@@ -182,6 +182,20 @@ func hasAllScope(p *auth.Principal) bool {
 	return false
 }
 
+func RequireAny(keys ...string) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		p := Principal(c)
+		for _, key := range keys {
+			if g, ok := p.Can(key); ok {
+				c.Locals(scopeKey, g)
+				c.Locals("perm_used", key)
+				return c.Next()
+			}
+		}
+		return httpx.Forbidden("permission_denied", "You do not have permission to do that")
+	}
+}
+
 func Require(key string) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		p := Principal(c)

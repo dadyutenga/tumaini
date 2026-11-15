@@ -31,14 +31,14 @@ type User struct {
 }
 
 type UserInput struct {
-	Name       string
-	Phone      string
-	Email      string
-	Password   string
-	RoleID     uuid.UUID
-	EmployeeID *uuid.UUID
-	BranchIDs  []uuid.UUID
-	Language   string
+	Name       string      `json:"name"`
+	Phone      string      `json:"phone"`
+	Email      string      `json:"email"`
+	Password   string      `json:"password"`
+	RoleID     uuid.UUID   `json:"role_id"`
+	EmployeeID *uuid.UUID  `json:"employee_id"`
+	BranchIDs  []uuid.UUID `json:"branch_ids"`
+	Language   string      `json:"language"`
 }
 
 func (s *Service) ListUsers(ctx context.Context, p *auth.Principal, q string, page httpx.Page) ([]User, int, error) {
@@ -193,9 +193,10 @@ func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUI
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE users SET name = COALESCE(NULLIF($2,''), name), phone = COALESCE(NULLIF($3,''), phone),
-			  email = COALESCE(NULLIF($4,'')::citext, email), role_id = $5, language = COALESCE(NULLIF($6,''), language)
+			  email = COALESCE(NULLIF($4,'')::citext, email), role_id = $5, language = COALESCE(NULLIF($6,''), language),
+			  employee_id = COALESCE($7, employee_id)
 			WHERE id = $1
-		`, id, strings.TrimSpace(in.Name), strings.TrimSpace(in.Phone), strings.TrimSpace(in.Email), newRole, in.Language); err != nil {
+		`, id, strings.TrimSpace(in.Name), strings.TrimSpace(in.Phone), strings.TrimSpace(in.Email), newRole, in.Language, in.EmployeeID); err != nil {
 			return err
 		}
 		if len(in.BranchIDs) > 0 {
@@ -362,8 +363,8 @@ type RolePermView struct {
 }
 
 type RoleInput struct {
-	Name  string
-	Perms []RolePermView
+	Name  string         `json:"name"`
+	Perms []RolePermView `json:"permissions"`
 }
 
 func (s *Service) ListRoles(ctx context.Context, p *auth.Principal) ([]Role, error) {

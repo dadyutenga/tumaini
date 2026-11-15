@@ -72,17 +72,17 @@ func Seed(ctx context.Context, tx pgx.Tx, businessID uuid.UUID) error {
 }
 
 type MoneyInput struct {
-	BusinessID    uuid.UUID
-	BranchID      *uuid.UUID
-	Name          string
-	Type          string
-	Provider      string
-	AccountNumber string
-	CustodianID   *uuid.UUID
-	Opening       decimal.Decimal
+	BusinessID     uuid.UUID
+	BranchID       *uuid.UUID
+	Name           string
+	Type           string
+	Provider       string
+	AccountNumber  string
+	CustodianID    *uuid.UUID
+	Opening        decimal.Decimal
 	AllowOverdraft bool
-	UserID        uuid.UUID
-	EntryDate     string
+	UserID         uuid.UUID
+	EntryDate      string
 }
 
 func CreateMoneyAccount(ctx context.Context, tx pgx.Tx, led *ledger.Service, in MoneyInput) (uuid.UUID, error) {

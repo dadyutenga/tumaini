@@ -39,7 +39,7 @@ func (s *Service) ToPermission(ctx context.Context, tx pgx.Tx, businessID uuid.U
 		SELECT DISTINCT u.id
 		FROM users u
 		JOIN role_permissions rp ON rp.role_id = u.role_id AND rp.permission_key = $2
-		WHERE u.is_active
+		WHERE u.business_id = $1 AND u.is_active
 		  AND (
 		    rp.scope = 'all'
 		    OR $3::uuid IS NULL

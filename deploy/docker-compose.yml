@@ -1,0 +1,49 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: postgres_dev
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  migrate:
+    build:
+      context: ../backend
+    command: ["/app/migrate", "up"]
+    environment:
+      MIGRATE_DATABASE_URL: postgres://bms_owner:bms_owner_dev@postgres:5432/bms?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ../backend
+    environment:
+      HTTP_ADDR: ":8080"
+      DATABASE_URL: postgres://bms_app:bms_app_dev@postgres:5432/bms?sslmode=disable
+      MIGRATE_DATABASE_URL: postgres://bms_owner:bms_owner_dev@postgres:5432/bms?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:-dev-only-change-me-please-32-characters}
+      CORS_ORIGINS: http://localhost:5173
+      COOKIE_SECURE: "false"
+      STORAGE_PATH: /app/data/files
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - files:/app/data
+
+volumes:
+  pgdata:
+  files:

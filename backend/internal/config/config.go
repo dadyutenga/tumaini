@@ -10,25 +10,25 @@ import (
 
 // Config is the process configuration. Secrets come from the environment.
 type Config struct {
-	AppEnv            string
-	HTTPAddr          string
-	DatabaseURL       string
+	AppEnv             string
+	HTTPAddr           string
+	DatabaseURL        string
 	MigrateDatabaseURL string
-	JWTSecret         string
-	AccessTokenTTL    time.Duration
-	RefreshTokenTTL   time.Duration
-	CORSOrigins       []string
-	CookieDomain      string
-	CookieSecure      bool
-	StorageDriver     string
-	StoragePath       string
-	DefaultTimezone   string
-	DefaultCurrency   string
-	LogLevel          string
-	ArgonMemory       uint32
-	ArgonTime         uint32
-	ArgonThreads      uint8
-	AutoMigrate       bool
+	JWTSecret          string
+	AccessTokenTTL     time.Duration
+	RefreshTokenTTL    time.Duration
+	CORSOrigins        []string
+	CookieDomain       string
+	CookieSecure       bool
+	StorageDriver      string
+	StoragePath        string
+	DefaultTimezone    string
+	DefaultCurrency    string
+	LogLevel           string
+	ArgonMemory        uint32
+	ArgonTime          uint32
+	ArgonThreads       uint8
+	AutoMigrate        bool
 }
 
 func Load() (Config, error) {

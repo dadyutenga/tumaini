@@ -198,7 +198,7 @@ func (s *Service) grantDefaults(ctx context.Context, tx pgx.Tx, businessID, owne
 func (s *Service) defaultSettings(ctx context.Context, tx pgx.Tx, businessID uuid.UUID) error {
 	vals := map[string]any{
 		"tax.prices_include_tax": false,
-		"currency.code": "TZS", "currency.symbol": "TZS", "currency.decimals": 2, "currency.thousands_separator": ",",
+		"currency.code":          "TZS", "currency.symbol": "TZS", "currency.decimals": 2, "currency.thousands_separator": ",",
 		"invoice.prefix": "INV", "invoice.terms": "Payment is due as stated.", "invoice.footer": "", "invoice.due_days": 0,
 		"receipt.header": "", "receipt.footer": "Thank you", "receipt.show_logo": true, "receipt.paper_width": 80,
 		"receipt.show_cashier": true, "receipt.show_tax": true,
@@ -207,7 +207,7 @@ func (s *Service) defaultSettings(ctx context.Context, tx pgx.Tx, businessID uui
 		"system.timezone": "Africa/Dar_es_Salaam", "system.date_format": "02 Jan 2006", "system.language": "en",
 		"system.allow_negative_stock": false, "system.business_day_start": "00:00", "system.session_timeout_minutes": 30,
 		"system.till_difference_threshold": 1000,
-		"notifications.supplier_due_days": 7, "notifications.salary_due_days": 3,
+		"notifications.supplier_due_days":  7, "notifications.salary_due_days": 3,
 		"payment.methods": map[string]any{
 			"cash": map[string]any{"enabled": true}, "bank": map[string]any{"enabled": true},
 			"mobile_money": map[string]any{"enabled": true}, "credit": map[string]any{"enabled": true},
@@ -231,7 +231,10 @@ func (s *Service) defaultMaster(ctx context.Context, tx pgx.Tx, businessID uuid.
 	`, ids.New(), businessID, ids.New()); err != nil {
 		return err
 	}
-	units := []struct{ name, short string; dec bool }{
+	units := []struct {
+		name, short string
+		dec         bool
+	}{
 		{"piece", "pc", false}, {"kg", "kg", true}, {"litre", "L", true}, {"box", "box", false}, {"carton", "ctn", false},
 	}
 	for _, u := range units {
@@ -306,15 +309,15 @@ func (s *Service) accessFor(ctx context.Context, tx pgx.Tx, userID, businessID, 
 }
 
 type foundUser struct {
-	ID                  uuid.UUID
-	BusinessID          uuid.UUID
-	RoleID              uuid.UUID
-	Name                string
-	PasswordHash        string
-	Active              bool
-	MustChange          bool
-	LockedUntil         *time.Time
-	BusinessActive      bool
+	ID             uuid.UUID
+	BusinessID     uuid.UUID
+	RoleID         uuid.UUID
+	Name           string
+	PasswordHash   string
+	Active         bool
+	MustChange     bool
+	LockedUntil    *time.Time
+	BusinessActive bool
 }
 
 func (s *Service) Login(ctx context.Context, identifier, password, ip, ua string) (SessionResult, error) {
