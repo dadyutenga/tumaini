@@ -1,0 +1,215 @@
+package middleware
+
+import (
+	"context"
+	"log/slog"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/gofiber/fiber/v3/middleware/requestid"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
+	"bms/internal/platform/auth"
+	"bms/internal/platform/db"
+	"bms/internal/platform/httpx"
+	"bms/internal/platform/idem"
+)
+
+const principalKey = "principal"
+const scopeKey = "scope"
+
+type Scope struct {
+	Kind  string
+	Limit any
+}
+
+func RequestLogger() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		start := time.Now()
+		err := c.Next()
+		p, _ := c.Locals(principalKey).(*auth.Principal)
+		uid, bid := "", ""
+		if p != nil {
+			uid = p.UserID.String()
+			bid = p.BusinessID.String()
+		}
+		slog.Info("request",
+			"request_id", requestid.FromContext(c),
+			"method", c.Method(),
+			"path", c.Path(),
+			"status", c.Response().StatusCode(),
+			"duration_ms", time.Since(start).Milliseconds(),
+			"user_id", uid,
+			"business_id", bid,
+		)
+		return err
+	}
+}
+
+func SecurityHeaders() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		c.Set("X-Content-Type-Options", "nosniff")
+		c.Set("X-Frame-Options", "DENY")
+		c.Set("Referrer-Policy", "no-referrer")
+		c.Set("X-Request-Id", requestid.FromContext(c))
+		return c.Next()
+	}
+}
+
+type bucket struct {
+	start time.Time
+	n     int
+}
+
+type Limiter struct {
+	mu  sync.Mutex
+	m   map[string]bucket
+	max int
+	win time.Duration
+}
+
+func NewLimiter(max int, win time.Duration) *Limiter {
+	return &Limiter{m: map[string]bucket{}, max: max, win: win}
+}
+
+func (l *Limiter) Handler() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		key := c.IP() + "|" + c.Path()
+		now := time.Now()
+		l.mu.Lock()
+		b := l.m[key]
+		if now.Sub(b.start) > l.win {
+			b = bucket{start: now}
+		}
+		b.n++
+		l.m[key] = b
+		tooMany := b.n > l.max
+		l.mu.Unlock()
+		if tooMany {
+			return httpx.TooMany("too_many_requests", "Too many attempts. Wait a minute and try again.")
+		}
+		return c.Next()
+	}
+}
+
+type PrincipalLoader func(ctx context.Context, claims auth.Claims) (*auth.Principal, error)
+
+func Auth(tokens auth.Tokens, load PrincipalLoader) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		raw := strings.TrimPrefix(c.Get("Authorization"), "Bearer ")
+		if raw == "" || raw == c.Get("Authorization") {
+			return httpx.Unauthorized("invalid_token", "Sign in again")
+		}
+		claims, err := tokens.Verify(raw)
+		if err != nil {
+			return httpx.Unauthorized("invalid_token", "Sign in again")
+		}
+		p, err := load(c.Context(), claims)
+		if err != nil {
+			return err
+		}
+		p.IP = c.IP()
+		p.UserAgent = c.Get("User-Agent")
+		p.RequestID = requestid.FromContext(c)
+		c.Locals(principalKey, p)
+		return c.Next()
+	}
+}
+
+func Principal(c fiber.Ctx) *auth.Principal {
+	p, _ := c.Locals(principalKey).(*auth.Principal)
+	return p
+}
+
+func Branch(database *db.DB) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		p := Principal(c)
+		if p == nil {
+			return httpx.Unauthorized("invalid_token", "Sign in again")
+		}
+		raw := c.Get("X-Branch-Id")
+		if raw == "all" {
+			if p.IsOwner || hasAllScope(p) {
+				return c.Next()
+			}
+			return httpx.Forbidden("branch_forbidden", "You can only view your own branches")
+		}
+		if raw == "" {
+			var id uuid.UUID
+			err := database.InTx(c.Context(), p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+				err := tx.QueryRow(ctx, `SELECT branch_id FROM user_branches WHERE user_id = $1 AND is_default LIMIT 1`, p.UserID).Scan(&id)
+				if err != nil {
+					err = tx.QueryRow(ctx, `SELECT branch_id FROM user_branches WHERE user_id = $1 LIMIT 1`, p.UserID).Scan(&id)
+				}
+				return err
+			})
+			if err != nil {
+				return c.Next()
+			}
+			p.BranchID = &id
+			c.Locals(principalKey, p)
+			return c.Next()
+		}
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return httpx.BadRequest("invalid_branch", "X-Branch-Id must be a branch id")
+		}
+		if !p.AllowsBranch(id) {
+			return httpx.Forbidden("branch_forbidden", "You are not assigned to that branch")
+		}
+		var active bool
+		err = database.InTx(c.Context(), p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT is_active FROM branches WHERE id = $1`, id).Scan(&active)
+		})
+		if err != nil || !active {
+			return httpx.NotFound("not_found", "Branch not found")
+		}
+		p.BranchID = &id
+		c.Locals(principalKey, p)
+		return c.Next()
+	}
+}
+
+func hasAllScope(p *auth.Principal) bool {
+	for _, g := range p.Perms {
+		if g.Scope == "all" {
+			return true
+		}
+	}
+	return false
+}
+
+func Require(key string) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		p := Principal(c)
+		g, ok := p.Can(key)
+		if !ok {
+			return httpx.Forbidden("permission_denied", "You do not have permission to do that")
+		}
+		c.Locals(scopeKey, g)
+		return c.Next()
+	}
+}
+
+func GrantFrom(c fiber.Ctx) auth.Grant {
+	g, _ := c.Locals(scopeKey).(auth.Grant)
+	return g
+}
+
+// Idempotent requires a key and stores it for the service to claim inside its transaction.
+func Idempotent() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		key := c.Get("Idempotency-Key")
+		if key == "" {
+			return httpx.BadRequest("idempotency_key_required", "Send an Idempotency-Key header so a retry cannot double-post")
+		}
+		if _, err := uuid.Parse(key); err != nil {
+			return httpx.BadRequest("idempotency_key_required", "Idempotency-Key must be a UUID")
+		}
+		c.SetContext(idem.With(c.Context(), idem.New(key, append([]byte(nil), c.Body()...))))
+		return c.Next()
+	}
+}
