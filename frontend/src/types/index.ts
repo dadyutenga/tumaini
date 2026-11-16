@@ -1,55 +1,162 @@
-import type { ReactNode } from "react";
-
-export type Role = "admin" | "member";
-
-export interface User {
-  name: string;
-  role: Role;
-  email?: string;
-}
-
-export interface AuthContextType {
-  user: User | null;
-  login: (name: string, role?: Role) => void;
-  logout: () => void;
-}
-
 export type Theme = "light" | "dark" | "system";
-
 export type Locale = "en" | "sw";
 
-export interface RecordItem {
+/** Decimal values (money, quantity) travel as strings, never floats. */
+export type Decimal = string;
+
+export interface Grant {
+  scope: "all" | "branch" | "own";
+  limit: Decimal | null;
+}
+
+export interface SessionUser {
   id: string;
   name: string;
-  status: "Active" | "Draft" | "Archived";
-  owner: string;
-  createdAt?: string;
-  notes?: string;
+  phone: string | null;
+  email: string | null;
+  role_id: string;
+  role_name: string;
+  role_slug: string;
+  employee_id: string | null;
+  language: string;
+  is_active: boolean;
+  branch_ids: string[];
+  must_change_password: boolean;
 }
 
-export interface Column<T> {
-  key: keyof T;
-  label: string;
-  render?: (row: T) => ReactNode;
+export interface Me {
+  user: SessionUser;
+  permissions: Record<string, Grant>;
+  branches: string[];
+  is_owner: boolean;
 }
 
-export interface ReportItem {
-  date: string;
-  name: string;
-  value: number;
-}
-
-export interface ActivityItem {
+export interface Branch {
   id: string;
-  label: string;
-  time: string;
+  name: string;
+  code: string;
+  address: string | null;
+  phone: string | null;
+  manager_id: string | null;
+  is_main: boolean;
+  is_active: boolean;
 }
 
-export interface NavRoute {
-  path: string;
-  label: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
-  component: React.ComponentType;
-  navigation: boolean;
-  requiredRole?: Role;
+export interface Product {
+  id: string;
+  name: string;
+  sku: string;
+  barcode: string | null;
+  category_id: string | null;
+  unit_id: string;
+  unit: string;
+  tax_rate_id: string | null;
+  kind: "stock" | "service";
+  sell_price: Decimal;
+  reorder_level: Decimal;
+  is_active: boolean;
+  qty_on_hand?: Decimal;
+  avg_cost?: Decimal;
+  description?: string | null;
+}
+
+export interface Category {
+  id: string;
+  parent_id: string | null;
+  name: string;
+  is_active: boolean;
+}
+
+export interface Unit {
+  id: string;
+  name: string;
+  short_name: string;
+  allow_decimal: boolean;
+}
+
+export interface Customer {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  tax_number: string | null;
+  credit_limit: Decimal;
+  payment_terms_days: number;
+  is_walk_in: boolean;
+  is_active: boolean;
+  balance: Decimal;
+  notes: string | null;
+}
+
+export interface MoneyAccount {
+  id: string;
+  name: string;
+  type: string;
+  branch_id: string | null;
+  provider: string | null;
+  account_number: string | null;
+  allow_overdraft: boolean;
+  is_active: boolean;
+  balance?: Decimal;
+}
+
+export interface SaleRow {
+  id: string;
+  number: string;
+  status: string;
+  total: Decimal;
+  paid_total: Decimal;
+  balance: Decimal;
+  business_date: string;
+  cashier_id: string;
+}
+
+export interface SaleItem {
+  id?: string;
+  product_id: string;
+  product_name: string;
+  qty: Decimal;
+  unit_price: Decimal;
+  discount: Decimal;
+  tax_amount: Decimal;
+  line_total: Decimal;
+  qty_returned?: Decimal;
+}
+
+export interface Sale {
+  id?: string;
+  number?: string;
+  status: string;
+  subtotal: Decimal;
+  discount_total: Decimal;
+  tax_total: Decimal;
+  total: Decimal;
+  paid_total: Decimal;
+  balance: Decimal;
+  change_due?: Decimal;
+  business_date?: string;
+  receipt_footer?: string;
+  profit?: Decimal;
+  items: SaleItem[];
+}
+
+export interface Till {
+  id: string;
+  money_account_id: string;
+  opening_float: Decimal;
+  opened_at: string;
+  status: "open";
+}
+
+export interface Approval {
+  id: string;
+  kind: string;
+  subject_type: string;
+  subject_id: string;
+  amount: { Decimal: Decimal; Valid: boolean } | Decimal | null;
+  summary: string;
+  status: string;
+  requested_by: string;
+  created_at: string;
 }

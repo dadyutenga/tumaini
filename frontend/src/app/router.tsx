@@ -17,24 +17,33 @@ export const router = createBrowserRouter([
       </ProtectedRoute>
     ),
     errorElement: <ErrorBoundary />,
-    children: [
-      ...routes.map(({ path, component: Component }) => ({
-        index: path === "/" ? true : undefined,
-        path: path === "/" ? undefined : path.slice(1),
-        element: (
+    children: routes.map(({ path, component: Component, permission }) => ({
+      index: path === "/" ? true : undefined,
+      path: path === "/" ? undefined : path.slice(1),
+      element: (
+        <ProtectedRoute permission={permission}>
           <Suspense fallback={<PageLoader />}>
             <Component />
           </Suspense>
-        ),
-      })),
-    ],
+        </ProtectedRoute>
+      ),
+    })),
   },
-  ...["login", "register", "forgot-password", "reset-password"].map((path) => ({
+  ...["login", "register"].map((path) => ({
     path,
     element: <AuthPage mode={path} />,
   })),
-  { path: "403", element: <Status code="403" title="Access Denied" /> },
-  { path: "404", element: <Status code="404" title="Page Not Found" /> },
-  { path: "500", element: <Status code="500" title="Server Error" /> },
+  {
+    path: "403",
+    element: (
+      <Status
+        code="403"
+        title="Access denied"
+        description="Your role does not include this page."
+      />
+    ),
+  },
+  { path: "404", element: <Status code="404" title="Page not found" /> },
+  { path: "500", element: <Status code="500" title="Server error" /> },
   { path: "*", element: <NotFound /> },
 ]);

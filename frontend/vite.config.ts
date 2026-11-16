@@ -16,4 +16,13 @@ export default defineConfig({
     },
   },
   plugins: [react(), tailwindcss()],
+  server: {
+    // The refresh cookie is SameSite=Strict, so the browser must see one origin. Proxy the API.
+    proxy: {
+      "/api": {
+        target: process.env.API_PROXY_TARGET ?? "http://127.0.0.1:8080",
+        changeOrigin: false,
+      },
+    },
+  },
 });

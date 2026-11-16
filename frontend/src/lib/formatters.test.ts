@@ -24,3 +24,14 @@ describe("formatters", () => {
     expect(formatBytes(-1)).toBe("—");
   });
 });
+
+describe("decimal helpers", () => {
+  it("reads strings, numbers and nullable decimals", async () => {
+    const { toNumber, formatQty } = await import("./formatters");
+    expect(toNumber("2500.50")).toBe(2500.5);
+    expect(toNumber(7)).toBe(7);
+    expect(toNumber(null)).toBe(0);
+    expect(toNumber({ Decimal: "12", Valid: true })).toBe(12);
+    expect(formatQty("1234.5")).toBe("1,234.5");
+  });
+});

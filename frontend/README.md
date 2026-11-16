@@ -1,242 +1,57 @@
-# Frontend Template
+# Tumaini BMS frontend
 
-A production-ready, domain-neutral React + Vite + TypeScript application template with Tailwind CSS v4, Radix UI primitives, React Router 7, TanStack Query, React Hook Form, Zod, and Recharts.
+Vite, React 19, TypeScript, Tailwind 4, TanStack Query, React Router, and shadcn/Radix components. It talks to the Go API in `../backend`. The layout and UI kit come from the template this project started from; the pages, auth, and API client are written for the BMS API.
 
-Designed to be cloned, customized, and shipped in minutes.
-
----
-
-## Tech Stack
-
-- **Runtime & Language**: React 19, TypeScript (strict mode).
-- **Build System**: Vite 8 with `@vitejs/plugin-react`.
-- **Routing**: React Router 7 (`react-router-dom`) with `createBrowserRouter`, lazy route splitting, and error boundaries.
-- **Styling**: Tailwind CSS v4 with centralized OKLCH design tokens.
-- **UI Components**: Radix UI primitives, Lucide React icons, Vaul drawer, Sonner toasts.
-- **Server State**: TanStack Query v5 (`@tanstack/react-query`).
-- **Form Management**: React Hook Form with Zod schema validation.
-- **Data Visualization**: Recharts 2 with responsive wrappers.
-- **Localization**: Built-in optional bilingual support (English & Swahili) with live language switching.
-- **Testing**: Vitest + React Testing Library + jsdom.
-- **Quality**: ESLint 9 (flat config) + Prettier.
-- **Deployment**: Multi-stage `Dockerfile` (Node 24 build & Nginx alpine) and GitHub Actions CI.
-
----
-
-## Quickstart & How to Run
-
-Requirements: **Node.js >= 24** and **npm**.
+## Run
 
 ```bash
-# 1. Install dependencies
+# 1. API on http://127.0.0.1:8080 (see the root README)
+# 2. Frontend
+cd frontend
 npm install
-
-# 2. Start local development server
-npm run dev
-
-# 3. Run test suite
-npm test
-
-# 4. Check linting and formatting
-npm run lint
-
-# 5. Build production bundle
-npm run build
+npm run dev        # http://localhost:5173
 ```
 
-Once running, visit `http://localhost:5173`. Any email address and a password of at least 8 characters will log you into the local demo session.
+Open `http://localhost:5173` (not `127.0.0.1`) and choose **Register** to create a business and its owner.
 
----
+In development Vite proxies `/api` to the API, so the browser sees a single origin. The refresh cookie is `SameSite=Strict` and needs that. Set `API_PROXY_TARGET` to proxy somewhere else. Set `VITE_API_BASE_URL` only if you serve the API from a different origin; then the API's `CORS_ORIGINS` must include the frontend and the cookie rules need a shared site.
 
-## Folder Structure
+Scripts: `npm run lint`, `npm test`, `npm run build`.
 
-```
-src/
-├── app/                  # Application bootstrap & shell config
-│   ├── App.tsx           # Top-level root component
-│   ├── providers.tsx     # Consolidated context providers
-│   ├── router.tsx        # React Router createBrowserRouter config
-│   ├── routes.tsx        # Single navigation & route declaration array
-│   └── ThemeProvider.tsx # Dark/Light/System theme provider
-├── assets/               # Brand & SVG vector assets
-├── components/           # Reusable UI component library
-│   ├── layout/           # AppShell, DashboardLayout, AuthLayout
-│   ├── shared/           # Composed components (DataTable, Charts, Display cards)
-│   └── ui/               # Radix primitives (Button, Dialog, Input, Select, etc.)
-├── features/             # Modular feature slices
-│   ├── auth/             # AuthProvider, ProtectedRoute, AuthForm
-│   ├── dashboard/        # Dashboard view, stat cards, activity feed
-│   ├── example-crud/     # Records list, modal create/edit dialog, mock store
-│   ├── i18n/             # English/Swahili translation provider & switcher
-│   ├── reports/          # Analytics metrics, date-range picker, CSV export
-│   └── settings/         # Account, appearance, and notification settings
-├── hooks/                # Reusable custom React hooks
-├── lib/                  # Helpers, API client, formatters, validators
-├── pages/                # Lazy-loaded route target components
-├── styles/               # Centralized Tailwind CSS design tokens & global CSS
-└── types/                # Domain-neutral TypeScript interfaces
-```
+## How it works
 
----
+| Piece | File | Notes |
+| --- | --- | --- |
+| API client | `src/lib/api.ts` | Bearer token in memory, rotating refresh cookie, single-flight refresh on 401, `X-Branch-Id`, `Idempotency-Key`, `{data, meta}` and `{error}` envelopes |
+| Session | `src/features/auth/auth.tsx` | Restores the session from the refresh cookie, loads `/me`, exposes `can(permission)` and the active branch |
+| Query hooks | `src/hooks/useApi.ts` | `useGet`, `useGetPage`, `useWrite` with toasts, approval (202) handling and idempotency keys |
+| Navigation | `src/app/routes.tsx` | Each route lists the permissions that show it. The sidebar and route guard both use them |
+| UI kit | `src/components/shared/kit.tsx` | `PageHeader`, `DataGrid`, `FormDialog`, `Field`, `Pager`, `StatusBadge` |
 
-## How to Add a Page
+Money and quantities stay strings end to end. `toNumber` and `formatMoney` are for display only.
 
-Adding a new page requires only **two simple steps**:
+## Pages
 
-### Step 1: Create the Page Component
+| Page | API |
+| --- | --- |
+| Overview | sales, profit and loss, low stock, approvals, customers |
+| Point of sale | tills, products, `/sales/preview`, `/sales` |
+| Sales and sale detail | sales, returns |
+| Products | products, categories, units |
+| Stock | levels, low stock, stock in and out |
+| Customers and detail | customers, statement, payments, credit limit |
+| Money | money accounts, transfers, transactions |
+| Expenses | categories, submit, pay |
+| Approvals | list, approve, reject |
+| Team and roles | users, roles |
+| Activity log | audit log |
+| Settings | business, branches, tax rates |
+| My account | profile, password |
 
-Create your page component in `src/pages/Analytics.tsx`:
+## Not built yet
 
-```tsx
-// src/pages/Analytics.tsx
-export default function AnalyticsPage() {
-  return (
-    <div className="space-y-6">
-      <h1 className="text-3xl font-bold tracking-tight">Analytics</h1>
-      <p className="text-muted-foreground">My new custom dashboard view.</p>
-    </div>
-  );
-}
-```
+The backend has no endpoint for these, so there is no screen yet: suppliers and purchase orders lists, employees, attendance, payroll runs, quotations, held carts, and reports beyond profit and loss. Add the screens as the endpoints land. Expenses has no list endpoint, so that page only shows expenses submitted in the current session.
 
-### Step 2: Register in `src/app/routes.tsx`
+The language switcher and its dictionary come from the template and are not wired into the new pages, which are in English.
 
-Add a lazy import and one entry to the `routes` array:
-
-```tsx
-// src/app/routes.tsx
-import { LineChart } from "lucide-react";
-const AnalyticsPage = lazy(() => import("@/pages/Analytics"));
-
-export const routes = [
-  // ... existing routes
-  {
-    path: "/analytics",
-    label: "Analytics",
-    icon: LineChart,
-    component: AnalyticsPage,
-    navigation: true, // set to false for parameterized routes like /records/:id
-  },
-];
-```
-
-The route is now automatically mounted in React Router and added to the sidebar navigation and search command palette (`Ctrl+K`).
-
----
-
-## How to Add an API Call
-
-The template includes an interceptor-ready HTTP client in `src/lib/api.ts` and TanStack Query integration.
-
-### Example: Define a Query and Mutation Hook
-
-```tsx
-// src/features/items/api.ts
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/api";
-
-interface Item {
-  id: string;
-  name: string;
-}
-
-// GET /items
-export function useItems() {
-  return useQuery({
-    queryKey: ["items"],
-    queryFn: () => apiRequest<Item[]>("/items"),
-  });
-}
-
-// POST /items
-export function useCreateItem() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (newItem: Omit<Item, "id">) =>
-      apiRequest<Item>("/items", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newItem),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["items"] });
-    },
-  });
-}
-```
-
----
-
-## How to Add a Component
-
-1. Place generic primitives in `src/components/ui/` (e.g. `src/components/ui/badge.tsx`).
-2. Place composed or multi-element widgets in `src/components/shared/` (e.g. `src/components/shared/MyCard.tsx`).
-3. Import using the `@/` path alias:
-
-```tsx
-import { Button } from "@/components/ui/button";
-import { StatCard } from "@/components/shared/Display";
-```
-
-All reusable components are indexed with code snippets in [COMPONENT_CATALOG.md](docs/COMPONENT_CATALOG.md).
-
----
-
-## How to Change the Theme
-
-Design tokens are centralized in `src/styles/globals.css`.
-
-- **Colors & Radii**: Adjust the CSS variables under `:root` (light mode) and `:root.dark` (dark mode).
-- **Primary Color**: Modify `--primary` and `--primary-foreground`.
-- **Border Radius**: Change `--radius` (defaults to `0.875rem`).
-- **Fonts**: Update `--font-sans` or `--font-display`.
-
-```css
-/* src/styles/globals.css */
-:root {
-  --primary: oklch(0.52 0.14 155); /* Custom brand color */
-  --radius: 0.75rem;
-}
-```
-
-The app shell includes a theme toggle and persists preference (`light`, `dark`, `system`) to `localStorage`.
-
----
-
-## Environment Variables
-
-Copy `.env.example` to `.env.local`:
-
-```bash
-cp .env.example .env.local
-```
-
-| Variable            | Description                                | Default                |
-| :------------------ | :----------------------------------------- | :--------------------- |
-| `VITE_API_BASE_URL` | Base URL for remote API endpoints          | `""` (mock/local mode) |
-| `VITE_APP_TITLE`    | Brand title displayed in document & header | `"Your App"`           |
-
-> [!CAUTION]
-> Vite environment variables with the `VITE_` prefix are bundled into client code. **Never store secret keys, private tokens, or passwords in them.**
-
----
-
-## Container & CI Deployment
-
-### Multi-stage Docker
-
-Build and run with Docker:
-
-```bash
-docker build -t frontend-template .
-docker run -p 8080:80 frontend-template
-```
-
-### GitHub Actions
-
-The automated CI workflow is configured in `.github/workflows/ci.yml`. On every push and pull request, it runs:
-
-1. `npm run lint`
-2. `npm run build`
-3. `npm test`
+`docs/` holds the original template notes and is kept for reference.

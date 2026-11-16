@@ -1,44 +1,76 @@
+import { useState } from "react";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Field, PageHeader } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
-import { useI18n } from "@/features/i18n/i18n";
+import { useWrite } from "@/hooks/useApi";
 
 export default function Profile() {
-  const { user } = useAuth();
-  const { t } = useI18n();
-
+  const { user, me } = useAuth();
+  const [name, setName] = useState(user?.name ?? "");
+  const [pw, setPw] = useState({ current_password: "", new_password: "" });
+  const update = useWrite<{ name: string }, unknown>("PUT", "/me", { success: "Profile updated" });
+  const change = useWrite<typeof pw, unknown>("PUT", "/auth/password", {
+    success: "Password changed",
+    onSuccess: () => setPw({ current_password: "", new_password: "" }),
+  });
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">{t.nav.profile}</h1>
-        <p className="mt-2 text-muted-foreground">Manage your personal information and session.</p>
+    <>
+      <PageHeader
+        title="My account"
+        description={`${user?.role_name}${me?.is_owner ? " · owner" : ""}`}
+      />
+      <div className="grid max-w-3xl gap-6 md:grid-cols-2">
+        <form
+          className="space-y-4 rounded-2xl border bg-card p-6"
+          onSubmit={(e) => {
+            e.preventDefault();
+            update.mutate({ name });
+          }}
+        >
+          <h2 className="font-semibold">Profile</h2>
+          <Field label="Name">
+            <Input required value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field label="Phone or email">
+            <Input disabled value={user?.phone ?? user?.email ?? ""} />
+          </Field>
+          <Button type="submit" disabled={update.isPending}>
+            Save
+          </Button>
+        </form>
+        <form
+          className="space-y-4 rounded-2xl border bg-card p-6"
+          onSubmit={(e) => {
+            e.preventDefault();
+            change.mutate(pw);
+          }}
+        >
+          <h2 className="font-semibold">Change password</h2>
+          <Field label="Current password">
+            <Input
+              required
+              type="password"
+              autoComplete="current-password"
+              value={pw.current_password}
+              onChange={(e) => setPw({ ...pw, current_password: e.target.value })}
+            />
+          </Field>
+          <Field label="New password">
+            <Input
+              required
+              minLength={8}
+              type="password"
+              autoComplete="new-password"
+              value={pw.new_password}
+              onChange={(e) => setPw({ ...pw, new_password: e.target.value })}
+            />
+          </Field>
+          <Button type="submit" disabled={change.isPending}>
+            Change password
+          </Button>
+        </form>
       </div>
-
-      <div className="rounded-2xl border bg-card p-6">
-        <div className="flex items-center gap-4">
-          <Avatar className="h-16 w-16 text-2xl font-bold">
-            <AvatarFallback>{user?.name?.[0]?.toUpperCase() ?? "U"}</AvatarFallback>
-          </Avatar>
-          <div>
-            <h2 className="text-xl font-semibold">{user?.name}</h2>
-            <div className="mt-1 flex items-center gap-2">
-              <Badge variant="secondary">{user?.role ?? "member"}</Badge>
-              <span className="text-xs text-muted-foreground">Local Session</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-8 grid gap-4 border-t pt-6 text-sm sm:grid-cols-2">
-          <div>
-            <p className="font-medium text-muted-foreground">Full Name</p>
-            <p className="mt-1 font-semibold">{user?.name}</p>
-          </div>
-          <div>
-            <p className="font-medium text-muted-foreground">Session Status</p>
-            <p className="mt-1 font-semibold text-primary">Authenticated</p>
-          </div>
-        </div>
-      </div>
-    </div>
+    </>
   );
 }

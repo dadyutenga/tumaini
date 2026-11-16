@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, matchPath, useLocation } from "react-router-dom";
 import { Menu, PanelLeftClose } from "lucide-react";
 import { routes } from "@/app/routes";
+import { useVisibleRoutes } from "@/app/useVisibleRoutes";
+import { BranchSwitcher } from "@/components/layout/BranchSwitcher";
 import {
   NotificationBell,
   SearchPalette,
@@ -10,6 +12,9 @@ import {
 } from "@/components/shared/Toolbar";
 import { LanguageSwitcher } from "@/features/i18n/LanguageSwitcher";
 import { useI18n } from "@/features/i18n/i18n";
+import { useAuth } from "@/features/auth/auth";
+import { useGet } from "@/hooks/useApi";
+import { setActiveCurrency } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -34,9 +39,10 @@ function Navigation({
   compact?: boolean;
   onNavigate?: () => void;
 }) {
+  const visible = useVisibleRoutes();
   return (
     <nav aria-label="Main navigation" className="space-y-1">
-      {routes
+      {visible
         .filter((route) => route.navigation)
         .map(({ path, label, icon: Icon }) => (
           <NavLink
@@ -66,8 +72,15 @@ export default function DashboardLayout() {
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const { t } = useI18n();
+  const { can } = useAuth();
+  const business = useGet<{ currency: string }>("/business", undefined, {
+    enabled: can("settings.view"),
+  });
+  setActiveCurrency(business.data?.currency);
 
-  const currentRoute = routes.find((r) => r.path === location.pathname);
+  const currentRoute = routes.find((r) =>
+    matchPath({ path: r.path, end: true }, location.pathname),
+  );
   const title = currentRoute?.label ?? "Page";
 
   return (
@@ -80,9 +93,9 @@ export default function DashboardLayout() {
       >
         <Link to="/" className="mb-8 flex h-10 items-center gap-3 px-2 font-bold">
           <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary text-sm font-black text-primary-foreground">
-            A
+            T
           </span>
-          {!compact && <span className="text-base tracking-tight">Your App</span>}
+          {!compact && <span className="text-base tracking-tight">Tumaini BMS</span>}
         </Link>
         <Navigation compact={compact} />
       </aside>
@@ -103,7 +116,7 @@ export default function DashboardLayout() {
               </Button>
             </SheetTrigger>
             <SheetContent side="left">
-              <SheetTitle className="mb-6">Your App</SheetTitle>
+              <SheetTitle className="mb-6">Tumaini BMS</SheetTitle>
               <SheetDescription className="sr-only">Choose a page to navigate to.</SheetDescription>
               <Navigation onNavigate={() => setOpen(false)} />
             </SheetContent>
@@ -140,6 +153,7 @@ export default function DashboardLayout() {
 
           {/* Topbar Actions */}
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+            <BranchSwitcher />
             <SearchPalette />
             <LanguageSwitcher />
             <ThemeToggle />
@@ -152,9 +166,7 @@ export default function DashboardLayout() {
           <Outlet />
         </main>
 
-        <footer className="border-t px-8 py-6 text-xs text-muted-foreground">
-          Your App · Reusable Frontend Template
-        </footer>
+        <footer className="border-t px-8 py-6 text-xs text-muted-foreground">Tumaini BMS</footer>
       </div>
     </div>
   );

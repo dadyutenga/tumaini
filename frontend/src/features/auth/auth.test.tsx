@@ -1,47 +1,88 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { MemoryRouter, Routes, Route } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { AuthProvider, ProtectedRoute } from "./auth";
-describe("ProtectedRoute", () => {
-  it("redirects anonymous visitors to login", () => {
-    render(
+
+const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
+
+function mount(permission?: string) {
+  render(
+    <QueryClientProvider client={new QueryClient()}>
       <MemoryRouter initialEntries={["/private"]}>
         <AuthProvider>
           <Routes>
             <Route
               path="/private"
               element={
-                <ProtectedRoute>
+                <ProtectedRoute permission={permission}>
                   <div>Private</div>
                 </ProtectedRoute>
               }
             />
             <Route path="/login" element={<div>Sign in</div>} />
-          </Routes>
-        </AuthProvider>
-      </MemoryRouter>,
-    );
-    expect(screen.getByText("Sign in")).toBeInTheDocument();
-  });
-  it("denies a signed-in member access to an admin route", () => {
-    localStorage.setItem("template-user", JSON.stringify({ name: "Demo", role: "member" }));
-    render(
-      <MemoryRouter initialEntries={["/private"]}>
-        <AuthProvider>
-          <Routes>
-            <Route
-              path="/private"
-              element={
-                <ProtectedRoute role="admin">
-                  <div>Private</div>
-                </ProtectedRoute>
-              }
-            />
             <Route path="/403" element={<div>Denied</div>} />
           </Routes>
         </AuthProvider>
-      </MemoryRouter>,
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+const me = (permissions: Record<string, unknown>, isOwner = false) => ({
+  data: {
+    user: { id: "u1", name: "Amina Owner", role_name: "Staff", branch_ids: ["b1"] },
+    permissions,
+    branches: ["b1"],
+    is_owner: isOwner,
+  },
+});
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe("ProtectedRoute", () => {
+  it("sends visitors without a session to login", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(json({ error: { code: "session_ended", message: "x" } }, 401)),
     );
-    expect(screen.getByText("Denied")).toBeInTheDocument();
+    mount();
+    expect(await screen.findByText("Sign in")).toBeInTheDocument();
+  });
+
+  it("lets a signed-in user in", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("/auth/refresh") ? json({ data: { access_token: "t" } }) : json(me({})),
+      ),
+    );
+    mount();
+    expect(await screen.findByText("Private")).toBeInTheDocument();
+  });
+
+  it("denies a user whose role lacks the permission", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("/auth/refresh")
+          ? json({ data: { access_token: "t" } })
+          : json(me({ "sales.view": { scope: "own", limit: null } })),
+      ),
+    );
+    mount("users.manage");
+    expect(await screen.findByText("Denied")).toBeInTheDocument();
+  });
+
+  it("lets the owner through every permission check", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url.endsWith("/auth/refresh") ? json({ data: { access_token: "t" } }) : json(me({}, true)),
+      ),
+    );
+    mount("users.manage");
+    expect(await screen.findByText("Private")).toBeInTheDocument();
   });
 });

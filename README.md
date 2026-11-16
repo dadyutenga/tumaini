@@ -47,6 +47,18 @@ go run ./cmd/api
 
 Health checks: `GET /healthz` and `GET /readyz`.
 
+## Run the frontend
+
+With the API running on port 8080:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Open <http://localhost:5173> and register a business. See `frontend/README.md`.
+
 ## Tests
 
 The acceptance test uses the database in `DATABASE_URL`. It registers its own businesses and does not wipe other data.
