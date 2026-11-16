@@ -179,7 +179,7 @@ import { Button } from "@/components/ui/button";
 import { StatCard } from "@/components/shared/Display";
 ```
 
-All reusable components are indexed with code snippets in [COMPONENT_CATALOG.md](COMPONENT_CATALOG.md).
+All reusable components are indexed with code snippets in [COMPONENT_CATALOG.md](docs/COMPONENT_CATALOG.md).
 
 ---
 

@@ -2,7 +2,16 @@
 
 Business management system for a company with one or more branches: sales, stock, purchasing, money, staff, and payroll. The backend (`backend/`) is a Go modular monolith. The frontend (`frontend/`) is a Vite + React template, imported without its git history; see `frontend/README.md`.
 
-The product contract is the specification in this folder: `SRS.md`, `Backend design.md`, `Database schema.md`, and `API reference.md`.
+The product contract is the specification in `docs/spec/`: `SRS.md`, `Backend design.md`, `Database schema.md`, and `API reference.md`.
+
+## Layout
+
+```
+backend/    Go API (Fiber v3, PostgreSQL)
+frontend/   Vite + React app
+deploy/     Docker Compose and Postgres init
+docs/       spec/ (SRS, designs, schema, API reference) and implementation reports
+```
 
 ## Stack
 
