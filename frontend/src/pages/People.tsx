@@ -239,7 +239,7 @@ function LeaveTab() {
   const decide = useWrite<{ id: string; action: string }, unknown>(
     "POST",
     (b) => `/leave-requests/${b.id}/${b.action}`,
-    { invalidate: refresh, success: "Leave updated" },
+    { invalidate: refresh, success: "Leave updated", toBody: () => ({}) },
   );
   return (
     <>

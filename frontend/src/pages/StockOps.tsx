@@ -78,7 +78,7 @@ function TransfersTab() {
   const act = useWrite<{ id: string; action: string }, unknown>(
     "POST",
     (b) => `/stock-transfers/${b.id}/${b.action}`,
-    { idempotent: true, invalidate: refresh, success: "Transfer updated" },
+    { idempotent: true, invalidate: refresh, success: "Transfer updated", toBody: () => ({}) },
   );
   const receive = useWrite<unknown, unknown>(
     "POST",
@@ -274,7 +274,7 @@ function CountsTab() {
   const act = useWrite<{ id: string; action: string }, unknown>(
     "POST",
     (b) => `/stock-adjustments/${b.id}/${b.action}`,
-    { idempotent: true, invalidate: refresh, success: "Adjustment updated" },
+    { idempotent: true, invalidate: refresh, success: "Adjustment updated", toBody: () => ({}) },
   );
   const save = useWrite<unknown, unknown>("PUT", () => `/stock-adjustments/${editing?.id}`, {
     invalidate: refresh,

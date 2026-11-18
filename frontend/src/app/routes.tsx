@@ -10,6 +10,7 @@ import {
   BarChart3,
   FileText,
   ArrowLeftRight,
+  Repeat,
   ReceiptText,
   ScrollText,
   Settings,
@@ -166,6 +167,14 @@ export const routes: AppRoute[] = [
     component: lazy(() => import("@/pages/Expenses")),
     navigation: true,
     permission: ["expenses.view", "expenses.create"],
+  },
+  {
+    path: "/expense-setup",
+    label: "Expense setup",
+    icon: Repeat,
+    component: lazy(() => import("@/pages/ExpenseSetup")),
+    navigation: true,
+    permission: ["expense_categories.manage", "recurring_expenses.manage", "petty_cash.manage"],
   },
   {
     path: "/reports",
