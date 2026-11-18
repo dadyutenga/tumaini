@@ -1,0 +1,12 @@
+DROP INDEX IF EXISTS commission_rules_pos_idx;
+DROP INDEX IF EXISTS commission_rules_emp_idx;
+DROP INDEX IF EXISTS attendance_days_overtime_idx;
+DROP INDEX IF EXISTS attendance_days_review_idx;
+DROP INDEX IF EXISTS payslips_employee_idx;
+DROP INDEX IF EXISTS payslip_lines_loan_idx;
+DROP INDEX IF EXISTS payslip_lines_payslip_idx;
+DROP INDEX IF EXISTS loan_repayments_loan_idx;
+DROP INDEX IF EXISTS leave_requests_status_idx;
+DROP INDEX IF EXISTS pay_adjustments_payslip_idx;
+DROP INDEX IF EXISTS pay_adjustments_emp_period_idx;
+DROP INDEX IF EXISTS sales_employee_day_idx;
