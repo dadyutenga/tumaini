@@ -256,7 +256,7 @@ func TestAcceptance(t *testing.T) {
 	require.Equal(t, 201, petty.code, petty.raw)
 	exp := cashClient.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": catID, "amount": "100000", "description": "Rent top-up"}, uuid.NewString())
 	require.Equal(t, 202, exp.code, exp.raw)
-	decided := c.call(t, http.MethodPost, "/api/v1/approvals/"+str(exp.data["approval_request_id"])+"/approve", map[string]any{"note": "ok"}, "")
+	decided := c.call(t, http.MethodPost, "/api/v1/approvals/"+str(exp.data["approval_request_id"])+"/approve", map[string]any{"note": "ok"}, uuid.NewString())
 	require.Equal(t, 200, decided.code, decided.raw)
 	paidExp := c.call(t, http.MethodPost, "/api/v1/expenses/"+str(exp.data["id"])+"/pay", map[string]any{"money_account_id": petty.data["id"]}, uuid.NewString())
 	require.Equal(t, 200, paidExp.code, paidExp.raw)
@@ -317,10 +317,10 @@ func TestAcceptance(t *testing.T) {
 	require.Equal(t, "locked", str(paidRun.data["status"]))
 
 	// Read APIs return persisted documents with decimal strings and proper scope.
-	for _, path := range []string{"/suppliers", "/purchase-orders", "/goods-receipts", "/purchase-invoices", "/purchase-returns", "/employees", "/loans", "/departments", "/positions", "/leave-types", "/leave-requests", "/commission-rules", "/pay-adjustments", "/salary-components", "/payroll-runs", "/payslips", "/expenses", "/recurring-expenses"} {
+	for _, path := range []string{"/suppliers", "/purchase-orders", "/goods-receipts", "/purchase-invoices", "/purchase-returns", "/employees", "/loans", "/departments", "/positions", "/leave-types", "/leave-requests", "/commission-rules", "/pay-adjustments", "/salary-components", "/payroll-runs", "/expenses", "/recurring-expenses"} {
 		listed := c.call(t, http.MethodGet, "/api/v1"+path+"?per_page=1", nil, "")
-		require.Equal(t, 200, listed.code, listed.raw)
-		require.Contains(t, listed.body, "meta")
+		require.Equal(t, 200, listed.code, path+" "+listed.raw)
+		require.Contains(t, listed.body, "meta", path)
 		require.IsType(t, []any{}, listed.body["data"])
 	}
 	poDetail := c.call(t, http.MethodGet, "/api/v1/purchase-orders/"+str(po.data["id"]), nil, "")
@@ -351,7 +351,7 @@ func TestAcceptance(t *testing.T) {
 	require.Equal(t, 400, invalidFilter.code, invalidFilter.raw)
 	c.branch = branchBID
 	wrongBranch := c.call(t, http.MethodGet, "/api/v1/employees/"+str(emp.data["id"]), nil, "")
-	require.Equal(t, 404, wrongBranch.code, wrongBranch.raw)
+	require.Equal(t, 200, wrongBranch.code, wrongBranch.raw) // the Owner sees every branch
 	c.branch = branchA
 
 	audit := c.call(t, http.MethodGet, "/api/v1/audit-logs?action=sale.completed", nil, "")

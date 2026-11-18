@@ -1,6 +1,8 @@
 package attendance
 
 import (
+	"strconv"
+
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
 
@@ -10,74 +12,194 @@ import (
 
 type Handler struct{ Svc *Service }
 
+var pr = middleware.Principal
+
+type clockIn struct {
+	EmployeeID *uuid.UUID `json:"employee_id"`
+}
+
 func (h *Handler) ClockIn(c fiber.Ctx) error {
-	var body struct {
-		EmployeeID *uuid.UUID `json:"employee_id"`
+	var in clockIn
+	if err := httpx.BindOptional(c, &in); err != nil {
+		return err
 	}
-	if len(c.Body()) > 0 {
-		if err := c.Bind().Body(&body); err != nil {
-			return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
-		}
+	out, err := h.Svc.ClockIn(c.Context(), pr(c), in.EmployeeID)
+	return httpx.OK(c, out, err)
+}
+
+func (h *Handler) ClockOut(c fiber.Ctx) error {
+	var in clockIn
+	if err := httpx.BindOptional(c, &in); err != nil {
+		return err
 	}
-	kind := "in"
-	if c.Path() == "/api/v1/attendance/clock-out" {
-		kind = "out"
-	}
-	out, err := h.Svc.ClockEvent(c.Context(), middleware.Principal(c), body.EmployeeID, kind)
+	out, err := h.Svc.ClockOut(c.Context(), pr(c), in.EmployeeID)
+	return httpx.OK(c, out, err)
+}
+
+func (h *Handler) Today(c fiber.Ctx) error {
+	branch, err := httpx.QueryUUID(c, "branch_id")
 	if err != nil {
 		return err
 	}
-	return c.JSON(httpx.Data(out))
+	out, err := h.Svc.Today(c.Context(), pr(c), branch)
+	return httpx.OK(c, out, err)
 }
 
-func (h *Handler) Schedule(c fiber.Ctx) error {
-	var body struct {
-		BranchID   *uuid.UUID `json:"branch_id"`
-		EmployeeID *uuid.UUID `json:"employee_id"`
-		Weekday    int        `json:"weekday"`
-		Start      string     `json:"start_time"`
-		End        string     `json:"end_time"`
+func dayFilter(c fiber.Ctx) (DayFilter, error) {
+	f := DayFilter{Status: c.Query("status"), OTStatus: c.Query("overtime_status"), Review: httpx.QueryBool(c, "needs_review")}
+	var err error
+	if f.EmployeeID, err = httpx.QueryUUID(c, "employee_id"); err != nil {
+		return f, err
 	}
-	if err := c.Bind().Body(&body); err != nil {
-		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
+	if f.BranchID, err = httpx.QueryUUID(c, "branch_id"); err != nil {
+		return f, err
 	}
-	if err := h.Svc.PutSchedule(c.Context(), middleware.Principal(c), body.BranchID, body.EmployeeID, body.Weekday, body.Start, body.End); err != nil {
+	f.From, f.To, err = httpx.Range(c)
+	return f, err
+}
+
+func (h *Handler) list(mod func(*DayFilter)) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		f, err := dayFilter(c)
+		if err != nil {
+			return err
+		}
+		if mod != nil {
+			mod(&f)
+		}
+		page := httpx.PageFrom(c)
+		rows, total, err := h.Svc.Days(c.Context(), pr(c), f, page)
+		return httpx.Paged(c, rows, page, total, err)
+	}
+}
+
+func (h *Handler) PutDay(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
 		return err
 	}
-	return c.JSON(httpx.Data(fiber.Map{"ok": true}))
+	var in DayIn
+	if err := httpx.Bind(c, &in); err != nil {
+		return err
+	}
+	out, err := h.Svc.PutDay(c.Context(), pr(c), id, in)
+	return httpx.OK(c, out, err)
+}
+
+func (h *Handler) AddEvent(c fiber.Ctx) error {
+	var in EventIn
+	if err := httpx.Bind(c, &in); err != nil {
+		return err
+	}
+	out, err := h.Svc.AddEvent(c.Context(), pr(c), in)
+	return httpx.Created(c, out, err)
 }
 
 func (h *Handler) Mark(c fiber.Ctx) error {
-	var body struct {
-		EmployeeID uuid.UUID `json:"employee_id"`
-		Day        string    `json:"day"`
-		Status     string    `json:"status"`
+	var in struct {
+		EmployeeID uuid.UUID `json:"employee_id" validate:"required"`
+		Day        string    `json:"day" validate:"required,date"`
+		Status     string    `json:"status" validate:"required,oneof=present late absent half_day leave holiday day_off"`
+		Note       string    `json:"note"`
 	}
-	if err := c.Bind().Body(&body); err != nil {
-		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
-	}
-	if err := h.Svc.Mark(c.Context(), middleware.Principal(c), body.EmployeeID, body.Day, body.Status); err != nil {
+	if err := httpx.Bind(c, &in); err != nil {
 		return err
 	}
-	return c.JSON(httpx.Data(fiber.Map{"ok": true}))
+	out, err := h.Svc.Mark(c.Context(), pr(c), in.EmployeeID, in.Day, in.Status, in.Note)
+	return httpx.OK(c, out, err)
 }
 
-func (h *Handler) Days(c fiber.Ctx) error {
-	id, err := uuid.Parse(c.Query("employee_id"))
-	if err != nil {
-		return httpx.BadRequest("invalid_id", "employee_id is required")
+func (h *Handler) decideOvertime(approve bool) fiber.Handler {
+	return func(c fiber.Ctx) error {
+		id, err := httpx.UUIDParam(c, "day_id")
+		if err != nil {
+			return err
+		}
+		var in struct {
+			Note string `json:"note"`
+		}
+		if err := httpx.BindOptional(c, &in); err != nil {
+			return err
+		}
+		out, err := h.Svc.DecideOvertime(c.Context(), pr(c), id, approve, in.Note)
+		return httpx.OK(c, out, err)
 	}
-	list, err := h.Svc.Days(c.Context(), middleware.Principal(c), id)
+}
+
+func (h *Handler) Summary(c fiber.Ctx) error {
+	branch, err := httpx.QueryUUID(c, "branch_id")
 	if err != nil {
 		return err
 	}
-	return c.JSON(httpx.Data(list))
+	out, err := h.Svc.Summary(c.Context(), pr(c), c.Query("month"), branch)
+	return httpx.OK(c, out, err)
+}
+
+func (h *Handler) Schedules(c fiber.Ctx) error {
+	branch, err := httpx.QueryUUID(c, "branch_id")
+	if err != nil {
+		return err
+	}
+	emp, err := httpx.QueryUUID(c, "employee_id")
+	if err != nil {
+		return err
+	}
+	out, err := h.Svc.Schedules(c.Context(), pr(c), branch, emp)
+	return httpx.OKList(c, out, err)
+}
+
+func (h *Handler) PutSchedule(c fiber.Ctx) error {
+	var in ScheduleIn
+	if err := httpx.Bind(c, &in); err != nil {
+		return err
+	}
+	out, err := h.Svc.PutSchedule(c.Context(), pr(c), in)
+	return httpx.OK(c, out, err)
+}
+
+func (h *Handler) Holidays(c fiber.Ctx) error {
+	year, _ := strconv.Atoi(c.Query("year"))
+	out, err := h.Svc.Holidays(c.Context(), pr(c), year)
+	return httpx.OKList(c, out, err)
+}
+
+func (h *Handler) CreateHoliday(c fiber.Ctx) error {
+	var in HolidayIn
+	if err := httpx.Bind(c, &in); err != nil {
+		return err
+	}
+	out, err := h.Svc.CreateHoliday(c.Context(), pr(c), in)
+	return httpx.Created(c, out, err)
+}
+
+func (h *Handler) DeleteHoliday(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	if err := h.Svc.DeleteHoliday(c.Context(), pr(c), id); err != nil {
+		return err
+	}
+	return c.SendStatus(fiber.StatusNoContent)
 }
 
 func Register(r fiber.Router, h *Handler) {
-	registerReads(r, h)
-	r.Post("/attendance/clock-in", middleware.Require("attendance.clock"), h.ClockIn)
-	r.Post("/attendance/clock-out", middleware.Require("attendance.clock"), h.ClockIn)
-	r.Put("/schedules", middleware.Require("schedules.manage"), h.Schedule)
-	r.Post("/attendance/days", middleware.Require("attendance.edit"), h.Mark)
+	req := middleware.Require
+	r.Post("/attendance/clock-in", req("attendance.clock"), h.ClockIn)
+	r.Post("/attendance/clock-out", req("attendance.clock"), h.ClockOut)
+	r.Get("/attendance/today", req("attendance.view"), h.Today)
+	r.Get("/attendance/days", req("attendance.view"), h.list(nil))
+	r.Post("/attendance/days", req("attendance.edit"), h.Mark)
+	r.Put("/attendance/days/:id", req("attendance.edit"), h.PutDay)
+	r.Post("/attendance/events", req("attendance.edit"), h.AddEvent)
+	r.Get("/attendance/late", req("attendance.view"), h.list(func(f *DayFilter) { f.LateOnly = true }))
+	r.Get("/attendance/overtime", req("attendance.view"), h.list(func(f *DayFilter) { f.OTOnly = true }))
+	r.Post("/attendance/overtime/:day_id/approve", req("overtime.approve"), h.decideOvertime(true))
+	r.Post("/attendance/overtime/:day_id/reject", req("overtime.approve"), h.decideOvertime(false))
+	r.Get("/attendance/summary", req("attendance.view"), h.Summary)
+	r.Get("/schedules", req("schedules.manage"), h.Schedules)
+	r.Put("/schedules", req("schedules.manage"), h.PutSchedule)
+	r.Get("/holidays", req("schedules.manage"), h.Holidays)
+	r.Post("/holidays", req("schedules.manage"), h.CreateHoliday)
+	r.Delete("/holidays/:id", req("schedules.manage"), h.DeleteHoliday)
 }

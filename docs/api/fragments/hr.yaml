@@ -1,0 +1,2512 @@
+paths:
+  /employees:
+    get:
+      summary: List. Salary fields only with `employees.view_salary`
+      operationId: get_employees
+      tags:
+      - Employees
+      x-permission: employees.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Create profile
+      operationId: post_employees
+      tags:
+      - Employees
+      x-permission: employees.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /employees/{id}:
+    get:
+      summary: Profile
+      operationId: get_employees_id
+      tags:
+      - Employees
+      x-permission: employees.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+    put:
+      summary: Edit
+      operationId: put_employees_id
+      tags:
+      - Employees
+      x-permission: employees.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /employees/{id}/terminate:
+    post:
+      summary: Terminate with date and reason
+      operationId: post_employees_id_terminate
+      tags:
+      - Employees
+      x-permission: employees.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /employees/{id}/user:
+    post:
+      summary: Create a login for the employee
+      operationId: post_employees_id_user
+      tags:
+      - Employees
+      x-permission: users.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /employees/{id}/statement:
+    get:
+      summary: GET /employees/{id}/statement
+      operationId: get_employees_id_statement
+      tags:
+      - Employees
+      x-permission: employees.view_salary
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+  /employees/{id}/components:
+    get:
+      summary: Salary structure of the employee
+      operationId: get_employees_id_components
+      tags:
+      - Employees
+      x-permission: components.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+    put:
+      summary: Salary structure of the employee
+      operationId: put_employees_id_components
+      tags:
+      - Employees
+      x-permission: components.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /employees/{id}/leave-balance:
+    get:
+      summary: Days allowed, taken, remaining per type
+      operationId: get_employees_id_leave_balance
+      tags:
+      - Employees
+      x-permission: employees.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+  /departments:
+    get:
+      summary: Manage departments
+      operationId: get_departments
+      tags:
+      - Employees
+      x-permission: departments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Manage departments
+      operationId: post_departments
+      tags:
+      - Employees
+      x-permission: departments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /departments/{id}:
+    put:
+      summary: Manage departments
+      operationId: put_departments_id
+      tags:
+      - Employees
+      x-permission: departments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+    delete:
+      summary: Manage departments
+      operationId: delete_departments_id
+      tags:
+      - Employees
+      x-permission: departments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /positions:
+    get:
+      summary: Manage positions
+      operationId: get_positions
+      tags:
+      - Employees
+      x-permission: departments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Manage positions
+      operationId: post_positions
+      tags:
+      - Employees
+      x-permission: departments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /positions/{id}:
+    put:
+      summary: Manage positions
+      operationId: put_positions_id
+      tags:
+      - Employees
+      x-permission: departments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+    delete:
+      summary: Manage positions
+      operationId: delete_positions_id
+      tags:
+      - Employees
+      x-permission: departments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /leave-types:
+    get:
+      summary: Manage leave types
+      operationId: get_leave_types
+      tags:
+      - Employees
+      x-permission: departments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Manage leave types
+      operationId: post_leave_types
+      tags:
+      - Employees
+      x-permission: departments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /leave-types/{id}:
+    put:
+      summary: Manage leave types
+      operationId: put_leave_types_id
+      tags:
+      - Employees
+      x-permission: departments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /leave-requests:
+    get:
+      summary: List requests for the scope
+      operationId: get_leave_requests
+      tags:
+      - Employees
+      x-permission: leave.approve
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Request leave for self, or for an employee with `leave.approve`
+      operationId: post_leave_requests
+      tags:
+      - Employees
+      x-permission: leave.request
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /leave-requests/{id}/approve:
+    post:
+      summary: Decide
+      operationId: post_leave_requests_id_approve
+      tags:
+      - Employees
+      x-permission: leave.approve
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /leave-requests/{id}/reject:
+    post:
+      summary: POST /leave-requests/{id}/reject
+      operationId: post_leave_requests_id_reject
+      tags:
+      - Employees
+      x-permission: leave.approve
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /leave-requests/{id}/cancel:
+    post:
+      summary: POST /leave-requests/{id}/cancel
+      operationId: post_leave_requests_id_cancel
+      tags:
+      - Employees
+      x-permission: leave.request, leave.approve
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /loans:
+    get:
+      summary: Payroll reports
+      operationId: get_loans
+      tags:
+      - Employees
+      x-permission: loans.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Create a loan or advance. Approved within limit, else 202
+      operationId: post_loans
+      tags:
+      - Employees
+      x-permission: loans.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /loans/{id}:
+    get:
+      summary: Detail with schedule and repayments
+      operationId: get_loans_id
+      tags:
+      - Employees
+      x-permission: loans.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+  /loans/{id}/disburse:
+    post:
+      summary: Pay out from a money account
+      operationId: post_loans_id_disburse
+      tags:
+      - Employees
+      x-permission: loans.approve
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /loans/{id}/repay:
+    post:
+      summary: Record a direct cash repayment
+      operationId: post_loans_id_repay
+      tags:
+      - Employees
+      x-permission: payments.receive
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /commission-rules:
+    get:
+      summary: Manage commission rules
+      operationId: get_commission_rules
+      tags:
+      - Employees
+      x-permission: components.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Manage commission rules
+      operationId: post_commission_rules
+      tags:
+      - Employees
+      x-permission: components.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /commission-rules/{id}:
+    put:
+      summary: Manage commission rules
+      operationId: put_commission_rules_id
+      tags:
+      - Employees
+      x-permission: components.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /pay-adjustments:
+    get:
+      summary: One-off bonuses and deductions for a period
+      operationId: get_pay_adjustments
+      tags:
+      - Employees
+      x-permission: adjustments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: One-off bonuses and deductions for a period
+      operationId: post_pay_adjustments
+      tags:
+      - Employees
+      x-permission: adjustments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /pay-adjustments/{id}:
+    delete:
+      summary: One-off bonuses and deductions for a period
+      operationId: delete_pay_adjustments_id
+      tags:
+      - Employees
+      x-permission: adjustments.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /me/employee:
+    get:
+      summary: Own employee profile
+      operationId: get_me_employee
+      tags:
+      - Employees
+      x-permission: any signed-in user
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /me/attendance:
+    get:
+      summary: Own records only
+      operationId: get_me_attendance
+      tags:
+      - Employees
+      x-permission: any signed-in user
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /me/leave:
+    get:
+      summary: Own records only
+      operationId: get_me_leave
+      tags:
+      - Employees
+      x-permission: any signed-in user
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /me/loans:
+    get:
+      summary: Own records only
+      operationId: get_me_loans
+      tags:
+      - Employees
+      x-permission: any signed-in user
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /me/payslips:
+    get:
+      summary: Own records only
+      operationId: get_me_payslips
+      tags:
+      - Employees
+      x-permission: any signed-in user
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /me/payments:
+    get:
+      summary: Own records only
+      operationId: get_me_payments
+      tags:
+      - Employees
+      x-permission: any signed-in user
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that

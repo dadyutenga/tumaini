@@ -3,6 +3,7 @@ package jobs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -26,6 +27,7 @@ const (
 	SendNotification   = "send_notification"
 	SessionCleanup     = "session_cleanup"
 	BusinessExport     = "business_export"
+	PayrollCalculate   = "payroll_calculate"
 )
 
 type Handler func(ctx context.Context, businessID uuid.UUID, payload json.RawMessage) error
@@ -33,13 +35,123 @@ type Handler func(ctx context.Context, businessID uuid.UUID, payload json.RawMes
 type Client struct {
 	pool     *pgxpool.Pool
 	handlers map[string]Handler
+	daily    []daily
+	now      func() time.Time
+}
+
+// daily is a job enqueued once per business per local date, at or after a local time.
+type daily struct {
+	kind string
+	at   string // HH:MM in the business timezone; "end" means at the next business day start
 }
 
 func New(pool *pgxpool.Pool) *Client {
-	return &Client{pool: pool, handlers: map[string]Handler{}}
+	return &Client{pool: pool, handlers: map[string]Handler{}, now: func() time.Time { return time.Now().UTC() }}
 }
 
+// SetClock lets tests drive the scheduler with a fixed clock.
+func (c *Client) SetClock(now func() time.Time) { c.now = now }
+
 func (c *Client) Register(kind string, h Handler) { c.handlers[kind] = h }
+
+// Daily schedules kind once a day per business at local time at (HH:MM).
+func (c *Client) Daily(kind, at string) { c.daily = append(c.daily, daily{kind: kind, at: at}) }
+
+// Enqueue adds a job outside any transaction.
+func (c *Client) Enqueue(ctx context.Context, businessID uuid.UUID, kind string, payload any) error {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	_, err = c.pool.Exec(ctx, `INSERT INTO jobs (id, business_id, kind, payload, run_at) VALUES ($1,$2,$3,$4, now())`, ids.New(), businessID, kind, raw)
+	return err
+}
+
+// Schedule enqueues every daily job that is due and not yet enqueued for the
+// business's current local date. The mark row makes this safe to run from
+// several processes at once.
+func (c *Client) Schedule(ctx context.Context) error {
+	if len(c.daily) == 0 {
+		return nil
+	}
+	rows, err := c.pool.Query(ctx, `SELECT id, timezone, day_start FROM job_businesses()`)
+	if err != nil {
+		return err
+	}
+	type biz struct {
+		id       uuid.UUID
+		tz, day0 string
+	}
+	var list []biz
+	for rows.Next() {
+		var b biz
+		if err := rows.Scan(&b.id, &b.tz, &b.day0); err != nil {
+			rows.Close()
+			return err
+		}
+		list = append(list, b)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	now := c.now()
+	for _, b := range list {
+		loc, err := time.LoadLocation(b.tz)
+		if err != nil {
+			loc = time.UTC
+		}
+		local := now.In(loc)
+		for _, d := range c.daily {
+			at := d.at
+			if at == "end" {
+				at = b.day0
+			}
+			due, err := time.ParseInLocation("15:04", at, loc)
+			if err != nil {
+				continue
+			}
+			dueToday := time.Date(local.Year(), local.Month(), local.Day(), due.Hour(), due.Minute(), 0, 0, loc)
+			if local.Before(dueToday) {
+				continue
+			}
+			runDate := local.Format("2006-01-02")
+			// For the day-end job the run date is the business day that just ended.
+			if d.at == "end" {
+				runDate = local.AddDate(0, 0, -1).Format("2006-01-02")
+			}
+			tag, err := c.pool.Exec(ctx, `
+				INSERT INTO scheduled_job_marks (business_id, kind, run_date) VALUES ($1,$2,$3)
+				ON CONFLICT DO NOTHING
+			`, b.id, d.kind, runDate)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() == 0 {
+				continue
+			}
+			if err := c.Enqueue(ctx, b.id, d.kind, map[string]any{"date": runDate}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// RunPending processes queued jobs until none are ready. Tests use it to run
+// jobs synchronously.
+func (c *Client) RunPending(ctx context.Context) error {
+	for i := 0; i < 1000; i++ {
+		ok, err := c.one(ctx)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+	}
+	return nil
+}
 
 func EnqueueTx(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, kind string, payload any) error {
 	raw, err := json.Marshal(payload)
@@ -56,10 +168,19 @@ func EnqueueTx(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, kind string
 func (c *Client) Run(ctx context.Context) {
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
+	sched := time.NewTicker(time.Minute)
+	defer sched.Stop()
+	if err := c.Schedule(ctx); err != nil {
+		slog.Error("schedule", "err", err)
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-sched.C:
+			if err := c.Schedule(ctx); err != nil {
+				slog.Error("schedule", "err", err)
+			}
 		case <-ticker.C:
 			c.drain(ctx)
 		}
@@ -112,7 +233,7 @@ func (c *Client) one(ctx context.Context) (bool, error) {
 		runErr = errUnknown(kind)
 	} else {
 		runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		runErr = h(runCtx, businessID, payload)
+		runErr = safeRun(runCtx, h, businessID, payload)
 		cancel()
 	}
 	status := "done"
@@ -128,6 +249,16 @@ func (c *Client) one(ctx context.Context) (bool, error) {
 	}
 	_, err = c.pool.Exec(ctx, `UPDATE jobs SET status = $2, last_error = NULLIF($3,''), run_at = now() + interval '30 seconds' WHERE id = $1`, id, status, msg)
 	return true, err
+}
+
+// safeRun turns a handler panic into an error so one bad job cannot stop the worker.
+func safeRun(ctx context.Context, h Handler, businessID uuid.UUID, payload json.RawMessage) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("job panicked: %v", r)
+		}
+	}()
+	return h(ctx, businessID, payload)
 }
 
 type unknownJob string

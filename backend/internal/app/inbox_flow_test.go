@@ -1,0 +1,156 @@
+package app_test
+
+import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/gofiber/fiber/v3"
+	"github.com/stretchr/testify/require"
+)
+
+func TestInboxApprovalsNotificationsAuditBackups(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	staff, _ := e.user(t, "staff")
+	mgrPhone := uniquePhone()
+	mgrRes := e.owner.call(t, http.MethodPost, "/api/v1/users", map[string]any{
+		"name": "Approver", "phone": mgrPhone, "password": "manager-pass-1", "role_id": e.roleID(t, "manager"), "branch_ids": []string{e.branch},
+	}, "")
+	require.Equal(t, 201, mgrRes.code, mgrRes.raw)
+	mgr := &client{app: e.app.Fiber, token: login(t, e.app.Fiber, mgrPhone, "manager-pass-1"), branch: e.branch}
+
+	cats := e.owner.call(t, http.MethodGet, "/api/v1/expense-categories", nil, "")
+	require.Equal(t, 200, cats.code, cats.raw)
+	category := str(asList(cats.body["data"])[0]["id"])
+	submit := func(c *client, amount string) string {
+		t.Helper()
+		res := c.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": category, "amount": amount, "description": "Generator fuel"}, key())
+		require.Equal(t, 202, res.code, res.raw)
+		return str(res.data["approval_request_id"])
+	}
+
+	// Staff cannot open the inbox; managers see the request with a working link and badge count.
+	first := submit(staff, "100000")
+	require.Equal(t, 403, staff.call(t, http.MethodGet, "/api/v1/approvals", nil, "").code)
+	count := mgr.call(t, http.MethodGet, "/api/v1/approvals/count", nil, "")
+	require.Equal(t, 200, count.code, count.raw)
+	require.GreaterOrEqual(t, int(dec(count.data["pending"]).IntPart()), 1)
+	list := mgr.call(t, http.MethodGet, "/api/v1/approvals?status=pending&kind=expense", nil, "")
+	require.Equal(t, 200, list.code, list.raw)
+	row := find(asList(list.body["data"]), "id", first)
+	require.Equal(t, true, row["can_decide"])
+	require.NotNil(t, list.body["meta"])
+	detail := mgr.call(t, http.MethodGet, "/api/v1/approvals/"+first, nil, "")
+	require.Equal(t, 200, detail.code, detail.raw)
+	require.Contains(t, str(detail.data["subject_link"]), "/api/v1/expenses/")
+	require.Equal(t, 400, mgr.call(t, http.MethodGet, "/api/v1/approvals?kind=nope", nil, "").code)
+
+	// The requester cancels; the expense goes back out of the queue and nobody can decide it.
+	require.Equal(t, 403, mgr.call(t, http.MethodPost, "/api/v1/approvals/"+first+"/cancel", nil, "").code)
+	cancel := staff.call(t, http.MethodPost, "/api/v1/approvals/"+first+"/cancel", nil, "")
+	require.Equal(t, 200, cancel.code, cancel.raw)
+	again := mgr.call(t, http.MethodPost, "/api/v1/approvals/"+first+"/approve", map[string]any{}, key())
+	require.Equal(t, 409, again.code, again.raw)
+
+	// Approve is idempotent and needs a key.
+	second := submit(staff, "120000")
+	require.Equal(t, 400, mgr.call(t, http.MethodPost, "/api/v1/approvals/"+second+"/approve", map[string]any{}, "").code)
+	k := key()
+	ok := mgr.call(t, http.MethodPost, "/api/v1/approvals/"+second+"/approve", map[string]any{"note": "fine"}, k)
+	require.Equal(t, 200, ok.code, ok.raw)
+	replay := mgr.call(t, http.MethodPost, "/api/v1/approvals/"+second+"/approve", map[string]any{"note": "fine"}, k)
+	require.Equal(t, 200, replay.code, replay.raw)
+	require.JSONEq(t, ok.raw, replay.raw)
+
+	// Nobody approves their own request (BR-11), except the Owner.
+	own := submit(mgr, "2000000")
+	self := mgr.call(t, http.MethodPost, "/api/v1/approvals/"+own+"/approve", map[string]any{}, key())
+	require.Equal(t, 403, self.code, self.raw)
+	require.Equal(t, 200, e.owner.call(t, http.MethodPost, "/api/v1/approvals/"+own+"/reject", map[string]any{"note": "too much"}, "").code)
+
+	// On-the-spot approval with the manager's PIN; wrong PINs are counted and blocked.
+	require.Equal(t, 200, mgr.call(t, http.MethodPut, "/api/v1/auth/pin", map[string]any{"pin": "4321"}, "").code)
+	third := submit(staff, "110000")
+	bad := staff.call(t, http.MethodPost, "/api/v1/approvals/"+third+"/approve-with-pin", map[string]any{"approver": mgrPhone, "pin": "1111"}, key())
+	require.Equal(t, 401, bad.code, bad.raw)
+	malformed := staff.call(t, http.MethodPost, "/api/v1/approvals/"+third+"/approve-with-pin", map[string]any{"approver": mgrPhone, "pin": "12ab"}, key())
+	require.Equal(t, 422, malformed.code, malformed.raw)
+	good := staff.call(t, http.MethodPost, "/api/v1/approvals/"+third+"/approve-with-pin", map[string]any{"approver": mgrPhone, "pin": "4321"}, key())
+	require.Equal(t, 200, good.code, good.raw)
+	decided := mgr.call(t, http.MethodGet, "/api/v1/approvals/"+third, nil, "")
+	require.Equal(t, mgrRes.data["id"], decided.data["decided_by"])
+	for i := 0; i < 5; i++ {
+		staff.call(t, http.MethodPost, "/api/v1/approvals/"+third+"/approve-with-pin", map[string]any{"approver": mgrPhone, "pin": "0000"}, key())
+	}
+	locked := staff.call(t, http.MethodPost, "/api/v1/approvals/"+third+"/approve-with-pin", map[string]any{"approver": mgrPhone, "pin": "4321"}, key())
+	require.Equal(t, 429, locked.code, locked.raw)
+
+	// The requester was notified of each decision; read and read-all clear the badge.
+	unread := staff.call(t, http.MethodGet, "/api/v1/notifications/unread-count", nil, "")
+	require.Equal(t, 200, unread.code, unread.raw)
+	require.GreaterOrEqual(t, int(dec(unread.data["unread"]).IntPart()), 2)
+	notes := staff.call(t, http.MethodGet, "/api/v1/notifications?unread=true&per_page=1", nil, "")
+	require.Equal(t, 200, notes.code, notes.raw)
+	require.Len(t, asList(notes.body["data"]), 1)
+	one := str(asList(notes.body["data"])[0]["id"])
+	require.Equal(t, 200, staff.call(t, http.MethodPost, "/api/v1/notifications/"+one+"/read", nil, "").code)
+	require.Equal(t, 404, mgr.call(t, http.MethodPost, "/api/v1/notifications/"+one+"/read", nil, "").code)
+	require.Equal(t, 200, staff.call(t, http.MethodPost, "/api/v1/notifications/read-all", nil, "").code)
+	zero := staff.call(t, http.MethodGet, "/api/v1/notifications/unread-count", nil, "")
+	require.EqualValues(t, 0, dec(zero.data["unread"]).IntPart())
+
+	// Audit: the decisions are logged with the deciding user, and a record has its own history.
+	logs := e.owner.call(t, http.MethodGet, "/api/v1/audit-logs?action=approval.&entity_type=approval_request", nil, "")
+	require.Equal(t, 200, logs.code, logs.raw)
+	require.GreaterOrEqual(t, len(asList(logs.body["data"])), 3)
+	hist := e.owner.call(t, http.MethodGet, "/api/v1/audit-logs/entity/approval_request/"+third, nil, "")
+	require.Equal(t, 200, hist.code, hist.raw)
+	require.Equal(t, mgrRes.data["id"], asList(hist.body["data"])[0]["user_id"])
+	require.Equal(t, 403, staff.call(t, http.MethodGet, "/api/v1/audit-logs", nil, "").code)
+	require.Equal(t, 400, e.owner.call(t, http.MethodGet, "/api/v1/audit-logs?from=yesterday", nil, "").code)
+
+	// Business export: Owner only, runs as a job, downloadable only by its requester or an Owner.
+	require.Equal(t, 403, mgr.call(t, http.MethodPost, "/api/v1/backups/export", nil, "").code)
+	start := e.owner.call(t, http.MethodPost, "/api/v1/backups/export", nil, "")
+	require.Equal(t, 202, start.code, start.raw)
+	exportID := str(start.data["id"])
+	require.Equal(t, 409, e.owner.call(t, http.MethodPost, "/api/v1/backups/export", nil, "").code)
+	e.runJobs(t)
+	status := e.owner.call(t, http.MethodGet, "/api/v1/exports/"+exportID, nil, "")
+	require.Equal(t, 200, status.code, status.raw)
+	require.Equal(t, "done", status.data["status"], status.raw)
+	require.Equal(t, 404, staff.call(t, http.MethodGet, "/api/v1/exports/"+exportID, nil, "").code)
+	backups := e.owner.call(t, http.MethodGet, "/api/v1/backups", nil, "")
+	require.Equal(t, 200, backups.code, backups.raw)
+	require.Len(t, asList(backups.data["exports"]), 1)
+	url := str(status.data["download_url"])
+	zipBody := download(t, e.app.Fiber, e.owner, url)
+	require.Equal(t, "PK", string(zipBody[:2]))
+	require.NotContains(t, string(zipBody), "argon2id", "password hashes must not be exported")
+	staffDownload := httptest.NewRequest(http.MethodGet, url, nil)
+	staffDownload.Header.Set("Authorization", "Bearer "+staff.token)
+	resp, err := e.app.Fiber.Test(staffDownload, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	require.Equal(t, 404, resp.StatusCode)
+
+	// Tenancy: another business sees none of it.
+	other := newEnv(t, defaultNow)
+	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/approvals/"+third, nil, "").code)
+	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/exports/"+exportID, nil, "").code)
+	empty := other.owner.call(t, http.MethodGet, "/api/v1/audit-logs/entity/approval_request/"+third, nil, "")
+	require.Empty(t, asList(empty.body["data"]))
+}
+
+func download(t *testing.T, app *fiber.App, c *client, url string) []byte {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	resp, err := app.Test(req, fiber.TestConfig{Timeout: 0})
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, 200, resp.StatusCode)
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return body
+}

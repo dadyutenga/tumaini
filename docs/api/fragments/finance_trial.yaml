@@ -1,0 +1,50 @@
+paths:
+  /reports/trial-balance:
+    get:
+      summary: Ledger reports
+      operationId: get_reports_trial_balance
+      tags:
+      - Finance
+      x-permission: reports.financial
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that

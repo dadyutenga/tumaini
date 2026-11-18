@@ -1,0 +1,2280 @@
+paths:
+  /money-accounts:
+    get:
+      summary: List money accounts. Bank and mobile money balances only with accounts.view_balance
+      operationId: get_money_accounts
+      tags:
+      - Finance
+      x-permission: accounts.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: type
+        in: query
+        schema:
+          type: string
+          enum:
+          - cash
+          - bank
+          - mobile_money
+          - petty_cash
+      - name: is_active
+        in: query
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000100
+                  name: CRDB
+                  type: bank
+                  ledger_code: '1011'
+                  is_active: true
+                  balance: '499000.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Create a money account with its ledger account and opening balance
+      operationId: post_money_accounts
+      tags:
+      - Finance
+      x-permission: accounts.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                type:
+                  type: string
+                  enum:
+                  - cash
+                  - bank
+                  - mobile_money
+                  - petty_cash
+                branch_id:
+                  type: string
+                  format: uuid
+                provider:
+                  type: string
+                account_number:
+                  type: string
+                custodian_id:
+                  type: string
+                  format: uuid
+                opening_balance:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                allow_overdraft:
+                  type: boolean
+                  description: Ignored for petty cash
+              required:
+              - name
+              - type
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000100
+                  name: CRDB
+                  type: bank
+                  ledger_code: '1011'
+                  is_active: true
+                  balance: '499000.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /money-accounts/{id}:
+    get:
+      summary: Money account detail
+      operationId: get_money_accounts_id
+      tags:
+      - Finance
+      x-permission: accounts.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000100
+                  name: CRDB
+                  type: bank
+                  ledger_code: '1011'
+                  is_active: true
+                  balance: '499000.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+    put:
+      summary: Edit name, provider, number, custodian or overdraft flag
+      operationId: put_money_accounts_id
+      tags:
+      - Finance
+      x-permission: accounts.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                provider:
+                  type: string
+                account_number:
+                  type: string
+                custodian_id:
+                  type: string
+                  format: uuid
+                allow_overdraft:
+                  type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000100
+                  name: CRDB
+                  type: bank
+                  ledger_code: '1011'
+                  is_active: true
+                  balance: '499000.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /money-accounts/{id}/deactivate:
+    post:
+      summary: Deactivate an account with a zero balance and no open till
+      operationId: post_money_accounts_id_deactivate
+      tags:
+      - Finance
+      x-permission: accounts.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000100
+                  name: CRDB
+                  type: bank
+                  ledger_code: '1011'
+                  is_active: false
+                  balance: '499000.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+  /money-accounts/{id}/statement:
+    get:
+      summary: Movements with opening, running and closing balance. format=csv, xlsx or pdf for a file
+      operationId: get_money_accounts_id_statement
+      tags:
+      - Finance
+      x-permission: accounts.view_balance
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: format
+        in: query
+        schema:
+          type: string
+          enum:
+          - json
+          - csv
+          - xlsx
+          - pdf
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  opening_balance: '0.00'
+                  closing_balance: '499000.00'
+                  lines:
+                  - date: '2026-11-16'
+                    description: Transfer DSM01-MTX-000001
+                    in: '0.00'
+                    out: '501000.00'
+                    balance: '499000.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+  /money-accounts/{id}/reconcile:
+    post:
+      summary: Record the actual balance and post the difference
+      operationId: post_money_accounts_id_reconcile
+      tags:
+      - Finance
+      x-permission: reconcile.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                actual_balance:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                date:
+                  type: string
+                  format: date
+                note:
+                  type: string
+              required:
+              - actual_balance
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  system_balance: '499000.00'
+                  actual_balance: '499500.00'
+                  difference: '500.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /payments:
+    get:
+      summary: All payments in scope
+      operationId: get_payments
+      tags:
+      - Finance
+      x-permission: payments.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: direction
+        in: query
+        schema:
+          type: string
+          enum:
+          - in
+          - out
+      - name: kind
+        in: query
+        schema:
+          type: string
+        description: One kind or a comma separated list
+      - name: party_type
+        in: query
+        schema:
+          type: string
+          enum:
+          - customer
+          - supplier
+          - employee
+      - name: party_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: account_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - posted
+          - voided
+      - name: q
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: 0192f0d5-0000-7000-8000-000000000200
+                  number: DSM01-PIN-000044
+                  direction: in
+                  kind: customer_payment
+                  party_name: Juma
+                  amount: '20000.00'
+                  status: posted
+                  payment_date: '2026-11-16'
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /payments/customers:
+    get:
+      summary: Payments with a customer party
+      operationId: get_payments_customers
+      tags:
+      - Finance
+      x-permission: payments.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: direction
+        in: query
+        schema:
+          type: string
+          enum:
+          - in
+          - out
+      - name: kind
+        in: query
+        schema:
+          type: string
+        description: One kind or a comma separated list
+      - name: party_type
+        in: query
+        schema:
+          type: string
+          enum:
+          - customer
+          - supplier
+          - employee
+      - name: party_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: account_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - posted
+          - voided
+      - name: q
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: 0192f0d5-0000-7000-8000-000000000200
+                  number: DSM01-PIN-000044
+                  direction: in
+                  kind: customer_payment
+                  party_name: Juma
+                  amount: '20000.00'
+                  status: posted
+                  payment_date: '2026-11-16'
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /payments/suppliers:
+    get:
+      summary: Payments with a supplier party
+      operationId: get_payments_suppliers
+      tags:
+      - Finance
+      x-permission: payments.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: direction
+        in: query
+        schema:
+          type: string
+          enum:
+          - in
+          - out
+      - name: kind
+        in: query
+        schema:
+          type: string
+        description: One kind or a comma separated list
+      - name: party_type
+        in: query
+        schema:
+          type: string
+          enum:
+          - customer
+          - supplier
+          - employee
+      - name: party_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: account_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - posted
+          - voided
+      - name: q
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: 0192f0d5-0000-7000-8000-000000000200
+                  number: DSM01-PIN-000044
+                  direction: out
+                  kind: supplier_payment
+                  party_name: Juma
+                  amount: '20000.00'
+                  status: posted
+                  payment_date: '2026-11-16'
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /payments/staff:
+    get:
+      summary: 'Payments with an employee party: salaries, loans, repayments'
+      operationId: get_payments_staff
+      tags:
+      - Finance
+      x-permission: payments.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: direction
+        in: query
+        schema:
+          type: string
+          enum:
+          - in
+          - out
+      - name: kind
+        in: query
+        schema:
+          type: string
+        description: One kind or a comma separated list
+      - name: party_type
+        in: query
+        schema:
+          type: string
+          enum:
+          - customer
+          - supplier
+          - employee
+      - name: party_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: account_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - posted
+          - voided
+      - name: q
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: 0192f0d5-0000-7000-8000-000000000200
+                  number: DSM01-PIN-000044
+                  direction: out
+                  kind: salary
+                  party_name: Juma
+                  amount: '20000.00'
+                  status: posted
+                  payment_date: '2026-11-16'
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /payments/{id}:
+    get:
+      summary: Payment detail with allocations
+      operationId: get_payments_id
+      tags:
+      - Finance
+      x-permission: payments.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000200
+                  number: DSM01-PIN-000044
+                  direction: in
+                  kind: customer_payment
+                  party_name: Juma
+                  amount: '20000.00'
+                  status: posted
+                  payment_date: '2026-11-16'
+                  allocations:
+                  - document_type: sale
+                    document_number: DSM01-SAL-000124
+                    amount: '20000.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+  /payments/{id}/voucher:
+    get:
+      summary: Printable receipt or voucher. format=pdf returns a PDF
+      operationId: get_payments_id_voucher
+      tags:
+      - Finance
+      x-permission: payments.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: format
+        in: query
+        schema:
+          type: string
+          enum:
+          - json
+          - pdf
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000200
+                  number: DSM01-PIN-000044
+                  direction: in
+                  kind: customer_payment
+                  party_name: Juma
+                  amount: '20000.00'
+                  status: posted
+                  payment_date: '2026-11-16'
+                  title: Payment receipt
+                  business:
+                    name: Tumaini Shop
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+  /payments/{id}/void:
+    post:
+      summary: 'Void a payment: reversing entry and reopened documents. 202 above the payments.void limit'
+      operationId: post_payments_id_void
+      tags:
+      - Finance
+      x-permission: payments.void
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+              required:
+              - reason
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000200
+                  number: DSM01-PIN-000044
+                  direction: in
+                  kind: customer_payment
+                  party_name: Juma
+                  amount: '20000.00'
+                  status: voided
+                  payment_date: '2026-11-16'
+                  void_reason: Bounced
+        '202':
+          description: Waiting for approval
+          content:
+            application/json:
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000001
+                  approval_request_id: 0192f0d5-0000-7000-8000-000000000002
+                  status: pending_approval
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /money-transfers:
+    get:
+      summary: List money transfers
+      operationId: get_money_transfers
+      tags:
+      - Finance
+      x-permission: accounts.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: account_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: 0192f0d5-0000-7000-8000-000000000300
+                  number: DSM01-MTX-000001
+                  from_account_name: CRDB
+                  to_account_name: Main till
+                  amount: '500000.00'
+                  fee: '1000.00'
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Move money between two accounts with an optional fee
+      operationId: post_money_transfers
+      tags:
+      - Finance
+      x-permission: transfers_money.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from_account_id:
+                  type: string
+                  format: uuid
+                to_account_id:
+                  type: string
+                  format: uuid
+                amount:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                fee:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                date:
+                  type: string
+                  format: date
+                reference:
+                  type: string
+                note:
+                  type: string
+              required:
+              - from_account_id
+              - to_account_id
+              - amount
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000300
+                  number: DSM01-MTX-000001
+                  amount: '500000.00'
+                  fee: '1000.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /income:
+    get:
+      summary: Other income and owner capital
+      operationId: get_income
+      tags:
+      - Finance
+      x-permission: payments.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: kind
+        in: query
+        schema:
+          type: string
+          enum:
+          - income
+          - capital
+      - name: category_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: 0192f0d5-0000-7000-8000-000000000400
+                  number: DSM01-INC-000001
+                  kind: income
+                  amount: '20000.00'
+                  status: posted
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Record other income (credits the category account) or owner capital (credits 3000)
+      operationId: post_income
+      tags:
+      - Finance
+      x-permission: income.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                kind:
+                  type: string
+                  enum:
+                  - income
+                  - capital
+                  default: income
+                category_id:
+                  type: string
+                  format: uuid
+                  description: Required for income
+                amount:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                money_account_id:
+                  type: string
+                  format: uuid
+                date:
+                  type: string
+                  format: date
+                description:
+                  type: string
+                reference:
+                  type: string
+              required:
+              - amount
+              - money_account_id
+              - description
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000400
+                  number: DSM01-INC-000001
+                  kind: income
+                  amount: '20000.00'
+                  payment_number: DSM01-PIN-000045
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /income-categories:
+    get:
+      summary: List income categories
+      operationId: get_income_categories
+      tags:
+      - Finance
+      x-permission: income.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000500
+                  name: Other income
+                  ledger_code: '4100'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Create an income category mapped to an income ledger account
+      operationId: post_income_categories
+      tags:
+      - Finance
+      x-permission: income.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                ledger_code:
+                  type: string
+                  default: '4100'
+              required:
+              - name
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /drawings:
+    post:
+      summary: Record an owner drawing (Owner only)
+      operationId: post_drawings
+      tags:
+      - Finance
+      x-permission: drawings.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                money_account_id:
+                  type: string
+                  format: uuid
+                date:
+                  type: string
+                  format: date
+                reference:
+                  type: string
+                note:
+                  type: string
+              required:
+              - amount
+              - money_account_id
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000600
+                  number: DSM01-POUT-000009
+                  kind: drawing
+                  amount: '10000.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /statutory-payments:
+    post:
+      summary: Remit statutory deductions, never more than is owed in 2210
+      operationId: post_statutory_payments
+      tags:
+      - Finance
+      x-permission: payments.pay
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                money_account_id:
+                  type: string
+                  format: uuid
+                date:
+                  type: string
+                  format: date
+                reference:
+                  type: string
+                note:
+                  type: string
+              required:
+              - amount
+              - money_account_id
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000700
+                  number: DSM01-POUT-000010
+                  kind: statutory
+                  amount: '45000.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /transactions:
+    get:
+      summary: Every money movement across accounts with a running balance per account
+      operationId: get_transactions
+      tags:
+      - Finance
+      x-permission: transactions.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: account_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: type
+        in: query
+        schema:
+          type: string
+        description: Journal source type, for example sale or money_transfer
+      - name: q
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - date: '2026-11-16'
+                  account: Main till
+                  in: '500000.00'
+                  out: '0.00'
+                  running_balance: '500000.00'
+                  type: money_transfer
+                  description: Transfer DSM01-MTX-000001
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /ledger/accounts:
+    get:
+      summary: Chart of accounts with debit, credit and balance
+      operationId: get_ledger_accounts
+      tags:
+      - Finance
+      x-permission: reports.financial
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: as_of
+        in: query
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  lines:
+                  - code: '1000'
+                    name: Cash on hand
+                    type: asset
+                    debit: '0.00'
+                    credit: '0.00'
+                    balance: '0.00'
+                  debit_total: '0.00'
+                  credit_total: '0.00'
+                  balanced: true
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /ledger/entries:
+    get:
+      summary: Journal entries with lines
+      operationId: get_ledger_entries
+      tags:
+      - Finance
+      x-permission: reports.financial
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: source_type
+        in: query
+        schema:
+          type: string
+      - name: source_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: account_code
+        in: query
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - entry_date: '2026-11-16'
+                  source_type: sale
+                  description: Sale DSM01-SAL-000124
+                  lines:
+                  - account_code: '1000'
+                    debit: '9000.00'
+                    credit: '0.00'
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /periods/lock:
+    get:
+      summary: Current lock date
+      operationId: get_periods_lock
+      tags:
+      - Finance
+      x-permission: periods.lock
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  locked_until: '2026-10-31'
+                  locked_by_name: Amina
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    put:
+      summary: Set the locked-until date (before today), or null to reopen
+      operationId: put_periods_lock
+      tags:
+      - Finance
+      x-permission: periods.lock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                locked_until:
+                  type:
+                  - string
+                  - 'null'
+                  format: date
+              required:
+              - locked_until
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  locked_until: '2026-10-31'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos

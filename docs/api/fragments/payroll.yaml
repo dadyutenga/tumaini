@@ -1,0 +1,923 @@
+paths:
+  /salary-components:
+    get:
+      summary: Allowances, deductions, employer contributions
+      operationId: get_salary_components
+      tags:
+      - Payroll
+      x-permission: components.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Allowances, deductions, employer contributions
+      operationId: post_salary_components
+      tags:
+      - Payroll
+      x-permission: components.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /salary-components/{id}:
+    put:
+      summary: Allowances, deductions, employer contributions
+      operationId: put_salary_components_id
+      tags:
+      - Payroll
+      x-permission: components.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /payroll-runs:
+    get:
+      summary: List runs
+      operationId: get_payroll_runs
+      tags:
+      - Payroll
+      x-permission: payroll.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Create a run for a period and scope
+      operationId: post_payroll_runs
+      tags:
+      - Payroll
+      x-permission: payroll.prepare
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /payroll-runs/{id}:
+    get:
+      summary: Run with payslip summary
+      operationId: get_payroll_runs_id
+      tags:
+      - Payroll
+      x-permission: payroll.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+  /payroll-runs/{id}/calculate:
+    post:
+      summary: Calculate or recalculate. Returns 202 and runs as a job for large runs
+      operationId: post_payroll_runs_id_calculate
+      tags:
+      - Payroll
+      x-permission: payroll.prepare
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /payroll-runs/{id}/payslips/{pid}/lines:
+    put:
+      summary: Manually adjust lines before approval, with reason
+      operationId: put_payroll_runs_id_payslips_pid_lines
+      tags:
+      - Payroll
+      x-permission: payroll.prepare
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: pid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /payroll-runs/{id}/submit:
+    post:
+      summary: Send for approval
+      operationId: post_payroll_runs_id_submit
+      tags:
+      - Payroll
+      x-permission: payroll.prepare
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /payroll-runs/{id}/approve:
+    post:
+      summary: Freeze and post to journal
+      operationId: post_payroll_runs_id_approve
+      tags:
+      - Payroll
+      x-permission: payroll.approve
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /payroll-runs/{id}/pay:
+    post:
+      summary: 'Body: money account and list of payslip IDs, or `all`. Records salary payments'
+      operationId: post_payroll_runs_id_pay
+      tags:
+      - Payroll
+      x-permission: payroll.pay
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /payroll-runs/{id}/reverse:
+    post:
+      summary: Reverse an approved, unpaid run
+      operationId: post_payroll_runs_id_reverse
+      tags:
+      - Payroll
+      x-permission: payroll.reverse
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: conflict
+                  message: The record is not in a state that allows this
+  /payroll-runs/{id}/payment-list:
+    get:
+      summary: GET /payroll-runs/{id}/payment-list
+      operationId: get_payroll_runs_id_payment_list
+      tags:
+      - Payroll
+      x-permission: payroll.pay
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+  /payslips/{id}:
+    get:
+      summary: One payslip. `format=pdf`
+      operationId: get_payslips_id
+      tags:
+      - Payroll
+      x-permission: payslips.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+  /salary-payments:
+    get:
+      summary: Salary payment history
+      operationId: get_salary_payments
+      tags:
+      - Payroll
+      x-permission: payroll.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+      - name: per_page
+        in: query
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 100
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that

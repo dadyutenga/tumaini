@@ -1,0 +1,621 @@
+paths:
+  /approvals:
+    get:
+      summary: Requests the caller may decide, decided history in scope, and own requests
+      operationId: get_approvals
+      tags:
+      - Approvals
+      x-permission: approvals.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - pending
+          - approved
+          - rejected
+          - cancelled
+      - name: kind
+        in: query
+        schema:
+          type: string
+          enum:
+          - discount
+          - refund
+          - sale_void
+          - expense
+          - stock_adjustment
+          - purchase_order
+          - loan
+          - leave
+          - overtime
+          - payroll_run
+          - credit_override
+          - payment_void
+      - name: mine
+        in: query
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /approvals/count:
+    get:
+      summary: Pending requests the caller may decide, for the badge
+      operationId: get_approvals_count
+      tags:
+      - Approvals
+      x-permission: approvals.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  pending: 3
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /approvals/{id}:
+    get:
+      summary: Request detail with subject_link to the record
+      operationId: get_approvals__id
+      tags:
+      - Approvals
+      x-permission: approvals.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /approvals/{id}/approve:
+    post:
+      summary: Approve with an optional note. Completes the underlying action in the same transaction
+      operationId: post_approvals__id__approve
+      tags:
+      - Approvals
+      x-permission: approvals.decide
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0e1-...
+                  status: approved
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /approvals/{id}/reject:
+    post:
+      summary: Reject with an optional note. The record returns to its previous state
+      operationId: post_approvals__id__reject
+      tags:
+      - Approvals
+      x-permission: approvals.decide
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /approvals/{id}/cancel:
+    post:
+      summary: Cancel own pending request
+      operationId: post_approvals__id__cancel
+      tags:
+      - Approvals
+      x-permission: requester
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /approvals/{id}/approve-with-pin:
+    post:
+      summary: 'On-the-spot approval: the approver enters their phone or email and PIN on the requester''s screen. Five wrong
+        PINs in 15 minutes block that approver for 15 minutes'
+      operationId: post_approvals__id__approve_with_pin
+      tags:
+      - Approvals
+      x-permission: approvals.decide (of the approver)
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                approver:
+                  type: string
+                pin:
+                  type: string
+                note:
+                  type: string
+              required:
+              - approver
+              - pin
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '429':
+          description: Too many attempts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /notifications:
+    get:
+      summary: Own notifications, newest first
+      operationId: get_notifications
+      tags:
+      - Notifications
+      x-permission: any
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: unread
+        in: query
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /notifications/unread-count:
+    get:
+      summary: Unread count for the bell
+      operationId: get_notifications_unread_count
+      tags:
+      - Notifications
+      x-permission: any
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  unread: 2
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /notifications/{id}/read:
+    post:
+      summary: Mark one notification read
+      operationId: post_notifications__id__read
+      tags:
+      - Notifications
+      x-permission: any
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /notifications/read-all:
+    post:
+      summary: Mark all own notifications read
+      operationId: post_notifications_read_all
+      tags:
+      - Notifications
+      x-permission: any
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /audit-logs:
+    get:
+      summary: Activity log with before and after values
+      operationId: get_audit_logs
+      tags:
+      - Audit and backup
+      x-permission: audit.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: user_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: action
+        in: query
+        schema:
+          type: string
+      - name: entity_type
+        in: query
+        schema:
+          type: string
+      - name: entity_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: branch_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /audit-logs/entity/{type}/{id}:
+    get:
+      summary: History of one record
+      operationId: get_audit_logs_entity__type___id
+      tags:
+      - Audit and backup
+      x-permission: audit.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: type
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /backups/export:
+    post:
+      summary: Start a business data export job (zip of JSON lines, secrets removed)
+      operationId: post_backups_export
+      tags:
+      - Audit and backup
+      x-permission: backup.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0f1-...
+                  status: queued
+                  status_url: /api/v1/exports/0192f0f1-...
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /backups:
+    get:
+      summary: Export jobs and the time of the last automatic backup
+      operationId: get_backups
+      tags:
+      - Audit and backup
+      x-permission: backup.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /exports/{id}:
+    get:
+      summary: Status and download link of an export job
+      operationId: get_exports__id
+      tags:
+      - Audit and backup
+      x-permission: requester
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
