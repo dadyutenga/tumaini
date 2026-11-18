@@ -48,6 +48,21 @@ export default function Pos() {
   const [receipt, setReceipt] = useState<Sale | null>(null);
   const [closing, setClosing] = useState(false);
   const [heldOpen, setHeldOpen] = useState(false);
+  const [payingOut, setPayingOut] = useState(false);
+  const [payout, setPayout] = useState({ to_account_id: "", amount: "", note: "" });
+  const payOutCash = useWrite<typeof payout, unknown>(
+    "POST",
+    () => `/tills/${till.data?.id}/pay-out`,
+    {
+      idempotent: true,
+      invalidate: ["/tills", "/money"],
+      success: "Cash paid out of the till",
+      onSuccess: () => {
+        setPayingOut(false);
+        setPayout({ to_account_id: "", amount: "", note: "" });
+      },
+    },
+  );
   const [heldId, setHeldId] = useState<string | null>(null);
   const held = useGet<HeldCart[]>("/sales/held", undefined, { enabled: can("sales.create") });
   const idempotencyKey = useRef(newIdempotencyKey());
@@ -183,6 +198,9 @@ export default function Pos() {
           <div className="flex gap-2">
             <Button variant="outline" onClick={() => setHeldOpen(true)}>
               Held carts{held.data?.length ? ` (${held.data.length})` : ""}
+            </Button>
+            <Button variant="outline" onClick={() => setPayingOut(true)}>
+              Pay out cash
             </Button>
             <Button variant="outline" onClick={() => setClosing(true)}>
               Close till
@@ -377,6 +395,47 @@ export default function Pos() {
         </aside>
       </div>
 
+      <FormDialog
+        open={payingOut}
+        onOpenChange={setPayingOut}
+        title="Pay out cash"
+        busy={payOutCash.isPending}
+        onSubmit={() => payOutCash.mutate(payout)}
+      >
+        <p className="text-sm text-muted-foreground">
+          Move cash from this till to the safe or the bank. It is recorded as a transfer.
+        </p>
+        <Field label="Send to">
+          <NativeSelect
+            required
+            value={payout.to_account_id}
+            onChange={(e) => setPayout((p) => ({ ...p, to_account_id: e.target.value }))}
+          >
+            <option value="">Choose…</option>
+            {accounts.data
+              ?.filter((a) => a.is_active && a.id !== till.data?.money_account_id)
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+          </NativeSelect>
+        </Field>
+        <Field label="Amount">
+          <Input
+            required
+            inputMode="decimal"
+            value={payout.amount}
+            onChange={(e) => setPayout((p) => ({ ...p, amount: e.target.value }))}
+          />
+        </Field>
+        <Field label="Note">
+          <Input
+            value={payout.note}
+            onChange={(e) => setPayout((p) => ({ ...p, note: e.target.value }))}
+          />
+        </Field>
+      </FormDialog>
       <FormDialog
         open={heldOpen}
         onOpenChange={setHeldOpen}
