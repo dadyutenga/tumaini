@@ -11,6 +11,7 @@ import {
   FileText,
   ArrowLeftRight,
   Repeat,
+  Settings2,
   ReceiptText,
   ScrollText,
   Settings,
@@ -135,6 +136,14 @@ export const routes: AppRoute[] = [
     component: lazy(() => import("@/pages/People")),
     navigation: true,
     permission: ["employees.view", "leave.request", "attendance.clock", "attendance.view"],
+  },
+  {
+    path: "/hr-setup",
+    label: "HR setup",
+    icon: Settings2,
+    component: lazy(() => import("@/pages/HrSetup")),
+    navigation: true,
+    permission: ["departments.manage", "schedules.manage", "loans.view"],
   },
   {
     path: "/payroll",
