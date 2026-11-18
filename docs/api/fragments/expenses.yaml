@@ -1,0 +1,1658 @@
+paths:
+  /expense-categories:
+    get:
+      summary: List expense categories with their ledger accounts
+      operationId: get_expense_categories
+      tags:
+      - Expenses
+      x-permission: expense_categories.manage, expenses.view or expenses.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: all
+        in: query
+        schema:
+          type: boolean
+        description: Include inactive categories
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000030
+                  name: Rent
+                  ledger_code: '6000'
+                  is_active: true
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Create an expense category mapped to an expense ledger account
+      operationId: post_expense_categories
+      tags:
+      - Expenses
+      x-permission: expense_categories.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                ledger_code:
+                  type: string
+                  description: Expense ledger account code, default 6090
+                is_active:
+                  type: boolean
+              required:
+              - name
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /expense-categories/{id}:
+    put:
+      summary: Rename, remap or deactivate a category
+      operationId: put_expense_categories_id
+      tags:
+      - Expenses
+      x-permission: expense_categories.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                ledger_code:
+                  type: string
+                  description: Expense ledger account code, default 6090
+                is_active:
+                  type: boolean
+              required:
+              - name
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /expenses:
+    get:
+      summary: List expenses. Staff with own scope see only their own
+      operationId: get_expenses
+      tags:
+      - Expenses
+      x-permission: expenses.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - submitted
+          - approved
+          - rejected
+          - paid
+          - reversed
+      - name: category_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: submitted_by
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: q
+        in: query
+        schema:
+          type: string
+      - name: sort
+        in: query
+        schema:
+          type: string
+        description: date, amount, created_at or number; prefix - for descending
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: 0192f0d5-0000-7000-8000-000000000010
+                  number: DSM01-EXP-000012
+                  status: approved
+                  amount: '40000.00'
+                  category_name: Transport
+                  date: '2026-11-16'
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Submit an expense. Approved at once within the submitter's limit, else waits for approval
+      operationId: post_expenses
+      tags:
+      - Expenses
+      x-permission: expenses.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category_id:
+                  type: string
+                  format: uuid
+                amount:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                description:
+                  type: string
+                  maxLength: 500
+                payee:
+                  type: string
+                date:
+                  type: string
+                  format: date
+                receipt_file:
+                  type: string
+                  description: File id or path from POST /files
+                money_account_id:
+                  type: string
+                  format: uuid
+                  description: Pay at once from this account when the expense is approved within the limit (needs expenses.pay)
+              required:
+              - category_id
+              - amount
+              - description
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000010
+                  number: DSM01-EXP-000012
+                  status: approved
+                  amount: '40000.00'
+                  category_name: Transport
+                  date: '2026-11-16'
+        '202':
+          description: Waiting for approval
+          content:
+            application/json:
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000001
+                  approval_request_id: 0192f0d5-0000-7000-8000-000000000002
+                  status: pending_approval
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /expenses/{id}:
+    get:
+      summary: Expense detail with the pending approval request, if any
+      operationId: get_expenses_id
+      tags:
+      - Expenses
+      x-permission: expenses.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000010
+                  number: DSM01-EXP-000012
+                  status: approved
+                  amount: '40000.00'
+                  category_name: Transport
+                  date: '2026-11-16'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+    put:
+      summary: Edit a submitted expense. Submitter or Owner only
+      operationId: put_expenses_id
+      tags:
+      - Expenses
+      x-permission: expenses.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                category_id:
+                  type: string
+                  format: uuid
+                amount:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                description:
+                  type: string
+                  maxLength: 500
+                payee:
+                  type: string
+                date:
+                  type: string
+                  format: date
+                receipt_file:
+                  type: string
+                  description: File id or path from POST /files
+                money_account_id:
+                  type: string
+                  format: uuid
+                  description: Pay at once from this account when the expense is approved within the limit (needs expenses.pay)
+              required:
+              - category_id
+              - amount
+              - description
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000010
+                  number: DSM01-EXP-000012
+                  status: approved
+                  amount: '40000.00'
+                  category_name: Transport
+                  date: '2026-11-16'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /expenses/{id}/approve:
+    post:
+      summary: Approve the expense's pending approval request, within the expenses.approve limit
+      operationId: post_expenses_id_approve
+      tags:
+      - Expenses
+      x-permission: expenses.approve
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000010
+                  number: DSM01-EXP-000012
+                  status: approved
+                  amount: '40000.00'
+                  category_name: Transport
+                  date: '2026-11-16'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+  /expenses/{id}/reject:
+    post:
+      summary: Reject the expense's pending approval request with a note
+      operationId: post_expenses_id_reject
+      tags:
+      - Expenses
+      x-permission: expenses.approve
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note:
+                  type: string
+                  maxLength: 500
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000010
+                  number: DSM01-EXP-000012
+                  status: rejected
+                  amount: '40000.00'
+                  category_name: Transport
+                  date: '2026-11-16'
+                  reject_reason: No receipt
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+  /expenses/{id}/pay:
+    post:
+      summary: Pay an approved expense from a money account. Petty cash never goes below zero
+      operationId: post_expenses_id_pay
+      tags:
+      - Expenses
+      x-permission: expenses.pay
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                money_account_id:
+                  type: string
+                  format: uuid
+              required:
+              - money_account_id
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000010
+                  status: paid
+                  payment_id: 0192f0d5-0000-7000-8000-000000000040
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /expenses/{id}/reverse:
+    post:
+      summary: 'Reverse a paid expense: mirror journal entry and void its payment'
+      operationId: post_expenses_id_reverse
+      tags:
+      - Expenses
+      x-permission: expenses.reverse
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+                  maxLength: 500
+              required:
+              - reason
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000010
+                  number: DSM01-EXP-000012
+                  status: reversed
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /recurring-expenses:
+    get:
+      summary: List recurring expense templates
+      operationId: get_recurring_expenses
+      tags:
+      - Expenses
+      x-permission: recurring_expenses.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: is_active
+        in: query
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: 0192f0d5-0000-7000-8000-000000000020
+                  description: Shop rent
+                  amount: '300000.00'
+                  frequency: monthly
+                  next_run: '2026-12-16'
+                  is_active: true
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Create a template. The daily job creates a submitted expense on each due date
+      operationId: post_recurring_expenses
+      tags:
+      - Expenses
+      x-permission: recurring_expenses.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                branch_id:
+                  type: string
+                  format: uuid
+                category_id:
+                  type: string
+                  format: uuid
+                amount:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                description:
+                  type: string
+                payee:
+                  type: string
+                frequency:
+                  type: string
+                  enum:
+                  - weekly
+                  - monthly
+                  - yearly
+                start_date:
+                  type: string
+                  format: date
+                end_date:
+                  type: string
+                  format: date
+              required:
+              - category_id
+              - amount
+              - description
+              - frequency
+              - start_date
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000020
+                  description: Shop rent
+                  amount: '300000.00'
+                  frequency: monthly
+                  next_run: '2026-12-16'
+                  is_active: true
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /recurring-expenses/{id}:
+    put:
+      summary: Edit a template
+      operationId: put_recurring_expenses_id
+      tags:
+      - Expenses
+      x-permission: recurring_expenses.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                branch_id:
+                  type: string
+                  format: uuid
+                category_id:
+                  type: string
+                  format: uuid
+                amount:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                description:
+                  type: string
+                payee:
+                  type: string
+                frequency:
+                  type: string
+                  enum:
+                  - weekly
+                  - monthly
+                  - yearly
+                start_date:
+                  type: string
+                  format: date
+                end_date:
+                  type: string
+                  format: date
+              required:
+              - category_id
+              - amount
+              - description
+              - frequency
+              - start_date
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000020
+                  description: Shop rent
+                  amount: '300000.00'
+                  frequency: monthly
+                  next_run: '2026-12-16'
+                  is_active: true
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /recurring-expenses/{id}/pause:
+    post:
+      summary: Pause a template
+      operationId: post_recurring_expenses_id_pause
+      tags:
+      - Expenses
+      x-permission: recurring_expenses.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000020
+                  description: Shop rent
+                  amount: '300000.00'
+                  frequency: monthly
+                  next_run: '2026-12-16'
+                  is_active: false
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+  /recurring-expenses/{id}/resume:
+    post:
+      summary: Resume a template. Due dates missed while paused are skipped
+      operationId: post_recurring_expenses_id_resume
+      tags:
+      - Expenses
+      x-permission: recurring_expenses.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000020
+                  description: Shop rent
+                  amount: '300000.00'
+                  frequency: monthly
+                  next_run: '2026-12-16'
+                  is_active: true
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+  /petty-cash:
+    get:
+      summary: Petty cash accounts with balance, custodian and last count
+      operationId: get_petty_cash
+      tags:
+      - Expenses
+      x-permission: petty_cash.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000050
+                  name: Petty A
+                  balance: '40000.00'
+                  custodian_name: Neema
+                  last_reconciled: '2026-11-15'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /petty-cash/{id}/top-up:
+    post:
+      summary: Transfer money into petty cash
+      operationId: post_petty_cash_id_top_up
+      tags:
+      - Expenses
+      x-permission: petty_cash.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                from_account_id:
+                  type: string
+                  format: uuid
+                amount:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                date:
+                  type: string
+                  format: date
+                reference:
+                  type: string
+                note:
+                  type: string
+              required:
+              - from_account_id
+              - amount
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  transfer_id: 0192f0d5-0000-7000-8000-000000000060
+                  number: DSM01-MTX-000003
+                  amount: '50000.00'
+                  balance: '80000.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos
+  /petty-cash/{id}/reconcile:
+    post:
+      summary: Record a petty cash count and post the difference to cash over or short
+      operationId: post_petty_cash_id_reconcile
+      tags:
+      - Expenses
+      x-permission: petty_cash.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                actual_balance:
+                  type: string
+                  pattern: ^-?\d+(\.\d{1,2})?$
+                  example: '2500.00'
+                date:
+                  type: string
+                  format: date
+                note:
+                  type: string
+              required:
+              - actual_balance
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-0000-7000-8000-000000000070
+                  system_balance: '160000.00'
+                  actual_balance: '150000.00'
+                  difference: '-10000.00'
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found or outside your scope
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: Not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: This record is not in a state that allows that
+        '422':
+          description: Field validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: validation_failed
+                  message: Check the highlighted fields
+                  fields:
+                    amount: dpos

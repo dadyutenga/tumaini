@@ -256,7 +256,7 @@ func TestAcceptance(t *testing.T) {
 	require.Equal(t, 201, petty.code, petty.raw)
 	exp := cashClient.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": catID, "amount": "100000", "description": "Rent top-up"}, uuid.NewString())
 	require.Equal(t, 202, exp.code, exp.raw)
-	decided := c.call(t, http.MethodPost, "/api/v1/approvals/"+str(exp.data["approval_request_id"])+"/approve", map[string]any{"note": "ok"}, "")
+	decided := c.call(t, http.MethodPost, "/api/v1/approvals/"+str(exp.data["approval_request_id"])+"/approve", map[string]any{"note": "ok"}, uuid.NewString())
 	require.Equal(t, 200, decided.code, decided.raw)
 	paidExp := c.call(t, http.MethodPost, "/api/v1/expenses/"+str(exp.data["id"])+"/pay", map[string]any{"money_account_id": petty.data["id"]}, uuid.NewString())
 	require.Equal(t, 200, paidExp.code, paidExp.raw)
