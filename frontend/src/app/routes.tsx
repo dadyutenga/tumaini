@@ -12,6 +12,7 @@ import {
   ArrowLeftRight,
   Repeat,
   Settings2,
+  BriefcaseBusiness,
   ReceiptText,
   ScrollText,
   Settings,
@@ -234,6 +235,14 @@ export const routes: AppRoute[] = [
     component: lazy(() => import("@/pages/Settings")),
     navigation: true,
     permission: ["settings.view"],
+  },
+  {
+    path: "/my-work",
+    label: "My work",
+    icon: BriefcaseBusiness,
+    component: lazy(() => import("@/pages/MyWork")),
+    navigation: true,
+    permission: ["payslips.view", "attendance.clock", "leave.request"],
   },
   {
     path: "/profile",
