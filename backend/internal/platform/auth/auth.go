@@ -116,6 +116,9 @@ type Claims struct {
 type Tokens struct {
 	Secret []byte
 	Access time.Duration
+	// Now is the clock used to check expiry. It must match the clock used to sign,
+	// otherwise a fixed or skewed application clock makes fresh tokens look expired.
+	Now func() time.Time
 }
 
 func (t Tokens) Sign(userID, businessID, roleID, sessionID uuid.UUID, permVersion int, now time.Time) (string, error) {
@@ -141,11 +144,19 @@ func (t Tokens) Verify(raw string) (Claims, error) {
 			return nil, errors.New("unexpected signing method")
 		}
 		return t.Secret, nil
-	})
+	}, t.parserOptions()...)
 	if err != nil {
 		return Claims{}, err
 	}
 	return claims, nil
+}
+
+func (t Tokens) parserOptions() []jwt.ParserOption {
+	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired()}
+	if t.Now != nil {
+		opts = append(opts, jwt.WithTimeFunc(t.Now))
+	}
+	return opts
 }
 
 // Grant is the scope and optional approval limit for one permission.
