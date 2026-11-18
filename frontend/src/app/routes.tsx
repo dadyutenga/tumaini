@@ -8,6 +8,7 @@ import {
   Contact,
   HandCoins,
   BarChart3,
+  FileText,
   ReceiptText,
   ScrollText,
   Settings,
@@ -60,6 +61,14 @@ export const routes: AppRoute[] = [
     component: lazy(() => import("@/pages/SaleDetail")),
     navigation: false,
     permission: ["sales.view"],
+  },
+  {
+    path: "/quotations",
+    label: "Quotations",
+    icon: FileText,
+    component: lazy(() => import("@/pages/Quotations")),
+    navigation: true,
+    permission: ["quotations.manage"],
   },
   {
     path: "/products",

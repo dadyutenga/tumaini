@@ -12,7 +12,9 @@ import {
 } from "@/components/shared/kit";
 import { PageLoader } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
-import { useGet, useWrite } from "@/hooks/useApi";
+import { toast } from "sonner";
+import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
+import { download } from "@/lib/api";
 import { formatDate, formatMoney, formatQty, toNumber } from "@/lib/formatters";
 import type { MoneyAccount, Sale, SaleItem, Till } from "@/types";
 
@@ -21,6 +23,8 @@ export default function SaleDetail() {
   const { can } = useAuth();
   const { data: sale, isLoading, error } = useGet<Sale>(`/sales/${id}`);
   const [returning, setReturning] = useState(false);
+  const [voiding, setVoiding] = useState(false);
+  const [voidReason, setVoidReason] = useState("");
   const [qtys, setQtys] = useState<Record<string, string>>({});
   const [reason, setReason] = useState("");
   const [method, setMethod] = useState("cash");
@@ -39,6 +43,16 @@ export default function SaleDetail() {
     onSuccess: () => {
       setReturning(false);
       setQtys({});
+    },
+  });
+
+  const voidSale = useWrite<{ reason: string }, unknown>("POST", `/sales/${id}/void`, {
+    idempotent: true,
+    invalidate: ["/sales", "/products", "/stock", "/money", "/customers"],
+    success: "Sale voided",
+    onSuccess: () => {
+      setVoiding(false);
+      setVoidReason("");
     },
   });
 
@@ -67,6 +81,21 @@ export default function SaleDetail() {
                 Return items
               </Button>
             )}
+            {can("sales.void") && sale.status === "completed" && (
+              <Button variant="outline" onClick={() => setVoiding(true)}>
+                Void sale
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              onClick={() =>
+                download(`/sales/${id}/invoice`, { format: "pdf" }, `${sale.number}.pdf`).catch(
+                  (e) => toast.error(errorMessage(e)),
+                )
+              }
+            >
+              Invoice PDF
+            </Button>
             <Button variant="outline" onClick={() => window.print()}>
               Print
             </Button>
@@ -170,6 +199,22 @@ export default function SaleDetail() {
         {lines.length === 0 && (
           <p className="text-xs text-muted-foreground">Enter at least one quantity.</p>
         )}
+      </FormDialog>
+      <FormDialog
+        open={voiding}
+        onOpenChange={setVoiding}
+        title="Void this sale"
+        submitLabel="Void sale"
+        busy={voidSale.isPending}
+        onSubmit={() => voidSale.mutate({ reason: voidReason })}
+      >
+        <p className="text-sm text-muted-foreground">
+          Stock goes back and the money is reversed. Only same-day sales can be voided without
+          approval.
+        </p>
+        <Field label="Reason">
+          <Input required value={voidReason} onChange={(e) => setVoidReason(e.target.value)} />
+        </Field>
       </FormDialog>
     </>
   );
