@@ -1,8 +1,6 @@
 package system
 
 import (
-	"time"
-
 	"github.com/gofiber/fiber/v3"
 
 	"bms/internal/kernel/deps"
@@ -13,12 +11,7 @@ import (
 // Mount registers the system jobs and their daily schedule. It has no routes.
 func Mount(_ fiber.Router, d deps.Deps) *Service {
 	svc := &Service{DB: d.DB, Notify: d.Notify, Store: d.Store, Clock: d.Clock}
-	if d.Config.SMTPHost != "" {
-		svc.Email = &sender.SMTP{Host: d.Config.SMTPHost, Port: d.Config.SMTPPort, User: d.Config.SMTPUser, Password: d.Config.SMTPPassword, From: d.Config.SMTPFrom, Timeout: 15 * time.Second}
-	}
-	if d.Config.SMSWebhookURL != "" {
-		svc.SMS = &sender.Webhook{URL: d.Config.SMSWebhookURL, APIKey: d.Config.SMSAPIKey, From: d.Config.SMSSender}
-	}
+	svc.Email, svc.SMS = sender.FromConfig(d.Config)
 	d.Jobs.Register(jobs.BusinessExport, svc.BusinessExport)
 	d.Jobs.Register(jobs.DebtReminders, svc.DebtReminders)
 	d.Jobs.Register(jobs.OwnerDailySummary, svc.OwnerDailySummary)

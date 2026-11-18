@@ -1,0 +1,1313 @@
+# Report and dashboard routes. All require a bearer token; every report
+# takes from/to, branch_id (limited to the caller's scope) and format.
+paths:
+  /dashboard:
+    get:
+      operationId: getDashboard
+      tags: [Dashboard]
+      summary: "All dashboard cards the caller may see (FR-DSH-01..10)"
+      description: |
+        Cards appear only with their permission: sales, sales_trend, top_products, sales_by_branch and
+        sales_by_payment_method need sales.view or reports.sales; gross_profit and profit need
+        dashboard.view_profit or products.view_cost; cash needs accounts.view (bank and mobile money
+        accounts only with accounts.view_balance); stock needs stock.view (value only with the cost or
+        valuation permission); outstanding needs customers.view, suppliers.view or payroll.view per item;
+        pending_approvals needs approvals.view; recent_activity needs audit.view.
+      x-permission: dashboard.view
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: period, in: query, schema: {type: string, enum: [today, week, month], default: today}}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Dashboard cards
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      period: {type: object, properties: {name: {type: string}, from: {type: string, format: date}, to: {type: string, format: date}, previous_from: {type: string, format: date}, previous_to: {type: string, format: date}}}
+                      sales: {type: object, properties: {total: {type: string}, count: {type: string}, previous_total: {type: string}, change_pct: {type: [string, "null"]}}}
+                      gross_profit: {type: object, properties: {amount: {type: string}, previous: {type: string}}}
+                      expenses: {type: object, properties: {total: {type: string}, previous_total: {type: string}, change_pct: {type: [string, "null"]}}}
+                      profit: {type: object, properties: {gross_profit: {type: string}, net_profit: {type: string}, income: {type: string}, expenses: {type: string}}}
+                      cash: {type: object, properties: {total: {type: string}, accounts: {type: array, items: {type: object}}, includes_bank_and_mobile: {type: boolean}}}
+                      stock: {type: object, properties: {value: {type: string}, low_stock_count: {type: string}}}
+                      outstanding: {type: object, properties: {customers_owe: {type: string}, we_owe_suppliers: {type: string}, salaries_due: {type: string}}}
+                      sales_trend: {type: array, items: {type: object, properties: {date: {type: string, format: date}, total: {type: string}}}}
+                      top_products: {type: array, items: {type: object}}
+                      sales_by_branch: {type: array, items: {type: object}}
+                      sales_by_payment_method: {type: array, items: {type: object}}
+                      pending_approvals: {type: object, properties: {count: {type: integer}, latest: {type: array, items: {type: object}}}}
+                      recent_activity: {type: array, items: {type: object}}
+              example:
+                data:
+                  period: {name: today, from: "2026-11-16", to: "2026-11-16", previous_from: "2026-11-15", previous_to: "2026-11-15"}
+                  sales: {total: "6000.00", count: "2", previous_total: "0", change_pct: null}
+        '400': {description: Invalid period, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing dashboard.view, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /dashboard/me:
+    get:
+      operationId: getMyDashboard
+      tags: [Dashboard]
+      summary: "Cashier view: own sales today, own till status, own clock status (FR-DSH-09)"
+      x-permission: any
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: Own figures
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      business_date: {type: string, format: date}
+                      sales_today: {type: object, properties: {count: {type: integer}, total: {type: string}, on_credit: {type: string}}}
+                      till: {type: [object, "null"]}
+                      attendance: {type: [object, "null"], properties: {clocked_in: {type: boolean}, today: {type: object}}}
+              example:
+                data: {business_date: "2026-11-16", sales_today: {count: 2, total: "6000.00", on_credit: "0.00"}, till: null, attendance: null}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/sales/summary:
+    get:
+      operationId: reportSalesSummary
+      tags: [Reports]
+      summary: "Sales summary by day, week or month (FR-REP-01)"
+      x-permission: reports.sales
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: group_by, in: query, schema: {type: string, enum: [day, week, month], default: day}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Sales summary by day, week or month"
+                  columns: [{"key": "period", "label": "period"}, {"key": "sales_count", "label": "sales_count"}, {"key": "gross_sales", "label": "gross_sales"}, {"key": "discounts", "label": "discounts"}]
+                  rows: [{"period": "2026-11-16", "sales_count": "6000.00", "gross_sales": "6000.00", "discounts": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/sales/by-product:
+    get:
+      operationId: reportSalesByProduct
+      tags: [Reports]
+      summary: "Sales by product with margin; sort=-net_sales for top sellers, net_sales for slow sellers (FR-REP-02)"
+      x-permission: reports.sales
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: sort, in: query, schema: {type: string, enum: [net_sales, -net_sales, qty, -qty, gross_profit, -gross_profit, margin, -margin, sales_count, -sales_count]}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Sales by product with margin"
+                  columns: [{"key": "product", "label": "product"}, {"key": "sku", "label": "sku"}, {"key": "sales_count", "label": "sales_count"}, {"key": "qty", "label": "qty"}]
+                  rows: [{"product": "Rice", "sku": "6000.00", "sales_count": "6000.00", "qty": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/sales/by-category:
+    get:
+      operationId: reportSalesByCategory
+      tags: [Reports]
+      summary: "Sales by category (FR-REP-02)"
+      x-permission: reports.sales
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: sort, in: query, schema: {type: string}}
+        - {name: category_id, in: query, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Sales by category"
+                  columns: [{"key": "category", "label": "category"}, {"key": "sales_count", "label": "sales_count"}, {"key": "qty", "label": "qty"}, {"key": "net_sales", "label": "net_sales"}]
+                  rows: [{"category": "6000.00", "sales_count": "6000.00", "qty": "6000.00", "net_sales": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/sales/by-cashier:
+    get:
+      operationId: reportSalesByCashier
+      tags: [Reports]
+      summary: "Sales by cashier (FR-REP-03)"
+      x-permission: reports.sales
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: sort, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Sales by cashier"
+                  columns: [{"key": "cashier", "label": "cashier"}, {"key": "sales_count", "label": "sales_count"}, {"key": "qty", "label": "qty"}, {"key": "net_sales", "label": "net_sales"}]
+                  rows: [{"cashier": "6000.00", "sales_count": "6000.00", "qty": "6000.00", "net_sales": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/sales/by-customer:
+    get:
+      operationId: reportSalesByCustomer
+      tags: [Reports]
+      summary: "Sales by customer (FR-REP-03)"
+      x-permission: reports.sales
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: sort, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Sales by customer"
+                  columns: [{"key": "customer", "label": "customer"}, {"key": "sales_count", "label": "sales_count"}, {"key": "qty", "label": "qty"}, {"key": "net_sales", "label": "net_sales"}]
+                  rows: [{"customer": "6000.00", "sales_count": "6000.00", "qty": "6000.00", "net_sales": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/sales/by-payment-method:
+    get:
+      operationId: reportSalesByPaymentMethod
+      tags: [Reports]
+      summary: "Sale receipts less refunds by payment method (FR-REP-03)"
+      x-permission: reports.sales
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Sale receipts less refunds by payment method"
+                  columns: [{"key": "method", "label": "method"}, {"key": "payments", "label": "payments"}, {"key": "amount_in", "label": "amount_in"}, {"key": "refunds", "label": "refunds"}]
+                  rows: [{"method": "6000.00", "payments": "6000.00", "amount_in": "6000.00", "refunds": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/tills:
+    get:
+      operationId: reportTills
+      tags: [Reports]
+      summary: "Till sessions: opening, cash sales, refunds, pay-outs, expected, counted, difference (FR-REP-04)"
+      x-permission: reports.sales
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Till sessions: opening, cash sales, refunds, pay-outs, expected, counted, difference"
+                  columns: [{"key": "cashier", "label": "cashier"}, {"key": "branch", "label": "branch"}, {"key": "status", "label": "status"}, {"key": "opened_at", "label": "opened_at"}]
+                  rows: [{"cashier": "6000.00", "branch": "6000.00", "status": "6000.00", "opened_at": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/profit-loss:
+    get:
+      operationId: reportProfitLoss
+      tags: [Reports]
+      summary: "Profit and loss from the ledger; compare=previous adds the previous period of equal length (FR-REP-05). Response also carries lines, income, expenses, net_profit, sales_revenue, cost_of_goods_sold, gross_profit, other_income, operating_expenses, expenses_by_category and, with compare, previous and change."
+      x-permission: reports.financial
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: compare, in: query, schema: {type: string, enum: [previous]}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Profit and loss from the ledger"
+                  columns: [{"key": "code", "label": "code"}, {"key": "name", "label": "name"}, {"key": "type", "label": "type"}, {"key": "amount", "label": "amount"}]
+                  rows: [{"code": "6000.00", "name": "6000.00", "type": "6000.00", "amount": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/expenses:
+    get:
+      operationId: reportExpenses
+      tags: [Reports]
+      summary: "Approved and paid expenses grouped (FR-REP-06)"
+      x-permission: reports.expenses
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: group_by, in: query, schema: {type: string, enum: [category, branch, payee, month], default: category}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Approved and paid expenses grouped"
+                  columns: [{"key": "category", "label": "category"}, {"key": "count", "label": "count"}, {"key": "amount", "label": "amount"}, {"key": "paid", "label": "paid"}]
+                  rows: [{"category": "6000.00", "count": "6000.00", "amount": "6000.00", "paid": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/inventory/on-hand:
+    get:
+      operationId: reportInventoryOnHand
+      tags: [Reports]
+      summary: "Stock on hand; cost and value only with the cost permission (FR-REP-07)"
+      x-permission: reports.inventory
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: category_id, in: query, schema: {type: string, format: uuid}}
+        - {name: q, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Stock on hand"
+                  columns: [{"key": "product", "label": "product"}, {"key": "sku", "label": "sku"}, {"key": "category", "label": "category"}, {"key": "branch", "label": "branch"}]
+                  rows: [{"product": "Rice", "sku": "6000.00", "category": "6000.00", "branch": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/inventory/valuation:
+    get:
+      operationId: reportInventoryValuation
+      tags: [Reports]
+      summary: "Inventory valuation now or as of a past date (FR-INV-28)"
+      x-permission: reports.inventory
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: as_of, in: query, schema: {type: string, format: date}}
+        - {name: group_by, in: query, schema: {type: string, enum: [product, category, branch], default: product}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Inventory valuation now or as of a past date"
+                  columns: [{"key": "product", "label": "product"}, {"key": "sku", "label": "sku"}, {"key": "category", "label": "category"}, {"key": "qty_on_hand", "label": "qty_on_hand"}]
+                  rows: [{"product": "Rice", "sku": "6000.00", "category": "6000.00", "qty_on_hand": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/inventory/movements:
+    get:
+      operationId: reportInventoryMovements
+      tags: [Reports]
+      summary: "Stock movements, paginated; response carries meta {page, per_page, total} (FR-REP-07)"
+      x-permission: reports.inventory
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: type, in: query, schema: {type: string, enum: [opening, stock_in, stock_out, purchase, purchase_return, sale, sale_return, transfer_out, transfer_in, adjustment]}}
+        - {name: product_id, in: query, schema: {type: string, format: uuid}}
+        - {name: page, in: query, schema: {type: integer, minimum: 1}}
+        - {name: per_page, in: query, schema: {type: integer, minimum: 1}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Stock movements, paginated"
+                  columns: [{"key": "date", "label": "date"}, {"key": "product", "label": "product"}, {"key": "sku", "label": "sku"}, {"key": "branch", "label": "branch"}]
+                  rows: [{"date": "2026-11-16", "product": "Rice", "sku": "6000.00", "branch": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/inventory/low-stock:
+    get:
+      operationId: reportInventoryLowStock
+      tags: [Reports]
+      summary: "Products at or below reorder level with a suggested order quantity (FR-INV-26)"
+      x-permission: reports.inventory
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Products at or below reorder level with a suggested order quantity"
+                  columns: [{"key": "product", "label": "product"}, {"key": "sku", "label": "sku"}, {"key": "branch", "label": "branch"}, {"key": "qty_on_hand", "label": "qty_on_hand"}]
+                  rows: [{"product": "Rice", "sku": "6000.00", "branch": "6000.00", "qty_on_hand": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/inventory/dead-stock:
+    get:
+      operationId: reportInventoryDeadStock
+      tags: [Reports]
+      summary: "Products in stock with no sale for at least `days` days (default 90)"
+      x-permission: reports.inventory
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: days, in: query, schema: {type: integer, minimum: 1}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Products in stock with no sale for at least `days` days"
+                  columns: [{"key": "product", "label": "product"}, {"key": "sku", "label": "sku"}, {"key": "branch", "label": "branch"}, {"key": "qty_on_hand", "label": "qty_on_hand"}]
+                  rows: [{"product": "Rice", "sku": "6000.00", "branch": "6000.00", "qty_on_hand": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/inventory/losses:
+    get:
+      operationId: reportInventoryLosses
+      tags: [Reports]
+      summary: "Stock out, downward adjustments and transfer shortfalls at cost"
+      x-permission: reports.inventory
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Stock out, downward adjustments and transfer shortfalls at cost"
+                  columns: [{"key": "date", "label": "date"}, {"key": "reason", "label": "reason"}, {"key": "product", "label": "product"}, {"key": "sku", "label": "sku"}]
+                  rows: [{"date": "2026-11-16", "reason": "6000.00", "product": "Rice", "sku": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/purchases:
+    get:
+      operationId: reportPurchases
+      tags: [Reports]
+      summary: "Purchases ordered against received and invoiced (FR-REP-08)"
+      x-permission: reports.purchases
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: group_by, in: query, schema: {type: string, enum: [supplier, product, month], default: supplier}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Purchases ordered against received and invoiced"
+                  columns: [{"key": "supplier", "label": "supplier"}, {"key": "ordered_qty", "label": "ordered_qty"}, {"key": "ordered_value", "label": "ordered_value"}, {"key": "received_qty", "label": "received_qty"}]
+                  rows: [{"supplier": "6000.00", "ordered_qty": "6000.00", "ordered_value": "6000.00", "received_qty": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/customer-debt:
+    get:
+      operationId: reportCustomerDebt
+      tags: [Reports]
+      summary: "Aged receivables per customer, as of `to` or today (FR-REP-09)"
+      x-permission: reports.debts
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Aged receivables per customer, as of `to` or today"
+                  columns: [{"key": "customer", "label": "customer"}, {"key": "phone", "label": "phone"}, {"key": "credit_limit", "label": "credit_limit"}, {"key": "invoices", "label": "invoices"}]
+                  rows: [{"customer": "6000.00", "phone": "6000.00", "credit_limit": "6000.00", "invoices": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/supplier-debt:
+    get:
+      operationId: reportSupplierDebt
+      tags: [Reports]
+      summary: "Aged payables per supplier, as of `to` or today (FR-REP-10)"
+      x-permission: reports.debts
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Aged payables per supplier, as of `to` or today"
+                  columns: [{"key": "supplier", "label": "supplier"}, {"key": "phone", "label": "phone"}, {"key": "invoices", "label": "invoices"}, {"key": "current", "label": "current"}]
+                  rows: [{"supplier": "6000.00", "phone": "6000.00", "invoices": "6000.00", "current": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/payroll/summary:
+    get:
+      operationId: reportPayrollSummary
+      tags: [Reports]
+      summary: "Payroll runs in the range (FR-REP-11)"
+      x-permission: reports.payroll
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Payroll runs in the range"
+                  columns: [{"key": "run", "label": "run"}, {"key": "period_start", "label": "period_start"}, {"key": "period_end", "label": "period_end"}, {"key": "status", "label": "status"}]
+                  rows: [{"run": "6000.00", "period_start": "2026-11-16", "period_end": "2026-11-16", "status": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/payroll/by-department:
+    get:
+      operationId: reportPayrollByDepartment
+      tags: [Reports]
+      summary: "Payroll totals per department (FR-REP-11)"
+      x-permission: reports.payroll
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Payroll totals per department"
+                  columns: [{"key": "department", "label": "department"}, {"key": "employees", "label": "employees"}, {"key": "gross", "label": "gross"}, {"key": "deductions", "label": "deductions"}]
+                  rows: [{"department": "6000.00", "employees": "6000.00", "gross": "6000.00", "deductions": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/payroll/deductions:
+    get:
+      operationId: reportPayrollDeductions
+      tags: [Reports]
+      summary: "Deductions, statutory, loan and employer lines summed (FR-REP-11)"
+      x-permission: reports.payroll
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Deductions, statutory, loan and employer lines summed"
+                  columns: [{"key": "kind", "label": "kind"}, {"key": "label", "label": "label"}, {"key": "employees", "label": "employees"}, {"key": "amount", "label": "amount"}]
+                  rows: [{"kind": "6000.00", "label": "6000.00", "employees": "6000.00", "amount": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/payroll/loans:
+    get:
+      operationId: reportPayrollLoans
+      tags: [Reports]
+      summary: "Staff loans outstanding (FR-REP-11)"
+      x-permission: reports.payroll
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: status, in: query, schema: {type: string, enum: [pending, approved, disbursed, settled, rejected]}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Staff loans outstanding"
+                  columns: [{"key": "number", "label": "number"}, {"key": "employee", "label": "employee"}, {"key": "kind", "label": "kind"}, {"key": "status", "label": "status"}]
+                  rows: [{"number": "6000.00", "employee": "6000.00", "kind": "6000.00", "status": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/staff-performance:
+    get:
+      operationId: reportStaffPerformance
+      tags: [Reports]
+      summary: "Sales, attendance, lateness and commission per employee (FR-REP-12)"
+      x-permission: reports.staff
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Sales, attendance, lateness and commission per employee"
+                  columns: [{"key": "employee", "label": "employee"}, {"key": "branch", "label": "branch"}, {"key": "sales_count", "label": "sales_count"}, {"key": "net_sales", "label": "net_sales"}]
+                  rows: [{"employee": "6000.00", "branch": "6000.00", "sales_count": "6000.00", "net_sales": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/branches:
+    get:
+      operationId: reportBranches
+      tags: [Reports]
+      summary: "Branch comparison: sales, gross profit, expenses, net profit, stock value, average sale (FR-BRN-06)"
+      x-permission: reports.branches
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Branch comparison: sales, gross profit, expenses, net profit, stock value, average sale"
+                  columns: [{"key": "branch", "label": "branch"}, {"key": "sales_count", "label": "sales_count"}, {"key": "net_sales", "label": "net_sales"}, {"key": "cost", "label": "cost"}]
+                  rows: [{"branch": "6000.00", "sales_count": "6000.00", "net_sales": "6000.00", "cost": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/cash-flow:
+    get:
+      operationId: reportCashFlow
+      tags: [Reports]
+      summary: "Money in and out per account with opening and closing; by_kind groups movements by document type (FR-REP-14)"
+      x-permission: reports.financial
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Money in and out per account with opening and closing"
+                  columns: [{"key": "account", "label": "account"}, {"key": "account_type", "label": "account_type"}, {"key": "opening", "label": "opening"}, {"key": "money_in", "label": "money_in"}]
+                  rows: [{"account": "6000.00", "account_type": "6000.00", "opening": "6000.00", "money_in": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/balance-sheet:
+    get:
+      operationId: reportBalanceSheet
+      tags: [Reports]
+      summary: "Balance sheet as of a date, business-wide; current earnings close income and expense into equity (FR-REP-16). Response also carries assets, liabilities, equity, current_earnings, liabilities_and_equity, balanced."
+      x-permission: reports.financial
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+        - {name: as_of, in: query, schema: {type: string, format: date}}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Balance sheet as of a date, business-wide"
+                  columns: [{"key": "section", "label": "section"}, {"key": "code", "label": "code"}, {"key": "name", "label": "name"}, {"key": "amount", "label": "amount"}]
+                  rows: [{"section": "6000.00", "code": "6000.00", "name": "6000.00", "amount": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+  /reports/tax:
+    get:
+      operationId: reportTax
+      tags: [Reports]
+      summary: "Output tax on sales net of returns and input tax on purchases per month (FR-REP-17)"
+      x-permission: reports.financial
+      security: [{bearerAuth: []}]
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - {name: from, in: query, schema: {type: string, format: date}, description: Start date (inclusive)}
+        - {name: to, in: query, schema: {type: string, format: date}, description: End date (inclusive)}
+        - {name: branch_id, in: query, schema: {type: string, format: uuid}, description: One branch inside the caller's scope; 404 when outside}
+        - {name: format, in: query, schema: {type: string, enum: [json, csv, xlsx, pdf], default: json}, description: json returns the table; csv, xlsx and pdf return a file attachment}
+      responses:
+        '200':
+          description: Report table, or a file when format is csv, xlsx or pdf
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [title, columns, rows]
+                    properties:
+                      title: {type: string}
+                      subtitle: {type: string}
+                      columns:
+                        type: array
+                        items: {type: object, properties: {key: {type: string}, label: {type: string}}}
+                      rows: {type: array, items: {type: object, additionalProperties: true}}
+                      totals: {type: object, additionalProperties: true}
+                    additionalProperties: true
+              example:
+                data:
+                  title: "Output tax on sales net of returns and input tax on purchases per month"
+                  columns: [{"key": "month", "label": "month"}, {"key": "taxable_sales", "label": "taxable_sales"}, {"key": "output_tax", "label": "output_tax"}, {"key": "input_tax", "label": "input_tax"}]
+                  rows: [{"month": "2026-11-16", "taxable_sales": "6000.00", "output_tax": "6000.00", "input_tax": "6000.00"}]
+            text/csv: {schema: {type: string}}
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet: {schema: {type: string, format: binary}}
+            application/pdf: {schema: {type: string, format: binary}}
+        '400': {description: Invalid query parameter, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '401': {description: Not signed in, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '403': {description: Missing permission, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}
+        '404': {description: branch_id outside the caller's scope, content: {application/json: {schema: {$ref: '#/components/schemas/Error'}}}}

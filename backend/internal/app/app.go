@@ -39,6 +39,7 @@ import (
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/jobs"
 	"bms/internal/platform/middleware"
+	"bms/internal/platform/sender"
 	"bms/internal/platform/storage"
 )
 
@@ -46,6 +47,8 @@ type App struct {
 	Fiber *fiber.App
 	DB    *db.DB
 	Jobs  *jobs.Client
+	// Recovery is exposed so tests can plug in a recording sender.
+	Recovery *identity.Recovery
 }
 
 func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) {
@@ -98,7 +101,12 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 
 	api := fiberApp.Group("/api/v1")
 	limit := middleware.NewLimiter(30, time.Minute).Handler()
-	identity.RegisterPublic(api.Group("/auth"), &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL}, limit)
+	authGroup := api.Group("/auth")
+	identity.RegisterPublic(authGroup, &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL}, limit)
+	recovery := &identity.Recovery{Svc: ident}
+	recovery.Email, recovery.SMS = sender.FromConfig(cfg)
+	authGroup.Post("/forgot-password", limit, recovery.ForgotHandler)
+	authGroup.Post("/reset-password", limit, recovery.ResetHandler)
 
 	private := api.Group("", middleware.Auth(auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, ident.Load), middleware.Branch(database))
 	identity.Register(private, &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL})
@@ -111,7 +119,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 		mount(private, d)
 	}
 
-	return &App{Fiber: fiberApp, DB: database, Jobs: worker}, nil
+	return &App{Fiber: fiberApp, DB: database, Jobs: worker, Recovery: recovery}, nil
 }
 
 // mountAny adapts a module Mount that returns its service.

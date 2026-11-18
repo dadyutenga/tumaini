@@ -17,6 +17,7 @@ import (
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/ids"
 	"bms/internal/platform/money"
+	"bms/internal/platform/sqlq"
 )
 
 type Service struct {
@@ -63,24 +64,24 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, q string, categor
 	var out []Product
 	var total int
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		where := `WHERE ($1='' OR p.name ILIKE '%'||$1||'%' OR p.sku ILIKE '%'||$1||'%' OR p.barcode ILIKE '%'||$1||'%')
-			AND ($2::uuid IS NULL OR p.category_id=$2)
-			AND ($3::bool IS NULL OR p.is_active=$3)`
-		args := []any{q, category, active}
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM products p `+where, args...).Scan(&total); err != nil {
+		// $1 is the active branch for stock and branch prices; may be NULL.
+		f := sqlq.New(p.BranchID)
+		q = strings.TrimSpace(q)
+		f.If(q != "", "(p.name ILIKE '%' || ? || '%' OR p.sku ILIKE '%' || ? || '%' OR p.barcode = ?)", q, q, q)
+		f.If(category != nil, "p.category_id = ?", category)
+		f.If(active != nil, "p.is_active = ?", active)
+		if low != nil && *low {
+			f.Add("p.kind = 'stock' AND COALESCE(sl.qty_on_hand,0) <= p.reorder_level")
+		}
+		from := ` FROM products p JOIN units u ON u.id=p.unit_id
+			LEFT JOIN stock_levels sl ON sl.product_id=p.id AND sl.branch_id=$1
+			LEFT JOIN product_branch_prices bp ON bp.product_id=p.id AND bp.branch_id=$1`
+		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+f.Where(), f.Args...).Scan(&total); err != nil {
 			return err
 		}
-		branch := p.BranchID
-		sql := `SELECT p.id, p.name, p.sku, p.barcode, p.category_id, p.unit_id, u.short_name, p.tax_rate_id, p.kind, p.sell_price, p.reorder_level, p.is_active, sl.qty_on_hand, sl.avg_cost, p.description
-			FROM products p JOIN units u ON u.id=p.unit_id
-			LEFT JOIN stock_levels sl ON sl.product_id=p.id AND sl.branch_id=$4 ` + where
-		args = append(args, branch)
-		if low != nil && *low {
-			sql += ` AND p.kind='stock' AND COALESCE(sl.qty_on_hand,0) <= p.reorder_level`
-		}
-		sql += ` ORDER BY p.name LIMIT $5 OFFSET $6`
-		args = append(args, page.PerPage, page.Offset)
-		rows, err := tx.Query(ctx, sql, args...)
+		rows, err := tx.Query(ctx, `SELECT p.id, p.name, p.sku, p.barcode, p.category_id, p.unit_id, u.short_name, p.tax_rate_id, p.kind,
+			COALESCE(bp.sell_price, p.sell_price), p.reorder_level, p.is_active, sl.qty_on_hand, sl.avg_cost, p.description`+
+			from+f.Where()+` ORDER BY p.name, p.id`+f.Page(page.PerPage, page.Offset), f.Args...)
 		if err != nil {
 			return err
 		}
@@ -192,6 +193,9 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in ProductInput
 	if in.Kind == "" {
 		in.Kind = "stock"
 	}
+	if err := checkProductInput(in); err != nil {
+		return Product{}, err
+	}
 	id := ids.New()
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		unit := in.UnitID
@@ -230,11 +234,38 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in ProductInput
 	return s.one(ctx, p, id)
 }
 
+// checkProductInput rejects values the database would refuse with a 500.
+func checkProductInput(in ProductInput) error {
+	if in.SellPrice.IsNegative() {
+		return httpx.BadRequest("invalid_body", "Selling price cannot be negative")
+	}
+	if in.ReorderLevel.IsNegative() {
+		return httpx.BadRequest("invalid_body", "Reorder level cannot be negative")
+	}
+	if in.Kind != "" && in.Kind != "stock" && in.Kind != "service" {
+		return httpx.BadRequest("invalid_body", "Kind must be stock or service")
+	}
+	return nil
+}
+
 func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, in ProductInput) (Product, error) {
+	if err := checkProductInput(in); err != nil {
+		return Product{}, err
+	}
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		var old decimal.Decimal
-		if err := tx.QueryRow(ctx, `SELECT sell_price FROM products WHERE id=$1`, id).Scan(&old); err != nil {
+		var kind string
+		if err := tx.QueryRow(ctx, `SELECT sell_price, kind FROM products WHERE id=$1 FOR UPDATE`, id).Scan(&old, &kind); err != nil {
 			return httpx.NotFound("not_found", "Product not found")
+		}
+		if in.Kind != "" && in.Kind != kind {
+			var moved bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM stock_movements WHERE product_id=$1)`, id).Scan(&moved); err != nil {
+				return err
+			}
+			if moved {
+				return httpx.Conflict("invalid_status", "This product has stock history, so it cannot change between stock and service")
+			}
 		}
 		price := money.Money(in.SellPrice)
 		if _, err := tx.Exec(ctx, `
@@ -243,6 +274,9 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 			kind=COALESCE(NULLIF($7,''), kind), sell_price=$8, reorder_level=$9, description=COALESCE(NULLIF($10,''), description)
 			WHERE id=$1
 		`, id, strings.TrimSpace(in.Name), strings.TrimSpace(in.Barcode), in.CategoryID, in.UnitID, in.TaxRateID, in.Kind, price, in.ReorderLevel, in.Description); err != nil {
+			if db.IsUnique(err) {
+				return httpx.Conflict("duplicate", "Another product already has that barcode")
+			}
 			return err
 		}
 		if !old.Equal(price) {
@@ -278,7 +312,25 @@ func (s *Service) BranchPrices(ctx context.Context, p *auth.Principal, id uuid.U
 	Price    decimal.Decimal `json:"sell_price"`
 }) error {
 	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM products WHERE id=$1)`, id).Scan(&exists); err != nil {
+			return err
+		}
+		if !exists {
+			return httpx.NotFound("not_found", "Product not found")
+		}
+		changes := []map[string]any{}
 		for _, pr := range prices {
+			if pr.Price.IsNegative() {
+				return httpx.BadRequest("invalid_body", "Selling price cannot be negative")
+			}
+			var branchOK bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM branches WHERE id=$1)`, pr.BranchID).Scan(&branchOK); err != nil {
+				return err
+			}
+			if !branchOK || !p.SeesBranch("products.manage", pr.BranchID) {
+				return httpx.NotFound("not_found", "Branch not found")
+			}
 			var old decimal.Decimal
 			err := tx.QueryRow(ctx, `SELECT sell_price FROM product_branch_prices WHERE product_id=$1 AND branch_id=$2`, id, pr.BranchID).Scan(&old)
 			if _, err2 := tx.Exec(ctx, `
@@ -295,8 +347,9 @@ func (s *Service) BranchPrices(ctx context.Context, p *auth.Principal, id uuid.U
 			`, ids.New(), p.BusinessID, id, pr.BranchID, old, money.Money(pr.Price), p.UserID); err != nil {
 				return err
 			}
+			changes = append(changes, map[string]any{"branch_id": pr.BranchID, "old_price": old, "new_price": money.Money(pr.Price)})
 		}
-		return nil
+		return s.Audit.Record(ctx, tx, p, "product.branch_prices", "product", id, nil, map[string]any{"prices": changes})
 	})
 }
 

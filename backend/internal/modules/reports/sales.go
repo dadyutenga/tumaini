@@ -180,8 +180,10 @@ func (s *Service) Tills(ctx context.Context, p *auth.Principal, f Filter) (expor
 			payouts = "COALESCE((SELECT SUM(mt.amount + mt.fee) FROM money_transfers mt WHERE mt.till_session_id = t.id), 0)"
 		}
 		q := sqlq.New()
-		tz := q.Arg(f.tz)
-		f.dates(q, "(t.opened_at AT TIME ZONE "+tz+")::date")
+		if f.From != "" || f.To != "" {
+			tz := q.Arg(f.tz)
+			f.dates(q, "(t.opened_at AT TIME ZONE "+tz+")::date")
+		}
 		f.branch(q, "t.branch_id")
 		var err error
 		list, err = rows(ctx, tx, `

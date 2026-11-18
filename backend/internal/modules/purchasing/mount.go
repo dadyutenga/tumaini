@@ -10,8 +10,8 @@ import (
 // Mount builds the module from the shared services and registers its routes,
 // approval hooks and background jobs.
 func Mount(r fiber.Router, d deps.Deps) *Service {
-	svc := New(d.DB, d.Stock, d.Ledger, d.Audit, d.Approval, d.Clock)
+	svc := New(d.DB, d.Stock, d.Ledger, d.Audit, d.Approval, d.Notify, d.Clock)
 	Register(r, &Handler{Svc: svc})
-	d.Approval.Register("purchase_order", approval.Hooks{OnApproved: svc.OnPOApproved})
+	d.Approval.Register("purchase_order", approval.Hooks{OnApproved: svc.OnPOApproved, OnRejected: svc.OnPORejected})
 	return svc
 }

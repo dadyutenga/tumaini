@@ -89,8 +89,10 @@ func (s *Service) Low(ctx context.Context, p *auth.Principal) ([]map[string]any,
 	return orEmpty(out), err
 }
 
-// StockCard lists movements with running balance for one product in the active branch (FR-INV-29).
-func (s *Service) StockCard(ctx context.Context, p *auth.Principal, productID uuid.UUID, from, to string) (map[string]any, error) {
+// StockCard lists movements with running balance (qty_after) for one product
+// in the active branch (FR-INV-29). The response stays a plain list for
+// existing clients; with from, opening_qty on each row is the balance before it.
+func (s *Service) StockCard(ctx context.Context, p *auth.Principal, productID uuid.UUID, from, to string) ([]map[string]any, error) {
 	if p.BranchID == nil {
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
 	}
@@ -134,12 +136,13 @@ func (s *Service) StockCard(ctx context.Context, p *auth.Principal, productID uu
 	if err != nil {
 		return nil, err
 	}
-	out = orEmpty(out)
-	closing := opening
-	if len(out) > 0 {
-		closing = out[len(out)-1]["qty_after"].(decimal.Decimal)
+	prev := opening
+	for _, row := range out {
+		row["opening_qty"] = prev
+		row["product_name"] = name
+		prev = row["qty_after"].(decimal.Decimal)
 	}
-	return map[string]any{"product_id": productID, "product_name": name, "branch_id": *p.BranchID, "opening_qty": opening, "closing_qty": closing, "movements": out}, nil
+	return orEmpty(out), nil
 }
 
 // Valuation values stock per product, category and branch, today or as of a past date (FR-INV-28).

@@ -1,0 +1,42 @@
+name: Backend CI
+on:
+  push:
+    paths: ["backend/**", "docs/api/**", "docs/spec/API reference.md", "deploy/postgres/**", ".github/workflows/backend-ci.yml"]
+  pull_request:
+    paths: ["backend/**", "docs/api/**", "docs/spec/API reference.md", "deploy/postgres/**", ".github/workflows/backend-ci.yml"]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres_ci
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgres://bms_app:bms_app_dev@127.0.0.1:5433/bms?sslmode=disable
+      MIGRATE_DATABASE_URL: postgres://bms_owner:bms_owner_dev@127.0.0.1:5433/bms?sslmode=disable
+      JWT_SECRET: ci-only-secret-0123456789abcdef0123
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Create roles and database
+        run: PGPASSWORD=postgres_ci psql -h 127.0.0.1 -p 5433 -U postgres -v ON_ERROR_STOP=1 -f ../deploy/postgres/init.sql
+      - run: go mod verify
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go build ./...
+      - name: Migrate up, down and up again
+        run: go run ./cmd/migrate up && go run ./cmd/migrate down && go run ./cmd/migrate up
+      - name: OpenAPI file is current
+        run: go run ./cmd/openapi -check
+      - run: go test -race -count=1 -coverpkg=./internal/... -coverprofile=coverage.out ./...
+      - run: go tool cover -func=coverage.out | tail -1

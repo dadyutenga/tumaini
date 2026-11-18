@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"bms/internal/config"
 )
 
 type Message struct {
@@ -148,4 +150,15 @@ func (w *Webhook) Send(ctx context.Context, m Message) error {
 		return fmt.Errorf("sms gateway returned %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// FromConfig builds the configured senders. A channel without configuration is nil.
+func FromConfig(c config.Config) (email, sms Sender) {
+	if c.SMTPHost != "" {
+		email = &SMTP{Host: c.SMTPHost, Port: c.SMTPPort, User: c.SMTPUser, Password: c.SMTPPassword, From: c.SMTPFrom, Timeout: 15 * time.Second}
+	}
+	if c.SMSWebhookURL != "" {
+		sms = &Webhook{URL: c.SMSWebhookURL, APIKey: c.SMSAPIKey, From: c.SMSSender}
+	}
+	return email, sms
 }

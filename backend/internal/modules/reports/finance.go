@@ -88,8 +88,8 @@ func (s *Service) ProfitLoss(ctx context.Context, p *auth.Principal, f Filter) (
 		ps["lines"] = prev.Lines
 		extra["previous"] = ps
 		extra["change"] = map[string]any{
-			"net_profit":   cur.Income.Sub(cur.Expense).Sub(prev.Income.Sub(prev.Expense)),
-			"gross_profit": cur.Revenue.Sub(cur.COGS).Sub(prev.Revenue.Sub(prev.COGS)),
+			"net_profit":     cur.Income.Sub(cur.Expense).Sub(prev.Income.Sub(prev.Expense)),
+			"gross_profit":   cur.Revenue.Sub(cur.COGS).Sub(prev.Revenue.Sub(prev.COGS)),
 			"net_profit_pct": pct(cur.Income.Sub(cur.Expense).Sub(prev.Income.Sub(prev.Expense)), prev.Income.Sub(prev.Expense).Abs()),
 		}
 	}
