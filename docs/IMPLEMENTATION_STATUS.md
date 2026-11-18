@@ -1,50 +1,40 @@
 # BMS implementation status
 
-Audited 18 November 2026 against the checked-in routes, pages, API handlers, SRS, frontend design, and website screen specification.
+Updated 18 November 2026. Backend and frontend are both in `main`.
 
-The implementation is incomplete. It has 15 authenticated routes, including two detail routes and My account; 12 routes appear in the sidebar before permission filtering. Login and registration are separate. Permissions can hide menu entries, but missing modules are also absent for the Owner.
+## Backend
 
-This is a source audit, not acceptance certification of every workflow. The older backend implementation report records an earlier test run and should not be interpreted as full product completion.
+Every route in `docs/spec/API reference.md` is implemented, and `TestOpenAPIContract` fails if a route is missing from `docs/api/openapi.yaml` or if the reference lists a route that is not registered. The backend tests run against PostgreSQL with row-level security (`go test ./...`, with `DATABASE_URL` and `MIGRATE_DATABASE_URL` set).
 
-## Current coverage and gaps
+Password recovery needs an SMTP or SMS webhook configured. Without one, `POST /auth/forgot-password` answers 503 `recovery_unavailable`, and the Owner resets passwords from Team.
 
-| Area | Current implementation | Required work |
+## Frontend screens
+
+| Area | Screen | Notes |
 | --- | --- | --- |
-| Authentication | Login, registration, refresh, logout, profile and password UI | Forgot-password delivery and recovery screens; session/security screens |
-| Dashboard | Overview assembled from sales, low stock, customers, approvals and profit/loss | Dedicated staff My day, remaining dashboard metrics and role-specific behavior |
-| Sales | POS, till controls within POS, history, detail and returns | Quotations, held carts, void, till payout; dedicated invoice, receipt and till-history workflows |
-| Catalog and stock | Product and stock pages, categories/units APIs, stock in/out | Transfer and adjustment workflows, valuation, stock cards, import UI and richer product management |
-| Customers | List, detail, statement, credit limit and payment UI | Debt overview, payment history and remaining specification details |
-| Suppliers and purchasing | Create supplier, create/get/submit order, receive goods, invoice and pay APIs | Supplier and purchase lists, missing detail/read APIs, all purchasing screens, supplier statements and purchase returns |
-| Expenses | Submit/pay UI, category API, approval inbox | Persisted expense list API/UI, category management, recurring expenses and petty cash reconciliation |
-| Finance | Money accounts, transfers, transactions UI; trial balance API | Account statements, payment lists, income, period locking and remaining reports |
-| Employees | Create employee and loan/disbursement APIs | Employee list/detail/update APIs and screens, departments, positions, leave and employee statements |
-| Attendance | Clock action, schedule write, manual day status and per-employee day list APIs | Clock/self-service screen, attendance lists/filters, schedule UI and complete overtime/leave workflows |
-| Payroll | Component creation and run create/calculate/approve/pay APIs | Component/run lists and detail APIs, payroll UI, payslip PDF, payment export and commission workflows |
-| Branches | Branch APIs and list/create UI in Settings | Dedicated branch detail, staff/inventory/sales/expense tabs and performance reports |
-| Users and roles | User list/create/activate/deactivate, role list | User editing, role/permission matrix editor, session management and login history UI |
-| Reports | Profit/loss API used by Overview | Reports index and remaining sales, stock, customer, purchasing, finance, HR and payroll reports |
-| Notifications and audit | Header notification popover and audit page | Full notifications page and remaining security/backup flows |
-| Settings | Business, branch and tax UI; grouped settings/payment method APIs | Receipt, invoice, payment, payroll, notification and system settings UI |
-| Cross-cutting UI | Permission-filtered navigation, API hooks, pagination and shared forms | Complete English/Swahili coverage, consistent filters/export, form validation, unsaved-change handling and accessibility checks |
-| API contract | Handwritten routes and API reference | OpenAPI document and automated route/contract coverage |
+| Sales | Point of sale, Sales, Sale detail, Quotations | Till open/close/pay-out, held carts, returns, void, invoice PDF, quotation to sale |
+| Stock | Products, Stock, Transfers and counts | Transfers with receive differences, count sheets, adjustments, movements |
+| Purchasing | Purchasing, Purchase order | Suppliers, orders, receiving, invoices, supplier payments |
+| Customers | Customers, Customer | Statement, payments, credit limit, write-off, aged debts |
+| Money | Money | Accounts, transfers, payments with void, income, period lock |
+| Expenses | Expenses, Expense setup | List and filters, categories, recurring, petty cash top-up and count |
+| People | People, Attendance, HR setup, My work | Employees, leave, clock in/out, overtime, working week, departments, positions, holidays, loans, staff self-service |
+| Payroll | Payroll, Payroll run, Payroll setup | Calculate, approve, pay, payment list, payslip PDF, components, commission, adjustments |
+| Reports | Reports | The whole catalogue with date ranges and CSV, XLSX and PDF export |
+| Admin | Team and roles, Settings, Activity log, Approvals | Role and permission editor, business, branches, tax, preferences |
+| Auth | Sign in, Register, Forgot password, My account | |
 
-## Additional website scope
+Each screen shows only what the signed-in role can use.
 
-`spec/Website Design and Screen Specification.md` includes Services: clients/leads, projects, service catalog, quotations/invoices, documents, tasks/calendar, renewals, design jobs, client approvals and contractors. Those modules are not implemented. They also lack matching domain/API definitions in the current core SRS and API reference. The specification needs to be reconciled before claiming that the full website design is delivered.
+## Still open
 
-## Completion order
-
-1. Complete supplier and purchasing read APIs and screens so receiving stock is usable end to end.
-2. Complete employees, attendance and payroll read APIs and screens, including staff self-service.
-3. Add stock transfers, adjustments, valuation and stock-card screens.
-4. Complete expense history, finance, reports, permission editing and settings.
-5. Add the remaining sales workflows, exports, recovery and security operations.
-6. Reconcile and implement the additional Services/design-job scope.
-7. Validate each workflow with real PostgreSQL data and permission/branch checks; complete the OpenAPI contract and screen acceptance checklist.
-
-Adding sidebar entries alone does not complete these modules. Each needs real read/write behavior, permission enforcement and verified user flows.
-
-## Verification limits
-
-The Team regression was verified against PostgreSQL and in the browser. The frontend build and tests passed at that point. The existing broad backend acceptance test currently fails with `invalid_token` because its fixed clock is 16 November 2026 while token validation uses the current clock; that needs correction before it can certify the rest of the backend today.
+- Employee detail page, employee statement, per-employee salary components and termination UI. The APIs exist.
+- Manual payslip line edits, payroll reversal and payroll reports beyond the catalogue.
+- Product import (CSV/Excel), price history, branch prices, stock card and valuation pages. The APIs exist.
+- Branch detail page with staff, stock and performance tabs.
+- Notifications page (the bell shows recent ones), login history and session management screens.
+- Settings: payment-method to account mapping, logo upload.
+- English and Swahili switching on the newer pages.
+- The Staff role has no `accounts.view`, so staff cannot pick a mobile-money or bank account at the till.
+- The website spec's Services scope (projects, design jobs, renewals) is not in the SRS or API reference and is not built.
+- `npm audit` reports vulnerabilities in dev dependencies that have not been reviewed.

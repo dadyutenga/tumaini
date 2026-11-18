@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Seeds a demo business with one user per role. Dev only. Needs the API running.
 # Usage: API=http://localhost:8080 deploy/seed-dev.sh
+# The staff user is linked to an employee record so My work, clock in and leave all work.
 set -euo pipefail
 API="${API:-http://localhost:8080}/api/v1"
 PASS="${SEED_PASSWORD:-BMS#2026}"
@@ -18,4 +19,7 @@ bid=$(curl -sS "${H[@]}" "$API/branches" | python3 -c "import sys,json;print(jso
 mk() { curl -sS -X POST "$API/users" "${H[@]}" -d "{\"name\":\"$1\",\"phone\":\"$2\",\"email\":\"$3\",\"password\":\"$PASS\",\"role_id\":\"$(rid "$4")\",\"branch_ids\":[\"$bid\"]}" | head -c 160; echo; }
 mk "Demo Manager" 0700000002 manager@demo.test manager
 mk "Demo Staff"   0700000003 staff@demo.test   staff
+emp=$(curl -sS -X POST "$API/employees" "${H[@]}" -d '{"name":"Demo Staff","phone":"0700000003","pay_type":"monthly","base_pay":"500000"}' | j "['data']['id']" 2>/dev/null || true)
+uid=$(curl -sS "${H[@]}" "$API/users" | python3 -c "import sys,json;print(next(u['id'] for u in json.load(sys.stdin)['data'] if u['email']=='staff@demo.test'))")
+[ -n "${emp:-}" ] && curl -sS -X PUT "$API/users/$uid" "${H[@]}" -d "{\"employee_id\":\"$emp\"}" >/dev/null && echo "Linked staff@demo.test to employee $emp"
 echo "Logins (password: $PASS): owner@demo.test, manager@demo.test, staff@demo.test"
