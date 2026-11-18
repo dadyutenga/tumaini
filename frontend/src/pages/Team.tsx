@@ -14,6 +14,7 @@ import {
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
+import { RoleEditor } from "@/features/auth/RoleEditor";
 import type { Branch, SessionUser } from "@/types";
 
 interface Role {
@@ -33,6 +34,7 @@ const blank = {
 
 export default function Team() {
   const { can } = useAuth();
+  const [editingRole, setEditingRole] = useState<string | null | undefined>(undefined);
   const [page, setPage] = useState(1);
   const users = useGetPage<SessionUser>("/users", { page, per_page: 25 });
   const roles = useGet<Role[]>("/roles", undefined, { enabled: can("roles.view") });
@@ -110,6 +112,13 @@ export default function Team() {
           <Pager meta={users.data?.meta} onPage={setPage} />
         </TabsContent>
         <TabsContent value="roles">
+          {can("roles.manage") && (
+            <div className="mb-4 flex justify-end">
+              <Button onClick={() => setEditingRole(null)}>
+                <Plus size={16} /> New role
+              </Button>
+            </div>
+          )}
           <DataGrid
             rows={roles.data}
             loading={roles.isLoading}
@@ -117,10 +126,23 @@ export default function Team() {
             columns={[
               { header: "Role", cell: (r) => <span className="font-medium">{r.name}</span> },
               { header: "Type", cell: (r) => (r.is_system ? "Built in" : "Custom") },
+              {
+                header: "",
+                cell: (r) => (
+                  <Button size="sm" variant="outline" onClick={() => setEditingRole(r.id)}>
+                    {can("roles.manage") ? "Edit permissions" : "View"}
+                  </Button>
+                ),
+              },
             ]}
           />
         </TabsContent>
       </Tabs>
+      <RoleEditor
+        roleId={editingRole ?? null}
+        open={editingRole !== undefined}
+        onClose={() => setEditingRole(undefined)}
+      />
       <FormDialog
         open={open}
         onOpenChange={setOpen}
