@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   Package,
   Truck,
+  Contact,
   ReceiptText,
   ScrollText,
   Settings,
@@ -105,6 +106,14 @@ export const routes: AppRoute[] = [
     component: lazy(() => import("@/pages/CustomerDetail")),
     navigation: false,
     permission: ["customers.view"],
+  },
+  {
+    path: "/people",
+    label: "People",
+    icon: Contact,
+    component: lazy(() => import("@/pages/People")),
+    navigation: true,
+    permission: ["employees.view", "leave.request", "attendance.clock", "attendance.view"],
   },
   {
     path: "/money",

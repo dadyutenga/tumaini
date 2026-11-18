@@ -169,5 +169,5 @@ func OKList(c fiber.Ctx, v []map[string]any, err error) error {
 	if v == nil {
 		v = []map[string]any{}
 	}
-	return c.JSON(List(v, Meta{Page: 1, PerPage: len(v), Total: len(v)}))
+	return c.JSON(List(v, Meta{Page: 1, PerPage: max(len(v), 1), Total: len(v)}))
 }
