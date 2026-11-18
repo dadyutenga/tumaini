@@ -615,4 +615,3 @@ func view(id uuid.UUID, number, status string, lines []line, tot totals, paid, b
 	}
 	return out
 }
-
