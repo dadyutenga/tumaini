@@ -29,9 +29,18 @@ type Config struct {
 	ArgonTime          uint32
 	ArgonThreads       uint8
 	AutoMigrate        bool
+	SMTPHost           string
+	SMTPPort           int
+	SMTPUser           string
+	SMTPPassword       string
+	SMTPFrom           string
+	SMSWebhookURL      string
+	SMSAPIKey          string
+	SMSSender          string
 }
 
 func Load() (Config, error) {
+	bad = nil
 	c := Config{
 		AppEnv:             getenv("APP_ENV", "development"),
 		HTTPAddr:           getenv("HTTP_ADDR", ":8080"),
@@ -52,6 +61,17 @@ func Load() (Config, error) {
 		ArgonTime:          uint32(intenv("ARGON_TIME", 2)),
 		ArgonThreads:       uint8(intenv("ARGON_THREADS", 1)),
 		AutoMigrate:        boolenv("AUTO_MIGRATE", false),
+		SMTPHost:           os.Getenv("SMTP_HOST"),
+		SMTPPort:           intenv("SMTP_PORT", 587),
+		SMTPUser:           os.Getenv("SMTP_USER"),
+		SMTPPassword:       os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:           os.Getenv("SMTP_FROM"),
+		SMSWebhookURL:      os.Getenv("SMS_WEBHOOK_URL"),
+		SMSAPIKey:          os.Getenv("SMS_API_KEY"),
+		SMSSender:          os.Getenv("SMS_SENDER_ID"),
+	}
+	if len(bad) > 0 {
+		return c, fmt.Errorf("invalid configuration: %s", strings.Join(bad, "; "))
 	}
 	if c.DatabaseURL == "" {
 		return c, fmt.Errorf("DATABASE_URL is required")
@@ -62,8 +82,40 @@ func Load() (Config, error) {
 	if c.MigrateDatabaseURL == "" {
 		c.MigrateDatabaseURL = c.DatabaseURL
 	}
+	if c.AccessTokenTTL <= 0 || c.AccessTokenTTL > time.Hour {
+		return c, fmt.Errorf("ACCESS_TOKEN_TTL must be between 1s and 1h")
+	}
+	if c.RefreshTokenTTL < c.AccessTokenTTL {
+		return c, fmt.Errorf("REFRESH_TOKEN_TTL must be longer than ACCESS_TOKEN_TTL")
+	}
+	if c.ArgonMemory < 8192 || c.ArgonTime < 1 || c.ArgonThreads < 1 {
+		return c, fmt.Errorf("ARGON_MEMORY must be at least 8192 and ARGON_TIME, ARGON_THREADS at least 1")
+	}
+	if c.StorageDriver != "local" {
+		return c, fmt.Errorf("STORAGE_DRIVER %q is not supported; use local", c.StorageDriver)
+	}
+	if c.SMTPHost != "" && c.SMTPFrom == "" {
+		return c, fmt.Errorf("SMTP_FROM is required when SMTP_HOST is set")
+	}
+	if c.AppEnv == "production" {
+		if !c.CookieSecure {
+			return c, fmt.Errorf("COOKIE_SECURE must be true in production")
+		}
+		if strings.Contains(c.JWTSecret, "replace-with") {
+			return c, fmt.Errorf("JWT_SECRET still has the example value")
+		}
+		for _, o := range c.CORSOrigins {
+			if o == "*" {
+				return c, fmt.Errorf("CORS_ORIGINS cannot be * when credentials are allowed")
+			}
+		}
+	}
 	return c, nil
 }
+
+// bad collects malformed variables during Load so they fail start-up instead
+// of silently falling back to defaults.
+var bad []string
 
 func MustLoad() Config {
 	c, err := Load()
@@ -87,6 +139,7 @@ func duration(k string, def time.Duration) time.Duration {
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil {
+		bad = append(bad, k+" is not a duration")
 		return def
 	}
 	return d
@@ -99,6 +152,7 @@ func boolenv(k string, def bool) bool {
 	}
 	b, err := strconv.ParseBool(v)
 	if err != nil {
+		bad = append(bad, k+" is not true or false")
 		return def
 	}
 	return b
@@ -110,7 +164,8 @@ func intenv(k string, def int) int {
 		return def
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil {
+	if err != nil || n < 0 {
+		bad = append(bad, k+" is not a whole number")
 		return def
 	}
 	return n

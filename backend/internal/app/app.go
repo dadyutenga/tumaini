@@ -32,6 +32,7 @@ import (
 	"bms/internal/modules/purchasing"
 	"bms/internal/modules/reports"
 	"bms/internal/modules/sales"
+	"bms/internal/modules/system"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
@@ -105,7 +106,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 		mountAny(org.Mount), mountAny(catalog.Mount), mountAny(inventory.Mount), mountAny(sales.Mount),
 		mountAny(customers.Mount), mountAny(expenses.Mount), mountAny(finance.Mount), mountAny(purchasing.Mount),
 		mountAny(hr.Mount), mountAny(attendance.Mount), mountAny(payroll.Mount), mountAny(reports.Mount),
-		mountAny(inbox.Mount),
+		mountAny(inbox.Mount), mountAny(system.Mount),
 	} {
 		mount(private, d)
 	}

@@ -1,0 +1,17 @@
+DROP TABLE IF EXISTS customer_write_off_items;
+DROP TABLE IF EXISTS customer_write_offs;
+DROP INDEX IF EXISTS sale_returns_list_idx;
+DROP INDEX IF EXISTS sales_kind_idx;
+DROP INDEX IF EXISTS sales_held_idx;
+ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_check;
+ALTER TABLE sales ADD CONSTRAINT sales_check CHECK (balance = total - paid_total OR status IN ('draft','held','voided','pending_approval','cancelled'));
+ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_status_check;
+ALTER TABLE sales ADD CONSTRAINT sales_status_check CHECK (status IN ('draft','held','pending_approval','completed','partially_refunded','refunded','voided','cancelled'));
+ALTER TABLE sales DROP CONSTRAINT IF EXISTS sales_written_off_check;
+ALTER TABLE sales DROP COLUMN IF EXISTS written_off;
+ALTER TABLE sales DROP COLUMN IF EXISTS receipt_prints;
+ALTER TABLE sales DROP COLUMN IF EXISTS converted_sale_id;
+ALTER TABLE sales DROP COLUMN IF EXISTS quotation_id;
+ALTER TABLE sales DROP COLUMN IF EXISTS cart;
+DROP INDEX IF EXISTS money_transfers_till_idx;
+ALTER TABLE money_transfers DROP COLUMN IF EXISTS till_session_id;
