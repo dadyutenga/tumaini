@@ -146,6 +146,9 @@ func (s *Service) createTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, in
 	if err != nil {
 		return 0, nil, err
 	}
+	if !tot.Total.IsPositive() {
+		return 0, nil, httpx.BadRequest("invalid_total", "The sale total must be greater than zero. Check the product prices")
+	}
 	pct := money.Zero
 	if tot.Subtotal.IsPositive() {
 		pct = tot.Discount.Div(tot.Subtotal).Mul(decimal.NewFromInt(100))
