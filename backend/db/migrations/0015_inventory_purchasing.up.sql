@@ -12,3 +12,8 @@ CREATE INDEX IF NOT EXISTS purchase_returns_supplier_idx ON purchase_returns (su
 CREATE INDEX IF NOT EXISTS purchase_returns_receipt_idx ON purchase_returns (receipt_id);
 CREATE INDEX IF NOT EXISTS purchase_returns_invoice_idx ON purchase_returns (invoice_id) WHERE invoice_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS purchase_return_items_return_idx ON purchase_return_items (return_id);
+
+-- A dispatched transfer can be returned in full to the sender (FR-INV-25).
+ALTER TABLE stock_transfers DROP CONSTRAINT IF EXISTS stock_transfers_status_check;
+ALTER TABLE stock_transfers ADD CONSTRAINT stock_transfers_status_check
+  CHECK (status IN ('draft','dispatched','received','received_with_difference','returned','cancelled'));

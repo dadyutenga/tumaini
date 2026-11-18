@@ -1,3 +1,6 @@
+ALTER TABLE stock_transfers DROP CONSTRAINT IF EXISTS stock_transfers_status_check;
+ALTER TABLE stock_transfers ADD CONSTRAINT stock_transfers_status_check
+  CHECK (status IN ('draft','dispatched','received','received_with_difference','cancelled'));
 DROP INDEX IF EXISTS purchase_return_items_return_idx;
 DROP INDEX IF EXISTS purchase_returns_invoice_idx;
 DROP INDEX IF EXISTS purchase_returns_receipt_idx;
