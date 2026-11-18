@@ -27,10 +27,19 @@ func (s *Service) ToUser(ctx context.Context, tx pgx.Tx, businessID, userID uuid
 	if m.EntityID != nil {
 		entity = *m.EntityID
 	}
-	_, err := tx.Exec(ctx, `
+	id := ids.New()
+	if _, err := tx.Exec(ctx, `
 		INSERT INTO notifications (id, business_id, user_id, type, title, body, link, entity_type, entity_id)
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-	`, ids.New(), businessID, userID, m.Type, m.Title, m.Body, m.Link, nullStr(m.EntityType), entity)
+	`, id, businessID, userID, m.Type, m.Title, m.Body, m.Link, nullStr(m.EntityType), entity); err != nil {
+		return err
+	}
+	// Email and SMS fan-out runs as a job, only when the business turned a channel on for this type.
+	_, err := tx.Exec(ctx, `
+		INSERT INTO jobs (id, business_id, kind, payload, run_at)
+		SELECT $1, $2, 'send_notification', jsonb_build_object('notification_id', $3::uuid), now()
+		WHERE EXISTS (SELECT 1 FROM notification_rules r WHERE r.type = $4 AND (r.email OR r.sms))
+	`, ids.New(), businessID, id, m.Type)
 	return err
 }
 

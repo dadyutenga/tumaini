@@ -1,0 +1,197 @@
+openapi: 3.1.0
+info:
+  title: Tumaini BMS API
+  version: 1.0.0
+  description: |
+    Business management API: sales, stock, purchasing, money, staff and payroll for a business with one or more branches.
+
+    Conventions (see docs/spec/API reference.md):
+    - JSON in and out. Success is `{ "data": ... }`; lists add `meta: {page, per_page, total}`.
+    - Errors are `{ "error": { "code", "message", "fields" } }`. 400 malformed, 401 not signed in, 403 no permission,
+      404 missing or outside your scope, 409 state conflict, 422 field validation, 429 rate limited.
+    - 202 means the action waits for approval; the body carries `approval_request_id`.
+    - Money and quantities are decimal strings, never floats. Business dates are `YYYY-MM-DD`; timestamps are RFC 3339 UTC.
+    - `x-permission` on each operation is the permission key the route checks. Scope (all, branch, own) then limits rows.
+    - This file is generated: edit docs/api/base.yaml or docs/api/fragments/*.yaml and run `go run ./cmd/openapi` in backend/.
+servers:
+  - url: /api/v1
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    refreshCookie:
+      type: apiKey
+      in: cookie
+      name: refresh_token
+  parameters:
+    BranchId:
+      name: X-Branch-Id
+      in: header
+      required: false
+      description: Active branch. Users whose scope is `all` may send `all` on GET routes. Defaults to the user's default branch.
+      schema:
+        type: string
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: UUID. The same key and body replays the first response; the same key with a different body returns 409.
+      schema:
+        type: string
+        format: uuid
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PerPage:
+      name: per_page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 25
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    From:
+      name: from
+      in: query
+      schema:
+        type: string
+        format: date
+    To:
+      name: to
+      in: query
+      schema:
+        type: string
+        format: date
+    Format:
+      name: format
+      in: query
+      schema:
+        type: string
+        enum: [json, csv, xlsx, pdf]
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              example: validation_failed
+            message:
+              type: string
+              example: Check the highlighted fields
+            fields:
+              type: object
+              additionalProperties:
+                type: string
+    Meta:
+      type: object
+      required: [page, per_page, total]
+      properties:
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+    Money:
+      type: string
+      pattern: '^-?[0-9]+(\.[0-9]+)?$'
+      example: '2500.00'
+    PendingApproval:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            approval_request_id:
+              type: string
+              format: uuid
+            status:
+              type: string
+              enum: [pending_approval]
+            id:
+              type: string
+              format: uuid
+    ReportTable:
+      type: object
+      properties:
+        title:
+          type: string
+        columns:
+          type: array
+          items:
+            type: object
+            properties:
+              key:
+                type: string
+              label:
+                type: string
+        rows:
+          type: array
+          items:
+            type: object
+        totals:
+          type: object
+  responses:
+    BadRequest:
+      description: Malformed request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Not signed in or session ended
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: Missing permission
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Missing or outside the caller's scope
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: State conflict, for example insufficient_stock, invalid_status or period_locked
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unprocessable:
+      description: Field validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Accepted:
+      description: Waiting for approval
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/PendingApproval'
+paths: {}

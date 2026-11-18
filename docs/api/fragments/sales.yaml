@@ -1,0 +1,1557 @@
+paths:
+  /tills/current:
+    get:
+      summary: The caller's open till session with expected cash, or null
+      operationId: get_tills_current
+      tags:
+      - Tills
+      x-permission: tills.open_close
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /tills/open:
+    post:
+      summary: Open a till session on a cash account with an opening float
+      operationId: post_tills_open
+      tags:
+      - Tills
+      x-permission: tills.open_close
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                money_account_id: &id001
+                  type: string
+                  format: uuid
+                opening_float: &id002
+                  $ref: '#/components/schemas/Money'
+              required:
+              - money_account_id
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  status: open
+                  opening_float: '50000.00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /tills:
+    get:
+      summary: List till sessions in scope
+      operationId: get_tills
+      tags:
+      - Tills
+      x-permission: tills.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - open
+          - closed
+      - name: cashier_id
+        in: query
+        schema: *id001
+      - &id006
+        $ref: '#/components/parameters/From'
+      - &id007
+        $ref: '#/components/parameters/To'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /tills/{id}:
+    get:
+      summary: 'Session report: sales by method, refunds, customer payments, pay-outs, expected, counted, difference'
+      operationId: get_tills_id
+      tags:
+      - Tills
+      x-permission: tills.view
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  status: open
+                  opening_float: '0.00'
+                  cash_sales: '4000.00'
+                  payout_total: '2500.00'
+                  expected_cash: '1500.00'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /tills/{id}/close:
+    post:
+      summary: Close a till with counted cash. Posts any difference to cash over or short and notifies above the threshold
+      operationId: post_tills_id_close
+      tags:
+      - Tills
+      x-permission: tills.open_close
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                counted_cash: *id002
+                note: &id003
+                  type: string
+              required:
+              - counted_cash
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  status: closed
+                  expected_cash: '1500.00'
+                  counted_cash: '1500.00'
+                  difference: '0.00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /tills/{id}/pay-out:
+    post:
+      summary: Move cash out of an open till to a safe or bank as a money transfer
+      operationId: post_tills_id_pay_out
+      tags:
+      - Tills
+      x-permission: tills.open_close
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                to_account_id: *id001
+                amount: *id002
+                reference: *id003
+                note: *id003
+              required:
+              - to_account_id
+              - amount
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: MAIN-MTX-000001
+                  amount: '2500.00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /sales/preview:
+    post:
+      summary: 'Price a cart: lines, discount, tax and total. No side effects'
+      operationId: post_sales_preview
+      tags:
+      - Sales
+      x-permission: sales.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: &id005
+              type: object
+              properties:
+                customer_id: *id001
+                items:
+                  type: array
+                  items: &id009
+                    type: object
+                    properties:
+                      product_id: *id001
+                      qty:
+                        type: string
+                        example: '3'
+                      discount: &id004
+                        type: object
+                        properties:
+                          type:
+                            type: string
+                            enum:
+                            - percent
+                            - amount
+                          value: *id002
+                        required:
+                        - type
+                        - value
+                    required:
+                    - product_id
+                    - qty
+                discount: *id004
+                payments:
+                  type: array
+                  items: &id011
+                    type: object
+                    properties:
+                      method:
+                        type: string
+                        enum:
+                        - cash
+                        - mobile_money
+                        - bank
+                      money_account_id: *id001
+                      amount: *id002
+                      reference: *id003
+                    required:
+                    - method
+                    - money_account_id
+                    - amount
+                note: *id003
+                held_id: *id001
+              required:
+              - items
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  status: preview
+                  total: '9000.00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /sales:
+    post:
+      summary: Create and complete a sale. 202 when a discount or credit needs approval
+      operationId: post_sales
+      tags:
+      - Sales
+      x-permission: sales.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: *id005
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data: &id008
+                  id: 0192f0d5-...
+                  number: DSM01-SAL-000124
+                  status: completed
+                  subtotal: '9500.00'
+                  discount_total: '500.00'
+                  tax_total: '0.00'
+                  total: '9000.00'
+                  paid_total: '9000.00'
+                  balance: '0.00'
+                  change_due: '1000.00'
+                  receipt_url: /api/v1/sales/0192f0d5-.../receipt
+        '202':
+          $ref: '#/components/responses/Accepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+    get:
+      summary: Sales history in scope. Cashiers with own scope see only their sales
+      operationId: get_sales
+      tags:
+      - Sales
+      x-permission: sales.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - *id006
+      - *id007
+      - name: status
+        in: query
+        schema: *id003
+      - name: customer_id
+        in: query
+        schema: *id001
+      - name: cashier_id
+        in: query
+        schema: *id001
+      - name: method
+        in: query
+        schema:
+          type: string
+          enum:
+          - cash
+          - mobile_money
+          - bank
+      - name: q
+        in: query
+        schema: *id003
+        description: Number, customer name or phone
+      - name: sort
+        in: query
+        schema: *id003
+        description: created_at, business_date, total, number, balance; prefix - for descending
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /sales/hold:
+    post:
+      summary: Save a held cart. Reserves no stock
+      operationId: post_sales_hold
+      tags:
+      - Sales
+      x-permission: sales.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: *id005
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: HOLD-...
+                  status: held
+                  total: '4000.00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /sales/held:
+    get:
+      summary: The caller's held carts in the active branch, with the stored cart
+      operationId: get_sales_held
+      tags:
+      - Sales
+      x-permission: sales.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /sales/held/{id}:
+    delete:
+      summary: Discard one of the caller's held carts
+      operationId: delete_sales_held_id
+      tags:
+      - Sales
+      x-permission: sales.create
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '204':
+          description: No content
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /sales/{id}:
+    get:
+      summary: Sale detail with items, payments, returns, approvals and audit trail
+      operationId: get_sales_id
+      tags:
+      - Sales
+      x-permission: sales.view
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data: *id008
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /sales/{id}/receipt:
+    get:
+      summary: Receipt print data. Every print after the first has copy=true
+      operationId: get_sales_id_receipt
+      tags:
+      - Sales
+      x-permission: sales.view
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  number: DSM01-SAL-000124
+                  copy: false
+                  receipt_prints: 1
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /sales/{id}/invoice:
+    get:
+      summary: A4 invoice data, or the PDF with format=pdf
+      operationId: get_sales_id_invoice
+      tags:
+      - Sales
+      x-permission: sales.view
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      - name: format
+        in: query
+        schema:
+          type: string
+          enum:
+          - json
+          - pdf
+      responses:
+        '200':
+          description: Invoice JSON or PDF
+          content:
+            application/json:
+              schema:
+                type: object
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /sales/{id}/void:
+    post:
+      summary: 'Void a sale on its own business day: stock back, payments voided, journal reversed. 202 above the sales.void limit'
+      operationId: post_sales_id_void
+      tags:
+      - Sales
+      x-permission: sales.void
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: *id003
+              required:
+              - reason
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  status: voided
+        '202':
+          $ref: '#/components/responses/Accepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /sales/{id}/payments:
+    post:
+      summary: Receive a payment against this sale balance
+      operationId: post_sales_id_payments
+      tags:
+      - Sales
+      x-permission: payments.receive
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: *id002
+                method:
+                  type: string
+                  enum:
+                  - cash
+                  - mobile_money
+                  - bank
+                money_account_id: *id001
+                reference: *id003
+              required:
+              - amount
+              - method
+              - money_account_id
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: MAIN-PIN-000004
+                  amount: '1500.00'
+                  balance: '500.00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /sales/{id}/returns:
+    get:
+      summary: Returns of a sale
+      operationId: get_sales_id_returns
+      tags:
+      - Returns
+      x-permission: sales.view
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      summary: Request a return. Completes at once within the caller's sales.refund_approve limit, else 202
+      operationId: post_sales_id_returns
+      tags:
+      - Returns
+      x-permission: sales.refund_request
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: *id003
+                refund_method:
+                  type: string
+                  enum:
+                  - cash
+                  - mobile_money
+                  - bank
+                  - reduce_debt
+                  - customer_credit
+                money_account_id: *id001
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      sale_item_id: *id001
+                      qty: *id003
+                      restock:
+                        type: boolean
+                    required:
+                    - sale_item_id
+                    - qty
+              required:
+              - reason
+              - items
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: MAIN-RET-000001
+                  status: completed
+                  refund_total: '1000.00'
+        '202':
+          $ref: '#/components/responses/Accepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /sale-returns:
+    get:
+      summary: All sale returns in scope
+      operationId: get_sale_returns
+      tags:
+      - Returns
+      x-permission: sales.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - pending_approval
+          - completed
+          - rejected
+      - name: sale_id
+        in: query
+        schema: *id001
+      - *id006
+      - *id007
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /sale-returns/{id}:
+    get:
+      summary: Return detail with lines
+      operationId: get_sale_returns_id
+      tags:
+      - Returns
+      x-permission: sales.view
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /quotations:
+    get:
+      summary: List quotations
+      operationId: get_quotations
+      tags:
+      - Quotations
+      x-permission: quotations.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - draft
+          - converted
+      - name: customer_id
+        in: query
+        schema: *id001
+      - name: q
+        in: query
+        schema: *id003
+      - *id006
+      - *id007
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      summary: Save a priced cart as a quotation. No stock or money effect
+      operationId: post_quotations
+      tags:
+      - Quotations
+      x-permission: quotations.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: &id010
+              type: object
+              properties:
+                customer_id: *id001
+                items:
+                  type: array
+                  items: *id009
+                discount: *id004
+                note: *id003
+                valid_until: &id012
+                  type: string
+                  format: date
+              required:
+              - items
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: MAIN-QUO-000001
+                  status: draft
+                  total: '3000.00'
+                  valid_until: '2026-11-30'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /quotations/{id}:
+    get:
+      summary: Quotation detail
+      operationId: get_quotations_id
+      tags:
+      - Quotations
+      x-permission: quotations.manage
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Edit an open quotation and reprice it
+      operationId: put_quotations_id
+      tags:
+      - Quotations
+      x-permission: quotations.manage
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: *id010
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /quotations/{id}/convert:
+    post:
+      summary: Turn an open, unexpired quotation into a sale at the quoted prices
+      operationId: post_quotations_id_convert
+      tags:
+      - Quotations
+      x-permission: sales.create
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                payments:
+                  type: array
+                  items: *id011
+                note: *id003
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: 0192f0d5-...
+                  number: DSM01-SAL-000124
+                  status: completed
+                  subtotal: '9500.00'
+                  discount_total: '500.00'
+                  tax_total: '0.00'
+                  total: '9000.00'
+                  paid_total: '9000.00'
+                  balance: '0.00'
+                  change_due: '1000.00'
+                  receipt_url: /api/v1/sales/0192f0d5-.../receipt
+                  quotation_id: '...'
+        '202':
+          $ref: '#/components/responses/Accepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /customers:
+    get:
+      summary: List and search customers with balance and credit
+      operationId: get_customers
+      tags:
+      - Customers
+      x-permission: customers.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: q
+        in: query
+        schema: *id003
+        description: Name, phone or email
+      - name: is_active
+        in: query
+        schema:
+          type: boolean
+      - name: has_balance
+        in: query
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+    post:
+      summary: Create a customer. The credit limit is kept only with customers.credit_limit
+      operationId: post_customers
+      tags:
+      - Customers
+      x-permission: customers.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: *id003
+                phone: *id003
+                email: *id003
+                address: *id003
+                tax_number: *id003
+                credit_limit: *id002
+                payment_terms_days:
+                  type: integer
+                notes: *id003
+              required:
+              - name
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  name: Juma
+                  balance: '0.00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /customers/debts:
+    get:
+      summary: 'Aged debt list: 0-30, 31-60, 61-90 and over 90 days'
+      operationId: get_customers_debts
+      tags:
+      - Customers
+      x-permission: customers.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+  /customers/{id}:
+    get:
+      summary: 'Profile with account summary: purchases, paid, balance, credit, available credit, last activity'
+      operationId: get_customers_id
+      tags:
+      - Customers
+      x-permission: customers.view
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  balance: '500.00'
+                  total_purchases: '3000.00'
+                  total_paid: '2500.00'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      summary: Edit a customer. The walk-in customer cannot be edited
+      operationId: put_customers_id
+      tags:
+      - Customers
+      x-permission: customers.manage
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: *id003
+                phone: *id003
+                email: *id003
+                address: *id003
+                tax_number: *id003
+                notes: *id003
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /customers/{id}/credit-limit:
+    put:
+      summary: Set credit limit and payment terms
+      operationId: put_customers_id_credit_limit
+      tags:
+      - Customers
+      x-permission: customers.credit_limit
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                credit_limit: *id002
+                payment_terms_days:
+                  type: integer
+              required:
+              - credit_limit
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /customers/{id}/deactivate:
+    post:
+      summary: Deactivate a customer who owes nothing
+      operationId: post_customers_id_deactivate
+      tags:
+      - Customers
+      x-permission: customers.manage
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /customers/{id}/unpaid:
+    get:
+      summary: Unpaid sales with balance, age and days overdue
+      operationId: get_customers_id_unpaid
+      tags:
+      - Customers
+      x-permission: customers.view
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /customers/{id}/statement:
+    get:
+      summary: Statement with opening, running and closing balance. format=pdf for a PDF
+      operationId: get_customers_id_statement
+      tags:
+      - Customers
+      x-permission: customers.statement
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      - *id006
+      - *id007
+      - name: format
+        in: query
+        schema:
+          type: string
+          enum:
+          - json
+          - pdf
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /customers/{id}/payments:
+    post:
+      summary: Receive a payment. Allocated oldest first or by the given allocations; any extra becomes customer credit
+      operationId: post_customers_id_payments
+      tags:
+      - Customers
+      x-permission: payments.receive
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: *id002
+                method:
+                  type: string
+                  enum:
+                  - cash
+                  - mobile_money
+                  - bank
+                money_account_id: *id001
+                reference: *id003
+                date: *id012
+                allocations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      sale_id: *id001
+                      amount: *id002
+                    required:
+                    - sale_id
+                    - amount
+              required:
+              - amount
+              - method
+              - money_account_id
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: MAIN-PIN-000002
+                  amount: '20000.00'
+                  allocated: '20000.00'
+                  credit: '0.00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+  /customers/{id}/write-off:
+    post:
+      summary: Write off bad debt oldest sale first. amount 0 or absent writes off the whole balance
+      operationId: post_customers_id_write_off
+      tags:
+      - Customers
+      x-permission: customers.write_off
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount: *id002
+                reason: *id003
+              required:
+              - reason
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  amount: '500.00'
+                  remaining_balance: '0.00'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'

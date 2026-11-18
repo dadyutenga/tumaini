@@ -116,6 +116,9 @@ type Claims struct {
 type Tokens struct {
 	Secret []byte
 	Access time.Duration
+	// Now is the clock used to check expiry. It must match the clock used to sign,
+	// otherwise a fixed or skewed application clock makes fresh tokens look expired.
+	Now func() time.Time
 }
 
 func (t Tokens) Sign(userID, businessID, roleID, sessionID uuid.UUID, permVersion int, now time.Time) (string, error) {
@@ -141,11 +144,19 @@ func (t Tokens) Verify(raw string) (Claims, error) {
 			return nil, errors.New("unexpected signing method")
 		}
 		return t.Secret, nil
-	})
+	}, t.parserOptions()...)
 	if err != nil {
 		return Claims{}, err
 	}
 	return claims, nil
+}
+
+func (t Tokens) parserOptions() []jwt.ParserOption {
+	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired()}
+	if t.Now != nil {
+		opts = append(opts, jwt.WithTimeFunc(t.Now))
+	}
+	return opts
 }
 
 // Grant is the scope and optional approval limit for one permission.
@@ -187,6 +198,56 @@ func (p *Principal) AllowsBranch(id uuid.UUID) bool {
 		}
 	}
 	return false
+}
+
+// BranchFilter returns the branches a list query must be limited to for a grant.
+// nil means no branch filter. An active branch (X-Branch-Id or default) always
+// narrows to that branch; the middleware has already checked it is allowed.
+func (p *Principal) BranchFilter(g Grant) []uuid.UUID {
+	if p.BranchID != nil {
+		return []uuid.UUID{*p.BranchID}
+	}
+	if p.IsOwner || g.Scope == "all" {
+		return nil
+	}
+	if p.BranchIDs == nil {
+		return []uuid.UUID{}
+	}
+	return p.BranchIDs
+}
+
+// ScopeBranches is BranchFilter for the grant of key.
+func (p *Principal) ScopeBranches(key string) []uuid.UUID {
+	g, _ := p.Can(key)
+	return p.BranchFilter(g)
+}
+
+// OwnOnly returns the user ID when the grant is limited to own records.
+func (p *Principal) OwnOnly(key string) *uuid.UUID {
+	if p.IsOwner {
+		return nil
+	}
+	if g, ok := p.Can(key); ok && g.Scope == "own" {
+		id := p.UserID
+		return &id
+	}
+	return nil
+}
+
+// SeesBranch reports whether a single record in branch is inside the caller's scope for key.
+// Detail routes return 404 when this is false, so existence is not revealed.
+func (p *Principal) SeesBranch(key string, branch uuid.UUID) bool {
+	if p.IsOwner {
+		return true
+	}
+	g, ok := p.Can(key)
+	if !ok {
+		return false
+	}
+	if g.Scope == "all" {
+		return true
+	}
+	return p.AllowsBranch(branch)
 }
 
 // WithinLimit reports whether amount is allowed without a further approval.

@@ -270,8 +270,12 @@ func (h *Handler) LoginHistory(c fiber.Ctx) error {
 		}
 		userID = &id
 	}
+	from, to, err := httpx.Range(c)
+	if err != nil {
+		return err
+	}
 	page := httpx.PageFrom(c)
-	list, total, err := h.Svc.LoginHistory(c.Context(), middleware.Principal(c), userID, c.Query("from"), c.Query("to"), page)
+	list, total, err := h.Svc.LoginHistory(c.Context(), middleware.Principal(c), userID, from, to, page)
 	if err != nil {
 		return err
 	}

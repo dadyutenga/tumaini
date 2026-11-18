@@ -14,6 +14,7 @@ import (
 	"bms/internal/config"
 	"bms/internal/kernel/approval"
 	"bms/internal/kernel/audit"
+	"bms/internal/kernel/deps"
 	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/notify"
 	"bms/internal/kernel/stock"
@@ -31,12 +32,14 @@ import (
 	"bms/internal/modules/purchasing"
 	"bms/internal/modules/reports"
 	"bms/internal/modules/sales"
+	"bms/internal/modules/system"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/jobs"
 	"bms/internal/platform/middleware"
+	"bms/internal/platform/sender"
 	"bms/internal/platform/storage"
 )
 
@@ -44,6 +47,8 @@ type App struct {
 	Fiber *fiber.App
 	DB    *db.DB
 	Jobs  *jobs.Client
+	// Recovery is exposed so tests can plug in a recording sender.
+	Recovery *identity.Recovery
 }
 
 func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) {
@@ -61,30 +66,14 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	led := ledger.New()
 	st := stock.New()
 	ap := approval.New(n)
-	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, Ledger: led, TTL: cfg.RefreshTokenTTL}
-	orgSvc := org.New(database, aud, led, store, clk)
-	catSvc := catalog.New(database, aud)
-	invSvc := inventory.New(database, st, led, aud, n, ap, clk)
-	salSvc := sales.New(database, st, led, aud, ap, clk)
-	cusSvc := customers.New(database, led, aud, clk)
-	expSvc := expenses.New(database, led, aud, ap, clk)
-	finSvc := finance.New(database, led, aud, clk)
-	purSvc := purchasing.New(database, st, led, aud, ap, clk)
-	hrSvc := hr.New(database, led, clk)
-	attSvc := attendance.New(database, clk)
-	paySvc := payroll.New(database, led, clk)
-	repSvc := reports.New(database)
-	boxSvc := inbox.New(database, ap)
-
-	ap.Register("discount", approval.Hooks{OnApproved: salSvc.OnApproved, OnRejected: salSvc.OnRejected})
-	ap.Register("credit_override", approval.Hooks{OnApproved: salSvc.OnApproved, OnRejected: salSvc.OnRejected})
-	ap.Register("refund", approval.Hooks{OnApproved: salSvc.OnReturnApproved})
-	ap.Register("expense", approval.Hooks{OnApproved: expSvc.OnApproved, OnRejected: expSvc.OnRejected})
-	ap.Register("stock_adjustment", approval.Hooks{OnApproved: invSvc.OnAdjustmentApproved, OnRejected: invSvc.OnAdjustmentRejected})
-	ap.Register("purchase_order", approval.Hooks{OnApproved: purSvc.OnPOApproved})
-
+	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, Ledger: led, TTL: cfg.RefreshTokenTTL}
 	worker := jobs.New(database.Pool)
-	worker.Register(jobs.CheckLowStock, invSvc.CheckLowStock)
+	worker.SetClock(clk.Now)
+	d := deps.Deps{
+		Config: cfg, DB: database, Ledger: led, Stock: st, Audit: aud, Notify: n, Approval: ap,
+		Clock: clk, Store: store, Jobs: worker,
+		Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads},
+	}
 
 	fiberApp := fiber.New(fiber.Config{
 		AppName:      "bms-api",
@@ -112,26 +101,30 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 
 	api := fiberApp.Group("/api/v1")
 	limit := middleware.NewLimiter(30, time.Minute).Handler()
-	identity.RegisterPublic(api.Group("/auth"), &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL}, limit)
+	authGroup := api.Group("/auth")
+	identity.RegisterPublic(authGroup, &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL}, limit)
+	recovery := &identity.Recovery{Svc: ident}
+	recovery.Email, recovery.SMS = sender.FromConfig(cfg)
+	authGroup.Post("/forgot-password", limit, recovery.ForgotHandler)
+	authGroup.Post("/reset-password", limit, recovery.ResetHandler)
 
-	private := api.Group("", middleware.Auth(auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL}, ident.Load), middleware.Branch(database))
+	private := api.Group("", middleware.Auth(auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, ident.Load), middleware.Branch(database))
 	identity.Register(private, &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL})
-	org.Register(private, &org.Handler{Svc: orgSvc})
-	catalog.Register(private, &catalog.Handler{Svc: catSvc})
-	inventory.Register(private, &inventory.Handler{Svc: invSvc})
-	sales.Register(private, &sales.Handler{Svc: salSvc})
-	customers.Register(private, &customers.Handler{Svc: cusSvc})
-	expenses.Register(private, &expenses.Handler{Svc: expSvc})
-	finance.Register(private, &finance.Handler{Svc: finSvc})
-	purchasing.Register(private, &purchasing.Handler{Svc: purSvc})
-	hr.Register(private, &hr.Handler{Svc: hrSvc})
-	attendance.Register(private, &attendance.Handler{Svc: attSvc})
-	payroll.Register(private, &payroll.Handler{Svc: paySvc})
-	reports.Register(private, &reports.Handler{Svc: repSvc})
-	inbox.Register(private, &inbox.Handler{Svc: boxSvc})
+	for _, mount := range []func(fiber.Router, deps.Deps){
+		mountAny(org.Mount), mountAny(catalog.Mount), mountAny(inventory.Mount), mountAny(sales.Mount),
+		mountAny(customers.Mount), mountAny(expenses.Mount), mountAny(finance.Mount), mountAny(purchasing.Mount),
+		mountAny(hr.Mount), mountAny(attendance.Mount), mountAny(payroll.Mount), mountAny(reports.Mount),
+		mountAny(inbox.Mount), mountAny(system.Mount),
+	} {
+		mount(private, d)
+	}
 
-	_ = os.Stderr
-	return &App{Fiber: fiberApp, DB: database, Jobs: worker}, nil
+	return &App{Fiber: fiberApp, DB: database, Jobs: worker, Recovery: recovery}, nil
+}
+
+// mountAny adapts a module Mount that returns its service.
+func mountAny[T any](m func(fiber.Router, deps.Deps) T) func(fiber.Router, deps.Deps) {
+	return func(r fiber.Router, d deps.Deps) { m(r, d) }
 }
 
 func (a *App) StartJobs(ctx context.Context) { go a.Jobs.Run(ctx) }

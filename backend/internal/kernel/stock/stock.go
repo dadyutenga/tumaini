@@ -2,6 +2,7 @@ package stock
 
 import (
 	"context"
+	"errors"
 	"sort"
 
 	"github.com/google/uuid"
@@ -139,13 +140,74 @@ func (s *Service) one(ctx context.Context, tx pgx.Tx, businessID, branchID uuid.
 	`, ids.New(), businessID, branchID, productID, moveType, signed, unitCost, newQty, newAvg, sourceType, sourceID, createdBy); err != nil {
 		return result{}, err
 	}
-	low := false
 	if _, err := tx.Exec(ctx, `
 		UPDATE stock_levels SET qty_on_hand = $3, avg_cost = $4, low_notified = CASE WHEN $3 > (SELECT reorder_level FROM products WHERE id = $2) THEN false ELSE low_notified END
 		WHERE branch_id = $1 AND product_id = $2
 	`, branchID, productID, newQty, newAvg); err != nil {
 		return result{}, err
 	}
-	_ = low
 	return result{QtyAfter: newQty, AvgAfter: newAvg, UnitCost: unitCost}, nil
+}
+
+// DeductAtCost removes stock valued at a given unit cost instead of the
+// current average, for purchase returns that leave at the price they came in.
+// The remaining stock keeps its total value: new average =
+// (qty x avg - out x cost) / (qty - out), never below zero.
+func (s *Service) DeductAtCost(ctx context.Context, tx pgx.Tx, businessID, branchID uuid.UUID, userID *uuid.UUID, moveType, sourceType string, sourceID uuid.UUID, lines []Line) error {
+	allowNeg, err := s.allowNegative(ctx, tx)
+	if err != nil {
+		return err
+	}
+	sorted := append([]Line(nil), lines...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ProductID.String() < sorted[j].ProductID.String() })
+	for _, ln := range sorted {
+		if ln.Qty.LessThanOrEqual(money.Zero) {
+			continue
+		}
+		var qty, avg decimal.Decimal
+		if err := tx.QueryRow(ctx, `
+			SELECT qty_on_hand, avg_cost FROM stock_levels WHERE branch_id = $1 AND product_id = $2 FOR UPDATE
+		`, branchID, ln.ProductID).Scan(&qty, &avg); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return httpx.Conflict("insufficient_stock", "There is not enough stock for this product")
+			}
+			return err
+		}
+		if !allowNeg && qty.LessThan(ln.Qty) {
+			return httpx.Conflict("insufficient_stock", "There is not enough stock for this product")
+		}
+		cost := money.Cost(ln.UnitCost)
+		newQty := qty.Sub(ln.Qty)
+		newAvg := money.Zero
+		if newQty.IsPositive() {
+			newAvg = money.Cost(qty.Mul(avg).Sub(ln.Qty.Mul(cost)).Div(newQty))
+			if newAvg.IsNegative() {
+				newAvg = money.Zero
+			}
+		}
+		var createdBy any
+		if userID != nil {
+			createdBy = *userID
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO stock_movements (id, business_id, branch_id, product_id, type, qty, unit_cost, qty_after, avg_cost_after, source_type, source_id, created_by)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+		`, ids.New(), businessID, branchID, ln.ProductID, moveType, ln.Qty.Neg(), cost, newQty, newAvg, sourceType, sourceID, createdBy); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE stock_levels SET qty_on_hand = $3, avg_cost = $4 WHERE branch_id = $1 AND product_id = $2`, branchID, ln.ProductID, newQty, newAvg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// Level returns quantity and average cost of a product in a branch (zero when never stocked).
+func (s *Service) Level(ctx context.Context, tx pgx.Tx, branchID, productID uuid.UUID) (decimal.Decimal, decimal.Decimal, error) {
+	var qty, avg decimal.Decimal
+	err := tx.QueryRow(ctx, `SELECT qty_on_hand, avg_cost FROM stock_levels WHERE branch_id = $1 AND product_id = $2`, branchID, productID).Scan(&qty, &avg)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return money.Zero, money.Zero, nil
+	}
+	return qty, avg, err
 }

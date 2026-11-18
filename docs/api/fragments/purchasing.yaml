@@ -1,0 +1,2651 @@
+paths:
+  /suppliers:
+    get:
+      summary: List suppliers with balance owed
+      operationId: list_suppliers
+      tags:
+      - Suppliers
+      x-permission: suppliers.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Name or phone
+      - name: is_active
+        in: query
+        required: false
+        schema:
+          type: boolean
+        description: Active flag
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: '...'
+                  name: Mill Ltd
+                  phone: '255700000000'
+                  payment_terms_days: 14
+                  is_active: true
+                  balance: '535000.00'
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+    post:
+      summary: Create a supplier
+      operationId: create_supplier
+      tags:
+      - Suppliers
+      x-permission: suppliers.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                contact_person:
+                  type: string
+                phone:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                address:
+                  type: string
+                tax_number:
+                  type: string
+                payment_terms_days:
+                  type: integer
+              required:
+              - name
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  name: Mill Ltd
+                  phone: '255700000000'
+                  payment_terms_days: 14
+                  is_active: true
+                  balance: '535000.00'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '422':
+          description: Field validation failed (validation_failed with fields)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /suppliers/debts:
+    get:
+      summary: Aged payables for all suppliers
+      operationId: supplier_debts
+      tags:
+      - Suppliers
+      x-permission: suppliers.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  suppliers:
+                  - supplier_id: '...'
+                    name: Mill Ltd
+                    '0_30': '535000.00'
+                    '31_60': '0.00'
+                    '61_90': '0.00'
+                    over_90: '0.00'
+                    total: '535000.00'
+                    overdue: '0.00'
+                  totals:
+                    total: '535000.00'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /suppliers/{id}:
+    get:
+      summary: Profile with account summary
+      operationId: get_supplier
+      tags:
+      - Suppliers
+      x-permission: suppliers.view
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  name: Mill Ltd
+                  phone: '255700000000'
+                  payment_terms_days: 14
+                  is_active: true
+                  balance: '535000.00'
+                  account:
+                    total_purchased: '1849000.00'
+                    total_paid: '1009000.00'
+                    balance: '535000.00'
+                    advance: '0.00'
+                    aging:
+                      '0_30': '535000.00'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+    put:
+      summary: Edit a supplier
+      operationId: update_supplier
+      tags:
+      - Suppliers
+      x-permission: suppliers.manage
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                contact_person:
+                  type: string
+                phone:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                address:
+                  type: string
+                tax_number:
+                  type: string
+                payment_terms_days:
+                  type: integer
+              required:
+              - name
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  name: Mill Ltd
+                  phone: '255700000000'
+                  payment_terms_days: 14
+                  is_active: true
+                  balance: '535000.00'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '422':
+          description: Field validation failed (validation_failed with fields)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /suppliers/{id}/deactivate:
+    post:
+      summary: Deactivate a supplier
+      operationId: deactivate_supplier
+      tags:
+      - Suppliers
+      x-permission: suppliers.manage
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  is_active: false
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /suppliers/{id}/purchases:
+    get:
+      summary: Orders, receipts and invoices of the supplier
+      operationId: supplier_purchases
+      tags:
+      - Suppliers
+      x-permission: po.view
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  purchase_orders: []
+                  goods_receipts: []
+                  purchase_invoices: []
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /suppliers/{id}/unpaid:
+    get:
+      summary: Unpaid invoices with age
+      operationId: supplier_unpaid
+      tags:
+      - Suppliers
+      x-permission: suppliers.view
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: DSM01-PINV-000001
+                  balance: '525000.00'
+                  age_days: 3
+                  overdue: false
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /suppliers/{id}/statement:
+    get:
+      summary: Statement with running balance. format=pdf downloads a PDF
+      operationId: supplier_statement
+      tags:
+      - Suppliers
+      x-permission: suppliers.view
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: From date
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: To date
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - json
+          - pdf
+        description: Output
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  opening_balance: '0.00'
+                  lines:
+                  - date: '2026-11-16'
+                    type: purchase_invoice
+                    description: Purchase invoice ...
+                    debit: '0.00'
+                    credit: '1830000.00'
+                    balance: '1830000.00'
+                  closing_balance: '535000.00'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /suppliers/{id}/payments:
+    post:
+      summary: Pay a supplier. Allocated oldest invoice first unless allocations are given; any excess is an advance
+      operationId: pay_supplier
+      tags:
+      - Suppliers
+      x-permission: payments.pay
+      description: Amounts above the caller's payments.pay limit are refused with 403 over_limit.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount:
+                  type: string
+                  pattern: ^-?[0-9]+(\.[0-9]+)?$
+                  example: '2500.00'
+                method:
+                  type: string
+                  enum:
+                  - cash
+                  - bank
+                  - mobile_money
+                money_account_id:
+                  type: string
+                  format: uuid
+                reference:
+                  type: string
+                date:
+                  type: string
+                  format: date
+                note:
+                  type: string
+                allocations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      invoice_id:
+                        type: string
+                        format: uuid
+                      amount:
+                        type: string
+                        pattern: ^-?[0-9]+(\.[0-9]+)?$
+                        example: '2500.00'
+                    required:
+                    - invoice_id
+                    - amount
+              required:
+              - amount
+              - money_account_id
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: DSM01-POUT-000001
+                  amount: '1000000.00'
+                  allocated: '1000000.00'
+                  advance: '0.00'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '422':
+          description: Field validation failed (validation_failed with fields)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /purchase-orders:
+    get:
+      summary: List purchase orders
+      operationId: list_purchase_orders
+      tags:
+      - Purchasing
+      x-permission: po.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Status
+      - name: supplier_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+        description: Supplier
+      - name: product_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+        description: Contains product
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+        description: Number
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: From date
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: To date
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: '...'
+                  number: DSM01-PO-000001
+                  status: draft
+                  supplier_id: '...'
+                  total: '3000000.00'
+                  items:
+                  - product_id: '...'
+                    qty_ordered: '50'
+                    qty_received: '30'
+                    qty_outstanding: '20'
+                    unit_cost: '60000.0000'
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+    post:
+      summary: Create a draft order
+      operationId: create_purchase_order
+      tags:
+      - Purchasing
+      x-permission: po.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                supplier_id:
+                  type: string
+                  format: uuid
+                expected_date:
+                  type: string
+                  format: date
+                note:
+                  type: string
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      product_id:
+                        type: string
+                        format: uuid
+                      qty:
+                        type: string
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        example: '10'
+                      unit_cost:
+                        type: string
+                        pattern: ^-?[0-9]+(\.[0-9]+)?$
+                        example: '2500.00'
+                      tax_rate:
+                        type: string
+                        pattern: ^-?[0-9]+(\.[0-9]+)?$
+                        example: '2500.00'
+                    required:
+                    - product_id
+                    - qty
+                  minItems: 1
+              required:
+              - supplier_id
+              - items
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: DSM01-PO-000001
+                  status: draft
+                  supplier_id: '...'
+                  total: '3000000.00'
+                  items:
+                  - product_id: '...'
+                    qty_ordered: '50'
+                    qty_received: '30'
+                    qty_outstanding: '20'
+                    unit_cost: '60000.0000'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '422':
+          description: Field validation failed (validation_failed with fields)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /purchase-orders/suggest:
+    get:
+      summary: Order lines suggested from low stock in the active branch
+      operationId: suggest_purchase_order
+      tags:
+      - Purchasing
+      x-permission: po.create
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: supplier_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+        description: Supplier
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  product_id: '...'
+                  qty_on_hand: '0'
+                  reorder_level: '10'
+                  qty: '20'
+                  unit_cost: '5000.0000'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /purchase-orders/{id}:
+    get:
+      summary: Detail with ordered, received and outstanding per line
+      operationId: get_purchase_order
+      tags:
+      - Purchasing
+      x-permission: po.view
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: DSM01-PO-000001
+                  status: draft
+                  supplier_id: '...'
+                  total: '3000000.00'
+                  items:
+                  - product_id: '...'
+                    qty_ordered: '50'
+                    qty_received: '30'
+                    qty_outstanding: '20'
+                    unit_cost: '60000.0000'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+    put:
+      summary: Edit a draft order
+      operationId: update_purchase_order
+      tags:
+      - Purchasing
+      x-permission: po.create
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                supplier_id:
+                  type: string
+                  format: uuid
+                expected_date:
+                  type: string
+                  format: date
+                note:
+                  type: string
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      product_id:
+                        type: string
+                        format: uuid
+                      qty:
+                        type: string
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        example: '10'
+                      unit_cost:
+                        type: string
+                        pattern: ^-?[0-9]+(\.[0-9]+)?$
+                        example: '2500.00'
+                      tax_rate:
+                        type: string
+                        pattern: ^-?[0-9]+(\.[0-9]+)?$
+                        example: '2500.00'
+                    required:
+                    - product_id
+                    - qty
+                  minItems: 1
+              required:
+              - supplier_id
+              - items
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: DSM01-PO-000001
+                  status: draft
+                  supplier_id: '...'
+                  total: '3000000.00'
+                  items:
+                  - product_id: '...'
+                    qty_ordered: '50'
+                    qty_received: '30'
+                    qty_outstanding: '20'
+                    unit_cost: '60000.0000'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '422':
+          description: Field validation failed (validation_failed with fields)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /purchase-orders/{id}/submit:
+    post:
+      summary: Approve at once within the po.create limit, else 202
+      operationId: submit_purchase_order
+      tags:
+      - Purchasing
+      x-permission: po.create
+      description: A rejected or cancelled request returns the order to draft.
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  status: approved
+        '202':
+          description: Above the caller's approval limit; waiting for approval
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      approval_request_id:
+                        type: string
+                        format: uuid
+                      status:
+                        type: string
+                        enum:
+                        - pending_approval
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /purchase-orders/{id}/cancel:
+    post:
+      summary: Cancel an order on which nothing was received
+      operationId: cancel_purchase_order
+      tags:
+      - Purchasing
+      x-permission: po.create
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  status: cancelled
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /purchase-orders/{id}/close:
+    post:
+      summary: Close a partially received order
+      operationId: close_purchase_order
+      tags:
+      - Purchasing
+      x-permission: po.approve
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  status: closed
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /purchase-orders/{id}/pdf:
+    get:
+      summary: Printable order
+      operationId: purchase_order_pdf
+      tags:
+      - Purchasing
+      x-permission: po.view
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: File download
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /goods-receipts:
+    get:
+      summary: List goods receipts
+      operationId: list_goods_receipts
+      tags:
+      - Purchasing
+      x-permission: po.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: supplier_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+        description: Supplier
+      - name: po_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+        description: Order
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - invoiced
+          - uninvoiced
+        description: Invoice state
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: From date
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: To date
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: '...'
+                  number: DSM01-GRN-000001
+                  po_id: '...'
+                  po_status: partially_received
+                  extra_costs: '30000.00'
+                  total_value: '1830000.00'
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+    post:
+      summary: Receive against an order, or directly with supplier_id and lines. Posts stock
+      operationId: create_goods_receipt
+      tags:
+      - Purchasing
+      x-permission: grn.create
+      description: Give po_id, or supplier_id for a direct receipt that creates a received order. extra_costs are spread across lines by value. Posts 1200 Dr / 2050 Cr.
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                po_id:
+                  type: string
+                  format: uuid
+                supplier_id:
+                  type: string
+                  format: uuid
+                delivery_note:
+                  type: string
+                extra_costs:
+                  type: string
+                  pattern: ^-?[0-9]+(\.[0-9]+)?$
+                  example: '2500.00'
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      product_id:
+                        type: string
+                        format: uuid
+                      qty:
+                        type: string
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        example: '10'
+                      unit_cost:
+                        type: string
+                        pattern: ^-?[0-9]+(\.[0-9]+)?$
+                        example: '2500.00'
+                    required:
+                    - product_id
+                    - qty
+                  minItems: 1
+              required:
+              - items
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: DSM01-GRN-000001
+                  po_id: '...'
+                  po_status: partially_received
+                  extra_costs: '30000.00'
+                  total_value: '1830000.00'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '422':
+          description: Field validation failed (validation_failed with fields)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /goods-receipts/{id}:
+    get:
+      summary: Receipt detail with lines
+      operationId: get_goods_receipt
+      tags:
+      - Purchasing
+      x-permission: po.view
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: DSM01-GRN-000001
+                  po_id: '...'
+                  po_status: partially_received
+                  extra_costs: '30000.00'
+                  total_value: '1830000.00'
+                  items:
+                  - id: '...'
+                    product_id: '...'
+                    qty_received: '30'
+                    qty_returned: '5'
+                    unit_cost: '61000.0000'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /purchase-invoices:
+    get:
+      summary: List purchase invoices
+      operationId: list_purchase_invoices
+      tags:
+      - Purchasing
+      x-permission: po.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - posted
+          - voided
+        description: Status
+      - name: supplier_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+        description: Supplier
+      - name: unpaid
+        in: query
+        required: false
+        schema:
+          type: boolean
+        description: Only unpaid
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: From date
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: To date
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: '...'
+                  number: DSM01-PINV-000001
+                  status: posted
+                  total: '1830000.00'
+                  paid_total: '0.00'
+                  balance: '1830000.00'
+                  due_date: '2026-11-30'
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+    post:
+      summary: Record an invoice for receipts; pay_now pays it in the same call
+      operationId: create_purchase_invoice
+      tags:
+      - Purchasing
+      x-permission: purchase_invoices.manage
+      description: Due date defaults to invoice date plus the supplier's payment terms. pay_now also needs payments.pay.
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                supplier_id:
+                  type: string
+                  format: uuid
+                receipt_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                  minItems: 1
+                supplier_ref:
+                  type: string
+                tax_total:
+                  type: string
+                  pattern: ^-?[0-9]+(\.[0-9]+)?$
+                  example: '2500.00'
+                date:
+                  type: string
+                  format: date
+                due_date:
+                  type: string
+                  format: date
+                pay_now:
+                  type: object
+                  properties:
+                    money_account_id:
+                      type: string
+                      format: uuid
+                    method:
+                      type: string
+                      enum:
+                      - cash
+                      - bank
+                      - mobile_money
+                    reference:
+                      type: string
+                  required:
+                  - money_account_id
+              required:
+              - supplier_id
+              - receipt_ids
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: DSM01-PINV-000001
+                  status: posted
+                  total: '1830000.00'
+                  paid_total: '0.00'
+                  balance: '1830000.00'
+                  due_date: '2026-11-30'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '422':
+          description: Field validation failed (validation_failed with fields)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /purchase-invoices/{id}:
+    get:
+      summary: Invoice detail with receipts and payments
+      operationId: get_purchase_invoice
+      tags:
+      - Purchasing
+      x-permission: po.view
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: DSM01-PINV-000001
+                  status: posted
+                  total: '1830000.00'
+                  paid_total: '0.00'
+                  balance: '1830000.00'
+                  due_date: '2026-11-30'
+                  receipts: []
+                  payments: []
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /purchase-invoices/{id}/void:
+    post:
+      summary: Void an unpaid invoice; reverses its journal entry and frees its receipts
+      operationId: void_purchase_invoice
+      tags:
+      - Purchasing
+      x-permission: purchase_invoices.manage
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  status: voided
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /purchase-returns:
+    get:
+      summary: List purchase returns
+      operationId: list_purchase_returns
+      tags:
+      - Purchasing
+      x-permission: po.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: supplier_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+        description: Supplier
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+          enum:
+          - reduce_debt
+          - refund
+        description: Settlement
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: From date
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+          format: date
+        description: To date
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+              example:
+                data:
+                - id: '...'
+                  number: DSM01-PRET-000001
+                  settlement: reduce_debt
+                  value: '305000.00'
+                  tax: '0.00'
+                  total: '305000.00'
+                meta:
+                  page: 1
+                  per_page: 25
+                  total: 1
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+    post:
+      summary: Return received goods to the supplier
+      operationId: create_purchase_return
+      tags:
+      - Purchasing
+      x-permission: purchase_returns.create
+      description: 'Stock leaves at the receipt cost. Invoiced receipt: 2000 Dr (reduce_debt) or money account Dr (refund), 1200 and 1500 Cr. Uninvoiced receipt: 2050 Dr; refund is refused.'
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                receipt_id:
+                  type: string
+                  format: uuid
+                reason:
+                  type: string
+                settlement:
+                  type: string
+                  enum:
+                  - reduce_debt
+                  - refund
+                money_account_id:
+                  type: string
+                  format: uuid
+                method:
+                  type: string
+                  enum:
+                  - cash
+                  - bank
+                  - mobile_money
+                reference:
+                  type: string
+                items:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      receipt_item_id:
+                        type: string
+                        format: uuid
+                      qty:
+                        type: string
+                        pattern: ^[0-9]+(\.[0-9]+)?$
+                        example: '10'
+                    required:
+                    - receipt_item_id
+                    - qty
+                  minItems: 1
+              required:
+              - receipt_id
+              - reason
+              - settlement
+              - items
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: DSM01-PRET-000001
+                  settlement: reduce_debt
+                  value: '305000.00'
+                  tax: '0.00'
+                  total: '305000.00'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '422':
+          description: Field validation failed (validation_failed with fields)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+  /purchase-returns/{id}:
+    get:
+      summary: Return detail with lines
+      operationId: get_purchase_return
+      tags:
+      - Purchasing
+      x-permission: po.view
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  number: DSM01-PRET-000001
+                  settlement: reduce_debt
+                  value: '305000.00'
+                  tax: '0.00'
+                  total: '305000.00'
+                  items:
+                  - receipt_item_id: '...'
+                    qty: '5'
+                    unit_cost: '61000.0000'
+        '400':
+          description: Malformed request or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'

@@ -1,0 +1,16 @@
+DROP TRIGGER IF EXISTS set_updated_at ON recurring_expenses;
+DROP INDEX IF EXISTS journal_entries_reverses_idx;
+DROP INDEX IF EXISTS journal_entries_source_id_idx;
+DROP INDEX IF EXISTS account_reconciliations_account_idx;
+DROP INDEX IF EXISTS other_income_date_idx;
+DROP INDEX IF EXISTS money_transfers_to_idx;
+DROP INDEX IF EXISTS money_transfers_from_idx;
+DROP INDEX IF EXISTS money_transfers_date_idx;
+DROP INDEX IF EXISTS payments_kind_idx;
+DROP INDEX IF EXISTS recurring_expenses_due_idx;
+ALTER TABLE recurring_expenses DROP COLUMN IF EXISTS updated_at;
+DROP INDEX IF EXISTS expenses_status_idx;
+DROP INDEX IF EXISTS expenses_recurring_date_uq;
+ALTER TABLE expenses DROP COLUMN IF EXISTS reverse_reason;
+ALTER TABLE expenses DROP COLUMN IF EXISTS reversed_by;
+ALTER TABLE expenses DROP COLUMN IF EXISTS reversed_at;

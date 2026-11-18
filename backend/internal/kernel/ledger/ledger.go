@@ -2,6 +2,7 @@ package ledger
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/google/uuid"
@@ -96,14 +97,29 @@ func (s *Service) Post(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, ent
 	return entryID, nil
 }
 
-func (s *Service) ensureOpen(ctx context.Context, tx pgx.Tx, entryDate string) error {
+// EnsureOpen rejects a date inside the locked period (BR-14, FR-FIN-19).
+// Callers use it before voiding or reversing a document dated entryDate.
+func (s *Service) EnsureOpen(ctx context.Context, tx pgx.Tx, entryDate string) error {
+	return s.ensureOpen(ctx, tx, entryDate)
+}
+
+// LockedUntil returns the lock date, or "" when nothing is locked.
+func (s *Service) LockedUntil(ctx context.Context, tx pgx.Tx) (string, error) {
 	var locked string
 	err := tx.QueryRow(ctx, `SELECT locked_until::text FROM period_locks`).Scan(&locked)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	return locked, err
+}
+
+func (s *Service) ensureOpen(ctx context.Context, tx pgx.Tx, entryDate string) error {
+	locked, err := s.LockedUntil(ctx, tx)
 	if err != nil {
-		if err.Error() == "no rows in result set" || err == pgx.ErrNoRows {
-			return nil
-		}
 		return err
+	}
+	if locked == "" {
+		return nil
 	}
 	if entryDate <= locked {
 		return httpx.Conflict("period_locked", "That date is in a locked period. Ask the owner to reopen it before posting.")
@@ -174,7 +190,7 @@ func (s *Service) Reverse(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, 
 	rows, err := tx.Query(ctx, `
 		SELECT je.id
 		FROM journal_entries je
-		WHERE je.source_type = $1 AND je.source_id = $2
+		WHERE je.source_type = $1 AND je.source_id = $2 AND je.reverses_id IS NULL
 		  AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reverses_id = je.id)
 	`, sourceType, sourceID)
 	if err != nil {
@@ -199,6 +215,39 @@ func (s *Service) Reverse(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, 
 		}
 	}
 	return nil
+}
+
+// ReverseSource reverses every unreversed entry whose source_id is sourceID,
+// whatever its source type. It returns how many entries were reversed.
+func (s *Service) ReverseSource(ctx context.Context, tx pgx.Tx, businessID, sourceID uuid.UUID, entryDate, description string, userID *uuid.UUID) (int, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT je.id FROM journal_entries je
+		WHERE je.source_id = $1 AND je.reverses_id IS NULL
+		  AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reverses_id = je.id)
+		ORDER BY je.created_at
+	`, sourceID)
+	if err != nil {
+		return 0, err
+	}
+	var entryIDs []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		entryIDs = append(entryIDs, id)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	for _, id := range entryIDs {
+		if err := s.reverseOne(ctx, tx, businessID, id, entryDate, description, userID); err != nil {
+			return 0, err
+		}
+	}
+	return len(entryIDs), nil
 }
 
 func (s *Service) reverseOne(ctx context.Context, tx pgx.Tx, businessID, original uuid.UUID, entryDate, description string, userID *uuid.UUID) error {

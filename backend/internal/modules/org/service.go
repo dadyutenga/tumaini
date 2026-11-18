@@ -3,6 +3,7 @@ package org
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 
@@ -502,6 +503,15 @@ func (s *Service) OpenFile(ctx context.Context, p *auth.Principal, id uuid.UUID)
 		err := tx.QueryRow(ctx, `SELECT path, original_name, mime_type FROM files WHERE id=$1`, id).Scan(&path, &name, &mime)
 		if err != nil {
 			return httpx.NotFound("not_found", "File not found")
+		}
+		// A data export holds the whole business; only its requester or an Owner may download it.
+		var exportOwner *uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT user_id FROM export_jobs WHERE file_id=$1 LIMIT 1`, id).Scan(&exportOwner); err == nil {
+			if exportOwner != nil && *exportOwner != p.UserID && !p.IsOwner {
+				return httpx.NotFound("not_found", "File not found")
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
 		}
 		return nil
 	})
