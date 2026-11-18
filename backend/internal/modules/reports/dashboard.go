@@ -94,9 +94,9 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 			q := sqlq.New()
 			src := linesSQL(q, tf)
 			trend, err := rows(ctx, tx, `
-				SELECT d::date AS date, COALESCE(x.total, 0) AS total
-				FROM generate_series(`+q.Arg(tf.From)+`::date, `+q.Arg(tf.To)+`::date, interval '1 day') d
-				LEFT JOIN (SELECT l.d, ROUND(SUM(l.total), 2) AS total FROM `+src+` GROUP BY l.d) x ON x.d = d::date
+				SELECT gs.day::date AS date, COALESCE(x.total, 0) AS total
+				FROM generate_series(`+q.Arg(tf.From)+`::date, `+q.Arg(tf.To)+`::date, interval '1 day') AS gs(day)
+				LEFT JOIN (SELECT l.d AS sale_day, ROUND(SUM(l.total), 2) AS total FROM `+src+` GROUP BY l.d) x ON x.sale_day = gs.day::date
 				ORDER BY 1`, q.Args...)
 			if err != nil {
 				return err

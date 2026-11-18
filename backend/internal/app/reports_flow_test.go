@@ -27,7 +27,7 @@ func (c *client) rawGet(t *testing.T, path string) (int, string, []byte) {
 	return resp.StatusCode, resp.Header.Get("Content-Type"), body
 }
 
-func d(s string) decimal.Decimal { return decimal.RequireFromString(s) }
+func rd(s string) decimal.Decimal { return decimal.RequireFromString(s) }
 
 func TestReportsAndDashboard(t *testing.T) {
 	e := newEnv(t, defaultNow)
@@ -57,17 +57,17 @@ func TestReportsAndDashboard(t *testing.T) {
 	sum := c.call(t, http.MethodGet, "/api/v1/reports/sales/summary?group_by=day&from=2026-11-01&to=2026-11-30", nil, "")
 	require.Equal(t, 200, sum.code, sum.raw)
 	tot := sum.data["totals"].(map[string]any)
-	require.True(t, dec(tot["sales_count"]).Equal(d("2")), sum.raw)
-	require.True(t, dec(tot["net_sales"]).Equal(d("6000")), sum.raw)
-	require.True(t, dec(tot["cost"]).Equal(d("2400")), sum.raw)
-	require.True(t, dec(tot["gross_profit"]).Equal(d("3600")), sum.raw)
+	require.True(t, dec(tot["sales_count"]).Equal(rd("2")), sum.raw)
+	require.True(t, dec(tot["net_sales"]).Equal(rd("6000")), sum.raw)
+	require.True(t, dec(tot["cost"]).Equal(rd("2400")), sum.raw)
+	require.True(t, dec(tot["gross_profit"]).Equal(rd("3600")), sum.raw)
 
 	// P&L: net profit = sales net of tax - cost - expenses.
 	pl := c.call(t, http.MethodGet, "/api/v1/reports/profit-loss?from=2026-11-01&to=2026-11-30&compare=previous", nil, "")
 	require.Equal(t, 200, pl.code, pl.raw)
-	require.True(t, dec(pl.data["net_profit"]).Equal(d("3100")), pl.raw)
-	require.True(t, dec(pl.data["gross_profit"]).Equal(d("3600")), pl.raw)
-	require.True(t, dec(pl.data["cost_of_goods_sold"]).Equal(d("2400")), pl.raw)
+	require.True(t, dec(pl.data["net_profit"]).Equal(rd("3100")), pl.raw)
+	require.True(t, dec(pl.data["gross_profit"]).Equal(rd("3600")), pl.raw)
+	require.True(t, dec(pl.data["cost_of_goods_sold"]).Equal(rd("2400")), pl.raw)
 	require.NotNil(t, pl.data["previous"])
 	require.NotEmpty(t, pl.data["lines"])
 
@@ -76,16 +76,16 @@ func TestReportsAndDashboard(t *testing.T) {
 	rows := asList(byProduct.data["rows"])
 	require.Len(t, rows, 2)
 	require.Equal(t, "Rice", str(rows[0]["product"]))
-	require.True(t, dec(rows[0]["gross_profit"]).Equal(d("3000")), byProduct.raw)
+	require.True(t, dec(rows[0]["gross_profit"]).Equal(rd("3000")), byProduct.raw)
 
 	// Valuation: 8 x 1,000 + 4 x 400 = 9,600, equal to on-hand value.
 	val := c.call(t, http.MethodGet, "/api/v1/reports/inventory/valuation", nil, "")
 	require.Equal(t, 200, val.code, val.raw)
-	require.True(t, dec(val.data["totals"].(map[string]any)["value"]).Equal(d("9600")), val.raw)
+	require.True(t, dec(val.data["totals"].(map[string]any)["value"]).Equal(rd("9600")), val.raw)
 	// Movement timestamps come from the database clock, so use dates well before and after them.
 	later := c.call(t, http.MethodGet, "/api/v1/reports/inventory/valuation?as_of=2099-12-31&group_by=category", nil, "")
 	require.Equal(t, 200, later.code, later.raw)
-	require.True(t, dec(later.data["totals"].(map[string]any)["value"]).Equal(d("9600")), later.raw)
+	require.True(t, dec(later.data["totals"].(map[string]any)["value"]).Equal(rd("9600")), later.raw)
 	before := c.call(t, http.MethodGet, "/api/v1/reports/inventory/valuation?as_of=2000-01-01", nil, "")
 	require.Equal(t, 200, before.code, before.raw)
 	require.Empty(t, asList(before.data["rows"]), before.raw)
@@ -97,15 +97,15 @@ func TestReportsAndDashboard(t *testing.T) {
 
 	pm := c.call(t, http.MethodGet, "/api/v1/reports/sales/by-payment-method", nil, "")
 	require.Equal(t, 200, pm.code, pm.raw)
-	require.True(t, dec(find(asList(pm.data["rows"]), "method", "cash")["net"]).Equal(d("6000")), pm.raw)
+	require.True(t, dec(find(asList(pm.data["rows"]), "method", "cash")["net"]).Equal(rd("6000")), pm.raw)
 
 	cf := c.call(t, http.MethodGet, "/api/v1/reports/cash-flow?from=2026-11-01&to=2026-11-30", nil, "")
 	require.Equal(t, 200, cf.code, cf.raw)
-	require.True(t, dec(cf.data["totals"].(map[string]any)["closing"]).Equal(d("5500")), cf.raw)
+	require.True(t, dec(cf.data["totals"].(map[string]any)["closing"]).Equal(rd("5500")), cf.raw)
 
 	br := c.call(t, http.MethodGet, "/api/v1/reports/branches", nil, "")
 	require.Equal(t, 200, br.code, br.raw)
-	require.True(t, dec(asList(br.data["rows"])[0]["net_profit"]).Equal(d("3100")), br.raw)
+	require.True(t, dec(asList(br.data["rows"])[0]["net_profit"]).Equal(rd("3100")), br.raw)
 
 	// Every report route answers for the owner.
 	for _, path := range []string{
@@ -141,7 +141,7 @@ func TestReportsAndDashboard(t *testing.T) {
 	// Dashboard: owner sees profit, manager without the profit permission does not.
 	dash := c.call(t, http.MethodGet, "/api/v1/dashboard?period=month", nil, "")
 	require.Equal(t, 200, dash.code, dash.raw)
-	require.True(t, dec(dash.data["sales"].(map[string]any)["total"]).Equal(d("6000")), dash.raw)
+	require.True(t, dec(dash.data["sales"].(map[string]any)["total"]).Equal(rd("6000")), dash.raw)
 	require.NotNil(t, dash.data["profit"])
 	require.NotNil(t, dash.data["gross_profit"])
 	require.Len(t, asList(dash.data["sales_trend"]), 30)
@@ -172,7 +172,7 @@ func TestReportsAndDashboard(t *testing.T) {
 	require.True(t, dec(me.data["sales_today"].(map[string]any)["count"]).IsZero(), me.raw)
 	ownerMe := c.call(t, http.MethodGet, "/api/v1/dashboard/me", nil, "")
 	require.Equal(t, 200, ownerMe.code, ownerMe.raw)
-	require.True(t, dec(ownerMe.data["sales_today"].(map[string]any)["count"]).Equal(d("2")), ownerMe.raw)
+	require.True(t, dec(ownerMe.data["sales_today"].(map[string]any)["count"]).Equal(rd("2")), ownerMe.raw)
 	require.NotNil(t, ownerMe.data["till"])
 
 	// A second business sees nothing from the first.

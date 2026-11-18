@@ -93,6 +93,10 @@ func (s *Service) tx(ctx context.Context, p *auth.Principal, f *Filter, fn func(
 		if _, err := tx.Exec(ctx, `SET TRANSACTION READ ONLY`); err != nil {
 			return err
 		}
+		// Local to this transaction: timestamptz::date gives the business-local date.
+		if _, err := tx.Exec(ctx, `SELECT set_config('TimeZone', $1, true)`, f.tz); err != nil {
+			return err
+		}
 		return fn(ctx, tx)
 	})
 }

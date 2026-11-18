@@ -134,8 +134,7 @@ func (s *Service) Movements(ctx context.Context, p *auth.Principal, f Filter) (e
 	var total int64
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
-		tz := q.Arg(f.tz)
-		f.dates(q, "(m.created_at AT TIME ZONE "+tz+")::date")
+		f.dates(q, "m.created_at::date")
 		f.branch(q, "m.branch_id")
 		q.If(typ != "", "m.type = ?", typ)
 		if id := optUUID(f, "product_id"); id != nil {
@@ -146,7 +145,7 @@ func (s *Service) Movements(ctx context.Context, p *auth.Principal, f Filter) (e
 		}
 		var err error
 		list, err = rows(ctx, tx, `
-			SELECT (m.created_at AT TIME ZONE `+tz+`)::date AS date, m.created_at, pr.name AS product, pr.sku, b.name AS branch, m.type,
+			SELECT m.created_at::date AS date, m.created_at, pr.name AS product, pr.sku, b.name AS branch, m.type,
 			       m.qty, ROUND(m.unit_cost, 4) AS unit_cost, ROUND(m.qty * m.unit_cost, 2) AS value, m.qty_after,
 			       m.source_type AS source, m.source_id
 			FROM stock_movements m
