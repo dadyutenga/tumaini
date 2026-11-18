@@ -9,6 +9,7 @@ import {
   HandCoins,
   BarChart3,
   FileText,
+  ArrowLeftRight,
   ReceiptText,
   ScrollText,
   Settings,
@@ -101,6 +102,14 @@ export const routes: AppRoute[] = [
     component: lazy(() => import("@/pages/PurchaseOrderDetail")),
     navigation: false,
     permission: ["po.view"],
+  },
+  {
+    path: "/stock-ops",
+    label: "Transfers and counts",
+    icon: ArrowLeftRight,
+    component: lazy(() => import("@/pages/StockOps")),
+    navigation: true,
+    permission: ["transfers.view", "stock.adjust", "stock.view"],
   },
   {
     path: "/customers",
