@@ -19,7 +19,7 @@ import { formatDate, formatMoney, today } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
 
 /** A list with a "new" dialog, shared by the small setup tables. */
-function SimpleList<Row extends { id: string }, Draft extends object>({
+export function SimpleList<Row extends { id: string }, Draft extends object>({
   path,
   rows,
   loading,

@@ -13,6 +13,7 @@ import {
   Repeat,
   Settings2,
   BriefcaseBusiness,
+  SlidersHorizontal,
   ReceiptText,
   ScrollText,
   Settings,
@@ -153,6 +154,14 @@ export const routes: AppRoute[] = [
     component: lazy(() => import("@/pages/Payroll")),
     navigation: true,
     permission: ["payroll.view"],
+  },
+  {
+    path: "/payroll-setup",
+    label: "Payroll setup",
+    icon: SlidersHorizontal,
+    component: lazy(() => import("@/pages/PayrollSetup")),
+    navigation: true,
+    permission: ["components.manage", "adjustments.manage"],
   },
   {
     path: "/payroll/:id",
