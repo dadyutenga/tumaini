@@ -14,6 +14,7 @@ import {
   Settings2,
   BriefcaseBusiness,
   SlidersHorizontal,
+  CalendarClock,
   ReceiptText,
   ScrollText,
   Settings,
@@ -138,6 +139,14 @@ export const routes: AppRoute[] = [
     component: lazy(() => import("@/pages/People")),
     navigation: true,
     permission: ["employees.view", "leave.request", "attendance.clock", "attendance.view"],
+  },
+  {
+    path: "/attendance",
+    label: "Attendance",
+    icon: CalendarClock,
+    component: lazy(() => import("@/pages/AttendanceAdmin")),
+    navigation: true,
+    permission: ["attendance.view"],
   },
   {
     path: "/hr-setup",
