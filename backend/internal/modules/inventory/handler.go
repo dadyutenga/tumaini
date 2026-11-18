@@ -235,6 +235,21 @@ func (h *Handler) Receive(c fiber.Ctx) error {
 	return httpx.Send(c, status, raw, err)
 }
 
+func (h *Handler) ReturnTransfer(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Reason string `json:"reason" validate:"max=500"`
+	}
+	if err := httpx.BindOptional(c, &body); err != nil {
+		return err
+	}
+	status, raw, err := h.Svc.ReturnTransfer(c.Context(), middleware.Principal(c), id, body.Reason)
+	return httpx.Send(c, status, raw, err)
+}
+
 func Register(r fiber.Router, h *Handler) {
 	r.Get("/stock/levels", middleware.Require("stock.view"), h.Levels)
 	r.Get("/stock/low", middleware.Require("stock.view"), h.Low)
@@ -260,5 +275,6 @@ func Register(r fiber.Router, h *Handler) {
 	r.Put("/stock-transfers/:id", middleware.Require("transfers.create"), h.UpdateTransfer)
 	r.Post("/stock-transfers/:id/dispatch", middleware.Require("transfers.dispatch"), middleware.Idempotent(), h.Dispatch)
 	r.Post("/stock-transfers/:id/receive", middleware.Require("transfers.receive"), middleware.Idempotent(), h.Receive)
+	r.Post("/stock-transfers/:id/return", middleware.Require("transfers.dispatch"), middleware.Idempotent(), h.ReturnTransfer)
 	r.Post("/stock-transfers/:id/cancel", middleware.Require("transfers.create"), h.CancelTransfer)
 }

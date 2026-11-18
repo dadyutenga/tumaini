@@ -816,6 +816,70 @@ func (s *Service) Dispatch(ctx context.Context, p *auth.Principal, id uuid.UUID)
 	return status, body, err
 }
 
+// ReturnTransfer sends a dispatched transfer back to the sender in full
+// (FR-INV-25). Every item re-enters the sending branch at the cost it left,
+// and the dispatch journal entry is mirrored (1200 Dr / 1210 Cr).
+func (s *Service) ReturnTransfer(ctx context.Context, p *auth.Principal, id uuid.UUID, reason string) (int, []byte, error) {
+	var status int
+	var body []byte
+	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+			if rep != nil {
+				status, body = rep.Status, rep.Body
+			}
+			return err
+		}
+		t, err := lockTransfer(ctx, tx, p, id, "transfers.dispatch", "from")
+		if err != nil {
+			return err
+		}
+		if t.status != "dispatched" {
+			return httpx.Conflict("invalid_status", "Only a dispatched transfer can be returned")
+		}
+		rows, err := tx.Query(ctx, `SELECT product_id, qty_sent, unit_cost FROM stock_transfer_items WHERE transfer_id=$1`, id)
+		if err != nil {
+			return err
+		}
+		var lines []stock.Line
+		var pids []uuid.UUID
+		value := money.Zero
+		for rows.Next() {
+			var ln stock.Line
+			if err := rows.Scan(&ln.ProductID, &ln.Qty, &ln.UnitCost); err != nil {
+				rows.Close()
+				return err
+			}
+			lines = append(lines, ln)
+			pids = append(pids, ln.ProductID)
+			value = value.Add(money.Money(ln.Qty.Mul(ln.UnitCost)))
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		user := p.UserID
+		if err := s.Stock.Receive(ctx, tx, p.BusinessID, t.from, &user, "transfer_in", "stock_transfer_return", id, lines); err != nil {
+			return err
+		}
+		if err := s.Ledger.Reverse(ctx, tx, p.BusinessID, "stock_transfer", id, s.bizDate(ctx, tx), "Transfer returned "+t.number, &user); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE stock_transfers SET status='returned', note=COALESCE(NULLIF($2,''), note) WHERE id=$1`, id, reason); err != nil {
+			return err
+		}
+		if err := jobs.EnqueueTx(ctx, tx, p.BusinessID, jobs.CheckLowStock, map[string]any{"branch_id": t.from, "product_ids": pids}); err != nil {
+			return err
+		}
+		if err := s.Audit.Record(ctx, tx, p, "transfer.returned", "stock_transfer", id, map[string]any{"status": "dispatched"}, map[string]any{"status": "returned", "value": value, "reason": reason}); err != nil {
+			return err
+		}
+		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "number": t.number, "status": "returned", "value": value}))
+		status, body = 200, raw
+		return err
+	})
+	return status, body, err
+}
+
 type ReceiveLine struct {
 	ProductID   uuid.UUID       `json:"product_id" validate:"required"`
 	QtyReceived decimal.Decimal `json:"qty_received" validate:"dgte0"`

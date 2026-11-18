@@ -148,6 +148,26 @@ func TestInventoryFlow(t *testing.T) {
 	notes := c.call(t, http.MethodGet, "/api/v1/notifications", nil, "")
 	require.NotEmpty(t, find(asList(notes.body["data"]), "type", "transfer_difference"), notes.raw)
 
+	// A dispatched transfer can be returned in full; it cannot then be received (FR-INV-25).
+	back := c.call(t, http.MethodPost, "/api/v1/stock-transfers", map[string]any{"to_branch_id": branchB, "items": []map[string]any{{"product_id": rice, "qty": "3"}}}, "")
+	require.Equal(t, 201, back.code, back.raw)
+	backID := str(back.data["id"])
+	notYet := c.call(t, http.MethodPost, "/api/v1/stock-transfers/"+backID+"/return", nil, key())
+	require.Equal(t, 409, notYet.code, notYet.raw)
+	before := dec(find(asList(c.call(t, http.MethodGet, "/api/v1/stock/levels", nil, "").body["data"]), "product_id", rice)["qty_on_hand"])
+	require.Equal(t, 200, c.call(t, http.MethodPost, "/api/v1/stock-transfers/"+backID+"/dispatch", nil, key()).code)
+	staffSender, _ := e.user(t, "staff")
+	noPerm := staffSender.call(t, http.MethodPost, "/api/v1/stock-transfers/"+backID+"/return", nil, key())
+	require.Equal(t, 403, noPerm.code, noPerm.raw)
+	returned := c.call(t, http.MethodPost, "/api/v1/stock-transfers/"+backID+"/return", map[string]any{"reason": "Wrong branch"}, key())
+	require.Equal(t, 200, returned.code, returned.raw)
+	require.Equal(t, "returned", str(returned.data["status"]))
+	require.True(t, dec(returned.data["value"]).Equal(invD("4500")), returned.raw)
+	after := dec(find(asList(c.call(t, http.MethodGet, "/api/v1/stock/levels", nil, "").body["data"]), "product_id", rice)["qty_on_hand"])
+	require.True(t, after.Equal(before), "stock back at the sender")
+	recvReturned := cB.call(t, http.MethodPost, "/api/v1/stock-transfers/"+backID+"/receive", nil, key())
+	require.Equal(t, 409, recvReturned.code, recvReturned.raw)
+
 	// Permissions and branch scope.
 	staff, _ := e.user(t, "staff")
 	denied := staff.call(t, http.MethodPost, "/api/v1/stock-adjustments", map[string]any{"reason": "x", "items": []map[string]any{{"product_id": rice, "qty_counted": "1"}}}, "")

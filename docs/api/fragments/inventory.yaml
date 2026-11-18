@@ -3291,6 +3291,92 @@ paths:
                 properties:
                   error:
                     $ref: '#/components/schemas/Error'
+  /stock-transfers/{id}/return:
+    post:
+      summary: Return a dispatched transfer in full to the sending branch
+      operationId: return_stock_transfer
+      tags:
+      - Transfers
+      x-permission: transfers.dispatch
+      description: Only for status dispatched, in the sender's branch scope. Items re-enter the sender at the cost they left; the dispatch entry is mirrored (1200 Dr / 1210 Cr).
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+              example:
+                data:
+                  id: '...'
+                  status: returned
+                  value: '4500.00'
+        '401':
+          description: Not signed in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found or outside your branch scope
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '409':
+          description: State conflict (for example insufficient_stock, invalid_status, period_locked, duplicate)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
+        '422':
+          description: Field validation failed (validation_failed with fields)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    $ref: '#/components/schemas/Error'
   /stock-transfers/{id}/cancel:
     post:
       summary: Cancel a draft transfer
