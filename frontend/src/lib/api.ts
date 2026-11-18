@@ -198,3 +198,25 @@ export function isPendingApproval(
     (value as { status?: string }).status === "pending_approval"
   );
 }
+
+/** Download a file (PDF, CSV, XLSX) from an authenticated endpoint and hand it to the browser. */
+export async function download(path: string, query: Query, filename: string) {
+  let response = await send(path, { query });
+  if (response.status === 401 && (await refreshSession())) response = await send(path, { query });
+  if (!response.ok) {
+    let message = "Could not download the file";
+    try {
+      const json = (await response.json()) as { error?: { message?: string } };
+      message = json.error?.message ?? message;
+    } catch {
+      // keep the default message
+    }
+    throw new ApiError(message, response.status);
+  }
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
