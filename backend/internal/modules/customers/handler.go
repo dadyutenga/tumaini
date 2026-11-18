@@ -166,11 +166,6 @@ func (h *Handler) Debts(c fiber.Ctx) error {
 	return httpx.OK(c, list, err)
 }
 
-func (h *Handler) DebtReport(c fiber.Ctx) error {
-	list, err := h.Svc.Debts(c.Context(), middleware.Principal(c), "reports.debts")
-	return httpx.OK(c, list, err)
-}
-
 func Register(r fiber.Router, h *Handler) {
 	r.Get("/customers", middleware.Require("customers.view"), h.List)
 	r.Post("/customers", middleware.Require("customers.manage"), h.Create)
@@ -183,5 +178,4 @@ func Register(r fiber.Router, h *Handler) {
 	r.Post("/customers/:id/payments", middleware.Require("payments.receive"), middleware.Idempotent(), h.Pay)
 	r.Post("/customers/:id/write-off", middleware.Require("customers.write_off"), middleware.Idempotent(), h.WriteOff)
 	r.Get("/customers/:id/statement", middleware.Require("customers.statement"), h.Statement)
-	r.Get("/reports/customer-debt", middleware.Require("reports.debts"), h.DebtReport)
 }

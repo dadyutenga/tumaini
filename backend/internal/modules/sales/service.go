@@ -334,7 +334,12 @@ func (s *Service) finish(ctx context.Context, tx pgx.Tx, p *auth.Principal, sale
 	}
 	var tillID *uuid.UUID
 	if hasCash(applied) {
-		id, account, err := openTill(ctx, tx, p.UserID)
+		// The cash sits in the cashier's till, also when an approver completes the sale.
+		var cashier uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT cashier_id FROM sales WHERE id=$1`, saleID).Scan(&cashier); err != nil {
+			return nil, err
+		}
+		id, account, err := openTill(ctx, tx, cashier)
 		if err != nil {
 			return nil, httpx.Conflict("till_not_open", "Open a till before taking cash")
 		}
