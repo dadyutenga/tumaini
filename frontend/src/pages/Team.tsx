@@ -88,7 +88,9 @@ export default function Team() {
               {
                 header: "Branches",
                 cell: (u) =>
-                  u.branch_ids.map((id) => branchNames.get(id) ?? id.slice(0, 6)).join(", ") || "-",
+                  (u.branch_ids ?? [])
+                    .map((id) => branchNames.get(id) ?? id.slice(0, 6))
+                    .join(", ") || "-",
               },
               {
                 header: "Status",

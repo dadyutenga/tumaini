@@ -63,8 +63,8 @@ func (h *Handler) Pay(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
+	registerReads(r, h)
 	r.Get("/expense-categories", middleware.Require("expenses.view"), h.Categories)
 	r.Post("/expenses", middleware.Require("expenses.create"), middleware.Idempotent(), h.Create)
-	r.Get("/expenses/:id", middleware.Require("expenses.view"), h.Get)
 	r.Post("/expenses/:id/pay", middleware.Require("expenses.pay"), middleware.Idempotent(), h.Pay)
 }

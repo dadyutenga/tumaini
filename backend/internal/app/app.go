@@ -61,7 +61,8 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	led := ledger.New()
 	st := stock.New()
 	ap := approval.New(n)
-	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, Ledger: led, TTL: cfg.RefreshTokenTTL}
+	tokens := auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}
+	ident := &identity.Service{DB: database, Auth: tokens, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, Ledger: led, TTL: cfg.RefreshTokenTTL}
 	orgSvc := org.New(database, aud, led, store, clk)
 	catSvc := catalog.New(database, aud)
 	invSvc := inventory.New(database, st, led, aud, n, ap, clk)
@@ -114,7 +115,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	limit := middleware.NewLimiter(30, time.Minute).Handler()
 	identity.RegisterPublic(api.Group("/auth"), &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL}, limit)
 
-	private := api.Group("", middleware.Auth(auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL}, ident.Load), middleware.Branch(database))
+	private := api.Group("", middleware.Auth(tokens, ident.Load), middleware.Branch(database))
 	identity.Register(private, &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL})
 	org.Register(private, &org.Handler{Svc: orgSvc})
 	catalog.Register(private, &catalog.Handler{Svc: catSvc})

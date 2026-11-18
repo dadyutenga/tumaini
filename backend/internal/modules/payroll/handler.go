@@ -83,6 +83,7 @@ func (h *Handler) Component(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
+	registerReads(r, h)
 	r.Post("/salary-components", middleware.Require("components.manage"), h.Component)
 	r.Post("/payroll-runs", middleware.Require("payroll.prepare"), h.Create)
 	r.Post("/payroll-runs/:id/calculate", middleware.Require("payroll.prepare"), h.Calculate)

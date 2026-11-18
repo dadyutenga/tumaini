@@ -49,7 +49,8 @@ func (s *Service) ListUsers(ctx context.Context, p *auth.Principal, q string, pa
 			return err
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT u.id, u.name, u.phone, u.email::text, u.role_id, r.name, r.slug, u.employee_id, u.language, u.is_active, u.must_change_password
+			SELECT u.id, u.name, u.phone, u.email::text, u.role_id, r.name, r.slug, u.employee_id, u.language, u.is_active, u.must_change_password,
+				ARRAY(SELECT ub.branch_id FROM user_branches ub WHERE ub.user_id = u.id ORDER BY ub.branch_id)
 			FROM users u JOIN roles r ON r.id = u.role_id
 			WHERE ($1 = '' OR u.name ILIKE '%'||$1||'%' OR u.phone ILIKE '%'||$1||'%')
 			ORDER BY u.name LIMIT $2 OFFSET $3
@@ -78,7 +79,7 @@ func (s *Service) ListUsers(ctx context.Context, p *auth.Principal, q string, pa
 
 func scanUser(row pgx.Row) (User, error) {
 	var u User
-	err := row.Scan(&u.ID, &u.Name, &u.Phone, &u.Email, &u.RoleID, &u.RoleName, &u.RoleSlug, &u.EmployeeID, &u.Language, &u.IsActive, &u.MustChange)
+	err := row.Scan(&u.ID, &u.Name, &u.Phone, &u.Email, &u.RoleID, &u.RoleName, &u.RoleSlug, &u.EmployeeID, &u.Language, &u.IsActive, &u.MustChange, &u.Branches)
 	return u, err
 }
 
@@ -86,7 +87,8 @@ func (s *Service) GetUser(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 	var u User
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		row := tx.QueryRow(ctx, `
-			SELECT u.id, u.name, u.phone, u.email::text, u.role_id, r.name, r.slug, u.employee_id, u.language, u.is_active, u.must_change_password
+			SELECT u.id, u.name, u.phone, u.email::text, u.role_id, r.name, r.slug, u.employee_id, u.language, u.is_active, u.must_change_password,
+				ARRAY(SELECT ub.branch_id FROM user_branches ub WHERE ub.user_id = u.id ORDER BY ub.branch_id)
 			FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1
 		`, id)
 		var err error
@@ -94,30 +96,9 @@ func (s *Service) GetUser(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 		if err != nil {
 			return httpx.NotFound("not_found", "User not found")
 		}
-		u.Branches, err = s.branchesOf(ctx, tx, id)
-		return err
+		return nil
 	})
 	return u, err
-}
-
-func (s *Service) branchesOf(ctx context.Context, tx pgx.Tx, userID uuid.UUID) ([]uuid.UUID, error) {
-	rows, err := tx.Query(ctx, `SELECT branch_id FROM user_branches WHERE user_id = $1`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var idsOut []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		idsOut = append(idsOut, id)
-	}
-	if idsOut == nil {
-		idsOut = []uuid.UUID{}
-	}
-	return idsOut, rows.Err()
 }
 
 func (s *Service) CreateUser(ctx context.Context, p *auth.Principal, in UserInput) (User, error) {

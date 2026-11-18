@@ -11,7 +11,19 @@ import (
 type Handler struct{ Svc *Service }
 
 func (h *Handler) ClockIn(c fiber.Ctx) error {
-	out, err := h.Svc.ClockIn(c.Context(), middleware.Principal(c))
+	var body struct {
+		EmployeeID *uuid.UUID `json:"employee_id"`
+	}
+	if len(c.Body()) > 0 {
+		if err := c.Bind().Body(&body); err != nil {
+			return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
+		}
+	}
+	kind := "in"
+	if c.Path() == "/api/v1/attendance/clock-out" {
+		kind = "out"
+	}
+	out, err := h.Svc.ClockEvent(c.Context(), middleware.Principal(c), body.EmployeeID, kind)
 	if err != nil {
 		return err
 	}
@@ -63,8 +75,9 @@ func (h *Handler) Days(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
+	registerReads(r, h)
 	r.Post("/attendance/clock-in", middleware.Require("attendance.clock"), h.ClockIn)
+	r.Post("/attendance/clock-out", middleware.Require("attendance.clock"), h.ClockIn)
 	r.Put("/schedules", middleware.Require("schedules.manage"), h.Schedule)
 	r.Post("/attendance/days", middleware.Require("attendance.edit"), h.Mark)
-	r.Get("/attendance/days", middleware.Require("attendance.view"), h.Days)
 }

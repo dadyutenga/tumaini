@@ -3,7 +3,7 @@
 # Usage: API=http://localhost:8080 deploy/seed-dev.sh
 set -euo pipefail
 API="${API:-http://localhost:8080}/api/v1"
-PASS="${SEED_PASSWORD:-Tumaini#2026}"
+PASS="${SEED_PASSWORD:-BMS#2026}"
 j() { python3 -c "import sys,json;d=json.load(sys.stdin);print(eval('d'+sys.argv[1]))" "$1"; }
 
 reg=$(curl -sS -X POST "$API/auth/register" -H 'Content-Type: application/json' \

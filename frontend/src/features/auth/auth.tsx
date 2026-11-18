@@ -45,7 +45,7 @@ interface Auth {
 }
 
 const Context = createContext<Auth | null>(null);
-const BRANCH_KEY = "tumaini-branch";
+const BRANCH_KEY = "bms-branch";
 
 function storedBranch() {
   try {

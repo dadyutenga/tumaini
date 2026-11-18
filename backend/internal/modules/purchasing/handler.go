@@ -111,9 +111,9 @@ func (h *Handler) Pay(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
+	registerReads(r, h)
 	r.Post("/suppliers", middleware.Require("suppliers.manage"), h.CreateSupplier)
 	r.Post("/purchase-orders", middleware.Require("po.create"), h.CreatePO)
-	r.Get("/purchase-orders/:id", middleware.Require("po.view"), h.GetPO)
 	r.Post("/purchase-orders/:id/submit", middleware.Require("po.create"), h.Submit)
 	r.Post("/goods-receipts", middleware.Require("grn.create"), middleware.Idempotent(), h.Receive)
 	r.Post("/purchase-invoices", middleware.Require("purchase_invoices.manage"), middleware.Idempotent(), h.Invoice)

@@ -116,6 +116,7 @@ type Claims struct {
 type Tokens struct {
 	Secret []byte
 	Access time.Duration
+	Now    func() time.Time
 }
 
 func (t Tokens) Sign(userID, businessID, roleID, sessionID uuid.UUID, permVersion int, now time.Time) (string, error) {
@@ -136,12 +137,16 @@ func (t Tokens) Sign(userID, businessID, roleID, sessionID uuid.UUID, permVersio
 
 func (t Tokens) Verify(raw string) (Claims, error) {
 	var claims Claims
+	now := t.Now
+	if now == nil {
+		now = time.Now
+	}
 	_, err := jwt.ParseWithClaims(raw, &claims, func(token *jwt.Token) (any, error) {
 		if token.Method != jwt.SigningMethodHS256 {
 			return nil, errors.New("unexpected signing method")
 		}
 		return t.Secret, nil
-	})
+	}, jwt.WithTimeFunc(now))
 	if err != nil {
 		return Claims{}, err
 	}

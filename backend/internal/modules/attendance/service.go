@@ -23,55 +23,115 @@ type Service struct {
 func New(database *db.DB, clk clock.Clock) *Service { return &Service{DB: database, Clock: clk} }
 
 func (s *Service) ClockIn(ctx context.Context, p *auth.Principal) (map[string]any, error) {
-	if p.EmployeeID == nil {
-		return nil, httpx.Conflict("employee_required", "Link this login to an employee before clocking in")
+	return s.ClockEvent(ctx, p, nil, "in")
+}
+
+func (s *Service) ClockEvent(ctx context.Context, p *auth.Principal, employee *uuid.UUID, kind string) (map[string]any, error) {
+	if employee == nil {
+		employee = p.EmployeeID
+	} else if p.EmployeeID == nil || *employee != *p.EmployeeID {
+		if _, ok := p.Can("attendance.edit"); !ok {
+			return nil, httpx.Forbidden("permission_denied", "You can only clock yourself")
+		}
 	}
-	if p.BranchID == nil {
-		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
+	if employee == nil {
+		return nil, httpx.Conflict("employee_required", "Link this login to an employee first")
 	}
-	now := s.Clock.Now()
 	var result map[string]any
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO attendance_events (id, business_id, branch_id, employee_id, type, at, source, created_by)
-			VALUES ($1,$2,$3,$4,'in',$5,'self',$6)
-		`, ids.New(), p.BusinessID, *p.BranchID, *p.EmployeeID, now, p.UserID); err != nil {
-			return err
+		var branch uuid.UUID
+		var employeeStatus string
+		if err := tx.QueryRow(ctx, `SELECT branch_id,status FROM employees WHERE id=$1 FOR UPDATE`, *employee).Scan(&branch, &employeeStatus); err != nil {
+			return httpx.NotFound("not_found", "Employee not found")
 		}
-		loc, _ := time.LoadLocation(setting.String(ctx, tx, "system.timezone", "Africa/Dar_es_Salaam"))
-		local := now.In(loc)
-		grace := setting.Int(ctx, tx, "payroll.late_grace_minutes", 10)
-		var start time.Time
-		var has bool
-		var startTxt *string
-		err := tx.QueryRow(ctx, `
-			SELECT to_char(start_time, 'HH24:MI') FROM work_schedules
-			WHERE weekday=$1 AND (employee_id=$2 OR (employee_id IS NULL AND branch_id=$3))
-			ORDER BY employee_id NULLS LAST LIMIT 1
-		`, int(local.Weekday()), *p.EmployeeID, *p.BranchID).Scan(&startTxt)
-		status := "present"
-		late := 0
-		if err == nil && startTxt != nil {
-			has = true
-			parsed, _ := time.Parse("15:04", *startTxt)
-			start = time.Date(local.Year(), local.Month(), local.Day(), parsed.Hour(), parsed.Minute(), 0, 0, loc)
-			mins := int(local.Sub(start).Minutes())
-			if mins > grace {
-				status = "late"
-				late = mins
-			}
+		if !p.AllowsBranch(branch) || (p.BranchID != nil && *p.BranchID != branch) {
+			return httpx.NotFound("not_found", "Employee not found")
 		}
-		_ = has
-		day := local.Format("2006-01-02")
-		_, err = tx.Exec(ctx, `
-			INSERT INTO attendance_days (id, business_id, branch_id, employee_id, day, status, first_in, late_minutes, needs_review)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true)
-			ON CONFLICT (employee_id, day) DO UPDATE SET status=EXCLUDED.status, first_in=EXCLUDED.first_in, late_minutes=EXCLUDED.late_minutes, needs_review=true
-		`, ids.New(), p.BusinessID, *p.BranchID, *p.EmployeeID, day, status, now, late)
+		if employeeStatus != "active" {
+			return httpx.Conflict("inactive_employee", "This employee is not active")
+		}
+		loc, err := time.LoadLocation(setting.String(ctx, tx, "system.timezone", "Africa/Dar_es_Salaam"))
 		if err != nil {
 			return err
 		}
-		result = map[string]any{"status": status, "late_minutes": late, "at": now}
+		now := s.Clock.Now()
+		local := now.In(loc)
+		day := local.Format("2006-01-02")
+		var first, last *time.Time
+		var locked bool
+		err = tx.QueryRow(ctx, `SELECT first_in,last_out,is_locked FROM attendance_days WHERE employee_id=$1 AND day=$2 FOR UPDATE`, *employee, day).Scan(&first, &last, &locked)
+		if err != nil && err != pgx.ErrNoRows {
+			return err
+		}
+		if locked {
+			return httpx.Conflict("day_locked", "This attendance day is locked")
+		}
+		if kind == "in" && first != nil {
+			return httpx.Conflict("already_clocked_in", "You have already clocked in today")
+		}
+		if kind == "out" && (first == nil || last != nil) {
+			return httpx.Conflict("not_clocked_in", "Clock in before clocking out, and only clock out once")
+		}
+		var startTxt, endTxt *string
+		var breakMinutes int
+		scheduleErr := tx.QueryRow(ctx, `SELECT to_char(start_time,'HH24:MI'),to_char(end_time,'HH24:MI'),break_minutes FROM work_schedules WHERE is_working AND weekday=$1 AND (employee_id=$2 OR (employee_id IS NULL AND branch_id=$3)) ORDER BY employee_id NULLS LAST LIMIT 1`, int(local.Weekday()), *employee, branch).Scan(&startTxt, &endTxt, &breakMinutes)
+		if scheduleErr != nil && scheduleErr != pgx.ErrNoRows {
+			return scheduleErr
+		}
+		atTime := func(text string) time.Time {
+			parsed, _ := time.Parse("15:04", text)
+			return time.Date(local.Year(), local.Month(), local.Day(), parsed.Hour(), parsed.Minute(), 0, 0, loc)
+		}
+		late := 0
+		status := "present"
+		worked, overtime := 0, 0
+		if kind == "in" {
+			if startTxt != nil {
+				late = int(local.Sub(atTime(*startTxt)).Minutes())
+				if late <= setting.Int(ctx, tx, "payroll.late_grace_minutes", 10) {
+					late = 0
+				} else {
+					status = "late"
+				}
+			}
+			_, err = tx.Exec(ctx, `INSERT INTO attendance_days(id,business_id,branch_id,employee_id,day,status,first_in,late_minutes,needs_review) VALUES($1,$2,$3,$4,$5,$6,$7,$8,true) ON CONFLICT(employee_id,day) DO UPDATE SET first_in=EXCLUDED.first_in,status=EXCLUDED.status,late_minutes=EXCLUDED.late_minutes,needs_review=true`, ids.New(), p.BusinessID, branch, *employee, day, status, now, late)
+		} else {
+			if now.Before(*first) {
+				return httpx.Conflict("invalid_time", "Clock-out must be after clock-in")
+			}
+			worked = int(now.Sub(*first).Minutes()) - breakMinutes
+			if worked < 0 {
+				worked = 0
+			}
+			if startTxt != nil && endTxt != nil {
+				end := atTime(*endTxt)
+				start := atTime(*startTxt)
+				if !end.After(start) {
+					end = end.AddDate(0, 0, 1)
+				}
+				expected := int(end.Sub(start).Minutes()) - breakMinutes
+				overtime = worked - expected
+				if overtime < 0 {
+					overtime = 0
+				}
+			}
+			otStatus := "none"
+			if overtime > 0 {
+				otStatus = "pending"
+			}
+			_, err = tx.Exec(ctx, `UPDATE attendance_days SET last_out=$3,worked_minutes=$4,overtime_minutes=$5,overtime_status=$6,needs_review=false WHERE employee_id=$1 AND day=$2`, *employee, day, now, worked, overtime, otStatus)
+		}
+		if err != nil {
+			return err
+		}
+		source := "self"
+		if p.EmployeeID == nil || *p.EmployeeID != *employee {
+			source = "manager"
+		}
+		if _, err = tx.Exec(ctx, `INSERT INTO attendance_events(id,business_id,branch_id,employee_id,type,at,source,created_by) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, ids.New(), p.BusinessID, branch, *employee, kind, now, source, p.UserID); err != nil {
+			return err
+		}
+		result = map[string]any{"type": kind, "status": status, "late_minutes": late, "worked_minutes": worked, "overtime_minutes": overtime, "at": now}
 		return nil
 	})
 	return result, err

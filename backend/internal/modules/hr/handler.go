@@ -57,6 +57,8 @@ func (h *Handler) Disburse(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
+	registerReads(r, h)
+	registerLeave(r, h)
 	r.Post("/employees", middleware.Require("employees.manage"), h.Create)
 	r.Post("/loans", middleware.Require("loans.create"), h.Loan)
 	r.Post("/loans/:id/disburse", middleware.Require("loans.approve"), h.Disburse)
