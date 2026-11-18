@@ -4,6 +4,7 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 import { ProtectedRoute } from "@/features/auth/auth";
 import { routes } from "./routes";
 import AuthPage from "@/pages/Auth";
+import ForgotPassword from "@/pages/ForgotPassword";
 import Status from "@/pages/Status";
 import { PageLoader } from "@/components/shared/Display";
 import { ErrorBoundary, NotFound } from "@/components/shared/RouteErrors";
@@ -33,6 +34,7 @@ export const router = createBrowserRouter([
     path,
     element: <AuthPage mode={path} />,
   })),
+  { path: "forgot-password", element: <ForgotPassword /> },
   {
     path: "403",
     element: (

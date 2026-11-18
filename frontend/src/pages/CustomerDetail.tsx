@@ -42,6 +42,17 @@ export default function CustomerDetail() {
   });
   const [paying, setPaying] = useState(false);
   const [limiting, setLimiting] = useState(false);
+  const [writingOff, setWritingOff] = useState(false);
+  const [off, setOff] = useState({ amount: "", reason: "" });
+  const writeOff = useWrite<typeof off, unknown>("POST", `/customers/${id}/write-off`, {
+    idempotent: true,
+    invalidate: ["/customers", "/reports", "/money"],
+    success: "Debt written off",
+    onSuccess: () => {
+      setWritingOff(false);
+      setOff({ amount: "", reason: "" });
+    },
+  });
   const [pay, setPay] = useState({
     amount: "",
     method: "cash",
@@ -100,6 +111,11 @@ export default function CustomerDetail() {
                 Credit limit
               </Button>
             )}
+            {can("customers.write_off") && toNumber(c.balance) > 0 && (
+              <Button variant="outline" onClick={() => setWritingOff(true)}>
+                Write off
+              </Button>
+            )}
             {can("payments.receive") && (
               <Button onClick={() => setPaying(true)} disabled={toNumber(c.balance) <= 0}>
                 Receive payment
@@ -148,6 +164,34 @@ export default function CustomerDetail() {
         </>
       )}
 
+      <FormDialog
+        open={writingOff}
+        onOpenChange={setWritingOff}
+        title="Write off bad debt"
+        submitLabel="Write off"
+        busy={writeOff.isPending}
+        onSubmit={() => writeOff.mutate(off)}
+      >
+        <p className="text-sm text-muted-foreground">
+          The oldest unpaid sales are cleared first and the amount is booked as a bad debt expense.
+          Owed now: {formatMoney(c.balance)}.
+        </p>
+        <Field label="Amount to write off">
+          <Input
+            required
+            inputMode="decimal"
+            value={off.amount}
+            onChange={(e) => setOff((o) => ({ ...o, amount: e.target.value }))}
+          />
+        </Field>
+        <Field label="Reason">
+          <Input
+            required
+            value={off.reason}
+            onChange={(e) => setOff((o) => ({ ...o, reason: e.target.value }))}
+          />
+        </Field>
+      </FormDialog>
       <FormDialog
         open={paying}
         onOpenChange={setPaying}

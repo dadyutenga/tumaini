@@ -116,6 +116,13 @@ export default function AuthPage({ mode }: { mode: string }) {
             autoComplete={isRegister ? "new-password" : "current-password"}
           />
         </Field>
+        {!isRegister && (
+          <p className="text-right text-sm">
+            <Link className="text-primary underline" to="/forgot-password">
+              Forgot password?
+            </Link>
+          </p>
+        )}
         {error && (
           <p role="alert" className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
             {error.message}
