@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataGrid, Field, FormDialog, PageHeader, StatusBadge } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useWrite } from "@/hooks/useApi";
+import { SettingsGroups } from "@/features/auth/SettingsGroups";
 import type { Branch } from "@/types";
 
 interface Business {
@@ -68,13 +69,20 @@ export default function Settings() {
 
   return (
     <>
-      <PageHeader title="Settings" description="Business profile, branches and tax." />
+      <PageHeader
+        title="Settings"
+        description="Business profile, branches, tax, receipts, payroll rules and system options."
+      />
       <Tabs defaultValue="business">
         <TabsList>
           <TabsTrigger value="business">Business</TabsTrigger>
           {can("branches.view") && <TabsTrigger value="branches">Branches</TabsTrigger>}
           <TabsTrigger value="tax">Tax rates</TabsTrigger>
+          <TabsTrigger value="preferences">Preferences</TabsTrigger>
         </TabsList>
+        <TabsContent value="preferences">
+          <SettingsGroups />
+        </TabsContent>
         <TabsContent value="business">
           {form && (
             <form
