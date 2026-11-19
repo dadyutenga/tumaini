@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -422,4 +423,74 @@ func TestPINGuessingIsLimitedAndPasswordChangeEndsOtherSessions(t *testing.T) {
 	blocked := third.call(t, http.MethodPut, "/api/v1/auth/password", map[string]any{"current_password": "a-brand-new-pass", "new_password": "another-new-pass"}, "")
 	require.Equal(t, 429, blocked.code, blocked.raw)
 	login(t, app, phone, "a-brand-new-pass")
+}
+
+// FR-NTF-08: a sign-in from a device the account has not been used from before notifies the user.
+func TestNewDeviceSignInNotifiesTheUser(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	app := e.app.Fiber
+	staff, userID := e.user(t, "staff") // e.user already signed in once, from the test client
+	_ = staff
+	phone := str(e.owner.call(t, http.MethodGet, "/api/v1/users/"+userID, nil, "").data["phone"])
+	signIn := func(ua string) *client {
+		code, body, _ := raw(t, app, http.MethodPost, "/api/v1/auth/login", map[string]any{"identifier": phone, "password": "staff-pass-123"}, map[string]string{"User-Agent": ua})
+		require.Equal(t, 200, code)
+		return &client{app: app, token: str(body["data"].(map[string]any)["access_token"]), branch: e.branch}
+	}
+	count := func(c *client) int {
+		n := 0
+		for _, title := range titles(t, c) {
+			if title == "Sign-in from a new device" {
+				n++
+			}
+		}
+		return n
+	}
+	chrome := signIn("Chrome/130 Windows")
+	before := count(chrome)
+	signIn("Chrome/130 Windows")
+	require.Equal(t, before, count(chrome), "the same device again is not news")
+	phoneApp := signIn("TumainiApp/1.0 Android")
+	require.Equal(t, before+1, count(phoneApp), "a device never seen before notifies the user")
+	signIn("TumainiApp/1.0 Android")
+	require.Equal(t, before+1, count(phoneApp), "and only once")
+	// The owner is not told about the staff member's devices.
+	require.NotContains(t, titles(t, e.owner), "Sign-in from a new device")
+}
+
+// FR-SET-09: a session idle longer than the business's timeout is over; activity keeps it alive.
+func TestIdleSessionsTimeOut(t *testing.T) {
+	clk := &stepClock{t: defaultNow}
+	e := newEnvWithClock(t, clk)
+	app := e.app.Fiber
+	require.Equal(t, 200, e.owner.call(t, http.MethodPut, "/api/v1/settings/system", map[string]any{"session_timeout_minutes": 5}, "").code)
+	require.Equal(t, 422, e.owner.call(t, http.MethodPut, "/api/v1/settings/system", map[string]any{"session_timeout_minutes": 1}, "").code, "at least 5 minutes")
+
+	code, body, refresh := raw(t, app, http.MethodPost, "/api/v1/auth/login", map[string]any{"identifier": e.phone, "password": "correct-horse"}, nil)
+	require.Equal(t, 200, code)
+	c := &client{app: app, token: str(body["data"].(map[string]any)["access_token"]), branch: e.branch}
+
+	// Activity inside the timeout keeps the session alive, even past 5 minutes in total.
+	clk.Advance(3 * time.Minute)
+	require.Equal(t, 200, c.call(t, http.MethodGet, "/api/v1/me", nil, "").code)
+	clk.Advance(3 * time.Minute)
+	require.Equal(t, 200, c.call(t, http.MethodGet, "/api/v1/me", nil, "").code, "6 minutes after sign-in but 3 after the last request")
+
+	// Idle for longer than the timeout: the request is refused and the session is gone.
+	clk.Advance(6 * time.Minute)
+	ended := c.call(t, http.MethodGet, "/api/v1/me", nil, "")
+	require.Equal(t, 401, ended.code, ended.raw)
+	require.Equal(t, "session_ended", errCode(ended.body))
+	require.Contains(t, ended.raw, "inactivity")
+	// The refresh token cannot bring it back.
+	code, _, _ = raw(t, app, http.MethodPost, "/api/v1/auth/refresh", nil, map[string]string{"Cookie": "refresh_token=" + refresh})
+	require.Equal(t, 401, code)
+
+	// A fresh sign-in works, and a refresh inside the timeout does too.
+	code, body, refresh = raw(t, app, http.MethodPost, "/api/v1/auth/login", map[string]any{"identifier": e.phone, "password": "correct-horse"}, nil)
+	require.Equal(t, 200, code)
+	clk.Advance(4 * time.Minute)
+	code, _, _ = raw(t, app, http.MethodPost, "/api/v1/auth/refresh", nil, map[string]string{"Cookie": "refresh_token=" + refresh})
+	require.Equal(t, 200, code, "inside the timeout")
+	_ = body
 }

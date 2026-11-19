@@ -9,6 +9,7 @@ info:
     - JSON in and out. Success is `{ "data": ... }`; lists add `meta: {page, per_page, total}`.
     - Errors are `{ "error": { "code", "message", "fields" } }`. 400 malformed, 401 not signed in, 403 no permission,
       404 missing or outside your scope, 409 state conflict, 422 field validation, 429 rate limited.
+    - A session idle longer than the business's session timeout (setting `system.session_timeout_minutes`, default 30) is ended: 401 `session_ended`.
     - 202 means the action waits for approval; the body carries `approval_request_id`.
     - Money and quantities are decimal strings, never floats, at the scale of the value: money `"2500.00"`, quantities `"3.000"`, unit costs `"1200.0000"`. Business dates are `YYYY-MM-DD`; timestamps are RFC 3339 UTC.
     - `x-permission` on each operation is the permission key the route checks. Scope (all, branch, own) then limits rows.

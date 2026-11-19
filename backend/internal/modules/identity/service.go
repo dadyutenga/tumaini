@@ -21,6 +21,7 @@ import (
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/ids"
+	"bms/internal/platform/setting"
 )
 
 type Service struct {
@@ -307,9 +308,9 @@ func (s *Service) insertSession(ctx context.Context, tx pgx.Tx, businessID, user
 		ipVal = ip
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO sessions (id, business_id, user_id, refresh_hash, user_agent, ip, expires_at)
-		VALUES ($1,$2,$3,$4,$5,$6::inet,$7)
-	`, ids.New(), businessID, userID, hash, ua, ipVal, now.Add(s.TTL))
+		INSERT INTO sessions (id, business_id, user_id, refresh_hash, user_agent, ip, expires_at, last_used_at)
+		VALUES ($1,$2,$3,$4,$5,$6::inet,$7,$8)
+	`, ids.New(), businessID, userID, hash, ua, ipVal, now.Add(s.TTL), now)
 	return raw, err
 }
 
@@ -377,6 +378,28 @@ func (s *Service) Login(ctx context.Context, identifier, password, ip, ua string
 		var branchID uuid.UUID
 		_ = tx.QueryRow(ctx, `SELECT branch_id FROM user_branches WHERE user_id = $1 AND is_default LIMIT 1`, u.ID).Scan(&branchID)
 		out = SessionResult{AccessToken: access, ExpiresIn: int(s.Auth.Access.Seconds()), Refresh: refresh, UserID: u.ID, BusinessID: u.BusinessID, BranchID: branchID}
+		// FR-NTF-08: tell the user when their account is used from a device it has not been used from before.
+		// The first sign-in ever is not "new"; there is nothing to compare it with.
+		var prior, same int
+		if err := tx.QueryRow(ctx, `
+			SELECT count(*) FILTER (WHERE success), count(*) FILTER (WHERE success AND COALESCE(user_agent,'') = $2)
+			FROM login_history WHERE user_id = $1`, u.ID, ua).Scan(&prior, &same); err != nil {
+			return err
+		}
+		if prior > 0 && same == 0 {
+			device := ua
+			if device == "" {
+				device = "an unknown device"
+			}
+			if len(device) > 120 {
+				device = device[:120]
+			}
+			return s.Notify.ToUser(ctx, tx, u.BusinessID, u.ID, notify.Message{
+				Type: "security", Title: "Sign-in from a new device",
+				Body: "Your account was signed in from " + device + " (" + ip + "). If this was not you, change your password and end your other sessions.",
+				Link: "/profile/sessions",
+			})
+		}
 		return nil
 	})
 	if err != nil {
@@ -443,6 +466,19 @@ func (s *Service) Refresh(ctx context.Context, raw, ip, ua string) (SessionResul
 	if sess.Expires.Before(now) {
 		_, _ = s.DB.Pool.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, sess.ID)
 		return SessionResult{}, httpx.Unauthorized("session_ended", "Sign in again")
+	}
+	// FR-SET-09: an idle session cannot be refreshed back to life.
+	var idleFor time.Duration
+	_ = s.DB.InTx(ctx, sess.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		idleFor = time.Duration(setting.Int(ctx, tx, "system.session_timeout_minutes", 30)) * time.Minute
+		return nil
+	})
+	if idleFor > 0 && now.Sub(sess.Last) > idleFor {
+		_ = s.DB.InTx(ctx, sess.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, sess.ID)
+			return err
+		})
+		return SessionResult{}, httpx.Unauthorized("session_ended", "You were signed out after a period of inactivity. Sign in again.")
 	}
 	var out SessionResult
 	err = s.DB.InTx(ctx, sess.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
@@ -607,6 +643,7 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 		return nil, httpx.Unauthorized("invalid_token", "Sign in again")
 	}
 	var p auth.Principal
+	idle := false
 	err = s.DB.InTx(ctx, claims.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		var active, businessActive bool
 		var slug string
@@ -620,9 +657,25 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 		if err != nil || !active || !businessActive {
 			return httpx.Unauthorized("session_ended", "Sign in again")
 		}
-		var sessionOK bool
-		if err := tx.QueryRow(ctx, `SELECT expires_at > now() FROM sessions WHERE id = $1 AND user_id = $2`, claims.SessionID, userID).Scan(&sessionOK); err != nil || !sessionOK {
+		var expires, lastUsed time.Time
+		if err := tx.QueryRow(ctx, `SELECT expires_at, last_used_at FROM sessions WHERE id = $1 AND user_id = $2`, claims.SessionID, userID).Scan(&expires, &lastUsed); err != nil {
 			return httpx.Unauthorized("session_ended", "Sign in again")
+		}
+		now := s.Clock.Now()
+		if !expires.After(now) {
+			return httpx.Unauthorized("session_ended", "Sign in again")
+		}
+		// FR-SET-09: a session that has been idle longer than the business's timeout is over.
+		timeout := time.Duration(setting.Int(ctx, tx, "system.session_timeout_minutes", 30)) * time.Minute
+		if timeout > 0 && now.Sub(lastUsed) > timeout {
+			idle = true
+			return httpx.Unauthorized("session_ended", "You were signed out after a period of inactivity. Sign in again.")
+		}
+		// Activity is recorded at most once a minute, so ordinary traffic costs one cheap write.
+		if now.Sub(lastUsed) > time.Minute {
+			if _, err := tx.Exec(ctx, `UPDATE sessions SET last_used_at = $2 WHERE id = $1`, claims.SessionID, now); err != nil {
+				return err
+			}
 		}
 		p.IsOwner = slug == "owner"
 		p.RoleSlug = slug
@@ -655,5 +708,12 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 		}
 		return brows.Err()
 	})
+	if idle {
+		// The failed request rolled back its own transaction, so remove the dead session separately.
+		_ = s.DB.InTx(ctx, claims.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `DELETE FROM sessions WHERE id = $1`, claims.SessionID)
+			return err
+		})
+	}
 	return &p, err
 }
