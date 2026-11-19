@@ -35,28 +35,28 @@ The legacy migrations are frozen in `backend/database/legacy/` for auditability.
 
 ## Backend port checklist
 
-Legend: [x] done (compiles, not yet integration-tested), [ ] not started.
+Legend: [x] done (compiles; not yet integration-tested), [~] partly done, [ ] not started. Work happens on branch `feature/new-database`, one commit per step; `git log --oneline` is the history. Nothing here has been run against a live API yet: the integration tests in `internal/app` still describe the old schema and are re-enabled module by module once a module is ported.
 
-- [x] Migration runner, schema installed, dev roles
-- [x] Platform: request context, worker pool, BM error mapping, tokens
-- [x] Identity: register, login, refresh, logout, password, principal
-- [x] Identity: users, roles, sessions, login history, overrides, recovery
-- [x] Audit kernel via `audit.log_event`; every transaction attributed
-- [x] Org and settings (profile, locations, tax, files, attachments, settings, notification rules; migration 170 adds `tenant_setting_values`)
+- [x] Migration runner, schema installed, dev roles, additive migrations 160 (worker grants), 170 (setting values), 180 (job queue)
+- [x] Platform: request context, worker pool, BM error mapping, tokens, idempotency, document numbering, jobs
+- [x] Identity: register, login, refresh, logout, password, principal, users, roles, sessions, login history, overrides, recovery
+- [x] Kernel: audit (`audit.log_event`), notify (in-app), approval (typed requests), payments writers (`Receive`, `Pay`)
+- [x] Org and settings (profile, locations, tax, files, attachments, settings, notification rules)
 - [x] Catalog (products, categories, price history; units are codes, per-branch prices and the product `kind` are gone)
 - [x] Inventory (reads, entries, counts, adjustments, transfers)
-- [ ] Customers, suppliers
-- [ ] Sales and POS (sales, lines, units, returns)
-- [ ] Purchasing
-- [ ] Finance (accounts, transactions, payments received/made, expenses, day closing)
+- [~] Customers (profiles done; receive payment, unpaid, statement, debts, write-off to do with finance)
+- [~] Finance (money accounts, statements, transfers, transactions done; payments list/detail/void/voucher, debts, day closing to do)
+- [ ] Sales and POS (sales, lines, units, returns; tills have no table in the approved schema: day closing per location replaces them)
+- [ ] Purchasing (purchases, goods receipts, suppliers, supplier payments)
+- [ ] Expenses (expenses, recurring, petty cash)
 - [ ] HR, attendance, payroll
-- [ ] Services and design (clients, projects, quotations, invoices, design jobs)
+- [ ] Services and design (clients, projects, quotations, invoices, design jobs, contractors, renewals, tasks)
 - [ ] Reports and dashboard
-- [ ] Notifications/inbox, approvals, system (jobs, exports, backups)
-- [ ] Remove `kernel/ledger`, `kernel/stock`, `kernel/chart`, `kernel/sequence` once nothing uses them
+- [ ] Inbox (approvals list, notifications), system (exports, backups)
+- [ ] Delete the old `kernel/ledger`, `kernel/stock`, `kernel/chart` and the old `payments` helpers once nothing uses them
 - [ ] Rename `Principal.BusinessID` to `TenantID` everywhere, remove the alias
-- [ ] Update integration tests to the new schema and re-enable
-- [ ] Update the web client (permission codes, role editor, user form)
-- [ ] OpenAPI updated
+- [ ] Rewrite the integration tests against the new schema
+- [ ] Update the web client (permission codes, role editor, user form, removed features)
+- [ ] OpenAPI
 - [ ] Legacy data migration tool, mapping and reconciliation
 - [ ] Deployment, cutover, rollback and backup documents
