@@ -233,7 +233,7 @@ func Idempotent() fiber.Handler {
 		if _, err := uuid.Parse(key); err != nil {
 			return httpx.BadRequest("idempotency_key_required", "Idempotency-Key must be a UUID")
 		}
-		c.SetContext(idem.With(c.Context(), idem.New(key, append([]byte(nil), c.Body()...))))
+		c.SetContext(idem.With(c.Context(), idem.New(key, append([]byte(nil), c.Body()...), c.Method(), c.Path())))
 		return c.Next()
 	}
 }

@@ -82,7 +82,7 @@ var Defaults = map[string]any{
 	"payroll.pay_day": 25, "payroll.working_days": 26, "payroll.standard_hours": 8, "payroll.overtime_multiplier": 1.5,
 	"payroll.late_grace_minutes": 10, "payroll.lateness_deducts": false,
 	"system.date_format": "02 Jan 2006", "system.business_day_start": "00:00", "system.till_difference_threshold": 1000,
-	"sales.discount_limit_percent": 0,
+	"sales.discount_limit_percent":    0,
 	"notifications.supplier_due_days": 7, "notifications.salary_due_days": 3,
 	"payment.methods": map[string]any{
 		"cash": map[string]any{"enabled": true}, "bank": map[string]any{"enabled": true},
