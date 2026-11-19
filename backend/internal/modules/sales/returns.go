@@ -9,59 +9,79 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
-	"bms/internal/kernel/approval"
-	"bms/internal/kernel/ledger"
+	"bms/internal/kernel/notify"
 	"bms/internal/kernel/payments"
 	"bms/internal/kernel/sequence"
-	"bms/internal/kernel/stock"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/idem"
-	"bms/internal/platform/ids"
 	"bms/internal/platform/money"
 	"bms/internal/platform/sqlq"
 )
 
 type ReturnItemIn struct {
-	SaleItemID uuid.UUID       `json:"sale_item_id"`
-	Qty        decimal.Decimal `json:"qty"`
-	Restock    *bool           `json:"restock"`
+	SaleItemID    uuid.UUID       `json:"sale_item_id"`
+	Qty           decimal.Decimal `json:"qty"`
+	Restock       *bool           `json:"restock"`
+	Condition     string          `json:"condition"`
+	ProductUnitID *uuid.UUID      `json:"product_unit_id,omitempty"`
 }
 
 type ReturnIn struct {
-	Reason       string         `json:"reason"`
-	RefundMethod string         `json:"refund_method"`
-	AccountID    *uuid.UUID     `json:"money_account_id"`
-	Items        []ReturnItemIn `json:"items"`
+	Reason     string         `json:"reason"`
+	Resolution string         `json:"resolution"` // refund (default) or exchange
+	Items      []ReturnItemIn `json:"items"`
 }
 
-var refundMethods = map[string]bool{"cash": true, "mobile_money": true, "bank": true, "reduce_debt": true, "customer_credit": true}
+type CompleteReturnIn struct {
+	AccountID      *uuid.UUID `json:"money_account_id"`
+	Method         string     `json:"method"`
+	Reference      string     `json:"reference"`
+	ExchangeSaleID *uuid.UUID `json:"exchange_sale_id,omitempty"`
+}
 
+type retLine struct {
+	saleLineID    uuid.UUID
+	qty, amt      decimal.Decimal
+	condition     string
+	restock       bool
+	productUnitID *uuid.UUID
+}
+
+// CreateReturn files a return request on a completed sale. Approval is a separate step on the
+// return itself (app.sale_returns requires decided_by <> requested_by and checks shop.return.approve).
 func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uuid.UUID, in ReturnIn) (int, []byte, error) {
-	if strings.TrimSpace(in.Reason) == "" {
-		return 0, nil, httpx.BadRequest("invalid_body", "Give a reason for the return")
+	reason := strings.TrimSpace(in.Reason)
+	if len(reason) < 3 {
+		return 0, nil, httpx.BadRequest("invalid_body", "Give a reason of at least 3 characters for the return")
 	}
 	if len(in.Items) == 0 {
 		return 0, nil, httpx.BadRequest("invalid_body", "Choose at least one item to return")
 	}
+	resolution := strings.ToLower(strings.TrimSpace(in.Resolution))
+	if resolution == "" {
+		resolution = "refund"
+	}
+	if resolution != "refund" && resolution != "exchange" {
+		return 0, nil, httpx.BadRequest("invalid_body", "Resolution must be refund or exchange")
+	}
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
 			return err
 		}
-		var branch uuid.UUID
-		var cust *uuid.UUID
-		var bal decimal.Decimal
+		var locID uuid.UUID
 		var number string
-		if err := tx.QueryRow(ctx, `SELECT branch_id, customer_id, balance, number FROM sales WHERE id=$1 AND kind='sale' AND status IN ('completed','partially_refunded') FOR UPDATE`, saleID).Scan(&branch, &cust, &bal, &number); err != nil {
-			return httpx.NotFound("not_found", "Sale not found")
-		}
-		if !p.SeesBranch("sales.refund_request", branch) {
-			return httpx.NotFound("not_found", "Sale not found")
+		var paid decimal.Decimal
+		if err := tx.QueryRow(ctx, `
+			SELECT location_id, COALESCE(receipt_no, ''), amount_paid
+			FROM app.sales WHERE tenant_id = $1 AND id = $2 AND status = 'completed' FOR UPDATE`, p.TenantID, saleID).
+			Scan(&locID, &number, &paid); err != nil {
+			return httpx.NotFound("not_found", "Completed sale not found")
 		}
 		amount := money.Zero
 		var rets []retLine
@@ -74,273 +94,233 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uu
 				return httpx.BadRequest("invalid_body", "Each sale line can appear once")
 			}
 			seen[it.SaleItemID] = true
-			var qty, returned, pending, lineTotal, taxAmt, unitCost decimal.Decimal
-			var product uuid.UUID
+			var qty, returned, pending, lineTotal decimal.Decimal
 			if err := tx.QueryRow(ctx, `
-				SELECT si.qty, si.qty_returned, si.line_total, si.tax_amount, si.unit_cost, si.product_id,
-				       COALESCE((SELECT SUM(ri.qty) FROM sale_return_items ri JOIN sale_returns r ON r.id=ri.return_id
-				                 WHERE ri.sale_item_id=si.id AND r.status='pending_approval'),0)
-				FROM sale_items si WHERE si.id=$1 AND si.sale_id=$2
-			`, it.SaleItemID, saleID).Scan(&qty, &returned, &lineTotal, &taxAmt, &unitCost, &product, &pending); err != nil {
+				SELECT sl.quantity, sl.returned_quantity, sl.line_total,
+				       COALESCE((SELECT SUM(rl.quantity) FROM app.sale_return_lines rl
+				                 JOIN app.sale_returns r ON r.tenant_id = rl.tenant_id AND r.id = rl.sale_return_id
+				                 WHERE rl.tenant_id = sl.tenant_id AND rl.sale_line_id = sl.id AND r.status IN ('requested','approved')), 0)
+				FROM app.sale_lines sl WHERE sl.tenant_id = $1 AND sl.id = $2 AND sl.sale_id = $3`,
+				p.TenantID, it.SaleItemID, saleID).Scan(&qty, &returned, &lineTotal, &pending); err != nil {
 				return httpx.NotFound("not_found", "Sale line not found")
 			}
 			if returned.Add(pending).Add(it.Qty).GreaterThan(qty) {
 				return httpx.Conflict("return_exceeds_sold", "Returned quantity cannot exceed the quantity sold less earlier returns")
 			}
-			part := money.Money(lineTotal.Mul(it.Qty).Div(qty))
-			taxPart := money.Money(taxAmt.Mul(it.Qty).Div(qty))
 			restock := true
 			if it.Restock != nil {
 				restock = *it.Restock
 			}
-			rets = append(rets, retLine{item: it.SaleItemID, product: product, qty: it.Qty, unitCost: unitCost, amt: part, tax: taxPart, restock: restock})
+			cond := strings.ToLower(strings.TrimSpace(it.Condition))
+			if cond == "" {
+				if restock {
+					cond = "resellable"
+				} else {
+					cond = "damaged"
+				}
+			}
+			if cond != "resellable" && cond != "damaged" {
+				return httpx.BadRequest("invalid_body", "Item condition must be resellable or damaged")
+			}
+			if restock && cond != "resellable" {
+				return httpx.BadRequest("invalid_body", "Damaged items cannot be restocked")
+			}
+			part := money.Zero
+			if resolution == "refund" {
+				part = money.Money(lineTotal.Mul(it.Qty).Div(qty))
+			}
+			rets = append(rets, retLine{
+				saleLineID: it.SaleItemID, qty: it.Qty, amt: part, condition: cond,
+				restock: restock, productUnitID: it.ProductUnitID,
+			})
 			amount = amount.Add(part)
 		}
-		if amount.LessThanOrEqual(money.Zero) {
-			return httpx.BadRequest("invalid_body", "Choose at least one item to return")
+		if resolution == "refund" && amount.LessThanOrEqual(money.Zero) {
+			return httpx.BadRequest("invalid_body", "Refund amount must be greater than zero")
 		}
-		method := in.RefundMethod
-		if method == "" {
-			if bal.IsPositive() {
-				method = "reduce_debt"
-			} else {
-				method = "cash"
-			}
-		}
-		if !refundMethods[method] {
-			return httpx.BadRequest("invalid_body", "Refund method must be cash, mobile_money, bank, reduce_debt or customer_credit")
-		}
-		if err := s.checkRefund(ctx, tx, method, in.AccountID, cust, bal, amount); err != nil {
-			return err
-		}
-		g, ok := p.Can("sales.refund_approve")
-		auto := ok && auth.WithinLimit(g, ok, amount)
-		retNumber, err := sequence.Next(ctx, tx, branch, "return")
+		date, err := s.bizDate(ctx, tx)
 		if err != nil {
 			return err
 		}
-		rid := ids.New()
-		st := "pending_approval"
-		if auto {
-			st = "completed"
+		retNumber, err := sequence.Next(ctx, tx, uuid.Nil, "sale_return")
+		if err != nil {
+			return err
 		}
-		var approvedBy any
-		if auto {
-			approvedBy = p.UserID
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO sale_returns (id, business_id, branch_id, number, sale_id, status, reason, refund_method, money_account_id, refund_total, requested_by, approved_by, completed_at)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12, CASE WHEN $6='completed' THEN now() ELSE NULL END)
-		`, rid, p.BusinessID, branch, retNumber, saleID, st, strings.TrimSpace(in.Reason), method, in.AccountID, amount, p.UserID, approvedBy); err != nil {
+		var rid uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO app.sale_returns (tenant_id, return_no, sale_id, location_id, status, resolution, reason, refund_amount, business_date)
+			VALUES ($1,$2,$3,$4,'requested',$5::app.return_resolution,$6,$7,$8::date)
+			RETURNING id`,
+			p.TenantID, retNumber, saleID, locID, resolution, reason, amount, date).Scan(&rid); err != nil {
 			return err
 		}
 		for _, r := range rets {
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO sale_return_items (id, business_id, return_id, sale_item_id, qty, restock, amount, unit_cost)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
-			`, ids.New(), p.BusinessID, rid, r.item, r.qty, r.restock, r.amt, r.unitCost); err != nil {
+				INSERT INTO app.sale_return_lines (tenant_id, sale_return_id, sale_line_id, quantity, condition, restock, refund_amount, product_unit_id)
+				VALUES ($1,$2,$3,$4,$5::app.item_condition,$6,$7,$8)`,
+				p.TenantID, rid, r.saleLineID, r.qty, r.condition, r.restock, r.amt, r.productUnitID); err != nil {
 				return err
 			}
 		}
-		if err := s.Audit.Record(ctx, tx, p, "sale_return.requested", "sale_return", rid, nil, map[string]any{"number": retNumber, "sale_id": saleID, "refund_total": amount, "method": method, "reason": in.Reason}); err != nil {
+		var amtPtr *decimal.Decimal
+		if amount.IsPositive() {
+			a := amount
+			amtPtr = &a
+		}
+		_ = s.Notify.ToApprovers(ctx, tx, p.TenantID, &locID, "shop.return.approve", amtPtr, p.UserID, notify.Message{
+			Type: "approval_waiting", Title: "Return awaiting approval",
+			Body: "Return " + retNumber + " on sale " + number + ": " + reason,
+			Link: "/sale-returns/" + rid.String(), EntityType: "sale_return", EntityID: &rid,
+		})
+		if err := s.Audit.Record(ctx, tx, p, "sale_return.requested", "sale_return", rid, nil, map[string]any{
+			"number": retNumber, "sale_id": saleID, "resolution": resolution, "refund_total": amount, "reason": reason,
+		}); err != nil {
 			return err
 		}
-		if !auto {
-			reqID, err := s.Approval.Request(ctx, tx, p, approval.Input{
-				BranchID: &branch, Kind: "refund", SubjectType: "sale_return", SubjectID: rid,
-				Amount: decimal.NullDecimal{Decimal: amount, Valid: true}, Summary: "Refund " + retNumber + " on sale " + number + ": " + in.Reason,
-			})
-			if err != nil {
-				return err
-			}
-			raw, err := idem.Complete(ctx, tx, p.UserID, 202, httpx.Data(map[string]any{"approval_request_id": reqID, "status": "pending_approval", "id": rid, "number": retNumber}))
-			status, body = 202, raw
-			return err
-		}
-		if err := s.applyReturn(ctx, tx, p, rid, saleID, branch, cust, method, in.AccountID, amount, rets); err != nil {
-			return err
-		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 201, httpx.Data(map[string]any{"id": rid, "number": retNumber, "status": "completed", "refund_total": amount, "refund_method": method}))
+		raw, err := idem.Complete(ctx, tx, p.UserID, 201, httpx.Data(map[string]any{
+			"id": rid, "number": retNumber, "sale_id": saleID, "status": "requested", "resolution": resolution, "refund_total": amount,
+		}))
 		status, body = 201, raw
 		return err
 	})
 	return status, body, err
 }
 
-func (s *Service) checkRefund(ctx context.Context, tx pgx.Tx, method string, account *uuid.UUID, cust *uuid.UUID, bal, amount decimal.Decimal) error {
-	switch method {
-	case "reduce_debt":
-		if bal.LessThan(amount) {
-			return httpx.Conflict("invalid_status", "The refund is larger than what the customer still owes on this sale. Refund in money or as customer credit")
+// DecideReturn approves or rejects a requested return. The database enforces separation of duties
+// (decided_by <> requested_by) and the approver's refund_approve_amount authority limit.
+func (s *Service) DecideReturn(ctx context.Context, p *auth.Principal, id uuid.UUID, approve bool) (map[string]any, error) {
+	var out map[string]any
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		var st string
+		var requestedBy uuid.UUID
+		err := tx.QueryRow(ctx, `SELECT status::text, requested_by FROM app.sale_returns WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&st, &requestedBy)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return httpx.NotFound("not_found", "Return not found")
 		}
-	case "customer_credit":
-		var walk bool
-		if cust == nil || tx.QueryRow(ctx, `SELECT is_walk_in FROM customers WHERE id=$1`, *cust).Scan(&walk) != nil || walk {
-			return httpx.Conflict("customer_required", "Customer credit needs a named customer")
-		}
-	default:
-		if account == nil {
-			return httpx.BadRequest("invalid_body", "Choose the account to refund from")
-		}
-		return checkAccount(ctx, tx, *account)
-	}
-	return nil
-}
-
-type retLine struct {
-	item, product           uuid.UUID
-	qty, unitCost, amt, tax decimal.Decimal
-	restock                 bool
-}
-
-func (s *Service) applyReturn(ctx context.Context, tx pgx.Tx, p *auth.Principal, returnID, saleID, branch uuid.UUID, cust *uuid.UUID, method string, account *uuid.UUID, amount decimal.Decimal, lines []retLine) error {
-	user := p.UserID
-	taxSum := money.Zero
-	costSum := money.Zero
-	for _, ln := range lines {
-		tag, err := tx.Exec(ctx, `UPDATE sale_items SET qty_returned = qty_returned + $2 WHERE id=$1 AND qty_returned + $2 <= qty`, ln.item, ln.qty)
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() == 0 {
-			return httpx.Conflict("return_exceeds_sold", "Returned quantity cannot exceed the quantity sold less earlier returns")
+		if st != "requested" {
+			return httpx.Conflict("invalid_status", "This return is no longer waiting for a decision")
 		}
-		taxSum = taxSum.Add(ln.tax)
-		if ln.restock {
-			if err := s.Stock.ReturnAtCost(ctx, tx, p.BusinessID, branch, &user, "sale_return", "sale_return", returnID, []stock.Line{{ProductID: ln.product, Qty: ln.qty, UnitCost: ln.unitCost}}); err != nil {
-				return err
+		if requestedBy == p.MembershipID {
+			return httpx.Forbidden("cannot_approve_own", "You cannot decide your own return request")
+		}
+		next := "rejected"
+		if approve {
+			next = "approved"
+		}
+		if _, err := tx.Exec(ctx, `UPDATE app.sale_returns SET status = $3::app.return_status WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, next); err != nil {
+			return err
+		}
+		if err := s.Audit.Record(ctx, tx, p, "sale_return."+next, "sale_return", id, nil, map[string]any{"status": next}); err != nil {
+			return err
+		}
+		out = map[string]any{"id": id, "status": next}
+		return nil
+	})
+	return out, err
+}
+
+// CancelReturn cancels a requested or approved return before completion.
+func (s *Service) CancelReturn(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
+	var out map[string]any
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		var st string
+		err := tx.QueryRow(ctx, `SELECT status::text FROM app.sale_returns WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&st)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return httpx.NotFound("not_found", "Return not found")
+		}
+		if err != nil {
+			return err
+		}
+		if st != "requested" && st != "approved" {
+			return httpx.Conflict("invalid_status", "This return cannot be cancelled")
+		}
+		if _, err := tx.Exec(ctx, `UPDATE app.sale_returns SET status = 'cancelled' WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+			return err
+		}
+		out = map[string]any{"id": id, "status": "cancelled"}
+		return s.Audit.Record(ctx, tx, p, "sale_return.cancelled", "sale_return", id, nil, out)
+	})
+	return out, err
+}
+
+// CompleteReturn finalises an approved return: the database restocks eligible lines, updates serial
+// units and reverses commissions; for a refund resolution, a payment out is posted from AccountID.
+func (s *Service) CompleteReturn(ctx context.Context, p *auth.Principal, id uuid.UUID, in CompleteReturnIn) (int, []byte, error) {
+	var status int
+	var body []byte
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+			if rep != nil {
+				status, body = rep.Status, rep.Body
 			}
-			costSum = costSum.Add(money.Money(ln.qty.Mul(ln.unitCost)))
+			return err
 		}
-	}
-	date, err := s.bizDate(ctx, tx)
-	if err != nil {
-		return err
-	}
-	net := amount.Sub(taxSum)
-	j := []ledger.Line{}
-	if net.IsPositive() {
-		j = append(j, ledger.Line{Code: "4010", BranchID: &branch, Debit: net})
-	}
-	if taxSum.IsPositive() {
-		j = append(j, ledger.Line{Code: "2100", BranchID: &branch, Debit: taxSum})
-	}
-	if method == "reduce_debt" || method == "customer_credit" {
-		code := "1100"
-		if method == "customer_credit" {
-			code = "2300"
+		var saleID, locID uuid.UUID
+		var custID *uuid.UUID
+		var st, resolution, retNo string
+		var refundAmt decimal.Decimal
+		err := tx.QueryRow(ctx, `
+			SELECT r.sale_id, r.location_id, s.customer_id, r.status::text, r.resolution::text, r.return_no, r.refund_amount
+			FROM app.sale_returns r JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id
+			WHERE r.tenant_id = $1 AND r.id = $2 FOR UPDATE OF r`, p.TenantID, id).
+			Scan(&saleID, &locID, &custID, &st, &resolution, &retNo, &refundAmt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return httpx.NotFound("not_found", "Return not found")
 		}
-		j = append(j, ledger.Line{Code: code, BranchID: &branch, PartyType: "customer", PartyID: cust, Credit: amount})
-		if method == "reduce_debt" {
-			tag, err := tx.Exec(ctx, `UPDATE sales SET total=total-$2, balance=balance-$2, tax_total=tax_total-$3, cost_total=cost_total-$4 WHERE id=$1 AND balance >= $2`, saleID, amount, taxSum, costSum)
+		if err != nil {
+			return err
+		}
+		if st != "approved" {
+			return httpx.Conflict("invalid_status", "Only an approved return can be completed")
+		}
+		if resolution == "refund" && refundAmt.IsPositive() && in.AccountID == nil {
+			return httpx.BadRequest("invalid_body", "Choose the money account to refund from")
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE app.sale_returns SET status = 'completed', completed_at = now(), exchange_sale_id = COALESCE($3, exchange_sale_id)
+			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, in.ExchangeSaleID); err != nil {
+			return err
+		}
+		out := map[string]any{"id": id, "number": retNo, "sale_id": saleID, "status": "completed", "resolution": resolution, "refund_total": refundAmt}
+		if resolution == "refund" && refundAmt.IsPositive() && in.AccountID != nil {
+			date, err := s.bizDate(ctx, tx)
 			if err != nil {
 				return err
 			}
-			if tag.RowsAffected() == 0 {
-				return httpx.Conflict("invalid_status", "The refund is larger than what the customer still owes on this sale")
+			otherPayee := ""
+			if custID == nil {
+				otherPayee = "Walk-in customer"
 			}
-		} else if _, err := tx.Exec(ctx, `UPDATE sales SET total=total-$2, paid_total=paid_total-$2, tax_total=tax_total-$3, cost_total=cost_total-$4 WHERE id=$1`, saleID, amount, taxSum, costSum); err != nil {
-			return err
-		}
-	} else {
-		if account == nil {
-			return httpx.BadRequest("invalid_body", "Choose the account to refund from")
-		}
-		code, _, err := s.Ledger.AccountCodeForMoney(ctx, tx, *account)
-		if err != nil {
-			return err
-		}
-		if err := s.Ledger.EnsureFunds(ctx, tx, *account, amount); err != nil {
-			return err
-		}
-		var till *uuid.UUID
-		if method == "cash" {
-			if id, _, err := openTill(ctx, tx, p.UserID); err == nil {
-				till = &id
+			method := ""
+			if in.Method != "" {
+				method = payments.Method(in.Method)
+				if method == "" {
+					return httpx.BadRequest("invalid_body", "Payment method must be cash, mobile_money, bank, card or cheque")
+				}
 			}
+			pay, err := payments.Pay(ctx, tx, payments.PayInput{
+				TenantID: p.TenantID, LocationID: locID, AccountID: *in.AccountID,
+				CustomerID: custID, OtherPayee: otherPayee, Method: method,
+				Amount: refundAmt, Reference: strings.TrimSpace(in.Reference), BusinessDate: date,
+				Notes: "Refund " + retNo, Allocations: []payments.Alloc{{SaleReturnID: &id, Amount: refundAmt}},
+			})
+			if err != nil {
+				return err
+			}
+			out["payment_id"] = pay.ID
+			out["payment_number"] = pay.Number
 		}
-		if _, err := payments.Insert(ctx, tx, payments.Input{
-			BusinessID: p.BusinessID, BranchID: branch, MoneyAccountID: *account, UserID: p.UserID, TillSessionID: till,
-			Direction: "out", Kind: "sale_refund", Method: method, PartyType: "customer", PartyID: cust,
-			Amount: amount, Date: date, AllocType: "sale", AllocID: saleID, AllocAmount: amount, Reference: "",
-		}); err != nil {
+		if err := s.Audit.Record(ctx, tx, p, "sale_return.completed", "sale_return", id, nil, out); err != nil {
 			return err
 		}
-		j = append(j, ledger.Line{Code: code, BranchID: &branch, MoneyAccountID: account, PartyType: "customer", PartyID: cust, Credit: amount})
-		if _, err := tx.Exec(ctx, `UPDATE sales SET total=total-$2, paid_total=paid_total-$2, tax_total=tax_total-$3, cost_total=cost_total-$4 WHERE id=$1`, saleID, amount, taxSum, costSum); err != nil {
-			return err
-		}
-	}
-	if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "sale_return", returnID, "Sale return", &user, j); err != nil {
+		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(out))
+		status, body = 200, raw
 		return err
-	}
-	if costSum.IsPositive() {
-		if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "sale_return_cost", returnID, "Stock returned", &user, []ledger.Line{
-			{Code: "1200", BranchID: &branch, Debit: costSum},
-			{Code: "5000", BranchID: &branch, Credit: costSum},
-		}); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE sales SET status = CASE
-			WHEN (SELECT COALESCE(SUM(qty-qty_returned),0) FROM sale_items WHERE sale_id=$1) = 0 THEN 'refunded'
-			ELSE 'partially_refunded' END
-		WHERE id=$1
-	`, saleID); err != nil {
-		return err
-	}
-	return s.Audit.Record(ctx, tx, p, "sale_return.completed", "sale_return", returnID, nil, map[string]any{"sale_id": saleID, "refund_total": amount, "method": method})
-}
-
-func (s *Service) OnReturnApproved(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
-	var saleID, branch uuid.UUID
-	var method, st string
-	var account *uuid.UUID
-	var amount decimal.Decimal
-	var cust *uuid.UUID
-	if err := tx.QueryRow(ctx, `
-		SELECT r.sale_id, r.branch_id, r.refund_method, r.money_account_id, r.refund_total, s.customer_id, r.status
-		FROM sale_returns r JOIN sales s ON s.id=r.sale_id WHERE r.id=$1 FOR UPDATE OF r
-	`, req.SubjectID).Scan(&saleID, &branch, &method, &account, &amount, &cust, &st); err != nil {
-		return err
-	}
-	if st != "pending_approval" {
-		return httpx.Conflict("invalid_status", "This return is no longer waiting for approval")
-	}
-	rows, err := tx.Query(ctx, `
-		SELECT ri.sale_item_id, si.product_id, ri.qty, ri.unit_cost, ri.amount, round(si.tax_amount * ri.qty / si.qty, 2), ri.restock
-		FROM sale_return_items ri JOIN sale_items si ON si.id=ri.sale_item_id WHERE ri.return_id=$1
-	`, req.SubjectID)
-	if err != nil {
-		return err
-	}
-	var lines []retLine
-	for rows.Next() {
-		var ln retLine
-		if err := rows.Scan(&ln.item, &ln.product, &ln.qty, &ln.unitCost, &ln.amt, &ln.tax, &ln.restock); err != nil {
-			rows.Close()
-			return err
-		}
-		lines = append(lines, ln)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if err := s.applyReturn(ctx, tx, p, req.SubjectID, saleID, branch, cust, method, account, amount, lines); err != nil {
-		return err
-	}
-	_, err = tx.Exec(ctx, `UPDATE sale_returns SET status='completed', approved_by=$2, completed_at=now() WHERE id=$1`, req.SubjectID, p.UserID)
-	return err
-}
-
-// OnReturnRejected closes a refund request that was rejected or cancelled.
-func (s *Service) OnReturnRejected(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
-	if _, err := tx.Exec(ctx, `UPDATE sale_returns SET status='rejected' WHERE id=$1 AND status='pending_approval'`, req.SubjectID); err != nil {
-		return err
-	}
-	return s.Audit.Record(ctx, tx, p, "sale_return."+req.Status, "sale_return", req.SubjectID, nil, map[string]any{"note": req.Note})
+	})
+	return status, body, err
 }
 
 type ReturnFilter struct {
@@ -350,28 +330,26 @@ type ReturnFilter struct {
 	To     string
 }
 
-// Returns lists sale returns inside the caller's sales.view scope.
+// Returns lists sale returns inside the caller's scope.
 func (s *Service) Returns(ctx context.Context, p *auth.Principal, f ReturnFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		if b := p.ScopeBranches("sales.view"); b != nil {
-			q.Add("r.branch_id = ANY(?)", b)
-		}
-		if own := p.OwnOnly("sales.view"); own != nil {
-			q.Add("(r.requested_by = ? OR s.cashier_id = ?)", *own, *own)
-		}
+		q := sqlq.New(p.TenantID)
+		q.Add("r.tenant_id = $1")
+		q.If(p.BranchID != nil, "r.location_id = ?", p.BranchID)
+		q.If(!p.Has("shop.sale.view_all") && !p.Has("shop.return.approve"), "(r.requested_by = ? OR s.sold_by = ?)", p.MembershipID, p.MembershipID)
 		q.If(f.SaleID != nil, "r.sale_id = ?", f.SaleID)
-		q.If(f.Status != "", "r.status = ?", f.Status)
-		q.If(f.From != "", "r.created_at >= ?::date", f.From)
-		q.If(f.To != "", "r.created_at < ?::date + 1", f.To)
-		from := ` FROM sale_returns r JOIN sales s ON s.id=r.sale_id`
+		q.If(f.Status != "", "r.status = ?::app.return_status", f.Status)
+		q.If(f.From != "", "r.business_date >= ?::date", f.From)
+		q.If(f.To != "", "r.business_date <= ?::date", f.To)
+		from := ` FROM app.sale_returns r JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id`
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT r.id, r.number, r.sale_id, s.number, r.status, r.reason, r.refund_method, r.refund_total, r.requested_by, r.approved_by, r.created_at, r.completed_at, r.branch_id`+
+			SELECT r.id, r.return_no, r.sale_id, COALESCE(s.receipt_no, ''), r.status::text, r.resolution::text,
+			       r.reason, r.refund_amount, r.requested_by, r.decided_by, r.created_at, r.completed_at, r.location_id`+
 			from+q.Where()+` ORDER BY r.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
 		if err != nil {
 			return err
@@ -392,14 +370,14 @@ func (s *Service) Returns(ctx context.Context, p *auth.Principal, f ReturnFilter
 func scanReturn(row pgx.Row) (map[string]any, error) {
 	var id, sale, by, branch uuid.UUID
 	var approved *uuid.UUID
-	var number, saleNo, status, reason, method string
+	var number, saleNo, status, resolution, reason string
 	var amount decimal.Decimal
 	var created, completed any
-	if err := row.Scan(&id, &number, &sale, &saleNo, &status, &reason, &method, &amount, &by, &approved, &created, &completed, &branch); err != nil {
+	if err := row.Scan(&id, &number, &sale, &saleNo, &status, &resolution, &reason, &amount, &by, &approved, &created, &completed, &branch); err != nil {
 		return nil, err
 	}
-	return map[string]any{"id": id, "number": number, "sale_id": sale, "sale_number": saleNo, "status": status, "reason": reason,
-		"refund_method": method, "refund_total": amount, "requested_by": by, "approved_by": approved, "created_at": created,
+	return map[string]any{"id": id, "number": number, "sale_id": sale, "sale_number": saleNo, "status": status, "resolution": resolution,
+		"reason": reason, "refund_total": amount, "requested_by": by, "approved_by": approved, "created_at": created,
 		"completed_at": completed, "branch_id": branch}, nil
 }
 
@@ -407,28 +385,31 @@ func scanReturn(row pgx.Row) (map[string]any, error) {
 func (s *Service) Return(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		var cashier uuid.UUID
 		m, err := scanReturn(tx.QueryRow(ctx, `
-			SELECT r.id, r.number, r.sale_id, s.number, r.status, r.reason, r.refund_method, r.refund_total, r.requested_by, r.approved_by, r.created_at, r.completed_at, r.branch_id
-			FROM sale_returns r JOIN sales s ON s.id=r.sale_id WHERE r.id=$1`, id))
+			SELECT r.id, r.return_no, r.sale_id, COALESCE(s.receipt_no, ''), r.status::text, r.resolution::text,
+			       r.reason, r.refund_amount, r.requested_by, r.decided_by, r.created_at, r.completed_at, r.location_id
+			FROM app.sale_returns r JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id
+			WHERE r.tenant_id = $1 AND r.id = $2`, p.TenantID, id))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFound("not_found", "Return not found")
 		}
 		if err != nil {
 			return err
 		}
-		if err := tx.QueryRow(ctx, `SELECT cashier_id FROM sales WHERE id=$1`, m["sale_id"]).Scan(&cashier); err != nil {
-			return err
-		}
-		if !p.SeesBranch("sales.view", m["branch_id"].(uuid.UUID)) {
-			return httpx.NotFound("not_found", "Return not found")
-		}
-		if own := p.OwnOnly("sales.view"); own != nil && m["requested_by"] != *own && cashier != *own {
-			return httpx.NotFound("not_found", "Return not found")
+		if !p.Has("shop.sale.view_all") && !p.Has("shop.return.approve") {
+			var soldBy uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT sold_by FROM app.sales WHERE tenant_id = $1 AND id = $2`, p.TenantID, m["sale_id"]).Scan(&soldBy); err != nil {
+				return err
+			}
+			if m["requested_by"] != p.MembershipID && soldBy != p.MembershipID {
+				return httpx.NotFound("not_found", "Return not found")
+			}
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT ri.id, ri.sale_item_id, si.product_id, si.product_name, ri.qty, ri.restock, ri.amount
-			FROM sale_return_items ri JOIN sale_items si ON si.id=ri.sale_item_id WHERE ri.return_id=$1 ORDER BY si.product_name`, id)
+			SELECT rl.id, rl.sale_line_id, sl.product_id, sl.product_name::text, rl.quantity, rl.condition::text, rl.restock, rl.refund_amount, rl.product_unit_id
+			FROM app.sale_return_lines rl
+			JOIN app.sale_lines sl ON sl.tenant_id = rl.tenant_id AND sl.id = rl.sale_line_id
+			WHERE rl.tenant_id = $1 AND rl.sale_return_id = $2 ORDER BY sl.line_no`, p.TenantID, id)
 		if err != nil {
 			return err
 		}
@@ -436,13 +417,15 @@ func (s *Service) Return(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 		items := []map[string]any{}
 		for rows.Next() {
 			var rid, item, product uuid.UUID
-			var name string
+			var unitID *uuid.UUID
+			var name, cond string
 			var qty, amt decimal.Decimal
 			var restock bool
-			if err := rows.Scan(&rid, &item, &product, &name, &qty, &restock, &amt); err != nil {
+			if err := rows.Scan(&rid, &item, &product, &name, &qty, &cond, &restock, &amt, &unitID); err != nil {
 				return err
 			}
-			items = append(items, map[string]any{"id": rid, "sale_item_id": item, "product_id": product, "product_name": name, "qty": qty, "restock": restock, "amount": amt})
+			items = append(items, map[string]any{"id": rid, "sale_item_id": item, "product_id": product, "product_name": name,
+				"qty": qty, "condition": cond, "restock": restock, "amount": amt, "product_unit_id": unitID})
 		}
 		m["items"] = items
 		out = m

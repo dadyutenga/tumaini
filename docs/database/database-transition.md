@@ -46,7 +46,7 @@ Legend: [x] done (compiles; not yet integration-tested), [~] partly done, [ ] no
 - [x] Inventory (reads, entries, counts, adjustments, transfers)
 - [x] Customers (profiles, receive payment, unpaid, statement, debts; write-off is not in the approved model)
 - [x] Finance (accounts, statements, transfers, transactions, payments, void, debts, day closing; ledger, income, drawings, statutory are not in the approved model)
-- [ ] Sales and POS (sales, lines, units, returns; tills have no table in the approved schema: day closing per location replaces them)
+- [x] Sales and POS (sales, lines, units, held carts, returns, void; tills and shop quotations are not in the approved model)
 - [ ] Purchasing (purchases, goods receipts, suppliers, supplier payments)
 - [ ] Expenses (expenses, recurring, petty cash)
 - [ ] HR, attendance, payroll
