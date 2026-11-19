@@ -1,0 +1,5224 @@
+paths:
+  /clients:
+    get:
+      summary: List clients and leads with balance owed and open projects
+      operationId: get_clients
+      tags:
+      - 'Services: Clients'
+      x-permission: clients.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: is_active
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Add a client or lead
+      operationId: post_clients
+      tags:
+      - 'Services: Clients'
+      x-permission: clients.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /clients/{id}:
+    get:
+      summary: Profile with projects, invoices, payments, documents and communication
+      operationId: get_clients_id
+      tags:
+      - 'Services: Clients'
+      x-permission: clients.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+    put:
+      summary: Edit profile
+      operationId: put_clients_id
+      tags:
+      - 'Services: Clients'
+      x-permission: clients.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /clients/{id}/convert:
+    post:
+      summary: Convert a lead to an active client
+      operationId: post_clients_id_convert
+      tags:
+      - 'Services: Clients'
+      x-permission: clients.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /clients/{id}/deactivate:
+    post:
+      summary: Deactivate a client with no balance owed
+      operationId: post_clients_id_deactivate
+      tags:
+      - 'Services: Clients'
+      x-permission: clients.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /clients/{id}/statement:
+    get:
+      summary: Invoices and payments with running balance. `format=pdf`
+      operationId: get_clients_id_statement
+      tags:
+      - 'Services: Clients'
+      x-permission: service_billing.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: File
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+  /service-catalog:
+    get:
+      summary: List services and packages
+      operationId: get_service_catalog
+      tags:
+      - 'Services: Catalog'
+      x-permission: any services permission
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: category
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: all
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Create a service or package with stages, required documents and package contents
+      operationId: post_service_catalog
+      tags:
+      - 'Services: Catalog'
+      x-permission: service_catalog.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-catalog/{id}:
+    get:
+      summary: Service with stages, documents and package items
+      operationId: get_service_catalog_id
+      tags:
+      - 'Services: Catalog'
+      x-permission: any services permission
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+    put:
+      summary: Edit. Stages, documents and package items are replaced when sent. Started projects keep their own copy
+      operationId: put_service_catalog_id
+      tags:
+      - 'Services: Catalog'
+      x-permission: service_catalog.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-catalog/{id}/deactivate:
+    post:
+      summary: Hide from new projects
+      operationId: post_service_catalog_id_deactivate
+      tags:
+      - 'Services: Catalog'
+      x-permission: service_catalog.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-catalog/{id}/activate:
+    post:
+      summary: Show again
+      operationId: post_service_catalog_id_activate
+      tags:
+      - 'Services: Catalog'
+      x-permission: service_catalog.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /projects:
+    get:
+      summary: List projects with stage progress, paid, balance, costs and profit. Limited to own projects for scope `own`
+      operationId: get_projects
+      tags:
+      - 'Services: Projects'
+      x-permission: projects.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: client_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: owner_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: late
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Start a project. Stages and required documents are copied from the service
+      operationId: post_projects
+      tags:
+      - 'Services: Projects'
+      x-permission: projects.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /projects/board:
+    get:
+      summary: Open projects grouped by current stage
+      operationId: get_projects_board
+      tags:
+      - 'Services: Projects'
+      x-permission: projects.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /projects/{id}:
+    get:
+      summary: Detail with stages, documents, payments, costs, notes, invoices and design jobs
+      operationId: get_projects_id
+      tags:
+      - 'Services: Projects'
+      x-permission: projects.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+    put:
+      summary: Edit name, status, owner, price, notes
+      operationId: put_projects_id
+      tags:
+      - 'Services: Projects'
+      x-permission: projects.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /projects/{id}/stages:
+    post:
+      summary: Add a stage
+      operationId: post_projects_id_stages
+      tags:
+      - 'Services: Projects'
+      x-permission: projects.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /projects/{id}/stages/{stage_id}:
+    put:
+      summary: Change status (not_started, in_progress, done, stuck), owner, deadline, checklist, with a note. The last done stage completes the project
+      operationId: put_projects_id_stages_stage_id
+      tags:
+      - 'Services: Projects'
+      x-permission: projects.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: stage_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /projects/{id}/stages/{stage_id}/design-jobs:
+    post:
+      summary: Create several design jobs for a branding stage. The stage is done when all are approved
+      operationId: post_projects_id_stages_stage_id_design_jobs
+      tags:
+      - 'Services: Projects'
+      x-permission: design.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: stage_id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /projects/{id}/notes:
+    get:
+      summary: Calls, messages and meetings
+      operationId: get_projects_id_notes
+      tags:
+      - 'Services: Projects'
+      x-permission: projects.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+    post:
+      summary: Add a note
+      operationId: post_projects_id_notes
+      tags:
+      - 'Services: Projects'
+      x-permission: projects.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /projects/{id}/updates:
+    post:
+      summary: Send an SMS update to the client and record it. `delivered` is false when no SMS provider is set
+      operationId: post_projects_id_updates
+      tags:
+      - 'Services: Projects'
+      x-permission: projects.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /projects/{id}/payments:
+    post:
+      summary: Receive a deposit or installment. It settles issued invoices first; the rest is held as a deposit
+      operationId: post_projects_id_payments
+      tags:
+      - 'Services: Projects'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /client-documents:
+    get:
+      summary: Document library
+      operationId: get_client_documents
+      tags:
+      - 'Services: Documents'
+      x-permission: clients.view or projects.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: client_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Register a document, optionally with an uploaded file
+      operationId: post_client_documents
+      tags:
+      - 'Services: Documents'
+      x-permission: clients.manage or projects.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /client-documents/{id}:
+    put:
+      summary: Rename, attach a file, mark received or missing
+      operationId: put_client_documents_id
+      tags:
+      - 'Services: Documents'
+      x-permission: clients.manage or projects.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /tasks:
+    get:
+      summary: Tasks. Scope `own` shows assigned and created tasks
+      operationId: get_tasks
+      tags:
+      - 'Services: Tasks'
+      x-permission: tasks.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: assignee_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: overdue
+        in: query
+        required: false
+        schema:
+          type: boolean
+      - name: open
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Create and assign a task
+      operationId: post_tasks
+      tags:
+      - 'Services: Tasks'
+      x-permission: tasks.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /tasks/{id}:
+    put:
+      summary: Edit. With only `tasks.view` a person can change the status of a task assigned to them
+      operationId: put_tasks_id
+      tags:
+      - 'Services: Tasks'
+      x-permission: tasks.manage or tasks.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /renewals:
+    get:
+      summary: Renewals with days left
+      operationId: get_renewals
+      tags:
+      - 'Services: Renewals'
+      x-permission: renewals.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: client_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: within_days
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Add a renewal
+      operationId: post_renewals
+      tags:
+      - 'Services: Renewals'
+      x-permission: renewals.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /renewals/{id}:
+    put:
+      summary: Edit a pending renewal
+      operationId: put_renewals_id
+      tags:
+      - 'Services: Renewals'
+      x-permission: renewals.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /renewals/{id}/renew:
+    post:
+      summary: Mark renewed; optional `next_due_date` schedules the next one
+      operationId: post_renewals_id_renew
+      tags:
+      - 'Services: Renewals'
+      x-permission: renewals.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /renewals/{id}/cancel:
+    post:
+      summary: Cancel
+      operationId: post_renewals_id_cancel
+      tags:
+      - 'Services: Renewals'
+      x-permission: renewals.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /renewals/{id}/remind:
+    post:
+      summary: Send the reminder to the client now
+      operationId: post_renewals_id_remind
+      tags:
+      - 'Services: Renewals'
+      x-permission: renewals.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-quotations:
+    get:
+      summary: List quotations
+      operationId: get_service_quotations
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: client_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Create a draft quotation
+      operationId: post_service_quotations
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-quotations/{id}:
+    get:
+      summary: Quotation with lines
+      operationId: get_service_quotations_id
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+    put:
+      summary: Edit a draft
+      operationId: put_service_quotations_id
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-quotations/{id}/send:
+    post:
+      summary: Mark sent
+      operationId: post_service_quotations_id_send
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-quotations/{id}/reject:
+    post:
+      summary: Mark rejected
+      operationId: post_service_quotations_id_reject
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-quotations/{id}/accept:
+    post:
+      summary: 'Accept: creates the draft invoice, and the project when `create_project` is true'
+      operationId: post_service_quotations_id_accept
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-quotations/{id}/pdf:
+    get:
+      summary: Printable quotation
+      operationId: get_service_quotations_id_pdf
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: File
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+  /service-invoices:
+    get:
+      summary: List invoices
+      operationId: get_service_invoices
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: client_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: overdue
+        in: query
+        required: false
+        schema:
+          type: boolean
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Create a draft from lines, a project or a design job, with optional installments
+      operationId: post_service_invoices
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-invoices/{id}:
+    get:
+      summary: Invoice with lines, installments and payments
+      operationId: get_service_invoices_id
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+    put:
+      summary: Edit a draft
+      operationId: put_service_invoices_id
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-invoices/{id}/issue:
+    post:
+      summary: 'Issue: posts the receivable and applies deposits already received for the project or job'
+      operationId: post_service_invoices_id_issue
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-invoices/{id}/void:
+    post:
+      summary: Void a draft, or an issued invoice with no payments. Reason required
+      operationId: post_service_invoices_id_void
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-invoices/{id}/payments:
+    post:
+      summary: Record a payment against the invoice. More than the balance is 409
+      operationId: post_service_invoices_id_payments
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-invoices/{id}/pdf:
+    get:
+      summary: Printable invoice
+      operationId: get_service_invoices_id_pdf
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: File
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+  /service-payments:
+    get:
+      summary: Client payments
+      operationId: get_service_payments
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: client_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: design_job_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /service-payments/{id}/void:
+    post:
+      summary: Void a client payment, its deposit applications and invoice allocations. Reason required
+      operationId: post_service_payments_id_void
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-costs:
+    get:
+      summary: Project, design job and contractor costs
+      operationId: get_service_costs
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: project_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: design_job_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: contractor_id
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Record a cost. With `money_account_id` it is paid now; with only `contractor_id` it is owed
+      operationId: post_service_costs
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /service-costs/{id}/void:
+    post:
+      summary: Void a cost not yet paid to a contractor. Reason required
+      operationId: post_service_costs_id_void
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /contractors:
+    get:
+      summary: List contractors with the amount we owe
+      operationId: get_contractors
+      tags:
+      - 'Services: Contractors'
+      x-permission: contractors.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: all
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Add a contractor
+      operationId: post_contractors
+      tags:
+      - 'Services: Contractors'
+      x-permission: contractors.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /contractors/{id}:
+    get:
+      summary: Detail
+      operationId: get_contractors_id
+      tags:
+      - 'Services: Contractors'
+      x-permission: contractors.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+    put:
+      summary: Edit
+      operationId: put_contractors_id
+      tags:
+      - 'Services: Contractors'
+      x-permission: contractors.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /contractors/{id}/deactivate:
+    post:
+      summary: Deactivate
+      operationId: post_contractors_id_deactivate
+      tags:
+      - 'Services: Contractors'
+      x-permission: contractors.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /contractors/{id}/activate:
+    post:
+      summary: Reactivate
+      operationId: post_contractors_id_activate
+      tags:
+      - 'Services: Contractors'
+      x-permission: contractors.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /contractors/{id}/statement:
+    get:
+      summary: Work owed and payments with running balance
+      operationId: get_contractors_id_statement
+      tags:
+      - 'Services: Contractors'
+      x-permission: contractors.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+  /contractors/{id}/payments:
+    post:
+      summary: Pay owed work from a money account, oldest first. More than owed is 409
+      operationId: post_contractors_id_payments
+      tags:
+      - 'Services: Contractors'
+      x-permission: contractors.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /design-jobs:
+    get:
+      summary: List design jobs. Scope `own` shows assigned jobs
+      operationId: get_design_jobs
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: q
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: designer_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: client_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: project_id
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: overdue
+        in: query
+        required: false
+        schema:
+          type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+    post:
+      summary: Create a job. Price and revisions default from the catalog service
+      operationId: post_design_jobs
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /design-jobs/board:
+    get:
+      summary: 'One column per status: new_brief, in_design, internal_review, with_client, changes_requested, approved, printing, delivered'
+      operationId: get_design_jobs_board
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: designer_id
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /design-jobs/{id}:
+    get:
+      summary: Detail with versions, feedback, references, costs, payments, print orders, time and invoices
+      operationId: get_design_jobs_id
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+    put:
+      summary: Edit brief, deadline, designer, price, deposit, revisions
+      operationId: put_design_jobs_id
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /design-jobs/{id}/status:
+    post:
+      summary: Move along the workflow. Changes requested uses one revision
+      operationId: post_design_jobs_id_status
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /design-jobs/{id}/versions:
+    post:
+      summary: Add a design version (file or link). Print-ready and source files are added once approved
+      operationId: post_design_jobs_id_versions
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /design-jobs/{id}/versions/{version_id}/send:
+    post:
+      summary: 'Send for approval: returns a private link valid 14 days and texts it to the client when SMS is set'
+      operationId: post_design_jobs_id_versions_version_id_send
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: version_id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /design-jobs/{id}/feedback:
+    post:
+      summary: Add a staff comment
+      operationId: post_design_jobs_id_feedback
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /design-jobs/{id}/payments:
+    post:
+      summary: Receive a deposit or balance for the job
+      operationId: post_design_jobs_id_payments
+      tags:
+      - 'Services: Design jobs'
+      x-permission: service_billing.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /design-jobs/{id}/timer/start:
+    post:
+      summary: Start the caller's timer
+      operationId: post_design_jobs_id_timer_start
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /design-jobs/{id}/timer/stop:
+    post:
+      summary: Stop the caller's timer
+      operationId: post_design_jobs_id_timer_stop
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /design-jobs/{id}/print-orders:
+    post:
+      summary: Create a print order for an approved design. Its cost is owed to the contractor
+      operationId: post_design_jobs_id_print_orders
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /print-orders/{id}:
+    put:
+      summary: 'Set status: ready, delivered or cancelled'
+      operationId: put_print_orders_id
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /public/design-approvals/{token}:
+    get:
+      summary: What the client sees on the approval page
+      operationId: get_public_design_approvals_token
+      tags:
+      - 'Services: Design jobs'
+      x-permission: none (private link)
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+  /public/design-approvals/{token}/file:
+    get:
+      summary: The version file
+      operationId: get_public_design_approvals_token_file
+      tags:
+      - 'Services: Design jobs'
+      x-permission: none (private link)
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: File
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+  /public/design-approvals/{token}/decision:
+    post:
+      summary: Approve, or request changes with a comment. One decision per link
+      operationId: post_public_design_approvals_token_decision
+      tags:
+      - 'Services: Design jobs'
+      x-permission: none (private link)
+      parameters:
+      - name: token
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: not_found
+                  message: The record was not found
+        '409':
+          description: State conflict
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_status
+                  message: The record is not in a state that allows this
+  /services/dashboard:
+    get:
+      summary: Projects by stage, late projects, overdue tasks, renewals due, debts, contractor balance, design counts. Each part needs its permission
+      operationId: get_services_dashboard
+      tags:
+      - 'Services: Dashboard and reports'
+      x-permission: any services view permission
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /reports/projects:
+    get:
+      summary: Projects with price, paid, balance, costs and profit. `format=csv`, `xlsx` or `pdf`
+      operationId: get_reports_projects
+      tags:
+      - 'Services: Dashboard and reports'
+      x-permission: reports.services
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that
+  /reports/design-jobs:
+    get:
+      summary: Jobs, on-time rate, days to approval, revisions, income, costs and profit by designer
+      operationId: get_reports_design_jobs
+      tags:
+      - 'Services: Dashboard and reports'
+      x-permission: reports.services
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: from
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: to
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '400':
+          description: Malformed request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: invalid_body
+                  message: Request body is not valid JSON
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                error:
+                  code: permission_denied
+                  message: You do not have permission to do that

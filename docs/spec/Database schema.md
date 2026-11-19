@@ -1247,6 +1247,28 @@ CREATE TABLE export_jobs (
 );
 ```
 
+## 9. Services (Business B)
+
+Added in migration `0020_services`. Every table has `business_id` and the same row-level security policy as the rest. Money amounts are `numeric(18,2)`. The module posts to the ledger through the shared kernel; no table here holds a balance that the ledger does not also hold.
+
+| Table | Holds |
+| --- | --- |
+| `svc_clients` | Name, phone, email, address, ID number, source, needs, notes, `status` (lead, active, completed), `is_active` |
+| `svc_catalog` | A service or package: category (business, design, other), standard price, government fees, included revisions, `is_package`, `is_active`. Unique name per business |
+| `svc_catalog_stages`, `svc_catalog_documents`, `svc_package_items` | Ordered stages with estimated days, required documents (optionally tied to a stage position), and the services inside a package |
+| `contractors` | Name, trade, contact. What we owe is computed from `svc_costs` |
+| `svc_projects` | Number, client, service, name, `status` (in_progress, on_hold, completed, cancelled), start date, owner, total price |
+| `svc_project_stages`, `svc_stage_events`, `svc_project_notes` | Stage copy with status (not_started, in_progress, done, stuck), owner, deadline and checklist; the who-and-when history of status changes; calls, messages and meetings |
+| `svc_documents` | Required or ad hoc document: `missing` or `received`, optional `file_id` |
+| `svc_tasks` | Title, assignee, due date, priority, status (todo, in_progress, done, cancelled), optional project or design job |
+| `svc_renewals` | Client item with due date and amount; `reminded_30_at` and `reminded_7_at` stop a reminder from repeating; `next_id` links the following renewal |
+| `svc_quotations`, `svc_invoices`, `svc_lines`, `svc_invoice_installments` | Quotation (draft, sent, accepted, rejected) and invoice (draft, issued, partial, paid, void) with shared line table and optional installment plan |
+| `svc_payments`, `svc_payment_allocations` | A client payment (same id as its `payments` row) with the part applied to invoices; what is not applied is a deposit held in ledger account 2400 |
+| `svc_costs`, `contractor_payments` | Project, job or contractor cost, `paid` from a money account or `owed` to a contractor, with `settled` as contractor payments are allocated |
+| `design_jobs`, `design_references`, `design_versions`, `design_feedback`, `design_time_entries`, `design_print_orders` | Jobs, reference files, versions (design, print_ready, source) with a hashed approval token, comments, timer entries and print orders |
+
+Constraints worth knowing: `payments.kind` gains `service_payment` and `contractor_payment`, and `payments.party_type` and `journal_lines.party_type` gain `client` and `contractor`. New ledger accounts are 2400 client deposits, 4300 service revenue and 5200 service costs, seeded for new businesses and added to existing ones by the migration. `design_token_business(hash)` is a `SECURITY DEFINER` function that resolves a client approval link to its business, so the public approval page can work before a tenant is known; it returns only the business id. `svc_today()` returns the business date set by the application for the transaction, so overdue and days-left checks follow the application clock.
+
 **Migration order**
 
 | File | Contents |
@@ -1261,6 +1283,8 @@ CREATE TABLE export_jobs (
 | 0008\_kernel | Section 8 |
 | 0009\_rls | Enable row-level security and policies on every tenant table, revoke update and delete on append-only tables |
 | 0010\_job\_queue | The job queue's own tables, from its migration tool |
+| 0011 to 0019 | Later additions to the tables above: see the files in `backend/db/migrations` |
+| 0020\_services | Section 9 |
 
 **Two places that run before a tenant is known**
 

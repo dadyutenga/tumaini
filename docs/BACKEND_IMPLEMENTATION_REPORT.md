@@ -54,7 +54,7 @@ These are specified and not built yet:
 - Dashboard cards and the rest of the report catalogue
 - OpenAPI file and the contract test that checks it
 - Forgot-password delivery. The sender interface is not wired to SMS or email
-- The website screen spec's services business (projects, design jobs, tasks, renewals). That scope is not in the SRS, the database schema, or the API reference, so it was not added
+- The website screen spec's services business was added on 19 November 2026 (migration 0020, section 9 of the API reference)
 
 ## Security that is in place
 

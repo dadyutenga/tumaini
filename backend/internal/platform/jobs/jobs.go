@@ -28,6 +28,7 @@ const (
 	SessionCleanup     = "session_cleanup"
 	BusinessExport     = "business_export"
 	PayrollCalculate   = "payroll_calculate"
+	ServiceReminders   = "service_reminders"
 )
 
 type Handler func(ctx context.Context, businessID uuid.UUID, payload json.RawMessage) error

@@ -6,6 +6,8 @@ Updated 18 November 2026. Backend and frontend are both in `main`.
 
 Every route in `docs/spec/API reference.md` is implemented, and `TestOpenAPIContract` fails if a route is missing from `docs/api/openapi.yaml` or if the reference lists a route that is not registered. The backend tests run against PostgreSQL with row-level security (`go test ./...`, with `DATABASE_URL` and `MIGRATE_DATABASE_URL` set).
 
+Services (Business B) is built: clients and leads, service catalog with packages, projects with stages and required documents, quotations, invoices with installments, client payments and deposits, costs, contractors, tasks, renewals with 30 and 7 day reminders, and design jobs with versions, a private client approval link, print orders and a timer. Routes are in section 9 of the API reference. A test, `TestServicesFlow`, covers the money and workflow rules.
+
 Password recovery needs an SMTP or SMS webhook configured. Without one, `POST /auth/forgot-password` answers 503 `recovery_unavailable`, and the Owner resets passwords from Team.
 
 ## Frontend screens
@@ -36,5 +38,5 @@ Each screen shows only what the signed-in role can use.
 - Settings: payment-method to account mapping, logo upload.
 - English and Swahili switching on the newer pages.
 - The Staff role has no `accounts.view`, so staff cannot pick a mobile-money or bank account at the till.
-- The website spec's Services scope (projects, design jobs, renewals) is not in the SRS or API reference and is not built.
+- The Services business has its backend (see below) but no screens yet.
 - `npm audit` reports vulnerabilities in dev dependencies that have not been reviewed.

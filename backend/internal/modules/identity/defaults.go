@@ -47,6 +47,11 @@ func managerPerms() []seededPerm {
 		l("reports.sales", "branch", ""), l("reports.inventory", "branch", ""), l("reports.purchases", "branch", ""),
 		l("reports.expenses", "branch", ""), l("reports.debts", "branch", ""), l("reports.staff", "branch", ""), l("reports.branches", "branch", ""),
 		l("dashboard.view", "branch", ""),
+		l("clients.view", "branch", ""), l("clients.manage", "branch", ""), l("projects.view", "branch", ""), l("projects.manage", "branch", ""),
+		l("service_catalog.manage", "branch", ""), l("service_billing.view", "branch", ""), l("service_billing.manage", "branch", ""),
+		l("design.view", "branch", ""), l("design.manage", "branch", ""), l("tasks.view", "branch", ""), l("tasks.manage", "branch", ""),
+		l("renewals.view", "branch", ""), l("renewals.manage", "branch", ""), l("contractors.view", "branch", ""), l("contractors.manage", "branch", ""),
+		l("reports.services", "branch", ""),
 	}
 }
 
@@ -66,5 +71,6 @@ func staffPerms() []seededPerm {
 		l("payments.receive", "branch", ""),
 		l("expenses.view", "own", ""), l("expenses.create", "branch", "50000"),
 		l("attendance.clock", "branch", ""), l("leave.request", "branch", ""), l("payslips.view", "own", ""),
+		l("clients.view", "own", ""), l("projects.view", "own", ""), l("design.view", "own", ""), l("tasks.view", "own", ""), l("renewals.view", "branch", ""),
 	}
 }

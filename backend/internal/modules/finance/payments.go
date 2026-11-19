@@ -338,6 +338,15 @@ func (s *Service) lockPayment(ctx context.Context, tx pgx.Tx, p *auth.Principal,
 	switch r.kind {
 	case "sale_refund":
 		return r, httpx.Conflict("invalid_status", "A refund is undone through its sale return, not by voiding the payment")
+	case "service_payment", "contractor_payment":
+		return r, httpx.Conflict("invalid_status", "Void this payment from Services, where its invoices and balances are kept")
+	}
+	var service bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM svc_costs WHERE payment_id=$1)`, id).Scan(&service); err != nil {
+		return r, err
+	}
+	if service {
+		return r, httpx.Conflict("invalid_status", "Void this cost from Services")
 	}
 	return r, nil
 }

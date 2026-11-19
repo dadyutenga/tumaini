@@ -355,3 +355,96 @@ Idempotency-Key: 6f1c2b9e-...
 ```
 
 The example assumes prices include 18% tax, so tax is the part of 9,000 that is tax: 9,000 x 18 / 118 = 1,372.88.
+
+## 9. Services (Business B)
+
+Clients, catalog, projects, quotations, invoices, costs, contractors, tasks, renewals and design jobs. Money posts to the ledger: an issued invoice debits receivables and credits service revenue (4300), a deposit is held in client deposits (2400) until an invoice absorbs it, and costs debit service costs (5200). (I) marks routes that need an `Idempotency-Key`.
+
+| Method and path | Permission | Does |
+| --- | --- | --- |
+| GET `/clients?q=&status=&is_active=` | `clients.view` | List clients and leads with balance owed and open projects |
+| POST `/clients` | `clients.manage` | Add a client or lead |
+| GET `/clients/:id` | `clients.view` | Profile with projects, invoices, payments, documents and communication |
+| PUT `/clients/:id` | `clients.manage` | Edit profile |
+| POST `/clients/:id/convert` | `clients.manage` | Convert a lead to an active client |
+| POST `/clients/:id/deactivate` | `clients.manage` | Deactivate a client with no balance owed |
+| GET `/clients/:id/statement?from=&to=&format=` | `service_billing.view` | Invoices and payments with running balance. `format=pdf` |
+| GET `/service-catalog?q=&category=&all=` | any services permission | List services and packages |
+| POST `/service-catalog` | `service_catalog.manage` | Create a service or package with stages, required documents and package contents |
+| GET `/service-catalog/:id` | any services permission | Service with stages, documents and package items |
+| PUT `/service-catalog/:id` | `service_catalog.manage` | Edit. Stages, documents and package items are replaced when sent. Started projects keep their own copy |
+| POST `/service-catalog/:id/deactivate` | `service_catalog.manage` | Hide from new projects |
+| POST `/service-catalog/:id/activate` | `service_catalog.manage` | Show again |
+| GET `/projects?q=&status=&client_id=&owner_id=&late=` | `projects.view` | List projects with stage progress, paid, balance, costs and profit. Limited to own projects for scope `own` |
+| GET `/projects/board` | `projects.view` | Open projects grouped by current stage |
+| POST `/projects` | `projects.manage` | Start a project. Stages and required documents are copied from the service |
+| GET `/projects/:id` | `projects.view` | Detail with stages, documents, payments, costs, notes, invoices and design jobs |
+| PUT `/projects/:id` | `projects.manage` | Edit name, status, owner, price, notes |
+| POST `/projects/:id/stages` | `projects.manage` | Add a stage |
+| PUT `/projects/:id/stages/:stage_id` | `projects.manage` | Change status (not_started, in_progress, done, stuck), owner, deadline, checklist, with a note. The last done stage completes the project |
+| POST `/projects/:id/stages/:stage_id/design-jobs` | `design.manage` | Create several design jobs for a branding stage. The stage is done when all are approved |
+| GET `/projects/:id/notes` | `projects.view` | Calls, messages and meetings |
+| POST `/projects/:id/notes` | `projects.manage` | Add a note |
+| POST `/projects/:id/updates` | `projects.manage` | Send an SMS update to the client and record it. `delivered` is false when no SMS provider is set |
+| POST `/projects/:id/payments` (I) | `service_billing.manage` | Receive a deposit or installment. It settles issued invoices first; the rest is held as a deposit |
+| GET `/client-documents?client_id=&project_id=&status=&q=` | clients.view or projects.view | Document library |
+| POST `/client-documents` | clients.manage or projects.manage | Register a document, optionally with an uploaded file |
+| PUT `/client-documents/:id` | clients.manage or projects.manage | Rename, attach a file, mark received or missing |
+| GET `/tasks?status=&assignee_id=&project_id=&from=&to=&overdue=&open=` | `tasks.view` | Tasks. Scope `own` shows assigned and created tasks |
+| POST `/tasks` | `tasks.manage` | Create and assign a task |
+| PUT `/tasks/:id` | tasks.manage or tasks.view | Edit. With only `tasks.view` a person can change the status of a task assigned to them |
+| GET `/renewals?status=&client_id=&within_days=` | `renewals.view` | Renewals with days left |
+| POST `/renewals` | `renewals.manage` | Add a renewal |
+| PUT `/renewals/:id` | `renewals.manage` | Edit a pending renewal |
+| POST `/renewals/:id/renew` | `renewals.manage` | Mark renewed; optional `next_due_date` schedules the next one |
+| POST `/renewals/:id/cancel` | `renewals.manage` | Cancel |
+| POST `/renewals/:id/remind` | `renewals.manage` | Send the reminder to the client now |
+| GET `/service-quotations?status=&client_id=&q=` | `service_billing.view` | List quotations |
+| POST `/service-quotations` | `service_billing.manage` | Create a draft quotation |
+| GET `/service-quotations/:id` | `service_billing.view` | Quotation with lines |
+| PUT `/service-quotations/:id` | `service_billing.manage` | Edit a draft |
+| POST `/service-quotations/:id/send` | `service_billing.manage` | Mark sent |
+| POST `/service-quotations/:id/reject` | `service_billing.manage` | Mark rejected |
+| POST `/service-quotations/:id/accept` | `service_billing.manage` | Accept: creates the draft invoice, and the project when `create_project` is true |
+| GET `/service-quotations/:id/pdf` | `service_billing.view` | Printable quotation |
+| GET `/service-invoices?status=&client_id=&project_id=&overdue=&q=` | `service_billing.view` | List invoices |
+| POST `/service-invoices` | `service_billing.manage` | Create a draft from lines, a project or a design job, with optional installments |
+| GET `/service-invoices/:id` | `service_billing.view` | Invoice with lines, installments and payments |
+| PUT `/service-invoices/:id` | `service_billing.manage` | Edit a draft |
+| POST `/service-invoices/:id/issue` | `service_billing.manage` | Issue: posts the receivable and applies deposits already received for the project or job |
+| POST `/service-invoices/:id/void` | `service_billing.manage` | Void a draft, or an issued invoice with no payments. Reason required |
+| POST `/service-invoices/:id/payments` (I) | `service_billing.manage` | Record a payment against the invoice. More than the balance is 409 |
+| GET `/service-invoices/:id/pdf` | `service_billing.view` | Printable invoice |
+| GET `/service-payments?client_id=&project_id=&design_job_id=&from=&to=` | `service_billing.view` | Client payments |
+| POST `/service-payments/:id/void` | `service_billing.manage` | Void a client payment, its deposit applications and invoice allocations. Reason required |
+| GET `/service-costs?project_id=&design_job_id=&contractor_id=` | `service_billing.view` | Project, design job and contractor costs |
+| POST `/service-costs` (I) | `service_billing.manage` | Record a cost. With `money_account_id` it is paid now; with only `contractor_id` it is owed |
+| POST `/service-costs/:id/void` | `service_billing.manage` | Void a cost not yet paid to a contractor. Reason required |
+| GET `/contractors?q=&all=` | `contractors.view` | List contractors with the amount we owe |
+| POST `/contractors` | `contractors.manage` | Add a contractor |
+| GET `/contractors/:id` | `contractors.view` | Detail |
+| PUT `/contractors/:id` | `contractors.manage` | Edit |
+| POST `/contractors/:id/deactivate` | `contractors.manage` | Deactivate |
+| POST `/contractors/:id/activate` | `contractors.manage` | Reactivate |
+| GET `/contractors/:id/statement` | `contractors.view` | Work owed and payments with running balance |
+| POST `/contractors/:id/payments` (I) | `contractors.manage` | Pay owed work from a money account, oldest first. More than owed is 409 |
+| GET `/design-jobs?q=&status=&designer_id=&client_id=&project_id=&overdue=` | `design.view` | List design jobs. Scope `own` shows assigned jobs |
+| GET `/design-jobs/board?designer_id=` | `design.view` | One column per status: new_brief, in_design, internal_review, with_client, changes_requested, approved, printing, delivered |
+| POST `/design-jobs` | `design.manage` | Create a job. Price and revisions default from the catalog service |
+| GET `/design-jobs/:id` | `design.view` | Detail with versions, feedback, references, costs, payments, print orders, time and invoices |
+| PUT `/design-jobs/:id` | `design.manage` | Edit brief, deadline, designer, price, deposit, revisions |
+| POST `/design-jobs/:id/status` | `design.manage` | Move along the workflow. Changes requested uses one revision |
+| POST `/design-jobs/:id/versions` | `design.manage` | Add a design version (file or link). Print-ready and source files are added once approved |
+| POST `/design-jobs/:id/versions/:version_id/send` | `design.manage` | Send for approval: returns a private link valid 14 days and texts it to the client when SMS is set |
+| POST `/design-jobs/:id/feedback` | `design.view` | Add a staff comment |
+| POST `/design-jobs/:id/payments` (I) | `service_billing.manage` | Receive a deposit or balance for the job |
+| POST `/design-jobs/:id/timer/start` | `design.view` | Start the caller's timer |
+| POST `/design-jobs/:id/timer/stop` | `design.view` | Stop the caller's timer |
+| POST `/design-jobs/:id/print-orders` | `design.manage` | Create a print order for an approved design. Its cost is owed to the contractor |
+| PUT `/print-orders/:id` | `design.manage` | Set status: ready, delivered or cancelled |
+| GET `/public/design-approvals/:token` | none (private link) | What the client sees on the approval page |
+| GET `/public/design-approvals/:token/file` | none (private link) | The version file |
+| POST `/public/design-approvals/:token/decision` | none (private link) | Approve, or request changes with a comment. One decision per link |
+| GET `/services/dashboard` | any services view permission | Projects by stage, late projects, overdue tasks, renewals due, debts, contractor balance, design counts. Each part needs its permission |
+| GET `/reports/projects?from=&to=&format=` | `reports.services` | Projects with price, paid, balance, costs and profit. `format=csv`, `xlsx` or `pdf` |
+| GET `/reports/design-jobs?from=&to=&format=` | `reports.services` | Jobs, on-time rate, days to approval, revisions, income, costs and profit by designer |
