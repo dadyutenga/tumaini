@@ -22,4 +22,8 @@ mk "Demo Staff"   0700000003 staff@demo.test   staff
 emp=$(curl -sS -X POST "$API/employees" "${H[@]}" -d '{"name":"Demo Staff","phone":"0700000003","pay_type":"monthly","base_pay":"500000"}' | j "['data']['id']" 2>/dev/null || true)
 uid=$(curl -sS "${H[@]}" "$API/users" | python3 -c "import sys,json;print(next(u['id'] for u in json.load(sys.stdin)['data'] if u['email']=='staff@demo.test'))")
 [ -n "${emp:-}" ] && curl -sS -X PUT "$API/users/$uid" "${H[@]}" -d "{\"employee_id\":\"$emp\"}" >/dev/null && echo "Linked staff@demo.test to employee $emp"
+# Services: two catalog entries and a lead, so the services screens have something to show.
+curl -sS -X POST "$API/service-catalog" "${H[@]}" -d '{"name":"Business registration","standard_price":"300000","government_fees":"50000","stages":[{"name":"Client intake","est_days":2},{"name":"Name registration","est_days":3},{"name":"TIN","est_days":5},{"name":"Licence","est_days":7}],"documents":[{"name":"ID copy","stage_position":1},{"name":"Proposed business names","stage_position":2}]}' >/dev/null
+curl -sS -X POST "$API/service-catalog" "${H[@]}" -d '{"name":"Logo design","category":"design","standard_price":"80000","included_revisions":3}' >/dev/null
+curl -sS -X POST "$API/clients" "${H[@]}" -d '{"name":"Mama Amina Shop","phone":"0711000111","source":"walk-in","needs":"Register a business and design a logo"}' >/dev/null
 echo "Logins (password: $PASS): owner@demo.test, manager@demo.test, staff@demo.test"
