@@ -156,15 +156,17 @@ type Branch struct {
 	Manager  *uuid.UUID `json:"manager_id"`
 	IsMain   bool       `json:"is_main"`
 	IsActive bool       `json:"is_active"`
+	// InvoicePrefix is the prefix of this branch's invoice numbers (FR-SET-05); it can be set on update.
+	InvoicePrefix *string `json:"invoice_prefix"`
 }
 
 func (s *Service) ListBranches(ctx context.Context, p *auth.Principal) ([]Branch, error) {
 	var out []Branch
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		q := `SELECT id, name, code, address, phone, manager_id, is_main, is_active FROM branches WHERE is_active OR $1`
+		q := `SELECT id, name, code, address, phone, manager_id, is_main, is_active, ` + invoicePrefixSQL("branches.id") + ` FROM branches WHERE is_active OR $1`
 		args := []any{p.IsOwner}
 		if !p.IsOwner {
-			q = `SELECT b.id, b.name, b.code, b.address, b.phone, b.manager_id, b.is_main, b.is_active
+			q = `SELECT b.id, b.name, b.code, b.address, b.phone, b.manager_id, b.is_main, b.is_active, ` + invoicePrefixSQL("b.id") + `
 				FROM branches b JOIN user_branches ub ON ub.branch_id=b.id AND ub.user_id=$1 ORDER BY b.name`
 			args = []any{p.UserID}
 		} else {
@@ -177,7 +179,7 @@ func (s *Service) ListBranches(ctx context.Context, p *auth.Principal) ([]Branch
 		defer rows.Close()
 		for rows.Next() {
 			var b Branch
-			if err := rows.Scan(&b.ID, &b.Name, &b.Code, &b.Address, &b.Phone, &b.Manager, &b.IsMain, &b.IsActive); err != nil {
+			if err := rows.Scan(&b.ID, &b.Name, &b.Code, &b.Address, &b.Phone, &b.Manager, &b.IsMain, &b.IsActive, &b.InvoicePrefix); err != nil {
 				return err
 			}
 			out = append(out, b)
@@ -239,6 +241,11 @@ func (s *Service) CreateBranch(ctx context.Context, p *auth.Principal, in Branch
 	return s.GetBranch(ctx, p, id)
 }
 
+// invoicePrefixSQL is a scalar subquery for a branch's invoice prefix; col is a fixed column name.
+func invoicePrefixSQL(col string) string {
+	return `(SELECT ds.prefix FROM document_sequences ds WHERE ds.branch_id = ` + col + ` AND ds.doc_type = 'invoice')`
+}
+
 var branchCode = regexp.MustCompile(`^[A-Z0-9]{1,8}$`)
 
 // checkManager makes sure a branch manager is an employee of this business.
@@ -262,8 +269,8 @@ func (s *Service) GetBranch(ctx context.Context, p *auth.Principal, id uuid.UUID
 	}
 	var b Branch
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT id, name, code, address, phone, manager_id, is_main, is_active FROM branches WHERE id=$1`, id).
-			Scan(&b.ID, &b.Name, &b.Code, &b.Address, &b.Phone, &b.Manager, &b.IsMain, &b.IsActive)
+		err := tx.QueryRow(ctx, `SELECT id, name, code, address, phone, manager_id, is_main, is_active, `+invoicePrefixSQL("branches.id")+` FROM branches WHERE id=$1`, id).
+			Scan(&b.ID, &b.Name, &b.Code, &b.Address, &b.Phone, &b.Manager, &b.IsMain, &b.IsActive, &b.InvoicePrefix)
 		if err != nil {
 			return httpx.NotFound("not_found", "Branch not found")
 		}
@@ -289,6 +296,15 @@ func (s *Service) UpdateBranch(ctx context.Context, p *auth.Principal, id uuid.U
 		}
 		if tag.RowsAffected() == 0 {
 			return httpx.NotFound("not_found", "Branch not found")
+		}
+		if in.InvoicePrefix != nil {
+			prefix := strings.ToUpper(strings.TrimSpace(*in.InvoicePrefix))
+			if !invoicePrefix.MatchString(prefix) {
+				return invalid(map[string]string{"invoice_prefix": "use 1 to 10 capital letters or digits"})
+			}
+			if _, err := tx.Exec(ctx, `UPDATE document_sequences SET prefix=$2 WHERE branch_id=$1 AND doc_type='invoice'`, id, prefix); err != nil {
+				return err
+			}
 		}
 		return s.Audit.Record(ctx, tx, p, "branch.updated", "branch", id, nil, in)
 	})

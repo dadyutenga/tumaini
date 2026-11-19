@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"bms/internal/kernel/sequence"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/export"
 	"bms/internal/platform/pdf"
@@ -66,6 +67,24 @@ func (s *Service) Invoice(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 		if err != nil {
 			return err
 		}
+		// The invoice number comes from the branch's invoice sequence the first time an invoice is
+		// produced and is then fixed (BR-13). The sale row is locked so two requests cannot both assign one.
+		var branch uuid.UUID
+		var number *string
+		if err := tx.QueryRow(ctx, `SELECT branch_id, invoice_number FROM sales WHERE id=$1 FOR UPDATE`, id).Scan(&branch, &number); err != nil {
+			return err
+		}
+		if number == nil {
+			n, err := sequence.Next(ctx, tx, branch, "invoice")
+			if err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE sales SET invoice_number=$2 WHERE id=$1`, id, n); err != nil {
+				return err
+			}
+			number = &n
+		}
+		m["invoice_number"] = *number
 		if m["business"], err = businessHeader(ctx, tx); err != nil {
 			return err
 		}
@@ -113,7 +132,8 @@ func InvoicePDF(m map[string]any) []byte {
 		d.Text("TIN: " + v)
 	}
 	d.Space(8)
-	d.Heading("INVOICE "+str(m["number"]), 13)
+	d.Heading("INVOICE "+str(m["invoice_number"]), 13)
+	d.KV("Sale", str(m["number"]))
 	d.KV("Date", str(m["business_date"]))
 	if v := str(m["due_date"]); v != "" {
 		d.KV("Due date", v)

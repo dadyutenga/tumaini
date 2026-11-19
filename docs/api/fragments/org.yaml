@@ -226,7 +226,8 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
     put:
-      summary: Edit a branch
+      summary: Edit a branch. invoice_prefix (1 to 10 capital letters or digits) sets the prefix of this branch's invoice
+        numbers
       operationId: put_branches__id
       tags:
       - Business and settings
@@ -255,6 +256,8 @@ paths:
                 manager_id:
                   type: string
                   format: uuid
+                invoice_prefix:
+                  type: string
       responses:
         '200':
           description: OK
@@ -271,6 +274,8 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /branches/{id}/deactivate:
@@ -369,10 +374,11 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /settings/{group}:
     put:
-      summary: 'Update one group: tax, currency, invoice, receipt, payroll, notifications, system, attendance. In attendance,
-        `restrict_clock_in` with `allowed_networks` (IPs or CIDRs) limits staff clock-in to those addresses (403 network_not_allowed).
-        Every key is type- and range-checked (unknown keys, bad timezones and wrong types are 422 field errors and change
-        nothing); each change is audited with old and new value. In the notifications group, `rules` maps an event type (low_stock,
+      summary: 'Update one group: tax, currency, invoice, receipt, payroll, notifications, system, attendance. `invoice.prefix`
+        (capitals and digits) is applied to every branch''s invoice numbers from the next invoice. In attendance, `restrict_clock_in`
+        with `allowed_networks` (IPs or CIDRs) limits staff clock-in to those addresses (403 network_not_allowed). Every key
+        is type- and range-checked (unknown keys, bad timezones and wrong types are 422 field errors and change nothing);
+        each change is audited with old and new value. In the notifications group, `rules` maps an event type (low_stock,
         approval_request, salary_due, ...) to {in_app, email, sms, days_before}'
       operationId: put_settings__group
       tags:

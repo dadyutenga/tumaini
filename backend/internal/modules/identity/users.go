@@ -13,6 +13,7 @@ import (
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/ids"
+	"bms/internal/platform/setting"
 )
 
 type User struct {
@@ -143,9 +144,10 @@ func (s *Service) CreateUser(ctx context.Context, p *auth.Principal, in UserInpu
 		if in.EmployeeID != nil {
 			emp = *in.EmployeeID
 		}
+		// The business's language setting is the default for people it creates (FR-SET-09).
 		lang := in.Language
 		if lang == "" {
-			lang = "en"
+			lang = setting.String(ctx, tx, "system.language", "en")
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO users (id, business_id, role_id, employee_id, name, phone, email, password_hash, language, must_change_password, created_by)

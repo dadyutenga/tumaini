@@ -582,7 +582,8 @@ paths:
           $ref: '#/components/responses/NotFound'
   /sales/{id}/invoice:
     get:
-      summary: A4 invoice data, or the PDF with format=pdf
+      summary: Invoice data, or an A4 PDF with format=pdf. The invoice number comes from the branch's invoice sequence the
+        first time an invoice is produced and never changes (invoice_number)
       operationId: get_sales_id_invoice
       tags:
       - Sales
@@ -616,7 +617,8 @@ paths:
           $ref: '#/components/responses/NotFound'
   /sales/{id}/void:
     post:
-      summary: 'Void a sale on its own business day: stock back, payments voided, journal reversed. 202 above the sales.void limit'
+      summary: 'Void a sale on its own business day: stock back, payments voided, journal reversed. 202 above the sales.void
+        limit'
       operationId: post_sales_id_void
       tags:
       - Sales

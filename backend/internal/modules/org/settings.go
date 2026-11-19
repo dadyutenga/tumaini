@@ -89,6 +89,7 @@ func oneOf(options ...any) check {
 	}
 }
 
+var invoicePrefix = regexp.MustCompile(`^[A-Z0-9]{1,10}$`)
 var currencyCode = regexp.MustCompile(`^[A-Z]{3}$`)
 var clockTime = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
 
@@ -151,7 +152,7 @@ var settingsSpec = map[string]map[string]check{
 		"code": pattern(currencyCode, "must be a three-letter code such as TZS"), "symbol": text(8),
 		"decimals": whole(0, 4), "thousands_separator": oneOf(",", ".", " ", ""),
 	},
-	"invoice": {"prefix": text(10), "terms": text(500), "footer": text(500), "due_days": whole(0, 365), "quotation_valid_days": whole(1, 365)},
+	"invoice": {"prefix": pattern(invoicePrefix, "use 1 to 10 capital letters or digits"), "terms": text(500), "footer": text(500), "due_days": whole(0, 365), "quotation_valid_days": whole(1, 365)},
 	"receipt": {"header": text(200), "footer": text(200), "show_logo": isBool, "paper_width": oneOf(58, 80), "show_cashier": isBool, "show_tax": isBool},
 	"payroll": {
 		"pay_day": whole(1, 31), "working_days": whole(1, 31), "standard_hours": number(1, 24), "overtime_multiplier": number(1, 5),
@@ -304,6 +305,12 @@ func (s *Service) UpdateSettings(ctx context.Context, p *auth.Principal, group s
 			}
 			if group == "currency" && name == "code" {
 				if _, err := tx.Exec(ctx, `UPDATE businesses SET currency=$2 WHERE id=$1`, p.BusinessID, val); err != nil {
+					return err
+				}
+			}
+			// The invoice prefix is stored per branch with the document sequence; this applies it to all of them.
+			if group == "invoice" && name == "prefix" {
+				if _, err := tx.Exec(ctx, `UPDATE document_sequences SET prefix=$1 WHERE doc_type='invoice'`, val); err != nil {
 					return err
 				}
 			}
