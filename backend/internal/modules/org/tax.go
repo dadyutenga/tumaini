@@ -12,7 +12,6 @@ import (
 	"bms/internal/platform/auth"
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
-	"bms/internal/platform/ids"
 )
 
 // TaxIn is a create or update body. On update every field is optional, so renaming
@@ -47,15 +46,15 @@ func (s *Service) SaveTax(ctx context.Context, p *auth.Principal, id *uuid.UUID,
 	var outID uuid.UUID
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if id == nil {
-			outID = ids.New()
+			outID = uuid.New()
 			wantDefault := in.IsDefault != nil && *in.IsDefault
 			if wantDefault {
-				if _, err := tx.Exec(ctx, `UPDATE tax_rates SET is_default=false WHERE is_default`); err != nil {
+				if _, err := tx.Exec(ctx, `UPDATE app.tax_rates SET is_default=false WHERE tenant_id=$1 AND is_default`, p.TenantID); err != nil {
 					return err
 				}
 			}
-			if _, err := tx.Exec(ctx, `INSERT INTO tax_rates (id, business_id, name, rate, is_default, is_active) VALUES ($1,$2,$3,$4,$5,true)`,
-				outID, p.BusinessID, name, *in.Rate, wantDefault); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO app.tax_rates (id, tenant_id, name, rate_pct, is_default) VALUES ($1,$2,$3,$4,$5)`,
+				outID, p.TenantID, name, *in.Rate, wantDefault); err != nil {
 				if db.IsUnique(err) {
 					return httpx.Conflict("duplicate", "A tax rate with that name already exists")
 				}
@@ -67,7 +66,7 @@ func (s *Service) SaveTax(ctx context.Context, p *auth.Principal, id *uuid.UUID,
 		var wasDefault, wasActive bool
 		var beforeName string
 		var beforeRate decimal.Decimal
-		if err := tx.QueryRow(ctx, `SELECT name, rate, is_default, is_active FROM tax_rates WHERE id=$1 FOR UPDATE`, outID).Scan(&beforeName, &beforeRate, &wasDefault, &wasActive); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT name::text, rate_pct, is_default, status = 'active' FROM app.tax_rates WHERE id=$1 FOR UPDATE`, outID).Scan(&beforeName, &beforeRate, &wasDefault, &wasActive); err != nil {
 			return httpx.NotFound("not_found", "Tax rate not found")
 		}
 		active := wasActive
@@ -85,12 +84,13 @@ func (s *Service) SaveTax(ctx context.Context, p *auth.Principal, id *uuid.UUID,
 			return httpx.Conflict("invalid_status", "The default tax rate must stay active")
 		}
 		if isDefault && !wasDefault {
-			if _, err := tx.Exec(ctx, `UPDATE tax_rates SET is_default=false WHERE is_default`); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE app.tax_rates SET is_default=false WHERE tenant_id=$1 AND is_default`, p.TenantID); err != nil {
 				return err
 			}
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE tax_rates SET name=COALESCE(NULLIF($2,''), name), rate=COALESCE($3, rate), is_default=$4, is_active=$5 WHERE id=$1`,
+			UPDATE app.tax_rates SET name=COALESCE(NULLIF($2,''), name), rate_pct=COALESCE($3, rate_pct), is_default=$4,
+			       status=CASE WHEN $5 THEN 'active' ELSE 'inactive' END::app.record_status WHERE id=$1`,
 			outID, name, in.Rate, isDefault, active); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "A tax rate with that name already exists")
@@ -105,7 +105,7 @@ func (s *Service) SaveTax(ctx context.Context, p *auth.Principal, id *uuid.UUID,
 	}
 	var t TaxRate
 	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT id, name, rate, is_default, is_active FROM tax_rates WHERE id=$1`, outID).
+		return tx.QueryRow(ctx, `SELECT id, name::text, rate_pct, is_default, status = 'active' FROM app.tax_rates WHERE id=$1`, outID).
 			Scan(&t.ID, &t.Name, &t.Rate, &t.IsDefault, &t.IsActive)
 	})
 	return t, err

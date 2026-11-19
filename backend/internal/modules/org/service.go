@@ -2,6 +2,7 @@ package org
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"io"
@@ -13,14 +14,11 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/kernel/audit"
-	"bms/internal/kernel/chart"
 	"bms/internal/kernel/ledger"
-	"bms/internal/kernel/sequence"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
-	"bms/internal/platform/ids"
 	"bms/internal/platform/storage"
 	"bms/internal/platform/upload"
 )
@@ -52,16 +50,31 @@ type Business struct {
 	IsActive  bool      `json:"is_active"`
 }
 
+// The business profile is two rows: app.tenants (legal name, timezone, status) and
+// app.tenant_settings (display name, contact details, tax identifiers, currency, logo).
+const businessSelect = `
+	SELECT t.id, ts.business_name::text, t.legal_name::text, ts.tin, ts.registration_no, ts.phone::text, ts.email::text,
+	       ts.address, ts.logo_file_id::text, ts.currency::text, t.timezone, t.status = 'active'
+	FROM app.tenants t JOIN app.tenant_settings ts ON ts.tenant_id = t.id WHERE t.id = $1`
+
+func scanBusiness(row pgx.Row) (Business, error) {
+	var b Business
+	err := row.Scan(&b.ID, &b.Name, &b.LegalName, &b.TaxNumber, &b.RegNumber, &b.Phone, &b.Email, &b.Address, &b.LogoFile, &b.Currency, &b.Timezone, &b.IsActive)
+	return b, err
+}
+
 func (s *Service) GetBusiness(ctx context.Context, p *auth.Principal) (Business, error) {
 	var b Business
-	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
-			SELECT id, name, legal_name, tax_number, reg_number, phone, email::text, address, logo_file, currency, timezone, is_active
-			FROM businesses WHERE id = $1
-		`, p.BusinessID).Scan(&b.ID, &b.Name, &b.LegalName, &b.TaxNumber, &b.RegNumber, &b.Phone, &b.Email, &b.Address, &b.LogoFile, &b.Currency, &b.Timezone, &b.IsActive)
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) (err error) {
+		b, err = scanBusiness(tx.QueryRow(ctx, businessSelect, p.TenantID))
+		return err
 	})
 	return b, err
 }
+
+var e164 = regexp.MustCompile(`^\+[1-9][0-9]{7,14}$`)
+
+var tinPattern = regexp.MustCompile(`^[0-9]{3}-?[0-9]{3}-?[0-9]{3}$`)
 
 func (s *Service) UpdateBusiness(ctx context.Context, p *auth.Principal, in Business) (Business, error) {
 	fields := map[string]string{}
@@ -76,202 +89,178 @@ func (s *Service) UpdateBusiness(ctx context.Context, p *auth.Principal, in Busi
 	if in.Email != nil && *in.Email != "" && !strings.Contains(*in.Email, "@") {
 		fields["email"] = "must be an email address"
 	}
+	if in.TaxNumber != nil && *in.TaxNumber != "" && !tinPattern.MatchString(*in.TaxNumber) {
+		fields["tax_number"] = "must be a TIN such as 123-456-789"
+	}
+	if in.Phone != nil && *in.Phone != "" {
+		if e164.MatchString(strings.ReplaceAll(*in.Phone, " ", "")) {
+			v := strings.ReplaceAll(*in.Phone, " ", "")
+			in.Phone = &v
+		} else {
+			fields["phone"] = "must be an international number such as +255712345678"
+		}
+	}
 	if len(fields) > 0 {
 		return Business{}, invalid(fields)
 	}
+	// An empty string clears an optional detail; nil leaves it alone.
+	clear := func(v *string) any {
+		if v == nil {
+			return nil
+		}
+		return *v
+	}
+	var out Business
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		before, _ := s.scanBusiness(ctx, tx, p.BusinessID)
+		before, _ := scanBusiness(tx.QueryRow(ctx, businessSelect, p.TenantID))
 		if _, err := tx.Exec(ctx, `
-			UPDATE businesses SET name=COALESCE(NULLIF($2,''), name), legal_name=COALESCE($3, legal_name),
-			tax_number=COALESCE($4, tax_number), reg_number=COALESCE($5, reg_number), phone=COALESCE($6, phone),
-			email=COALESCE($7::citext, email), address=COALESCE($8, address), currency=COALESCE(NULLIF($9,''), currency),
-			timezone=COALESCE(NULLIF($10,''), timezone)
-			WHERE id=$1
-		`, p.BusinessID, in.Name, in.LegalName, in.TaxNumber, in.RegNumber, in.Phone, in.Email, in.Address, in.Currency, in.Timezone); err != nil {
+			UPDATE app.tenant_settings SET
+			  business_name   = coalesce(NULLIF($2,''), business_name),
+			  tin             = CASE WHEN $3::text IS NULL THEN tin ELSE NULLIF($3,'') END,
+			  registration_no = CASE WHEN $4::text IS NULL THEN registration_no ELSE NULLIF($4,'') END,
+			  phone           = CASE WHEN $5::text IS NULL THEN phone ELSE NULLIF($5,'')::app.phone_e164 END,
+			  email           = CASE WHEN $6::text IS NULL THEN email ELSE NULLIF($6,'')::app.email END,
+			  address         = CASE WHEN $7::text IS NULL THEN address ELSE NULLIF($7,'') END,
+			  currency        = coalesce(NULLIF($8,''), currency)::app.currency
+			WHERE tenant_id = $1`,
+			p.TenantID, in.Name, clear(in.TaxNumber), clear(in.RegNumber), clear(in.Phone), clear(in.Email), clear(in.Address), in.Currency); err != nil {
 			return err
 		}
-		// The rest of the system reads these two from settings, so keep them in step.
-		for key, val := range map[string]string{"system.timezone": in.Timezone, "currency.code": in.Currency} {
-			if val == "" {
-				continue
-			}
-			raw, _ := json.Marshal(val)
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO settings (business_id, key, value, updated_by) VALUES ($1,$2,$3,$4)
-				ON CONFLICT (business_id, key) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by
-			`, p.BusinessID, key, raw, p.UserID); err != nil {
-				return err
-			}
-		}
-		after, err := s.scanBusiness(ctx, tx, p.BusinessID)
-		if err != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE app.tenants SET legal_name = coalesce(NULLIF($2,''), legal_name), timezone = coalesce(NULLIF($3,''), timezone),
+			       default_currency = coalesce(NULLIF($4,''), default_currency)::app.currency
+			WHERE id = $1`, p.TenantID, deref(in.LegalName), in.Timezone, in.Currency); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "business.updated", "business", p.BusinessID, before, after)
+		var err error
+		if out, err = scanBusiness(tx.QueryRow(ctx, businessSelect, p.TenantID)); err != nil {
+			return err
+		}
+		return s.Audit.Record(ctx, tx, p, "business.updated", "tenants", p.TenantID, before, out)
 	})
-	if err != nil {
-		return Business{}, err
+	return out, err
+}
+
+func deref(s *string) string {
+	if s == nil {
+		return ""
 	}
-	return s.GetBusiness(ctx, p)
+	return *s
 }
 
-func (s *Service) scanBusiness(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Business, error) {
-	var b Business
-	err := tx.QueryRow(ctx, `
-		SELECT id, name, legal_name, tax_number, reg_number, phone, email::text, address, logo_file, currency, timezone, is_active
-		FROM businesses WHERE id=$1
-	`, id).Scan(&b.ID, &b.Name, &b.LegalName, &b.TaxNumber, &b.RegNumber, &b.Phone, &b.Email, &b.Address, &b.LogoFile, &b.Currency, &b.Timezone, &b.IsActive)
-	return b, err
-}
-
+// SaveLogo stores the logo as a file and points the business profile at it.
 func (s *Service) SaveLogo(ctx context.Context, p *auth.Principal, name string, r io.Reader) (string, error) {
-	buf, mime, err := upload.Read(r, 2<<20, true)
-	if err != nil {
-		return "", err
-	}
-	file, err := s.Store.Save(ctx, p.BusinessID.String(), name, upload.Reader(buf), 2<<20)
-	if err != nil {
-		return "", httpx.BadRequest("invalid_body", err.Error())
-	}
-	id := ids.New()
-	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO files (id, business_id, path, original_name, mime_type, size_bytes, uploaded_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)
-		`, id, p.BusinessID, file.Path, name, mime, file.Size, p.UserID); err != nil {
-			return err
-		}
-		_, err := tx.Exec(ctx, `UPDATE businesses SET logo_file=$2 WHERE id=$1`, p.BusinessID, id.String())
+	id, err := s.store(ctx, p, name, r, 2<<20, true, "public", func(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
+		_, err := tx.Exec(ctx, `UPDATE app.tenant_settings SET logo_file_id = $2 WHERE tenant_id = $1`, p.TenantID, id)
 		return err
 	})
 	return id.String(), err
 }
 
+// ---------------------------------------------------------------------------------------------
+// Locations (the API still calls them branches)
+// ---------------------------------------------------------------------------------------------
+
 type Branch struct {
-	ID       uuid.UUID  `json:"id"`
-	Name     string     `json:"name"`
-	Code     string     `json:"code"`
-	Address  *string    `json:"address"`
-	Phone    *string    `json:"phone"`
-	Manager  *uuid.UUID `json:"manager_id"`
-	IsMain   bool       `json:"is_main"`
-	IsActive bool       `json:"is_active"`
-	// InvoicePrefix is the prefix of this branch's invoice numbers (FR-SET-05); it can be set on update.
-	InvoicePrefix *string `json:"invoice_prefix"`
+	ID             uuid.UUID `json:"id"`
+	Name           string    `json:"name"`
+	Kind           string    `json:"kind"`
+	Address        *string   `json:"address"`
+	Phone          *string   `json:"phone"`
+	BusinessUnitID uuid.UUID `json:"business_unit_id"`
+	// IsMain is the tenant's default location (app.locations.is_default).
+	IsMain   bool `json:"is_main"`
+	IsActive bool `json:"is_active"`
+}
+
+const branchSelect = `
+	SELECT id, name::text, kind::text, address, phone::text, business_unit_id, is_default, status = 'active'
+	FROM app.locations WHERE tenant_id = $1`
+
+func scanBranch(row pgx.Row) (Branch, error) {
+	var b Branch
+	err := row.Scan(&b.ID, &b.Name, &b.Kind, &b.Address, &b.Phone, &b.BusinessUnitID, &b.IsMain, &b.IsActive)
+	return b, err
 }
 
 func (s *Service) ListBranches(ctx context.Context, p *auth.Principal) ([]Branch, error) {
-	var out []Branch
+	out := []Branch{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := `SELECT id, name, code, address, phone, manager_id, is_main, is_active, ` + invoicePrefixSQL("branches.id") + ` FROM branches WHERE is_active OR $1`
-		args := []any{p.IsOwner}
-		if !p.IsOwner {
-			q = `SELECT b.id, b.name, b.code, b.address, b.phone, b.manager_id, b.is_main, b.is_active, ` + invoicePrefixSQL("b.id") + `
-				FROM branches b JOIN user_branches ub ON ub.branch_id=b.id AND ub.user_id=$1 ORDER BY b.name`
-			args = []any{p.UserID}
-		} else {
-			q += ` ORDER BY name`
-		}
-		rows, err := tx.Query(ctx, q, args...)
+		rows, err := tx.Query(ctx, branchSelect+` AND (status = 'active' OR $2) ORDER BY is_default DESC, name`, p.TenantID, p.Has("settings.manage"))
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var b Branch
-			if err := rows.Scan(&b.ID, &b.Name, &b.Code, &b.Address, &b.Phone, &b.Manager, &b.IsMain, &b.IsActive, &b.InvoicePrefix); err != nil {
+			b, err := scanBranch(rows)
+			if err != nil {
 				return err
 			}
 			out = append(out, b)
 		}
 		return rows.Err()
 	})
-	if out == nil {
-		out = []Branch{}
-	}
 	return out, err
 }
 
+var branchKinds = map[string]bool{"shop": true, "office": true, "warehouse": true}
+
 func (s *Service) CreateBranch(ctx context.Context, p *auth.Principal, in Branch) (Branch, error) {
 	name := strings.TrimSpace(in.Name)
-	if name == "" || strings.TrimSpace(in.Code) == "" {
-		return Branch{}, httpx.BadRequest("invalid_body", "Branch name and code are required")
+	if name == "" {
+		return Branch{}, httpx.BadRequest("invalid_body", "Branch name is required")
 	}
-	id := ids.New()
-	code := strings.ToUpper(strings.TrimSpace(in.Code))
-	// The code is part of every document number, so keep it short and plain.
-	if !branchCode.MatchString(code) {
-		return Branch{}, invalid(map[string]string{"code": "use 1 to 8 letters or digits"})
+	kind := in.Kind
+	if kind == "" {
+		kind = "shop"
 	}
+	if !branchKinds[kind] {
+		return Branch{}, invalid(map[string]string{"kind": "must be shop, office or warehouse"})
+	}
+	var out Branch
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if err := s.checkManager(ctx, tx, in.Manager); err != nil {
-			return err
+		unit := in.BusinessUnitID
+		if unit == uuid.Nil {
+			// Shops and warehouses belong to the retail unit, offices to the services unit.
+			code := "A"
+			if kind == "office" {
+				code = "B"
+			}
+			if err := tx.QueryRow(ctx, `SELECT id FROM app.business_units WHERE tenant_id = $1 AND code = $2`, p.TenantID, code).Scan(&unit); err != nil {
+				return err
+			}
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO branches (id, business_id, name, code, address, phone, manager_id)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)
-		`, id, p.BusinessID, name, code, in.Address, in.Phone, in.Manager); err != nil {
+		var id uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO app.locations (tenant_id, business_unit_id, name, kind, address, phone)
+			VALUES ($1,$2,$3,$4::app.location_kind,$5,NULLIF($6,'')::app.phone_e164) RETURNING id`,
+			p.TenantID, unit, name, kind, in.Address, deref(in.Phone)).Scan(&id); err != nil {
 			if db.IsUnique(err) {
-				return httpx.Conflict("duplicate", "Branch name or code already exists")
+				return httpx.Conflict("duplicate", "A branch with that name already exists")
 			}
 			return err
 		}
-		if err := sequence.Ensure(ctx, tx, p.BusinessID, id); err != nil {
+		// Every shop or office keeps its own cash drawer (spec: cash accounts belong to a location).
+		if kind != "warehouse" {
+			if _, err := tx.Exec(ctx, `INSERT INTO app.financial_accounts (tenant_id, name, kind, location_id, business_unit_id) VALUES ($1,$2,'cash',$3,$4)`,
+				p.TenantID, name+" till", id, unit); err != nil {
+				return err
+			}
+		}
+		if err := s.Audit.Record(ctx, tx, p, "branch.created", "locations", id, nil, map[string]any{"name": name, "kind": kind}); err != nil {
 			return err
 		}
-		if _, err := chart.CreateMoneyAccount(ctx, tx, s.Ledger, chart.MoneyInput{
-			BusinessID: p.BusinessID, BranchID: &id, Name: name + " till", Type: "cash",
-			UserID: p.UserID, EntryDate: s.Clock.Now().Format("2006-01-02"),
-		}); err != nil {
-			return err
-		}
-		_, err := tx.Exec(ctx, `
-			INSERT INTO user_branches (user_id, branch_id, business_id, is_default)
-			SELECT u.id, $1, $2, false FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug='owner'
-			ON CONFLICT DO NOTHING
-		`, id, p.BusinessID)
-		if err != nil {
-			return err
-		}
-		return s.Audit.Record(ctx, tx, p, "branch.created", "branch", id, nil, map[string]any{"name": name, "code": code})
-	})
-	if err != nil {
-		return Branch{}, err
-	}
-	return s.GetBranch(ctx, p, id)
-}
-
-// invoicePrefixSQL is a scalar subquery for a branch's invoice prefix; col is a fixed column name.
-func invoicePrefixSQL(col string) string {
-	return `(SELECT ds.prefix FROM document_sequences ds WHERE ds.branch_id = ` + col + ` AND ds.doc_type = 'invoice')`
-}
-
-var branchCode = regexp.MustCompile(`^[A-Z0-9]{1,8}$`)
-
-// checkManager makes sure a branch manager is an employee of this business.
-func (s *Service) checkManager(ctx context.Context, tx pgx.Tx, id *uuid.UUID) error {
-	if id == nil {
-		return nil
-	}
-	var ok bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM employees WHERE id=$1)`, *id).Scan(&ok); err != nil {
+		var err error
+		out, err = scanBranch(tx.QueryRow(ctx, branchSelect+` AND id = $2`, p.TenantID, id))
 		return err
-	}
-	if !ok {
-		return invalid(map[string]string{"manager_id": "employee not found"})
-	}
-	return nil
+	})
+	return out, err
 }
 
 func (s *Service) GetBranch(ctx context.Context, p *auth.Principal, id uuid.UUID) (Branch, error) {
-	if !p.AllowsBranch(id) && !p.IsOwner {
-		return Branch{}, httpx.NotFound("not_found", "Branch not found")
-	}
 	var b Branch
-	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT id, name, code, address, phone, manager_id, is_main, is_active, `+invoicePrefixSQL("branches.id")+` FROM branches WHERE id=$1`, id).
-			Scan(&b.ID, &b.Name, &b.Code, &b.Address, &b.Phone, &b.Manager, &b.IsMain, &b.IsActive, &b.InvoicePrefix)
-		if err != nil {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) (err error) {
+		if b, err = scanBranch(tx.QueryRow(ctx, branchSelect+` AND id = $2`, p.TenantID, id)); err != nil {
 			return httpx.NotFound("not_found", "Branch not found")
 		}
 		return nil
@@ -280,100 +269,79 @@ func (s *Service) GetBranch(ctx context.Context, p *auth.Principal, id uuid.UUID
 }
 
 func (s *Service) UpdateBranch(ctx context.Context, p *auth.Principal, id uuid.UUID, in Branch) (Branch, error) {
-	if !p.SeesBranch("branches.manage", id) {
-		return Branch{}, httpx.NotFound("not_found", "Branch not found")
+	if in.Kind != "" && !branchKinds[in.Kind] {
+		return Branch{}, invalid(map[string]string{"kind": "must be shop, office or warehouse"})
 	}
+	var out Branch
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if err := s.checkManager(ctx, tx, in.Manager); err != nil {
-			return err
-		}
 		tag, err := tx.Exec(ctx, `
-			UPDATE branches SET name=COALESCE(NULLIF($2,''), name), address=COALESCE($3, address), phone=COALESCE($4, phone), manager_id=COALESCE($5, manager_id)
-			WHERE id=$1
-		`, id, strings.TrimSpace(in.Name), in.Address, in.Phone, in.Manager)
+			UPDATE app.locations SET name = coalesce(NULLIF($3,''), name), address = coalesce($4, address),
+			       phone = coalesce(NULLIF($5,'')::app.phone_e164, phone), kind = coalesce(NULLIF($6,'')::app.location_kind, kind)
+			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, strings.TrimSpace(in.Name), in.Address, deref(in.Phone), in.Kind)
 		if err != nil {
+			if db.IsUnique(err) {
+				return httpx.Conflict("duplicate", "A branch with that name already exists")
+			}
 			return err
 		}
 		if tag.RowsAffected() == 0 {
 			return httpx.NotFound("not_found", "Branch not found")
 		}
-		if in.InvoicePrefix != nil {
-			prefix := strings.ToUpper(strings.TrimSpace(*in.InvoicePrefix))
-			if !invoicePrefix.MatchString(prefix) {
-				return invalid(map[string]string{"invoice_prefix": "use 1 to 10 capital letters or digits"})
-			}
-			if _, err := tx.Exec(ctx, `UPDATE document_sequences SET prefix=$2 WHERE branch_id=$1 AND doc_type='invoice'`, id, prefix); err != nil {
-				return err
-			}
+		if err := s.Audit.Record(ctx, tx, p, "branch.updated", "locations", id, nil, in); err != nil {
+			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "branch.updated", "branch", id, nil, in)
+		out, err = scanBranch(tx.QueryRow(ctx, branchSelect+` AND id = $2`, p.TenantID, id))
+		return err
 	})
-	if err != nil {
-		return Branch{}, err
-	}
-	return s.GetBranch(ctx, p, id)
+	return out, err
 }
 
 func (s *Service) DeactivateBranch(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
-	if !p.SeesBranch("branches.manage", id) {
-		return httpx.NotFound("not_found", "Branch not found")
-	}
 	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var isMain bool
-		if err := tx.QueryRow(ctx, `SELECT is_main FROM branches WHERE id=$1 FOR UPDATE`, id).Scan(&isMain); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT is_default FROM app.locations WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&isMain); err != nil {
 			return httpx.NotFound("not_found", "Branch not found")
 		}
 		if isMain {
 			return httpx.Conflict("invalid_status", "The main branch cannot be deactivated")
 		}
 		var stock decimal.Decimal
-		var tills, docs int
-		if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(qty_on_hand),0) FROM stock_levels WHERE branch_id=$1`, id).Scan(&stock); err != nil {
+		var docs int
+		if err := tx.QueryRow(ctx, `SELECT coalesce(sum(quantity_on_hand), 0) FROM app.stock_balances WHERE tenant_id = $1 AND location_id = $2`, p.TenantID, id).Scan(&stock); err != nil {
 			return err
 		}
 		if stock.GreaterThan(decimal.Zero) {
 			return httpx.Conflict("invalid_status", "This branch still has stock")
 		}
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM till_sessions WHERE branch_id=$1 AND status='open'`, id).Scan(&tills); err != nil {
-			return err
-		}
-		if tills > 0 {
-			return httpx.Conflict("invalid_status", "Close the open tills before deactivating this branch")
-		}
 		if err := tx.QueryRow(ctx, `
-			SELECT (SELECT count(*) FROM sales WHERE branch_id=$1 AND status IN ('draft','held','pending_approval'))
-			     + (SELECT count(*) FROM stock_transfers WHERE (from_branch_id=$1 OR to_branch_id=$1) AND status IN ('draft','dispatched'))
-			     + (SELECT count(*) FROM stock_adjustments WHERE branch_id=$1 AND status IN ('draft','pending_approval'))
-			     + (SELECT count(*) FROM purchase_orders WHERE branch_id=$1 AND status IN ('draft','pending_approval'))
-			     + (SELECT count(*) FROM expenses WHERE branch_id=$1 AND status IN ('submitted','approved'))
-		`, id).Scan(&docs); err != nil {
+			SELECT (SELECT count(*) FROM app.sales WHERE tenant_id = $1 AND location_id = $2 AND status IN ('draft','held','pending_approval'))
+			     + (SELECT count(*) FROM app.stock_transfers WHERE tenant_id = $1 AND (from_location_id = $2 OR to_location_id = $2) AND status IN ('draft','dispatched'))
+			     + (SELECT count(*) FROM app.day_closings WHERE tenant_id = $1 AND location_id = $2 AND status = 'open')`, p.TenantID, id).Scan(&docs); err != nil {
 			return err
 		}
 		if docs > 0 {
-			return httpx.Conflict("invalid_status", "This branch has open documents (drafts, transfers in transit, pending approvals or unpaid expenses)")
+			return httpx.Conflict("invalid_status", "This branch has open documents (drafts, transfers in transit or an open day)")
 		}
-		tag, err := tx.Exec(ctx, `UPDATE branches SET is_active=false WHERE id=$1 AND NOT is_main`, id)
-		if err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.locations SET status = 'inactive' WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
 			return err
 		}
-		if tag.RowsAffected() == 0 {
-			return httpx.Conflict("invalid_status", "The main branch cannot be deactivated")
-		}
-		return s.Audit.Record(ctx, tx, p, "branch.deactivated", "branch", id, nil, map[string]any{"is_active": false})
+		return s.Audit.Record(ctx, tx, p, "branch.deactivated", "locations", id, nil, map[string]any{"is_active": false})
 	})
 }
 
+// BranchStaff lists the people whose default location is this one, and the employees based there.
 func (s *Service) BranchStaff(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	if _, err := s.GetBranch(ctx, p, id); err != nil {
 		return nil, err
 	}
-	var users, employees []map[string]any
+	users, employees := []map[string]any{}, []map[string]any{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT u.id, u.name, r.name FROM users u
-			JOIN user_branches ub ON ub.user_id=u.id AND ub.branch_id=$1
-			JOIN roles r ON r.id=u.role_id WHERE u.is_active ORDER BY u.name
-		`, id)
+			SELECT u.id, u.full_name::text, coalesce(r.name::text, '') FROM app.memberships m
+			JOIN iam.users u ON u.id = m.user_id
+			LEFT JOIN app.membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.membership_id = m.id
+			LEFT JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id
+			WHERE m.tenant_id = $1 AND m.default_location_id = $2 AND m.status = 'active' ORDER BY u.full_name`, p.TenantID, id)
 		if err != nil {
 			return err
 		}
@@ -387,29 +355,27 @@ func (s *Service) BranchStaff(ctx context.Context, p *auth.Principal, id uuid.UU
 			users = append(users, map[string]any{"id": uid, "name": name, "role": role})
 		}
 		rows.Close()
-		rows, err = tx.Query(ctx, `SELECT id, name, employee_no, status FROM employees WHERE branch_id=$1 ORDER BY name`, id)
+		erows, err := tx.Query(ctx, `SELECT id, full_name::text, employee_no, status::text FROM app.employees WHERE tenant_id = $1 AND location_id = $2 ORDER BY full_name`, p.TenantID, id)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
+		defer erows.Close()
+		for erows.Next() {
 			var eid uuid.UUID
 			var name, no, status string
-			if err := rows.Scan(&eid, &name, &no, &status); err != nil {
+			if err := erows.Scan(&eid, &name, &no, &status); err != nil {
 				return err
 			}
 			employees = append(employees, map[string]any{"id": eid, "name": name, "employee_no": no, "status": status})
 		}
-		return rows.Err()
+		return erows.Err()
 	})
-	if users == nil {
-		users = []map[string]any{}
-	}
-	if employees == nil {
-		employees = []map[string]any{}
-	}
 	return map[string]any{"users": users, "employees": employees}, err
 }
+
+// ---------------------------------------------------------------------------------------------
+// Tax rates
+// ---------------------------------------------------------------------------------------------
 
 type TaxRate struct {
 	ID        uuid.UUID       `json:"id"`
@@ -420,9 +386,9 @@ type TaxRate struct {
 }
 
 func (s *Service) ListTax(ctx context.Context, p *auth.Principal) ([]TaxRate, error) {
-	var out []TaxRate
+	out := []TaxRate{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id, name, rate, is_default, is_active FROM tax_rates ORDER BY name`)
+		rows, err := tx.Query(ctx, `SELECT id, name::text, rate_pct, is_default, status = 'active' FROM app.tax_rates WHERE tenant_id = $1 ORDER BY name`, p.TenantID)
 		if err != nil {
 			return err
 		}
@@ -436,9 +402,6 @@ func (s *Service) ListTax(ctx context.Context, p *auth.Principal) ([]TaxRate, er
 		}
 		return rows.Err()
 	})
-	if out == nil {
-		out = []TaxRate{}
-	}
 	return out, err
 }
 
@@ -455,49 +418,81 @@ func (s *Service) PaymentMethods(ctx context.Context, p *auth.Principal) (any, e
 	return v, nil
 }
 
-// Upload stores a file after checking its content. The client's Content-Type is ignored.
-func (s *Service) Upload(ctx context.Context, p *auth.Principal, name, _ string, r io.Reader) (uuid.UUID, error) {
-	buf, mime, err := upload.Read(r, 10<<20, false)
+// ---------------------------------------------------------------------------------------------
+// Files
+// ---------------------------------------------------------------------------------------------
+
+var unsafeKey = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
+
+// store checks the bytes (the client's Content-Type is ignored), saves them under the tenant's
+// prefix and records app.files, then runs link in the same transaction so a file is never recorded
+// without whatever points at it.
+func (s *Service) store(ctx context.Context, p *auth.Principal, name string, r io.Reader, max int64, imagesOnly bool, class string,
+	link func(ctx context.Context, tx pgx.Tx, id uuid.UUID) error) (uuid.UUID, error) {
+	buf, mime, err := upload.Read(r, max, imagesOnly)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	file, err := s.Store.Save(ctx, p.BusinessID.String(), name, upload.Reader(buf), 10<<20)
+	safe := unsafeKey.ReplaceAllString(name, "_")
+	if safe == "" {
+		safe = "file"
+	}
+	file, err := s.Store.Save(ctx, p.TenantID.String(), safe, upload.Reader(buf), max)
 	if err != nil {
 		return uuid.Nil, httpx.BadRequest("invalid_body", err.Error())
 	}
-	id := ids.New()
+	sum := sha256.Sum256(buf)
+	var id uuid.UUID
 	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `
-			INSERT INTO files (id, business_id, path, original_name, mime_type, size_bytes, uploaded_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)
-		`, id, p.BusinessID, file.Path, name, mime, file.Size, p.UserID)
-		return err
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO app.files (tenant_id, storage_key, original_name, mime_type, size_bytes, sha256, classification)
+			VALUES ($1,$2,$3,$4,$5,$6,$7::app.data_class) RETURNING id`,
+			p.TenantID, file.Path, truncate(name, 255), mime, file.Size, sum[:], class).Scan(&id); err != nil {
+			return err
+		}
+		if link != nil {
+			return link(ctx, tx, id)
+		}
+		return nil
 	})
+	if err != nil {
+		_ = s.Store.Delete(ctx, file.Path)
+	}
 	return id, err
 }
 
+func truncate(s string, n int) string {
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
+}
+
+// Upload stores a file after checking its content.
+func (s *Service) Upload(ctx context.Context, p *auth.Principal, name, _ string, r io.Reader) (uuid.UUID, error) {
+	return s.store(ctx, p, name, r, 10<<20, false, "confidential", nil)
+}
+
+// OpenFile returns a stored file after checking the caller may see it.
 func (s *Service) OpenFile(ctx context.Context, p *auth.Principal, id uuid.UUID) (string, string, io.ReadCloser, error) {
 	var path, name, mime string
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `SELECT path, original_name, mime_type FROM files WHERE id=$1`, id).Scan(&path, &name, &mime)
-		if err != nil {
+		if err := tx.QueryRow(ctx, `SELECT storage_key, original_name, mime_type FROM app.files WHERE id = $1 AND deleted_at IS NULL`, id).Scan(&path, &name, &mime); err != nil {
 			return httpx.NotFound("not_found", "File not found")
 		}
-		// A data export holds the whole business; only its requester or an Owner may download it.
-		var exportOwner *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT user_id FROM export_jobs WHERE file_id=$1 LIMIT 1`, id).Scan(&exportOwner); err == nil {
-			if exportOwner != nil && *exportOwner != p.UserID && !p.IsOwner {
-				return httpx.NotFound("not_found", "File not found")
-			}
-		} else if !errors.Is(err, pgx.ErrNoRows) {
+		// A data export holds the whole business; only someone who manages backups may download it.
+		var isExport bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.backup_runs WHERE tenant_id = $1 AND storage_uri = $2)`, p.TenantID, path).Scan(&isExport); err != nil {
 			return err
 		}
-		// Employee documents (contracts, ID copies) are for the people who manage employees and the employee.
-		var docEmployee, docBranch uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			SELECT d.employee_id, e.branch_id FROM employee_documents d JOIN employees e ON e.id = d.employee_id WHERE d.file_id=$1`, id).Scan(&docEmployee, &docBranch); err == nil {
+		if isExport && !p.Has("security.backup.manage") {
+			return httpx.NotFound("not_found", "File not found")
+		}
+		// Employee documents (contracts, ID copies) are for people who manage employees, and the employee.
+		var docEmployee uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT employee_id FROM app.attachments WHERE file_id = $1 AND employee_id IS NOT NULL LIMIT 1`, id).Scan(&docEmployee); err == nil {
 			own := p.EmployeeID != nil && *p.EmployeeID == docEmployee
-			if !own && !p.SeesBranch("employees.manage", docBranch) {
+			if !own && !p.Has("hr.employee.manage") && !p.Has("hr.employee.view") {
 				return httpx.NotFound("not_found", "File not found")
 			}
 		} else if !errors.Is(err, pgx.ErrNoRows) {
