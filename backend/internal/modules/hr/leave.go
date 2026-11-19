@@ -251,6 +251,9 @@ func (s *Service) markLeaveDays(ctx context.Context, tx pgx.Tx, p *auth.Principa
 		if err == nil && locked {
 			return httpx.Conflict("period_locked", "Attendance for "+d.Format(hrkit.DateFmt)+" is locked by an approved payroll")
 		}
+		if err := hrkit.PayrollLocked(ctx, tx, emp, d.Format(hrkit.DateFmt)); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO attendance_days (id, business_id, branch_id, employee_id, day, status, note)
 			VALUES ($1,$2,$3,$4,$5,'leave',$6)

@@ -1,9 +1,11 @@
 package app_test
 
 import (
+	"context"
 	"net/http"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -200,4 +202,136 @@ func TestPurchasingLimitsAndMoneyAccountScope(t *testing.T) {
 	require.Equal(t, 201, o.call(t, http.MethodPost, "/api/v1/suppliers/"+str(supID)+"/payments", map[string]any{"amount": "100000", "method": "cash", "money_account_id": str(acc.data["id"])}, key()).code)
 	own := mgr.call(t, http.MethodPost, "/api/v1/suppliers/"+str(supID)+"/payments", map[string]any{"amount": "100000", "method": "cash", "money_account_id": str(rich.data["id"])}, key())
 	require.Equal(t, 201, own.code, "an account of the manager's own branch works: "+own.raw)
+}
+
+// FR-ATT-11: once a payroll run is approved, nothing in its period can change for the people in it,
+// including days that had no attendance record yet.
+func TestApprovedPayrollLocksDaysWithoutRecords(t *testing.T) {
+	e := newEnv(t, defaultNow) // 2026-11-16
+	o := e.owner
+	workWeek(t, o)
+	emp := employee(t, o, "Zuhura", "260000", nil)
+	zuhura := e.employeeLogin(t, emp, "staff")
+	event := func(day string) int {
+		return o.call(t, http.MethodPost, "/api/v1/attendance/events", map[string]any{"employee_id": emp, "type": "in", "at": day + "T05:00:00Z", "reason": "Forgot to clock"}, "").code
+	}
+	require.Equal(t, 201, event("2026-11-12"), "before approval the day can be filled in")
+
+	run := o.call(t, http.MethodPost, "/api/v1/payroll-runs", map[string]any{"period_start": "2026-11-01", "period_end": "2026-11-30"}, "")
+	require.Equal(t, 201, run.code, run.raw)
+	runID := str(run.data["id"])
+	require.Equal(t, 200, o.call(t, http.MethodPost, "/api/v1/payroll-runs/"+runID+"/calculate", nil, "").code)
+	require.Equal(t, 200, o.call(t, http.MethodPost, "/api/v1/payroll-runs/"+runID+"/approve", nil, key()).code)
+
+	// A day with no record, a clock-in today, and a leave day are all inside the approved period.
+	locked := o.call(t, http.MethodPost, "/api/v1/attendance/events", map[string]any{"employee_id": emp, "type": "in", "at": "2026-11-13T05:00:00Z", "reason": "Late entry"}, "")
+	require.Equal(t, 409, locked.code, locked.raw)
+	require.Equal(t, "period_locked", errCode(locked.body))
+	require.Equal(t, 409, zuhura.call(t, http.MethodPost, "/api/v1/attendance/clock-in", nil, "").code, "clocking in today is inside November")
+	types := o.call(t, http.MethodGet, "/api/v1/leave-types", nil, "")
+	annual := find(asList(types.body["data"]), "name", "Annual")
+	lv := zuhura.call(t, http.MethodPost, "/api/v1/leave-requests", map[string]any{"leave_type_id": annual["id"], "start_date": "2026-11-24", "end_date": "2026-11-24"}, "")
+	require.Equal(t, 201, lv.code, lv.raw)
+	dec := o.call(t, http.MethodPost, "/api/v1/leave-requests/"+str(lv.data["id"])+"/approve", nil, "")
+	require.Equal(t, 409, dec.code, "leave inside the approved period cannot be marked: "+dec.raw)
+
+	// A day before the period is not locked.
+	require.Equal(t, 201, event("2026-10-28"))
+}
+
+func countTitle(t *testing.T, c *client, title string) int {
+	n := 0
+	for _, got := range titles(t, c) {
+		if got == title {
+			n++
+		}
+	}
+	return n
+}
+
+// FR-APR-02: an approval request goes to the people who can decide it at that amount, not to everyone.
+func TestApprovalRequestsReachOnlyPeopleWhoCanDecideThem(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	o := e.owner
+	mgr, _ := e.user(t, "manager") // expenses.approve limit 1,000,000
+	staff, _ := e.user(t, "staff")
+	cats := o.call(t, http.MethodGet, "/api/v1/expense-categories", nil, "")
+	category := asList(cats.body["data"])[0]["id"]
+
+	small := countTitle(t, mgr, "Approval needed")
+	require.Equal(t, 202, staff.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": category, "amount": "80000", "description": "Small"}, key()).code)
+	require.Equal(t, small+1, countTitle(t, mgr, "Approval needed"), "a manager is told about an expense they can approve")
+
+	ownerBefore := countTitle(t, o, "Approval needed")
+	big := staff.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": category, "amount": "3000000", "description": "Large"}, key())
+	require.Equal(t, 202, big.code, big.raw)
+	require.Equal(t, small+1, countTitle(t, mgr, "Approval needed"), "and is not told about one above their limit")
+	require.Equal(t, ownerBefore+1, countTitle(t, o, "Approval needed"), "the Owner is")
+
+	// The inbox shows the same: the manager's badge and list leave out what they cannot decide.
+	list := mgr.call(t, http.MethodGet, "/api/v1/approvals?status=pending&kind=expense", nil, "")
+	require.Equal(t, 200, list.code, list.raw)
+	for _, row := range asList(list.body["data"]) {
+		if str(row["id"]) == str(big.data["approval_request_id"]) {
+			require.Equal(t, false, row["can_decide"], "visible as history of the business, but not decidable by a manager")
+		}
+	}
+	// A requester is not told about their own request, even when they could approve it.
+	ownRequest := mgr.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": category, "amount": "2000000", "description": "Manager's own"}, key())
+	require.Equal(t, 202, ownRequest.code, ownRequest.raw)
+	require.Equal(t, small+1, countTitle(t, mgr, "Approval needed"))
+}
+
+// FR-SET-08: the in-app switch and days_before of a notification rule take effect.
+func TestNotificationRulesAreHonoured(t *testing.T) {
+	e := newEnv(t, defaultNow) // 2026-11-16
+	o := e.owner
+	mgr, _ := e.user(t, "manager")
+	staff, _ := e.user(t, "staff")
+	cats := o.call(t, http.MethodGet, "/api/v1/expense-categories", nil, "")
+	category := asList(cats.body["data"])[0]["id"]
+	rule := func(r map[string]any) {
+		res := o.call(t, http.MethodPut, "/api/v1/settings/notifications", map[string]any{"rules": r}, "")
+		require.Equal(t, 200, res.code, res.raw)
+	}
+
+	// With the in-app channel off, the notification is not delivered in the app at all.
+	rule(map[string]any{"approval_request": map[string]any{"in_app": false}})
+	before := countTitle(t, mgr, "Approval needed")
+	require.Equal(t, 202, staff.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": category, "amount": "80000", "description": "Muted"}, key()).code)
+	require.Equal(t, before, countTitle(t, mgr, "Approval needed"))
+	unread := mgr.call(t, http.MethodGet, "/api/v1/notifications/unread-count", nil, "")
+	n0 := int(dec(unread.data["unread"]).IntPart())
+
+	// Email on, in-app off: it still goes out by email, and still stays out of the app's list and count.
+	rule(map[string]any{"approval_request": map[string]any{"in_app": false, "email": true}})
+	require.Equal(t, 202, staff.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": category, "amount": "81000", "description": "Email only"}, key()).code)
+	require.Equal(t, before, countTitle(t, mgr, "Approval needed"))
+	require.Equal(t, n0, int(dec(mgr.call(t, http.MethodGet, "/api/v1/notifications/unread-count", nil, "").data["unread"]).IntPart()))
+	var queued int
+	require.NoError(t, e.app.DB.Pool.QueryRow(context.Background(), `SELECT count(*) FROM jobs WHERE kind='send_notification' AND status='queued'`).Scan(&queued))
+	require.Greater(t, queued, 0, "the email delivery job was queued")
+
+	// Back on in-app: delivered again.
+	rule(map[string]any{"approval_request": map[string]any{"in_app": true, "email": false}})
+	require.Equal(t, 202, staff.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": category, "amount": "82000", "description": "Back"}, key()).code)
+	require.Equal(t, before+1, countTitle(t, mgr, "Approval needed"))
+
+	// days_before sets how far ahead supplier invoices are reminded about (default 7 days).
+	product := e.product(t, "Oil", "5000", "", "")
+	sup := o.call(t, http.MethodPost, "/api/v1/suppliers", map[string]any{"name": "Oil Co"}, "")
+	grn := o.call(t, http.MethodPost, "/api/v1/goods-receipts", map[string]any{"supplier_id": sup.data["id"], "items": []map[string]any{{"product_id": product, "qty": "10", "unit_cost": "3000"}}}, key())
+	require.Equal(t, 201, grn.code, grn.raw)
+	inv := o.call(t, http.MethodPost, "/api/v1/purchase-invoices", map[string]any{"supplier_id": sup.data["id"], "receipt_ids": []string{str(grn.data["id"])}, "due_date": "2026-11-26"}, key())
+	require.Equal(t, 201, inv.code, inv.raw)
+	biz := uuid.MustParse(str(o.call(t, http.MethodGet, "/api/v1/business", nil, "").data["id"]))
+	remind := func() {
+		require.NoError(t, e.app.Jobs.Enqueue(context.Background(), biz, "debt_reminders", map[string]any{}))
+		e.runJobs(t)
+	}
+	remind()
+	require.Equal(t, 0, countTitle(t, o, "Supplier invoices due"), "due in 10 days is outside the default 7-day window")
+	rule(map[string]any{"supplier_debt": map[string]any{"days_before": 14}})
+	remind()
+	require.GreaterOrEqual(t, countTitle(t, o, "Supplier invoices due"), 1, "inside a 14-day window")
 }

@@ -160,7 +160,7 @@ func checkUnlocked(ctx context.Context, tx pgx.Tx, employee uuid.UUID, day strin
 	if err == nil && locked {
 		return httpx.Conflict("period_locked", "Attendance for this day is locked by an approved payroll")
 	}
-	return nil
+	return hrkit.PayrollLocked(ctx, tx, employee, day)
 }
 
 type dayResult struct {

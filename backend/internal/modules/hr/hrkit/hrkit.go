@@ -322,3 +322,21 @@ func convert(oid uint32, typmod int32, v any) any {
 	_ = oidNumeric
 	return v
 }
+
+// PayrollLocked refuses a change to a day that falls inside the period of an approved, paid or
+// locked payroll run that includes the employee (FR-ATT-11). It covers days with no attendance
+// row yet, which the per-row is_locked flag cannot.
+func PayrollLocked(ctx context.Context, tx pgx.Tx, employee uuid.UUID, day string) error {
+	var locked bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM payslips ps JOIN payroll_runs r ON r.id = ps.run_id
+			WHERE ps.employee_id = $1 AND r.status IN ('approved','paid','locked') AND $2::date BETWEEN r.period_start AND r.period_end
+		)`, employee, day).Scan(&locked); err != nil {
+		return err
+	}
+	if locked {
+		return httpx.Conflict("period_locked", "Attendance for "+day+" is locked by an approved payroll")
+	}
+	return nil
+}

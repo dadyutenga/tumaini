@@ -1412,7 +1412,7 @@ func (s *Service) SalaryDue(ctx context.Context, businessID uuid.UUID, payload j
 			}
 		}
 		payDay := setting.Int(ctx, tx, "payroll.pay_day", 25)
-		before := setting.Int(ctx, tx, "notifications.salary_due_days", 3)
+		before := s.Notify.DaysBefore(ctx, tx, "salary_due", setting.Int(ctx, tx, "notifications.salary_due_days", 3))
 		last := time.Date(today.Year(), today.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
 		if payDay > last {
 			payDay = last

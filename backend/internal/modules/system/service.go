@@ -197,7 +197,7 @@ func (s *Service) DebtReminders(ctx context.Context, businessID uuid.UUID, _ jso
 		if err != nil {
 			return err
 		}
-		dueDays := setting.Int(ctx, tx, "notifications.supplier_due_days", 7)
+		dueDays := s.Notify.DaysBefore(ctx, tx, "supplier_debt", setting.Int(ctx, tx, "notifications.supplier_due_days", 7))
 		type agg struct {
 			branch uuid.UUID
 			n      int
