@@ -2,6 +2,7 @@ package app_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -365,4 +366,32 @@ func TestSalePaymentMethodRules(t *testing.T) {
 	require.Equal(t, 201, cust.code, cust.raw)
 	credit := o.call(t, http.MethodPost, "/api/v1/sales", map[string]any{"customer_id": cust.data["id"], "items": []map[string]any{{"product_id": product, "qty": "1"}}, "payments": []map[string]any{}}, key())
 	require.Equal(t, 409, credit.code, credit.raw)
+}
+
+// FR-SEC-01, FR-SET-10: report downloads are logged, and a rule change keeps its old value.
+func TestExportsAndRuleChangesAreAudited(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	o := e.owner
+	view := o.call(t, http.MethodGet, "/api/v1/reports/sales/summary", nil, "")
+	require.Equal(t, 200, view.code, view.raw)
+	require.Empty(t, asList(o.call(t, http.MethodGet, "/api/v1/audit-logs?action=report.exported", nil, "").body["data"]), "viewing is not an export")
+	csv := o.call(t, http.MethodGet, "/api/v1/reports/sales/summary?format=csv", nil, "")
+	require.Equal(t, 200, csv.code)
+	rows := asList(o.call(t, http.MethodGet, "/api/v1/audit-logs?action=report.exported", nil, "").body["data"])
+	require.Len(t, rows, 1)
+
+	put := func(v bool) {
+		res := o.call(t, http.MethodPut, "/api/v1/settings/notifications", map[string]any{"rules": map[string]any{"approval_request": map[string]any{"in_app": v}}}, "")
+		require.Equal(t, 200, res.code, res.raw)
+	}
+	put(false)
+	put(true)
+	logs := asList(o.call(t, http.MethodGet, "/api/v1/audit-logs?action=settings.updated", nil, "").body["data"])
+	require.NotEmpty(t, logs)
+	require.Contains(t, jsonOf(logs[0]), `"in_app":false`, "the newest change shows the value it replaced")
+}
+
+func jsonOf(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

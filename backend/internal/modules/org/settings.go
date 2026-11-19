@@ -388,6 +388,14 @@ func (s *Service) saveRules(ctx context.Context, tx pgx.Tx, p *auth.Principal, r
 		types = append(types, t)
 	}
 	sort.Strings(types)
+	oldRules := map[string]map[string]any{}
+	for _, typ := range types {
+		var inApp, email, sms bool
+		var days *int
+		if err := tx.QueryRow(ctx, `SELECT in_app, email, sms, days_before FROM notification_rules WHERE type=$1`, typ).Scan(&inApp, &email, &sms, &days); err == nil {
+			oldRules[typ] = map[string]any{"in_app": inApp, "email": email, "sms": sms, "days_before": days}
+		}
+	}
 	for _, typ := range types {
 		r := rules[typ]
 		if _, err := tx.Exec(ctx, `INSERT INTO notification_rules (business_id, type) VALUES ($1,$2) ON CONFLICT DO NOTHING`, p.BusinessID, typ); err != nil {
@@ -407,5 +415,5 @@ func (s *Service) saveRules(ctx context.Context, tx pgx.Tx, p *auth.Principal, r
 			}
 		}
 	}
-	return s.Audit.Record(ctx, tx, p, "settings.updated", "settings", p.BusinessID, nil, map[string]any{"key": "notifications.rules", "value": rules})
+	return s.Audit.Record(ctx, tx, p, "settings.updated", "settings", p.BusinessID, map[string]any{"key": "notifications.rules", "value": oldRules}, map[string]any{"key": "notifications.rules", "value": rules})
 }

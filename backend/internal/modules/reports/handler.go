@@ -2,17 +2,23 @@ package reports
 
 import (
 	"context"
+	"strings"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
+	"bms/internal/kernel/audit"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/export"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/middleware"
 )
 
-type Handler struct{ Svc *Service }
+type Handler struct {
+	Svc   *Service
+	Audit *audit.Service
+}
 
 type reportFn func(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error)
 
@@ -56,9 +62,27 @@ func (h *Handler) run(perm string, fn reportFn) fiber.Handler {
 		if err != nil {
 			return err
 		}
-		t, extra, err := fn(c.Context(), middleware.Principal(c), f)
+		p := middleware.Principal(c)
+		t, extra, err := fn(c.Context(), p, f)
+		if err == nil && h.exporting(c) {
+			// FR-SEC-01: a downloaded report is a recorded export.
+			if aerr := h.Svc.DB.InTx(c.Context(), p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+				return h.Audit.Record(ctx, tx, p, "report.exported", "report", uuid.Nil, nil,
+					map[string]any{"report": t.Title, "path": c.Path(), "format": strings.ToLower(c.Query("format")), "rows": len(t.Rows), "query": f.Query})
+			}); aerr != nil {
+				return aerr
+			}
+		}
 		return export.Respond(c, t, extra, err)
 	}
+}
+
+func (h *Handler) exporting(c fiber.Ctx) bool {
+	switch strings.ToLower(c.Query("format")) {
+	case "", "json":
+		return false
+	}
+	return h.Audit != nil
 }
 
 func (h *Handler) breakdown(by string) reportFn {
