@@ -2,6 +2,7 @@ package inventory
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -261,31 +262,36 @@ type DocFilter struct {
 	From, To                  string
 }
 
+// Entries lists posted stock entries: adjustments created from a stated reason, as opposed to counts.
 func (s *Service) Entries(ctx context.Context, p *auth.Principal, f DocFilter, page httpx.Page) ([]map[string]any, int, error) {
-	var out []map[string]any
+	out := []map[string]any{}
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		if b := p.ScopeBranches("stock.view"); b != nil {
-			q.Add("e.branch_id = ANY(?)", b)
-		}
-		q.If(f.Direction != "", "e.direction = ?", f.Direction)
-		q.If(f.Reason != "", "e.reason = ?", f.Reason)
-		q.If(f.From != "", "e.created_at >= ?::date", f.From)
-		q.If(f.To != "", "e.created_at < ?::date + 1", f.To)
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM stock_entries e`+q.Where(), q.Args...).Scan(&total); err != nil {
+		const where = ` WHERE a.tenant_id = $1 AND a.reason <> 'count_correction' AND a.status = 'posted'
+			AND ($2::uuid IS NULL OR a.location_id = $2)
+			AND ($3 = '' OR (CASE WHEN v.net >= 0 THEN 'in' ELSE 'out' END) = $3)
+			AND ($4 = '' OR a.reason::text = $4)
+			AND ($5 = '' OR a.created_at >= $5::date) AND ($6 = '' OR a.created_at < $6::date + 1)`
+		const from = ` FROM app.stock_adjustments a
+			JOIN LATERAL (SELECT coalesce(sum(l.quantity_delta), 0) AS net, count(*) AS n,
+			                     coalesce(sum(abs(l.quantity_delta) * coalesce(l.unit_cost, pr.average_cost)), 0) AS value
+			                FROM app.stock_adjustment_lines l JOIN app.products pr ON pr.tenant_id = l.tenant_id AND pr.id = l.product_id
+			               WHERE l.tenant_id = a.tenant_id AND l.stock_adjustment_id = a.id) v ON true
+			LEFT JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.created_by`
+		args := []any{p.TenantID, locationFilter(p), f.Direction, f.Reason, f.From, f.To}
+		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+where, args...).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT e.id, e.number, e.branch_id, e.direction, e.reason, e.note, e.total_value, e.created_by, e.created_at,
-			       (SELECT count(*) FROM stock_entry_items i WHERE i.entry_id=e.id)
-			FROM stock_entries e`+q.Where()+` ORDER BY e.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
+			SELECT a.id, a.adjustment_no, a.location_id, CASE WHEN v.net >= 0 THEN 'in' ELSE 'out' END, a.reason::text, a.note, v.value, m.user_id, a.created_at, v.n`+from+where+`
+			ORDER BY a.created_at DESC LIMIT $7 OFFSET $8`, append(args, page.PerPage, page.Offset)...)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var id, branch, by uuid.UUID
+			var id, branch uuid.UUID
+			var by *uuid.UUID
 			var number, dir, reason string
 			var note *string
 			var value decimal.Decimal
@@ -294,57 +300,52 @@ func (s *Service) Entries(ctx context.Context, p *auth.Principal, f DocFilter, p
 			if err := rows.Scan(&id, &number, &branch, &dir, &reason, &note, &value, &by, &at, &n); err != nil {
 				return err
 			}
-			out = append(out, map[string]any{"id": id, "number": number, "branch_id": branch, "direction": dir, "reason": reason, "note": note, "total_value": value, "created_by": by, "created_at": at, "item_count": n})
+			out = append(out, map[string]any{"id": id, "number": number, "branch_id": branch, "direction": dir, "reason": reason, "note": note,
+				"total_value": value, "created_by": by, "created_at": at, "item_count": n})
 		}
 		return rows.Err()
 	})
-	return orEmpty(out), total, err
+	return out, total, err
 }
 
 func (s *Service) GetEntry(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		var branch, by uuid.UUID
-		var number, dir, reason string
+		var branch uuid.UUID
+		var by *uuid.UUID
+		var number, reason string
 		var note *string
-		var value decimal.Decimal
 		var at time.Time
-		err := tx.QueryRow(ctx, `SELECT number, branch_id, direction, reason, note, total_value, created_by, created_at FROM stock_entries WHERE id=$1`, id).
-			Scan(&number, &branch, &dir, &reason, &note, &value, &by, &at)
-		if err != nil || !p.SeesBranch("stock.view", branch) {
+		if err := tx.QueryRow(ctx, `
+			SELECT a.adjustment_no, a.location_id, a.reason::text, a.note, m.user_id, a.created_at
+			FROM app.stock_adjustments a LEFT JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.created_by
+			WHERE a.tenant_id = $1 AND a.id = $2 AND a.reason <> 'count_correction'`, p.TenantID, id).Scan(&number, &branch, &reason, &note, &by, &at); err != nil {
 			return httpx.NotFound("not_found", "Stock entry not found")
 		}
 		items, err := itemRows(ctx, tx, `
-			SELECT i.product_id, p.name, p.sku, i.qty, i.unit_cost, round(i.qty*i.unit_cost, 2)
-			FROM stock_entry_items i JOIN products p ON p.id=i.product_id WHERE i.entry_id=$1 ORDER BY p.name`, id,
-			[]string{"product_id", "product_name", "sku", "qty", "unit_cost", "value"})
+			SELECT l.product_id, pr.name::text, coalesce(pr.sku, ''), abs(l.quantity_delta), coalesce(l.unit_cost, pr.average_cost),
+			       round(abs(l.quantity_delta) * coalesce(l.unit_cost, pr.average_cost), 2)
+			FROM app.stock_adjustment_lines l JOIN app.products pr ON pr.tenant_id = l.tenant_id AND pr.id = l.product_id
+			WHERE l.stock_adjustment_id = $1 ORDER BY pr.name`, id, []string{"product_id", "product_name", "sku", "qty", "unit_cost", "value"})
 		if err != nil {
 			return err
 		}
-		// Batch and expiry (FR-INV-32) are strings, so they are merged in beside the decimal columns.
-		batches, err := tx.Query(ctx, `SELECT product_id, batch_no, expiry_date::text FROM stock_entry_items WHERE entry_id=$1 AND (batch_no IS NOT NULL OR expiry_date IS NOT NULL)`, id)
-		if err != nil {
+		dir, value := "in", money.Zero
+		var net decimal.Decimal
+		if err := tx.QueryRow(ctx, `SELECT coalesce(sum(quantity_delta), 0) FROM app.stock_adjustment_lines WHERE stock_adjustment_id = $1`, id).Scan(&net); err != nil {
 			return err
 		}
-		byProduct := map[uuid.UUID][2]*string{}
-		for batches.Next() {
-			var pid uuid.UUID
-			var batch, expiry *string
-			if err := batches.Scan(&pid, &batch, &expiry); err != nil {
-				batches.Close()
-				return err
-			}
-			byProduct[pid] = [2]*string{batch, expiry}
-		}
-		batches.Close()
-		if err := batches.Err(); err != nil {
-			return err
+		if net.IsNegative() {
+			dir = "out"
 		}
 		for _, it := range items {
-			b := byProduct[it["product_id"].(uuid.UUID)]
-			it["batch_no"], it["expiry_date"] = b[0], b[1]
+			if v, ok := it["value"].(decimal.Decimal); ok {
+				value = value.Add(v)
+			}
+			it["batch_no"], it["expiry_date"] = nil, nil
 		}
-		out = map[string]any{"id": id, "number": number, "branch_id": branch, "direction": dir, "reason": reason, "note": note, "total_value": value, "created_by": by, "created_at": at, "items": items}
+		out = map[string]any{"id": id, "number": number, "branch_id": branch, "direction": dir, "reason": reason, "note": note,
+			"total_value": value, "created_by": by, "created_at": at, "items": items}
 		return nil
 	})
 	return out, err
@@ -357,7 +358,7 @@ func itemRows(ctx context.Context, tx pgx.Tx, sql string, id uuid.UUID, cols []s
 		return nil, err
 	}
 	defer rows.Close()
-	var out []map[string]any
+	out := []map[string]any{}
 	for rows.Next() {
 		vals := make([]any, len(cols))
 		var pid uuid.UUID
@@ -380,68 +381,96 @@ func itemRows(ctx context.Context, tx pgx.Tx, sql string, id uuid.UUID, cols []s
 		}
 		out = append(out, m)
 	}
-	return orEmpty(out), rows.Err()
+	return out, rows.Err()
 }
 
+// adjustmentNote splits the stock-take marker off a note.
+func adjustmentNote(note *string) (string, bool) {
+	if note == nil {
+		return "", false
+	}
+	if strings.HasPrefix(*note, stockTakeMark) {
+		return strings.TrimPrefix(*note, stockTakeMark), true
+	}
+	return *note, false
+}
+
+// Adjustments lists counted adjustments (stock counts and stock takes).
 func (s *Service) Adjustments(ctx context.Context, p *auth.Principal, f DocFilter, page httpx.Page) ([]map[string]any, int, error) {
-	var out []map[string]any
+	out := []map[string]any{}
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		if b := p.ScopeBranches("stock.view"); b != nil {
-			q.Add("a.branch_id = ANY(?)", b)
-		}
-		q.If(f.Status != "", "a.status = ?", f.Status)
-		q.If(f.From != "", "a.created_at >= ?::date", f.From)
-		q.If(f.To != "", "a.created_at < ?::date + 1", f.To)
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM stock_adjustments a`+q.Where(), q.Args...).Scan(&total); err != nil {
+		const where = ` WHERE a.tenant_id = $1 AND a.reason = 'count_correction' AND ($2::uuid IS NULL OR a.location_id = $2)
+			AND ($3 = '' OR a.status::text = $3) AND ($4 = '' OR a.created_at >= $4::date) AND ($5 = '' OR a.created_at < $5::date + 1)`
+		args := []any{p.TenantID, locationFilter(p), f.Status, f.From, f.To}
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.stock_adjustments a`+where, args...).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT a.id, a.number, a.branch_id, a.reason, a.status, a.is_stock_take, a.total_value, a.created_by, a.created_at, a.posted_at
-			FROM stock_adjustments a`+q.Where()+` ORDER BY a.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
+			SELECT a.id, a.adjustment_no, a.location_id, coalesce(a.note, ''), a.status::text, m.user_id, a.created_at, a.posted_at,
+			       (SELECT coalesce(sum(round(cl.counted_qty * pr.average_cost - coalesce(cl.system_qty, 0) * pr.average_cost, 2)), 0)
+			          FROM app.stock_counts c JOIN app.stock_count_lines cl ON cl.tenant_id = c.tenant_id AND cl.stock_count_id = c.id
+			          JOIN app.products pr ON pr.tenant_id = cl.tenant_id AND pr.id = cl.product_id
+			         WHERE c.tenant_id = a.tenant_id AND c.stock_adjustment_id = a.id)
+			FROM app.stock_adjustments a LEFT JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.created_by`+where+`
+			ORDER BY a.created_at DESC LIMIT $6 OFFSET $7`, append(args, page.PerPage, page.Offset)...)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var id, branch, by uuid.UUID
-			var number, reason, st string
-			var take bool
+			var id, branch uuid.UUID
+			var by *uuid.UUID
+			var number, note, st string
 			var value decimal.Decimal
 			var at time.Time
 			var posted *time.Time
-			if err := rows.Scan(&id, &number, &branch, &reason, &st, &take, &value, &by, &at, &posted); err != nil {
+			if err := rows.Scan(&id, &number, &branch, &note, &st, &by, &at, &posted, &value); err != nil {
 				return err
 			}
-			out = append(out, map[string]any{"id": id, "number": number, "branch_id": branch, "reason": reason, "status": st, "is_stock_take": take, "total_value": value, "created_by": by, "created_at": at, "posted_at": posted})
+			reason, take := adjustmentNote(&note)
+			out = append(out, map[string]any{"id": id, "number": number, "branch_id": branch, "reason": reason, "status": st, "is_stock_take": take,
+				"total_value": value, "created_by": by, "created_at": at, "posted_at": posted})
 		}
 		return rows.Err()
 	})
-	return orEmpty(out), total, err
+	return out, total, err
 }
 
 func (s *Service) GetAdjustment(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		var branch, by uuid.UUID
-		var number, reason, st string
-		var take bool
-		var value decimal.Decimal
+		var branch, count uuid.UUID
+		var by *uuid.UUID
+		var number, st string
+		var note *string
 		var at time.Time
-		err := tx.QueryRow(ctx, `SELECT number, branch_id, reason, status, is_stock_take, total_value, created_by, created_at FROM stock_adjustments WHERE id=$1`, id).
-			Scan(&number, &branch, &reason, &st, &take, &value, &by, &at)
-		if err != nil || !p.SeesBranch("stock.view", branch) {
+		if err := tx.QueryRow(ctx, `
+			SELECT a.adjustment_no, a.location_id, a.note, a.status::text, m.user_id, a.created_at, coalesce(c.id, '00000000-0000-0000-0000-000000000000'::uuid)
+			FROM app.stock_adjustments a
+			LEFT JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.created_by
+			LEFT JOIN app.stock_counts c ON c.tenant_id = a.tenant_id AND c.stock_adjustment_id = a.id
+			WHERE a.tenant_id = $1 AND a.id = $2 AND a.reason = 'count_correction'`, p.TenantID, id).Scan(&number, &branch, &note, &st, &by, &at, &count); err != nil {
 			return httpx.NotFound("not_found", "Adjustment not found")
 		}
 		items, err := itemRows(ctx, tx, `
-			SELECT i.product_id, p.name, p.sku, i.qty_system, i.qty_counted, i.qty_counted - i.qty_system, i.unit_cost, round((i.qty_counted - i.qty_system)*i.unit_cost, 2)
-			FROM stock_adjustment_items i JOIN products p ON p.id=i.product_id WHERE i.adjustment_id=$1 ORDER BY p.name`, id,
+			SELECT cl.product_id, pr.name::text, coalesce(pr.sku, ''), cl.system_qty, cl.counted_qty, cl.counted_qty - cl.system_qty, pr.average_cost,
+			       round((cl.counted_qty - cl.system_qty) * pr.average_cost, 2)
+			FROM app.stock_count_lines cl JOIN app.products pr ON pr.tenant_id = cl.tenant_id AND pr.id = cl.product_id
+			WHERE cl.stock_count_id = $1 ORDER BY pr.name`, count,
 			[]string{"product_id", "product_name", "sku", "qty_system", "qty_counted", "difference", "unit_cost", "value"})
 		if err != nil {
 			return err
 		}
-		out = map[string]any{"id": id, "number": number, "branch_id": branch, "reason": reason, "status": st, "is_stock_take": take, "total_value": value, "created_by": by, "created_at": at, "items": items}
+		value := money.Zero
+		for _, it := range items {
+			if v, ok := it["value"].(decimal.Decimal); ok {
+				value = value.Add(v)
+			}
+		}
+		reason, take := adjustmentNote(note)
+		out = map[string]any{"id": id, "number": number, "branch_id": branch, "reason": reason, "status": st, "is_stock_take": take,
+			"total_value": value, "created_by": by, "created_at": at, "items": items}
 		return nil
 	})
 	return out, err

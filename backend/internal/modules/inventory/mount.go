@@ -3,7 +3,6 @@ package inventory
 import (
 	"github.com/gofiber/fiber/v3"
 
-	"bms/internal/kernel/approval"
 	"bms/internal/kernel/deps"
 	"bms/internal/platform/jobs"
 )
@@ -13,7 +12,6 @@ import (
 func Mount(r fiber.Router, d deps.Deps) *Service {
 	svc := New(d.DB, d.Stock, d.Ledger, d.Audit, d.Notify, d.Approval, d.Clock)
 	Register(r, &Handler{Svc: svc})
-	d.Approval.Register("stock_adjustment", approval.Hooks{OnApproved: svc.OnAdjustmentApproved, OnRejected: svc.OnAdjustmentRejected})
 	d.Jobs.Register(jobs.CheckLowStock, svc.CheckLowStock)
 	return svc
 }
