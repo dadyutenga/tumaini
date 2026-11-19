@@ -8,8 +8,10 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/platform/auth"
+	"bms/internal/platform/export"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/middleware"
+	"bms/internal/platform/pdf"
 )
 
 type Handler struct{ Svc *Service }
@@ -131,11 +133,68 @@ func (h *Handler) BranchPrices(c fiber.Ctx) error {
 	return c.JSON(httpx.Data(fiber.Map{"ok": true}))
 }
 
+func (h *Handler) Export(c fiber.Ctx) error {
+	p := middleware.Principal(c)
+	list, _, err := h.Svc.List(c.Context(), p, c.Query("q"), nil, nil, nil, httpx.Page{Page: 1, PerPage: 10000}, showCost(p))
+	if err != nil {
+		return err
+	}
+	cost := showCost(p)
+	cols := []export.Col{{Key: "sku", Label: "SKU"}, {Key: "barcode", Label: "Barcode"}, {Key: "name", Label: "Name"}, {Key: "kind", Label: "Kind"}, {Key: "unit", Label: "Unit"}, {Key: "sell_price", Label: "Sell price"}}
+	if cost {
+		cols = append(cols, export.Col{Key: "avg_cost", Label: "Avg cost"})
+	}
+	cols = append(cols, export.Col{Key: "qty_on_hand", Label: "Stock"}, export.Col{Key: "warranty_months", Label: "Warranty (m)"}, export.Col{Key: "is_active", Label: "Active"})
+	rows := make([]map[string]any, 0, len(list))
+	for _, pr := range list {
+		bc := ""
+		if pr.Barcode != nil {
+			bc = *pr.Barcode
+		}
+		r := map[string]any{
+			"sku": pr.SKU, "barcode": bc, "name": pr.Name, "kind": pr.Kind, "unit": pr.Unit,
+			"sell_price": pr.SellPrice, "qty_on_hand": pr.QtyOnHand, "warranty_months": pr.WarrantyMonths, "is_active": pr.IsActive,
+		}
+		if cost {
+			r["avg_cost"] = pr.AvgCost
+		}
+		rows = append(rows, r)
+	}
+	t := export.Table{Title: "Products", Columns: cols, Rows: rows}
+	return export.Respond(c, t, nil, nil)
+}
+
+func (h *Handler) BarcodeLabel(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	res, err := h.Svc.Get(c.Context(), middleware.Principal(c), id)
+	if err != nil {
+		return err
+	}
+	pr := res["product"].(Product)
+	code := pr.SKU
+	if pr.Barcode != nil && *pr.Barcode != "" {
+		code = *pr.Barcode
+	}
+	d := pdf.NewSized(226, 140, 12)
+	d.Heading(pr.Name, 11)
+	d.Text("Code: " + code)
+	d.Heading("TZS "+pr.SellPrice.StringFixed(0), 12)
+	if pr.WarrantyMonths > 0 {
+		d.Text("Warranty: " + strconv.Itoa(pr.WarrantyMonths) + " months")
+	}
+	return export.File(c, "barcode-"+code+".pdf", "application/pdf", d.Bytes())
+}
+
 func Register(r fiber.Router, h *Handler) {
 	r.Get("/products", middleware.Require("products.view"), h.List)
 	r.Get("/products/lookup", middleware.Require("products.view"), h.Lookup)
+	r.Get("/products/export", middleware.Require("products.view"), h.Export)
 	r.Post("/products", middleware.Require("products.manage"), h.Create)
 	r.Get("/products/:id", middleware.Require("products.view"), h.Get)
+	r.Get("/products/:id/barcode-label", middleware.Require("products.view"), h.BarcodeLabel)
 	r.Put("/products/:id", middleware.Require("products.manage"), h.Update)
 	r.Put("/products/:id/branch-prices", middleware.Require("products.manage"), h.BranchPrices)
 	r.Post("/products/:id/deactivate", middleware.Require("products.manage"), h.active(false))

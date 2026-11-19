@@ -304,7 +304,7 @@ func (h *Handler) SetPeriodLock(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
-	r.Get("/money-accounts", middleware.Require("accounts.view"), h.List)
+	r.Get("/money-accounts", middleware.RequireAny("accounts.view", "sales.create", "tills.open_close", "payments.receive"), h.List)
 	r.Post("/money-accounts", middleware.Require("accounts.manage"), h.Create)
 	r.Get("/money-accounts/:id", middleware.Require("accounts.view"), h.Get)
 	r.Put("/money-accounts/:id", middleware.Require("accounts.manage"), h.Update)

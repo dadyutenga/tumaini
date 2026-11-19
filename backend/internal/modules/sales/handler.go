@@ -66,7 +66,17 @@ func (h *Handler) Receipt(c fiber.Ctx) error {
 		return err
 	}
 	out, err := h.Svc.Receipt(c.Context(), middleware.Principal(c), id)
-	return httpx.OK(c, out, err)
+	if err != nil {
+		return err
+	}
+	switch strings.ToLower(c.Query("format")) {
+	case "", "json":
+		return c.JSON(httpx.Data(out))
+	case "pdf":
+		return export.File(c, "receipt-"+str(out["number"])+".pdf", "application/pdf", ReceiptPDF(out))
+	default:
+		return httpx.BadRequest("invalid_query", "format must be json or pdf")
+	}
 }
 
 func (h *Handler) Invoice(c fiber.Ctx) error {
@@ -236,6 +246,18 @@ func (h *Handler) UpdateQuotation(c fiber.Ctx) error {
 	return httpx.OK(c, out, err)
 }
 
+func (h *Handler) QuotationPDF(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	out, err := h.Svc.QuotationDoc(c.Context(), middleware.Principal(c), id)
+	if err != nil {
+		return err
+	}
+	return export.File(c, "quotation-"+str(out["number"])+".pdf", "application/pdf", QuotationPDF(out))
+}
+
 func (h *Handler) ConvertQuotation(c fiber.Ctx) error {
 	id, err := httpx.UUIDParam(c, "id")
 	if err != nil {
@@ -345,6 +367,7 @@ func Register(r fiber.Router, h *Handler) {
 	r.Get("/quotations", middleware.Require("quotations.manage"), h.Quotations)
 	r.Post("/quotations", middleware.Require("quotations.manage"), h.CreateQuotation)
 	r.Get("/quotations/:id", middleware.Require("quotations.manage"), h.GetQuotation)
+	r.Get("/quotations/:id/pdf", middleware.Require("quotations.manage"), h.QuotationPDF)
 	r.Put("/quotations/:id", middleware.Require("quotations.manage"), h.UpdateQuotation)
 	r.Post("/quotations/:id/convert", middleware.Require("sales.create"), middleware.Idempotent(), h.ConvertQuotation)
 }

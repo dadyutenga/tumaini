@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Trash2 } from "lucide-react";
+import { Download, Plus, Trash2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -13,7 +14,8 @@ import {
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
-import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
+import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
+import { download } from "@/lib/api";
 import { formatDate, formatMoney } from "@/lib/formatters";
 import type { Customer, MoneyAccount, Product } from "@/types";
 
@@ -110,13 +112,27 @@ export default function Quotations() {
           { header: "Status", cell: (q) => <StatusBadge value={q.status} /> },
           {
             header: "",
-            cell: (q) =>
-              q.status === "open" &&
-              can("sales.create") && (
-                <Button size="sm" variant="outline" onClick={() => setConverting(q)}>
-                  Convert to sale
+            className: "text-right",
+            cell: (q) => (
+              <div className="flex justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    download(`/quotations/${q.id}/pdf`, {}, `quotation-${q.number}.pdf`).catch(
+                      (e) => toast.error(errorMessage(e)),
+                    )
+                  }
+                >
+                  <Download size={14} /> PDF
                 </Button>
-              ),
+                {q.status === "open" && can("sales.create") && (
+                  <Button size="sm" variant="outline" onClick={() => setConverting(q)}>
+                    Convert to sale
+                  </Button>
+                )}
+              </div>
+            ),
           },
         ]}
       />

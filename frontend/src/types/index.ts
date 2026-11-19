@@ -58,6 +58,9 @@ export interface Product {
   qty_on_hand?: Decimal;
   avg_cost?: Decimal;
   description?: string | null;
+  warranty_months?: number;
+  track_serial?: boolean;
+  photo_file?: string | null;
 }
 
 export interface Category {
@@ -110,6 +113,8 @@ export interface SaleRow {
   balance: Decimal;
   business_date: string;
   cashier_id: string;
+  customer_name?: string | null;
+  cashier_name?: string | null;
 }
 
 export interface SaleItem {
@@ -118,6 +123,8 @@ export interface SaleItem {
   product_name: string;
   qty: Decimal;
   unit_price: Decimal;
+  serial_number?: string | null;
+  warranty_months?: number;
   discount: Decimal;
   tax_amount: Decimal;
   line_total: Decimal;

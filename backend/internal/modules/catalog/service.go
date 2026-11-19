@@ -33,34 +33,40 @@ func New(database *db.DB, aud *audit.Service) *Service {
 }
 
 type Product struct {
-	ID           uuid.UUID        `json:"id"`
-	Name         string           `json:"name"`
-	SKU          string           `json:"sku"`
-	Barcode      *string          `json:"barcode"`
-	CategoryID   *uuid.UUID       `json:"category_id"`
-	UnitID       uuid.UUID        `json:"unit_id"`
-	Unit         string           `json:"unit"`
-	TaxRateID    *uuid.UUID       `json:"tax_rate_id"`
-	Kind         string           `json:"kind"`
-	SellPrice    decimal.Decimal  `json:"sell_price"`
-	ReorderLevel decimal.Decimal  `json:"reorder_level"`
-	IsActive     bool             `json:"is_active"`
-	QtyOnHand    *decimal.Decimal `json:"qty_on_hand,omitempty"`
-	AvgCost      *decimal.Decimal `json:"avg_cost,omitempty"`
-	Description  *string          `json:"description,omitempty"`
+	ID             uuid.UUID        `json:"id"`
+	Name           string           `json:"name"`
+	SKU            string           `json:"sku"`
+	Barcode        *string          `json:"barcode"`
+	CategoryID     *uuid.UUID       `json:"category_id"`
+	UnitID         uuid.UUID        `json:"unit_id"`
+	Unit           string           `json:"unit"`
+	TaxRateID      *uuid.UUID       `json:"tax_rate_id"`
+	Kind           string           `json:"kind"`
+	SellPrice      decimal.Decimal  `json:"sell_price"`
+	ReorderLevel   decimal.Decimal  `json:"reorder_level"`
+	IsActive       bool             `json:"is_active"`
+	QtyOnHand      *decimal.Decimal `json:"qty_on_hand,omitempty"`
+	AvgCost        *decimal.Decimal `json:"avg_cost,omitempty"`
+	Description    *string          `json:"description,omitempty"`
+	WarrantyMonths int              `json:"warranty_months"`
+	TrackSerial    bool             `json:"track_serial"`
+	PhotoFile      *uuid.UUID       `json:"photo_file,omitempty"`
 }
 
 type ProductInput struct {
-	Name         string          `json:"name"`
-	SKU          string          `json:"sku"`
-	Barcode      string          `json:"barcode"`
-	CategoryID   *uuid.UUID      `json:"category_id"`
-	UnitID       *uuid.UUID      `json:"unit_id"`
-	TaxRateID    *uuid.UUID      `json:"tax_rate_id"`
-	Kind         string          `json:"kind"`
-	SellPrice    decimal.Decimal `json:"sell_price"`
-	ReorderLevel decimal.Decimal `json:"reorder_level"`
-	Description  string          `json:"description"`
+	Name           string          `json:"name"`
+	SKU            string          `json:"sku"`
+	Barcode        string          `json:"barcode"`
+	CategoryID     *uuid.UUID      `json:"category_id"`
+	UnitID         *uuid.UUID      `json:"unit_id"`
+	TaxRateID      *uuid.UUID      `json:"tax_rate_id"`
+	Kind           string          `json:"kind"`
+	SellPrice      decimal.Decimal `json:"sell_price"`
+	ReorderLevel   decimal.Decimal `json:"reorder_level"`
+	Description    string          `json:"description"`
+	WarrantyMonths *int            `json:"warranty_months"`
+	TrackSerial    *bool           `json:"track_serial"`
+	PhotoFile      *uuid.UUID      `json:"photo_file"`
 }
 
 func (s *Service) List(ctx context.Context, p *auth.Principal, q string, category *uuid.UUID, active, low *bool, page httpx.Page, showCost bool) ([]Product, int, error) {
@@ -83,7 +89,7 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, q string, categor
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT p.id, p.name, p.sku, p.barcode, p.category_id, p.unit_id, u.short_name, p.tax_rate_id, p.kind,
-			COALESCE(bp.sell_price, p.sell_price), p.reorder_level, p.is_active, sl.qty_on_hand, sl.avg_cost, p.description`+
+			COALESCE(bp.sell_price, p.sell_price), p.reorder_level, p.is_active, sl.qty_on_hand, sl.avg_cost, p.description, p.warranty_months, p.track_serial, p.photo_file`+
 			from+f.Where()+` ORDER BY p.name, p.id`+f.Page(page.PerPage, page.Offset), f.Args...)
 		if err != nil {
 			return err
@@ -107,7 +113,7 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, q string, categor
 func scanProduct(row pgx.Row, showCost bool) (Product, error) {
 	var p Product
 	var cost *decimal.Decimal
-	err := row.Scan(&p.ID, &p.Name, &p.SKU, &p.Barcode, &p.CategoryID, &p.UnitID, &p.Unit, &p.TaxRateID, &p.Kind, &p.SellPrice, &p.ReorderLevel, &p.IsActive, &p.QtyOnHand, &cost, &p.Description)
+	err := row.Scan(&p.ID, &p.Name, &p.SKU, &p.Barcode, &p.CategoryID, &p.UnitID, &p.Unit, &p.TaxRateID, &p.Kind, &p.SellPrice, &p.ReorderLevel, &p.IsActive, &p.QtyOnHand, &cost, &p.Description, &p.WarrantyMonths, &p.TrackSerial, &p.PhotoFile)
 	if showCost {
 		p.AvgCost = cost
 	}
@@ -119,12 +125,12 @@ func (s *Service) Lookup(ctx context.Context, p *auth.Principal, code string) (P
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT p.id, p.name, p.sku, p.barcode, p.category_id, p.unit_id, u.short_name, p.tax_rate_id, p.kind,
-			       COALESCE(bp.sell_price, p.sell_price), p.reorder_level, p.is_active, sl.qty_on_hand, sl.avg_cost, p.description
+			       COALESCE(bp.sell_price, p.sell_price), p.reorder_level, p.is_active, sl.qty_on_hand, sl.avg_cost, p.description, p.warranty_months, p.track_serial, p.photo_file
 			FROM products p JOIN units u ON u.id=p.unit_id
 			LEFT JOIN product_branch_prices bp ON bp.product_id=p.id AND bp.branch_id=$2
 			LEFT JOIN stock_levels sl ON sl.product_id=p.id AND sl.branch_id=$2
 			WHERE p.barcode=$1 OR p.sku=$1
-		`, code, p.BranchID).Scan(&pr.ID, &pr.Name, &pr.SKU, &pr.Barcode, &pr.CategoryID, &pr.UnitID, &pr.Unit, &pr.TaxRateID, &pr.Kind, &pr.SellPrice, &pr.ReorderLevel, &pr.IsActive, &pr.QtyOnHand, &pr.AvgCost, &pr.Description)
+		`, code, p.BranchID).Scan(&pr.ID, &pr.Name, &pr.SKU, &pr.Barcode, &pr.CategoryID, &pr.UnitID, &pr.Unit, &pr.TaxRateID, &pr.Kind, &pr.SellPrice, &pr.ReorderLevel, &pr.IsActive, &pr.QtyOnHand, &pr.AvgCost, &pr.Description, &pr.WarrantyMonths, &pr.TrackSerial, &pr.PhotoFile)
 		if err != nil {
 			return httpx.NotFound("not_found", "No product matches that barcode or SKU")
 		}
@@ -178,9 +184,9 @@ func (s *Service) one(ctx context.Context, p *auth.Principal, id uuid.UUID) (Pro
 	var pr Product
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
-			SELECT p.id, p.name, p.sku, p.barcode, p.category_id, p.unit_id, u.short_name, p.tax_rate_id, p.kind, p.sell_price, p.reorder_level, p.is_active, NULL::numeric, NULL::numeric, p.description
+			SELECT p.id, p.name, p.sku, p.barcode, p.category_id, p.unit_id, u.short_name, p.tax_rate_id, p.kind, p.sell_price, p.reorder_level, p.is_active, NULL::numeric, NULL::numeric, p.description, p.warranty_months, p.track_serial, p.photo_file
 			FROM products p JOIN units u ON u.id=p.unit_id WHERE p.id=$1
-		`, id).Scan(&pr.ID, &pr.Name, &pr.SKU, &pr.Barcode, &pr.CategoryID, &pr.UnitID, &pr.Unit, &pr.TaxRateID, &pr.Kind, &pr.SellPrice, &pr.ReorderLevel, &pr.IsActive, &pr.QtyOnHand, &pr.AvgCost, &pr.Description)
+		`, id).Scan(&pr.ID, &pr.Name, &pr.SKU, &pr.Barcode, &pr.CategoryID, &pr.UnitID, &pr.Unit, &pr.TaxRateID, &pr.Kind, &pr.SellPrice, &pr.ReorderLevel, &pr.IsActive, &pr.QtyOnHand, &pr.AvgCost, &pr.Description, &pr.WarrantyMonths, &pr.TrackSerial, &pr.PhotoFile)
 		if err != nil {
 			return httpx.NotFound("not_found", "Product not found")
 		}
@@ -220,10 +226,15 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in ProductInput
 		if sku == "" {
 			sku = "SKU-" + strings.ToUpper(strings.ReplaceAll(id.String(), "-", ""))
 		}
+		warranty := 0
+		if in.WarrantyMonths != nil && *in.WarrantyMonths > 0 {
+			warranty = *in.WarrantyMonths
+		}
+		trackSerial := in.TrackSerial != nil && *in.TrackSerial
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO products (id, business_id, category_id, unit_id, tax_rate_id, sku, barcode, name, description, kind, sell_price, reorder_level, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,NULLIF($9,''),$10,$11,$12,$13)
-		`, id, p.BusinessID, in.CategoryID, unit, tax, sku, strings.TrimSpace(in.Barcode), strings.TrimSpace(in.Name), in.Description, in.Kind, money.Money(in.SellPrice), in.ReorderLevel, p.UserID); err != nil {
+			INSERT INTO products (id, business_id, category_id, unit_id, tax_rate_id, sku, barcode, name, description, kind, sell_price, reorder_level, warranty_months, track_serial, photo_file, created_by)
+			VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,NULLIF($9,''),$10,$11,$12,$13,$14,$15,$16)
+		`, id, p.BusinessID, in.CategoryID, unit, tax, sku, strings.TrimSpace(in.Barcode), strings.TrimSpace(in.Name), in.Description, in.Kind, money.Money(in.SellPrice), in.ReorderLevel, warranty, trackSerial, in.PhotoFile, p.UserID); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "SKU or barcode already exists")
 			}
@@ -274,9 +285,10 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 		if _, err := tx.Exec(ctx, `
 			UPDATE products SET name=COALESCE(NULLIF($2,''), name), barcode=COALESCE(NULLIF($3,''), barcode),
 			category_id=COALESCE($4, category_id), unit_id=COALESCE($5, unit_id), tax_rate_id=COALESCE($6, tax_rate_id),
-			kind=COALESCE(NULLIF($7,''), kind), sell_price=$8, reorder_level=$9, description=COALESCE(NULLIF($10,''), description)
+			kind=COALESCE(NULLIF($7,''), kind), sell_price=$8, reorder_level=$9, description=COALESCE(NULLIF($10,''), description),
+			warranty_months=COALESCE($11, warranty_months), track_serial=COALESCE($12, track_serial), photo_file=COALESCE($13, photo_file)
 			WHERE id=$1
-		`, id, strings.TrimSpace(in.Name), strings.TrimSpace(in.Barcode), in.CategoryID, in.UnitID, in.TaxRateID, in.Kind, price, in.ReorderLevel, in.Description); err != nil {
+		`, id, strings.TrimSpace(in.Name), strings.TrimSpace(in.Barcode), in.CategoryID, in.UnitID, in.TaxRateID, in.Kind, price, in.ReorderLevel, in.Description, in.WarrantyMonths, in.TrackSerial, in.PhotoFile); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "Another product already has that barcode")
 			}

@@ -118,6 +118,144 @@ func str(v any) string {
 	}
 }
 
+// ReceiptPDF renders a narrow thermal shop receipt (SRS Section 11: 58/80mm, warranty, COPY watermark).
+func ReceiptPDF(m map[string]any) []byte {
+	paper := 80
+	if cfg, ok := m["settings"].(map[string]any); ok {
+		if pw, ok := cfg["paper_width"].(int); ok && pw > 0 {
+			paper = pw
+		}
+	}
+	d := pdf.NewThermal(paper)
+	biz, _ := m["business"].(map[string]any)
+	d.Heading(str(biz["name"]), 11)
+	if v := str(biz["address"]); v != "" {
+		d.Text(v)
+	}
+	info := str(biz["phone"])
+	if tin := str(biz["tax_number"]); tin != "" {
+		if info != "" {
+			info += " | "
+		}
+		info += "TIN: " + tin
+	}
+	if info != "" {
+		d.Text(info)
+	}
+	if copyFlag, _ := m["copy"].(bool); copyFlag {
+		d.Heading("*** COPY ***", 10)
+	}
+	d.Rule()
+	d.KV("Receipt No", str(m["number"]))
+	d.KV("Date", str(m["business_date"]))
+	if v := str(m["cashier_name"]); v != "" {
+		d.KV("Cashier", v)
+	}
+	d.KV("Customer", str(m["customer_name"]))
+	d.Rule()
+	var rows [][]string
+	var warranties []string
+	items, _ := m["items"].([]map[string]any)
+	for _, it := range items {
+		name := str(it["product_name"])
+		if sn := str(it["serial_number"]); sn != "" {
+			name += " [SN:" + sn + "]"
+		}
+		rows = append(rows, []string{name, str(it["qty"]), amountText(it["line_total"])})
+		if w, ok := it["warranty_months"].(int); ok && w > 0 {
+			warranties = append(warranties, fmt.Sprintf("%d months (%s)", w, str(it["product_name"])))
+		}
+	}
+	d.Table([]string{"Item", "Qty", "Total"}, []float64{4, 1, 2}, rows)
+	d.Rule()
+	d.KV("Subtotal", amountText(m["subtotal"]))
+	if disc, ok := m["discount_total"].(decimal.Decimal); ok && disc.IsPositive() {
+		d.KV("Discount", amountText(disc))
+	}
+	d.KV("TOTAL", amountText(m["total"]))
+	d.KV("Paid", amountText(m["paid_total"]))
+	if chg, ok := m["change_due"].(decimal.Decimal); ok && chg.IsPositive() {
+		d.KV("Change", amountText(chg))
+	}
+	if bal, ok := m["balance"].(decimal.Decimal); ok && bal.IsPositive() {
+		d.KV("Balance", amountText(bal))
+		if due := str(m["due_date"]); due != "" {
+			d.KV("Due date", due)
+		}
+	}
+	if len(warranties) > 0 {
+		d.Rule()
+		for _, w := range warranties {
+			d.Text("Warranty: " + w)
+		}
+	}
+	if f := str(m["receipt_footer"]); f != "" {
+		d.Space(4)
+		d.Text(f)
+	} else {
+		d.Space(4)
+		d.Text("Thank you for your business")
+	}
+	return d.Bytes()
+}
+
+// QuotationPDF renders a shop quotation as an A4 PDF (SRS Section 11).
+func QuotationPDF(m map[string]any) []byte {
+	d := pdf.New()
+	biz, _ := m["business"].(map[string]any)
+	d.Heading(str(biz["name"]), 16)
+	for _, k := range []string{"address", "phone", "email"} {
+		if v := str(biz[k]); v != "" {
+			d.Text(v)
+		}
+	}
+	if v := str(biz["tax_number"]); v != "" {
+		d.Text("TIN: " + v)
+	}
+	d.Space(8)
+	d.Heading("QUOTATION "+str(m["number"]), 13)
+	d.KV("Date", str(m["business_date"]))
+	if v := str(m["valid_until"]); v != "" {
+		d.KV("Valid until", v)
+	}
+	d.KV("Customer", str(m["customer_name"]))
+	d.Space(8)
+	var rows [][]string
+	items, _ := m["items"].([]map[string]any)
+	for _, it := range items {
+		rows = append(rows, []string{str(it["product_name"]), str(it["qty"]), amountText(it["unit_price"]), amountText(it["discount"]), amountText(it["line_total"])})
+	}
+	d.Table([]string{"Item", "Qty", "Unit price", "Discount", "Total"}, []float64{4.5, 1, 1.5, 1.5, 1.5}, rows)
+	d.Rule()
+	for _, kv := range [][2]string{{"Subtotal", "subtotal"}, {"Discount", "discount_total"}, {"Tax", "tax_total"}, {"Total", "total"}} {
+		d.KV(kv[0], amountText(m[kv[1]]))
+	}
+	if n := str(m["note"]); n != "" {
+		d.Space(8)
+		d.Text(n)
+	}
+	d.Space(12)
+	d.Text("Accepted by: ____________________________   Date: ______________")
+	return d.Bytes()
+}
+
+// QuotationDoc returns quotation data enriched with business header for PDF export.
+func (s *Service) QuotationDoc(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
+	var out map[string]any
+	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		m, err := s.loadSale(ctx, tx, p, "quotations.manage", id, "quotation")
+		if err != nil {
+			return err
+		}
+		if m["business"], err = businessHeader(ctx, tx); err != nil {
+			return err
+		}
+		out = m
+		return nil
+	})
+	return out, err
+}
+
 // InvoicePDF renders the invoice data as an A4 PDF.
 func InvoicePDF(m map[string]any) []byte {
 	d := pdf.New()

@@ -111,6 +111,14 @@ export const routes: AppRoute[] = [
     permission: ["products.view"],
   },
   {
+    path: "/products/:id",
+    label: "Product",
+    icon: Package,
+    component: lazy(() => import("@/pages/ProductDetail")),
+    navigation: false,
+    permission: ["products.view"],
+  },
+  {
     path: "/stock",
     label: "Stock",
     icon: Warehouse,

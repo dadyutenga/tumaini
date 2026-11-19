@@ -68,10 +68,17 @@ func accountInScope(p *auth.Principal, perm string, branch *uuid.UUID) bool {
 	return p.SeesBranch(perm, *branch)
 }
 
-// canSeeBalance applies FR-FIN-18: cash balances are visible to anyone who can
-// see the account; bank and mobile money balances need accounts.view_balance.
+// canSeeBalance applies FR-FIN-18: cash balances are visible to anyone with
+// accounts.view; bank and mobile money balances need accounts.view_balance.
+// Cashiers who only have POS/till permissions see account names/types, never balances.
 func canSeeBalance(p *auth.Principal, typ string) bool {
-	if typ == "cash" || typ == "petty_cash" || p.IsOwner {
+	if p.IsOwner {
+		return true
+	}
+	if _, ok := p.Can("accounts.view"); !ok {
+		return false
+	}
+	if typ == "cash" || typ == "petty_cash" {
 		return true
 	}
 	_, ok := p.Can("accounts.view_balance")

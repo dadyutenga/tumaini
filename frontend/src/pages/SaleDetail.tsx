@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { Download, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -11,7 +12,9 @@ import {
   StatusBadge,
 } from "@/components/shared/kit";
 import { PageLoader } from "@/components/shared/Display";
+import { RecordHistoryTab } from "@/components/shared/RecordHistoryTab";
 import { useAuth } from "@/features/auth/auth";
+import { whatsappUrl } from "@/features/services/helpers";
 import { toast } from "sonner";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { download } from "@/lib/api";
@@ -89,12 +92,36 @@ export default function SaleDetail() {
             <Button
               variant="outline"
               onClick={() =>
+                download(`/sales/${id}/receipt`, { format: "pdf" }, `receipt-${sale.number}.pdf`).catch(
+                  (e) => toast.error(errorMessage(e)),
+                )
+              }
+            >
+              <Download size={14} /> Receipt PDF
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
                 download(`/sales/${id}/invoice`, { format: "pdf" }, `${sale.number}.pdf`).catch(
                   (e) => toast.error(errorMessage(e)),
                 )
               }
             >
               Invoice PDF
+            </Button>
+            <Button variant="outline" asChild>
+              <a
+                href={whatsappUrl(
+                  undefined,
+                  `Receipt ${sale.number}: Total ${formatMoney(sale.total)}, Paid ${formatMoney(sale.paid_total)}${
+                    toNumber(sale.balance) > 0 ? `, Balance ${formatMoney(sale.balance)}` : ""
+                  }.`,
+                )}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <MessageCircle size={14} /> WhatsApp
+              </a>
             </Button>
             <Button variant="outline" onClick={() => window.print()}>
               Print
@@ -216,6 +243,10 @@ export default function SaleDetail() {
           <Input required value={voidReason} onChange={(e) => setVoidReason(e.target.value)} />
         </Field>
       </FormDialog>
+      <section className="mt-8">
+        <h2 className="mb-3 text-base font-semibold">History</h2>
+        <RecordHistoryTab entityType="sale" entityId={id} />
+      </section>
     </>
   );
 }

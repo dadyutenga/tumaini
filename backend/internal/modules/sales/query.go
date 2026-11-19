@@ -140,7 +140,10 @@ func (s *Service) loadSale(ctx context.Context, tx pgx.Tx, p *auth.Principal, ke
 }
 
 func (s *Service) items(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) ([]map[string]any, error) {
-	rows, err := tx.Query(ctx, `SELECT id, product_id, product_name, qty, unit_price, unit_cost, discount, tax_rate, tax_amount, line_total, qty_returned FROM sale_items WHERE sale_id=$1 ORDER BY product_name, id`, id)
+	rows, err := tx.Query(ctx, `
+		SELECT si.id, si.product_id, si.product_name, si.qty, si.unit_price, si.unit_cost, si.discount, si.tax_rate, si.tax_amount, si.line_total, si.qty_returned, si.serial_number, COALESCE(pr.warranty_months, 0)
+		FROM sale_items si LEFT JOIN products pr ON pr.id = si.product_id
+		WHERE si.sale_id=$1 ORDER BY si.product_name, si.id`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -150,11 +153,13 @@ func (s *Service) items(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uu
 	for rows.Next() {
 		var itemID, pid uuid.UUID
 		var name string
+		var serial *string
+		var warranty int
 		var qty, price, ucost, d, rate, taxA, line, ret decimal.Decimal
-		if err := rows.Scan(&itemID, &pid, &name, &qty, &price, &ucost, &d, &rate, &taxA, &line, &ret); err != nil {
+		if err := rows.Scan(&itemID, &pid, &name, &qty, &price, &ucost, &d, &rate, &taxA, &line, &ret, &serial, &warranty); err != nil {
 			return nil, err
 		}
-		item := map[string]any{"id": itemID, "product_id": pid, "product_name": name, "qty": qty, "unit_price": price, "discount": d, "tax_rate": rate, "tax_amount": taxA, "line_total": line, "qty_returned": ret}
+		item := map[string]any{"id": itemID, "product_id": pid, "product_name": name, "qty": qty, "unit_price": price, "discount": d, "tax_rate": rate, "tax_amount": taxA, "line_total": line, "qty_returned": ret, "serial_number": serial, "warranty_months": warranty}
 		if cost {
 			item["unit_cost"] = ucost
 		}

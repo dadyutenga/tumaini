@@ -48,9 +48,10 @@ type Discount struct {
 }
 
 type ItemIn struct {
-	ProductID uuid.UUID       `json:"product_id"`
-	Qty       decimal.Decimal `json:"qty"`
-	Discount  *Discount       `json:"discount"`
+	ProductID    uuid.UUID       `json:"product_id"`
+	Qty          decimal.Decimal `json:"qty"`
+	Discount     *Discount       `json:"discount"`
+	SerialNumber string          `json:"serial_number"`
 }
 
 type PayIn struct {
@@ -66,6 +67,7 @@ type CreateIn struct {
 	Discount   *Discount  `json:"discount"`
 	Payments   []PayIn    `json:"payments"`
 	Note       string     `json:"note"`
+	DueDate    string     `json:"due_date"`
 	// HeldID removes the held cart this sale was resumed from.
 	HeldID *uuid.UUID `json:"held_id,omitempty"`
 
@@ -75,16 +77,17 @@ type CreateIn struct {
 }
 
 type line struct {
-	ProductID uuid.UUID
-	Name      string
-	Kind      string
-	Qty       decimal.Decimal
-	UnitPrice decimal.Decimal
-	Discount  decimal.Decimal
-	TaxRate   decimal.Decimal
-	Tax       decimal.Decimal
-	LineTotal decimal.Decimal
-	UnitCost  decimal.Decimal
+	ProductID    uuid.UUID
+	Name         string
+	Kind         string
+	Qty          decimal.Decimal
+	UnitPrice    decimal.Decimal
+	Discount     decimal.Decimal
+	TaxRate      decimal.Decimal
+	Tax          decimal.Decimal
+	LineTotal    decimal.Decimal
+	UnitCost     decimal.Decimal
+	SerialNumber string
 }
 
 type totals struct {
@@ -209,14 +212,21 @@ func (s *Service) createTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, in
 	}
 	var dueDate any
 	if balance.IsPositive() {
-		var days int
-		if err := tx.QueryRow(ctx, `SELECT payment_terms_days FROM customers WHERE id=$1`, cust).Scan(&days); err != nil {
-			return 0, nil, err
+		if strings.TrimSpace(in.DueDate) != "" {
+			if _, err := time.Parse("2006-01-02", strings.TrimSpace(in.DueDate)); err != nil {
+				return 0, nil, httpx.BadRequest("invalid_body", "due_date must be YYYY-MM-DD")
+			}
+			dueDate = strings.TrimSpace(in.DueDate)
+		} else {
+			var days int
+			if err := tx.QueryRow(ctx, `SELECT payment_terms_days FROM customers WHERE id=$1`, cust).Scan(&days); err != nil {
+				return 0, nil, err
+			}
+			if days == 0 {
+				days = setting.Int(ctx, tx, "invoice.due_days", 0)
+			}
+			dueDate = mustDate(date).AddDate(0, 0, days).Format("2006-01-02")
 		}
-		if days == 0 {
-			days = setting.Int(ctx, tx, "invoice.due_days", 0)
-		}
-		dueDate = mustDate(date).AddDate(0, 0, days).Format("2006-01-02")
 	}
 	paid := tot.Total.Sub(balance)
 	if _, err := tx.Exec(ctx, `
@@ -266,9 +276,9 @@ func (s *Service) createTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, in
 func insertItems(ctx context.Context, tx pgx.Tx, businessID, saleID uuid.UUID, lines []line) error {
 	for _, ln := range lines {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO sale_items (id, business_id, sale_id, product_id, product_name, qty, unit_price, discount, tax_rate, tax_amount, line_total)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-		`, ids.New(), businessID, saleID, ln.ProductID, ln.Name, ln.Qty, ln.UnitPrice, ln.Discount, ln.TaxRate, ln.Tax, ln.LineTotal); err != nil {
+			INSERT INTO sale_items (id, business_id, sale_id, product_id, product_name, qty, unit_price, discount, tax_rate, tax_amount, line_total, serial_number)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''))
+		`, ids.New(), businessID, saleID, ln.ProductID, ln.Name, ln.Qty, ln.UnitPrice, ln.Discount, ln.TaxRate, ln.Tax, ln.LineTotal, strings.TrimSpace(ln.SerialNumber)); err != nil {
 			return err
 		}
 	}
@@ -525,7 +535,7 @@ func (s *Service) price(ctx context.Context, tx pgx.Tx, p *auth.Principal, in Cr
 			disc = money.DiscountAmount(gross, it.Discount.Type, it.Discount.Value)
 		}
 		pr := money.PriceLine(money.LineInput{Qty: it.Qty, UnitPrice: price, Discount: disc, TaxRate: rate}, include)
-		lines = append(lines, line{ProductID: it.ProductID, Name: name, Kind: kind, Qty: it.Qty, UnitPrice: price, Discount: pr.Discount, TaxRate: rate, Tax: pr.Tax, LineTotal: pr.Total})
+		lines = append(lines, line{ProductID: it.ProductID, Name: name, Kind: kind, Qty: it.Qty, UnitPrice: price, Discount: pr.Discount, TaxRate: rate, Tax: pr.Tax, LineTotal: pr.Total, SerialNumber: strings.TrimSpace(it.SerialNumber)})
 		tot.Subtotal = tot.Subtotal.Add(pr.Gross)
 		tot.Discount = tot.Discount.Add(pr.Discount)
 		tot.Tax = tot.Tax.Add(pr.Tax)

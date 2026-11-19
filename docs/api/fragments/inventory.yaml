@@ -3452,3 +3452,53 @@ paths:
                 properties:
                   error:
                     $ref: '#/components/schemas/Error'
+
+  /products/export:
+    get:
+      summary: Export products list as CSV, XLSX or PDF
+      operationId: get_products_export
+      tags:
+      - Products
+      x-permission: products.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: q
+        in: query
+        schema:
+          type: string
+      - name: format
+        in: query
+        schema:
+          type: string
+          enum: [json, csv, xlsx, pdf]
+      responses:
+        '200':
+          description: OK
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /products/{id}/barcode-label:
+    get:
+      summary: Printable barcode label PDF for a product
+      operationId: get_products_id_barcode_label
+      tags:
+      - Products
+      x-permission: products.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'

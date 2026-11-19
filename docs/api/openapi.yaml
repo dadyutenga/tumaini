@@ -13262,6 +13262,30 @@ paths:
       tags:
         - Products
       x-permission: products.manage
+  /products/{id}/barcode-label:
+    get:
+      operationId: get_products_id_barcode_label
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+      summary: Printable barcode label PDF for a product
+      tags:
+        - Products
+      x-permission: products.view
   /products/{id}/branch-prices:
     put:
       operationId: set_branch_prices
@@ -13584,6 +13608,35 @@ paths:
       tags:
         - Stock
       x-permission: stock.view
+  /products/export:
+    get:
+      operationId: get_products_export
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: query
+          name: q
+          schema:
+            type: string
+        - in: query
+          name: format
+          schema:
+            enum:
+              - json
+              - csv
+              - xlsx
+              - pdf
+            type: string
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+      summary: Export products list as CSV, XLSX or PDF
+      tags:
+        - Products
+      x-permission: products.view
   /products/import:
     post:
       operationId: import_products
@@ -16436,6 +16489,30 @@ paths:
       tags:
         - Quotations
       x-permission: sales.create
+  /quotations/{id}/pdf:
+    get:
+      operationId: get_quotations_id_pdf
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+      summary: Printable A4 PDF for a shop quotation
+      tags:
+        - Quotations
+      x-permission: quotations.manage
   /recurring-expenses:
     get:
       operationId: get_recurring_expenses

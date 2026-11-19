@@ -17,25 +17,41 @@ const (
 )
 
 type Doc struct {
-	pages []*bytes.Buffer
-	cur   *bytes.Buffer
-	y     float64
+	pages  []*bytes.Buffer
+	cur    *bytes.Buffer
+	y      float64
+	w, h   float64
+	margin float64
 }
 
 func New() *Doc {
-	d := &Doc{}
+	return NewSized(pageW, pageH, margin)
+}
+
+// NewSized creates a PDF document with custom page width, height and margin in points.
+func NewSized(w, h, m float64) *Doc {
+	d := &Doc{w: w, h: h, margin: m}
 	d.newPage()
 	return d
+}
+
+// NewThermal creates a narrow receipt PDF sized for 58mm or 80mm thermal printers.
+func NewThermal(paperMM int) *Doc {
+	w := 226.0 // 80mm
+	if paperMM > 0 && paperMM <= 60 {
+		w = 164.0 // 58mm
+	}
+	return NewSized(w, 600.0, 12.0)
 }
 
 func (d *Doc) newPage() {
 	d.cur = &bytes.Buffer{}
 	d.pages = append(d.pages, d.cur)
-	d.y = pageH - margin
+	d.y = d.h - d.margin
 }
 
 func (d *Doc) ensure(h float64) {
-	if d.y-h < margin {
+	if d.y-h < d.margin {
 		d.newPage()
 	}
 }
@@ -50,28 +66,41 @@ func (d *Doc) text(x, size float64, bold bool, s string) {
 
 // Heading writes a bold line.
 func (d *Doc) Heading(s string, size float64) {
+	if d.w < 300 && size > 11 {
+		size = 11
+	}
 	d.ensure(size + lineGap)
 	d.y -= size
-	d.text(margin, size, true, s)
+	d.text(d.margin, size, true, s)
 	d.y -= lineGap
 }
 
-// Text writes a wrapped paragraph at 10pt.
+// Text writes a wrapped paragraph at 10pt (or 8pt on thermal).
 func (d *Doc) Text(s string) {
-	for _, ln := range wrap(s, width(pageW-2*margin, 10)) {
-		d.ensure(10 + lineGap)
-		d.y -= 10
-		d.text(margin, 10, false, ln)
+	sz := 10.0
+	if d.w < 300 {
+		sz = 8.0
+	}
+	for _, ln := range wrap(s, width(d.w-2*d.margin, sz)) {
+		d.ensure(sz + lineGap)
+		d.y -= sz
+		d.text(d.margin, sz, false, ln)
 		d.y -= lineGap
 	}
 }
 
 // KV writes "label: value" with the label in bold.
 func (d *Doc) KV(label, value string) {
-	d.ensure(10 + lineGap)
-	d.y -= 10
-	d.text(margin, 10, true, label)
-	d.text(margin+150, 10, false, value)
+	sz := 10.0
+	offset := 150.0
+	if d.w < 300 {
+		sz = 8.0
+		offset = (d.w - 2*d.margin) * 0.48
+	}
+	d.ensure(sz + lineGap)
+	d.y -= sz
+	d.text(d.margin, sz, true, clip(label, width(offset-4, sz)))
+	d.text(d.margin+offset, sz, false, clip(value, width(d.w-2*d.margin-offset, sz)))
 	d.y -= lineGap
 }
 
@@ -82,7 +111,7 @@ func (d *Doc) Space(h float64) { d.y -= h }
 func (d *Doc) Rule() {
 	d.ensure(6)
 	d.y -= 3
-	fmt.Fprintf(d.cur, "0.5 w %.2f %.2f m %.2f %.2f l S\n", margin, d.y, pageW-margin, d.y)
+	fmt.Fprintf(d.cur, "0.5 w %.2f %.2f m %.2f %.2f l S\n", d.margin, d.y, d.w-d.margin, d.y)
 	d.y -= 3
 }
 
@@ -99,25 +128,29 @@ func (d *Doc) Table(header []string, weights []float64, rows [][]string) {
 	for _, w := range weights {
 		total += w
 	}
-	avail := pageW - 2*margin
+	avail := d.w - 2*d.margin
 	widths := make([]float64, len(weights))
 	for i, w := range weights {
 		widths[i] = avail * w / total
 	}
+	sz := 9.0
+	if d.w < 300 {
+		sz = 7.5
+	}
 	row := func(cells []string, bold bool) {
-		d.ensure(9 + lineGap)
-		d.y -= 9
-		x := margin
+		d.ensure(sz + lineGap)
+		d.y -= sz
+		x := d.margin
 		for i, w := range widths {
 			cell := ""
 			if i < len(cells) {
-				cell = clip(cells[i], width(w-4, 9))
+				cell = clip(cells[i], width(w-3, sz))
 			}
 			cx := x
 			if isNumeric(cell) {
-				cx = x + w - 4 - float64(len(cell))*9*0.52
+				cx = x + w - 3 - float64(len(cell))*sz*0.52
 			}
-			d.text(cx, 9, bold, cell)
+			d.text(cx, sz, bold, cell)
 			x += w
 		}
 		d.y -= lineGap
@@ -149,7 +182,7 @@ func (d *Doc) Bytes() []byte {
 	obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
 	obj("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
 	for i, p := range d.pages {
-		obj(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.0f %.0f] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents %d 0 R >>", pageW, pageH, 6+2*i))
+		obj(fmt.Sprintf("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.0f %.0f] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents %d 0 R >>", d.w, d.h, 6+2*i))
 		content := p.Bytes()
 		obj(fmt.Sprintf("<< /Length %d >>\nstream\n%s\nendstream", len(content)+1, content))
 	}

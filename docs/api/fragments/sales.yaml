@@ -1557,3 +1557,28 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/Unprocessable'
+
+  /quotations/{id}/pdf:
+    get:
+      summary: Printable A4 PDF for a shop quotation
+      operationId: get_quotations_id_pdf
+      tags:
+      - Quotations
+      x-permission: quotations.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
