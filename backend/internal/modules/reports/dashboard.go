@@ -59,18 +59,35 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 		if period == "" {
 			period = "today"
 		}
-		from, to, pFrom, pTo, ok := periodRange(period, f.today)
-		if !ok {
-			return badQuery("period must be today, week or month")
+		var from, to, pFrom, pTo string
+		if period == "custom" {
+			if f.From == "" || f.To == "" {
+				return badQuery("custom period requires from and to dates")
+			}
+			from, to = f.From, f.To
+			pFrom, pTo = previousRange(from, to)
+		} else {
+			var ok bool
+			from, to, pFrom, pTo, ok = periodRange(period, f.today)
+			if !ok {
+				return badQuery("period must be today, week, month or custom")
+			}
 		}
-		out["period"] = map[string]any{"name": period, "from": from, "to": to, "previous_from": pFrom, "previous_to": pTo}
+		biz := f.Q("business")
+		if biz == "" {
+			biz = "all"
+		}
+		if biz != "all" && biz != "shop" && biz != "services" {
+			return badQuery("business must be all, shop or services")
+		}
+		out["period"] = map[string]any{"name": period, "from": from, "to": to, "previous_from": pFrom, "previous_to": pTo, "business": biz}
 		out["branch_ids"] = f.Branches
 		cur, prev := f, f
 		cur.From, cur.To = from, to
 		prev.From, prev.To = pFrom, pTo
 		profit := canCost(p)
 
-		if has(p, "sales.view", "reports.sales") {
+		if biz != "services" && has(p, "sales.view", "reports.sales") {
 			c, err := salesTotals(ctx, tx, cur)
 			if err != nil {
 				return err
@@ -134,6 +151,26 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 			out["sales_by_payment_method"] = byMethod
 		}
 
+		if biz != "shop" && has(p, "service_billing.view", "projects.view", "reports.services", "reports.financial") {
+			svcInc := func(rng Filter) (decimal.Decimal, error) {
+				q := sqlq.New()
+				q.Add("a.code = '4300'")
+				rng.dates(q, "l.entry_date")
+				rng.branch(q, "l.branch_id")
+				v, err := one(ctx, tx, `SELECT COALESCE(SUM(l.credit - l.debit), 0) AS v FROM journal_lines l JOIN ledger_accounts a ON a.id = l.ledger_account_id`+q.Where(), q.Args...)
+				return num(v, "v"), err
+			}
+			si, err := svcInc(cur)
+			if err != nil {
+				return err
+			}
+			psi, err := svcInc(prev)
+			if err != nil {
+				return err
+			}
+			out["service_income"] = map[string]any{"total": si, "previous_total": psi, "change_pct": pct(si.Sub(psi), psi)}
+		}
+
 		if has(p, "expenses.view", "reports.expenses") {
 			e, err := expenseTotal(ctx, tx, cur)
 			if err != nil {
@@ -151,10 +188,60 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 			if err != nil {
 				return err
 			}
+			pr, err := s.pl(ctx, tx, prev)
+			if err != nil {
+				return err
+			}
+			net := r.Income.Sub(r.Expense)
+			prevNet := pr.Income.Sub(pr.Expense)
+			if biz == "shop" {
+				net = r.Revenue.Sub(r.COGS)
+				prevNet = pr.Revenue.Sub(pr.COGS)
+			} else if biz == "services" {
+				net = r.ServiceIncome.Sub(r.ServiceCosts)
+				prevNet = pr.ServiceIncome.Sub(pr.ServiceCosts)
+			}
 			out["profit"] = map[string]any{
-				"gross_profit": r.Revenue.Sub(r.COGS), "net_profit": r.Income.Sub(r.Expense),
+				"gross_profit": r.Revenue.Sub(r.COGS), "net_profit": net,
+				"previous_net_profit": prevNet, "change_pct": pct(net.Sub(prevNet), prevNet.Abs()),
 				"income": r.Income, "expenses": r.Expense,
 			}
+		}
+
+		// Daily income vs expenses series for the SRS Section 5 line chart.
+		if has(p, "sales.view", "expenses.view", "reports.financial", "reports.sales") {
+			tEnd, _ := time.Parse("2006-01-02", to)
+			tStart, _ := time.Parse("2006-01-02", from)
+			if tEnd.Sub(tStart) < 13*24*time.Hour {
+				tStart = tEnd.AddDate(0, 0, -13)
+			}
+			q := sqlq.New()
+			q.Add("a.type IN ('income','expense')")
+			if biz == "shop" {
+				q.Add("a.code NOT IN ('4300','5200')")
+			} else if biz == "services" {
+				q.Add("a.code IN ('4300','5200')")
+			}
+			f.branch(q, "l.branch_id")
+			q.Add("l.entry_date >= ?::date", tStart.Format("2006-01-02"))
+			q.Add("l.entry_date <= ?::date", tEnd.Format("2006-01-02"))
+			ie, err := rows(ctx, tx, `
+				SELECT gs.day::date AS date,
+				       COALESCE(x.income, 0) AS income,
+				       COALESCE(x.expenses, 0) AS expenses
+				FROM generate_series(`+q.Arg(tStart.Format("2006-01-02"))+`::date, `+q.Arg(tEnd.Format("2006-01-02"))+`::date, interval '1 day') AS gs(day)
+				LEFT JOIN (
+					SELECT l.entry_date,
+					       ROUND(SUM(CASE WHEN a.type = 'income' THEN l.credit - l.debit ELSE 0 END), 2) AS income,
+					       ROUND(SUM(CASE WHEN a.type = 'expense' THEN l.debit - l.credit ELSE 0 END), 2) AS expenses
+					FROM journal_lines l JOIN ledger_accounts a ON a.id = l.ledger_account_id`+q.Where()+`
+					GROUP BY l.entry_date
+				) x ON x.entry_date = gs.day::date
+				ORDER BY 1`, q.Args...)
+			if err != nil {
+				return err
+			}
+			out["income_vs_expenses"] = ie
 		}
 
 		if has(p, "accounts.view") {
@@ -191,6 +278,17 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 			if profit || has(p, "valuation.view") {
 				card["value"] = num(st, "value")
 			}
+			lq := sqlq.New()
+			lq.Add("pr.kind = 'stock' AND pr.is_active AND pr.reorder_level > 0 AND sl.qty_on_hand <= pr.reorder_level")
+			f.branch(lq, "sl.branch_id")
+			lowList, err := rows(ctx, tx, `
+				SELECT pr.id, pr.name, sl.qty_on_hand, pr.reorder_level
+				FROM stock_levels sl JOIN products pr ON pr.id = sl.product_id`+lq.Where()+`
+				ORDER BY sl.qty_on_hand ASC LIMIT 6`, lq.Args...)
+			if err != nil {
+				return err
+			}
+			card["items"] = lowList
 			out["stock"] = card
 		}
 
@@ -205,6 +303,13 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 			}
 			outstanding["customers_owe"] = num(v, "v")
 		}
+		if has(p, "service_billing.view", "clients.view", "reports.debts") {
+			v, err := one(ctx, tx, `SELECT COALESCE(SUM(balance), 0) AS v FROM svc_invoices WHERE status IN ('issued','partial') AND balance > 0`)
+			if err != nil {
+				return err
+			}
+			outstanding["clients_owe"] = num(v, "v")
+		}
 		if has(p, "suppliers.view", "reports.debts") {
 			q := sqlq.New()
 			q.Add("i.status = 'posted' AND i.balance > 0")
@@ -214,6 +319,13 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 				return err
 			}
 			outstanding["we_owe_suppliers"] = num(v, "v")
+		}
+		if has(p, "contractors.view", "service_billing.view", "reports.debts") {
+			v, err := one(ctx, tx, `SELECT COALESCE(SUM(amount - settled), 0) AS v FROM svc_costs WHERE status = 'owed' AND amount > settled`)
+			if err != nil {
+				return err
+			}
+			outstanding["we_owe_contractors"] = num(v, "v")
 		}
 		if has(p, "payroll.view", "reports.payroll") {
 			q := sqlq.New()
@@ -229,6 +341,49 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 		}
 		if len(outstanding) > 0 {
 			out["outstanding"] = outstanding
+		}
+
+		// Services operational widgets for unified SRS Dashboard (projects by stage, overdue tasks, renewals due).
+		if has(p, "projects.view") {
+			stages, err := rows(ctx, tx, `
+				SELECT st.name AS stage, count(*) AS count,
+				       count(*) FILTER (WHERE st.status = 'stuck' OR (st.deadline IS NOT NULL AND st.deadline < $1::date)) AS late
+				FROM svc_projects pr
+				JOIN LATERAL (
+					SELECT name, status, deadline FROM svc_project_stages
+					WHERE project_id = pr.id AND status <> 'done'
+					ORDER BY position LIMIT 1
+				) st ON true
+				WHERE pr.status = 'in_progress'
+				GROUP BY st.name ORDER BY count DESC, st.name`, f.today)
+			if err != nil {
+				return err
+			}
+			out["projects_by_stage"] = stages
+		}
+		if has(p, "tasks.view") {
+			tasks, err := rows(ctx, tx, `
+				SELECT t.id, t.title, t.due_date, t.status, u.name AS assignee_name, pr.number AS project_number
+				FROM svc_tasks t
+				LEFT JOIN users u ON u.id = t.assignee_id
+				LEFT JOIN svc_projects pr ON pr.id = t.project_id
+				WHERE t.status IN ('todo','in_progress') AND t.due_date IS NOT NULL AND t.due_date < $1::date
+				ORDER BY t.due_date ASC LIMIT 6`, f.today)
+			if err != nil {
+				return err
+			}
+			out["overdue_tasks"] = tasks
+		}
+		if has(p, "renewals.view") {
+			rens, err := rows(ctx, tx, `
+				SELECT r.id, r.item, r.due_date, (r.due_date - $1::date) AS days_left, c.name AS client_name
+				FROM svc_renewals r JOIN svc_clients c ON c.id = r.client_id
+				WHERE r.status = 'pending' AND r.due_date <= ($1::date + 30)
+				ORDER BY r.due_date ASC LIMIT 6`, f.today)
+			if err != nil {
+				return err
+			}
+			out["renewals_due"] = rens
 		}
 
 		if has(p, "approvals.view") {
@@ -326,6 +481,58 @@ func (s *Service) Me(ctx context.Context, p *auth.Principal) (map[string]any, er
 				att["today"] = day[0]
 			}
 			out["attendance"] = att
+			// Commission earned this month (from posted/approved payslips or live commission estimate).
+			mStart := f.today[:8] + "01"
+			var comm decimal.Decimal
+			_ = tx.QueryRow(ctx, `
+				SELECT COALESCE(SUM(pl.amount), 0)
+				FROM payslip_lines pl
+				JOIN payslips ps ON ps.id = pl.payslip_id
+				JOIN payroll_runs r ON r.id = ps.run_id
+				WHERE ps.employee_id = $1 AND pl.kind = 'commission' AND r.period_start >= $2::date AND r.status <> 'cancelled'`,
+				*p.EmployeeID, mStart).Scan(&comm)
+			out["commission_month"] = comm
+		}
+		// Staff assigned jobs (projects + design jobs), tasks and low-stock products (SRS Section 2A).
+		myJobs, err := rows(ctx, tx, `
+			SELECT * FROM (
+				SELECT j.id, 'design_job' AS kind, j.title, c.name AS client_name, j.deadline AS due_date, j.status
+				FROM design_jobs j JOIN svc_clients c ON c.id = j.client_id
+				WHERE (j.designer_id = $1 OR j.created_by = $1) AND j.status NOT IN ('delivered','cancelled')
+				UNION ALL
+				SELECT pr.id, 'project' AS kind, pr.name AS title, c.name AS client_name,
+				       (SELECT MIN(deadline) FROM svc_project_stages st WHERE st.project_id = pr.id AND st.status <> 'done') AS due_date,
+				       pr.status
+				FROM svc_projects pr JOIN svc_clients c ON c.id = pr.client_id
+				WHERE (pr.owner_id = $1 OR pr.created_by = $1 OR EXISTS (SELECT 1 FROM svc_project_stages st WHERE st.project_id = pr.id AND st.owner_id = $1))
+				  AND pr.status IN ('in_progress','on_hold')
+			) x ORDER BY due_date ASC NULLS LAST LIMIT 10`, p.UserID)
+		if err != nil {
+			return err
+		}
+		out["my_jobs"] = myJobs
+		myTasks, err := rows(ctx, tx, `
+			SELECT t.id, t.title, t.due_date, t.status, (t.due_date IS NOT NULL AND t.due_date < $2::date) AS overdue,
+			       pr.number AS project_number
+			FROM svc_tasks t LEFT JOIN svc_projects pr ON pr.id = t.project_id
+			WHERE t.assignee_id = $1 AND t.status IN ('todo','in_progress')
+			ORDER BY t.due_date ASC NULLS LAST LIMIT 10`, p.UserID, f.today)
+		if err != nil {
+			return err
+		}
+		out["my_tasks"] = myTasks
+		if p.BranchID != nil {
+			low, err := rows(ctx, tx, `
+				SELECT pr.id, pr.name, sl.qty_on_hand, pr.reorder_level
+				FROM stock_levels sl JOIN products pr ON pr.id = sl.product_id
+				WHERE sl.branch_id = $1 AND pr.kind = 'stock' AND pr.is_active AND pr.reorder_level > 0 AND sl.qty_on_hand <= pr.reorder_level
+				ORDER BY sl.qty_on_hand ASC LIMIT 8`, *p.BranchID)
+			if err != nil {
+				return err
+			}
+			out["low_stock"] = low
+		} else {
+			out["low_stock"] = []map[string]any{}
 		}
 		return nil
 	})

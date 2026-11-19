@@ -13,15 +13,20 @@ import (
 )
 
 type plResult struct {
-	Lines                                       []map[string]any
-	Income, Expense, Revenue, COGS, OtherIncome decimal.Decimal
-	ExpensesByCat                               []map[string]any
+	Lines                                                                   []map[string]any
+	Income, Expense, Revenue, COGS, OtherIncome, ServiceIncome, ServiceCosts decimal.Decimal
+	ExpensesByCat                                                           []map[string]any
 }
 
 // pl reads income and expense accounts from journal lines for the range.
 func (s *Service) pl(ctx context.Context, tx pgx.Tx, f Filter) (plResult, error) {
 	q := sqlq.New()
 	q.Add("a.type IN ('income','expense')")
+	if biz := f.Q("business"); biz == "shop" {
+		q.Add("a.code NOT IN ('4300','5200')")
+	} else if biz == "services" {
+		q.Add("a.code IN ('4300','5200')")
+	}
 	f.dates(q, "l.entry_date")
 	f.branch(q, "l.branch_id")
 	lines, err := rows(ctx, tx, `
@@ -40,17 +45,23 @@ func (s *Service) pl(ctx context.Context, tx pgx.Tx, f Filter) (plResult, error)
 		code, _ := ln["code"].(string)
 		if ln["type"] == "income" {
 			r.Income = r.Income.Add(amt)
-			if code == "4000" || code == "4010" {
+			switch code {
+			case "4000", "4010":
 				r.Revenue = r.Revenue.Add(amt)
-			} else {
+			case "4300":
+				r.ServiceIncome = r.ServiceIncome.Add(amt)
+			default:
 				r.OtherIncome = r.OtherIncome.Add(amt)
 			}
 			continue
 		}
 		r.Expense = r.Expense.Add(amt)
-		if code == "5000" {
+		switch code {
+		case "5000":
 			r.COGS = r.COGS.Add(amt)
-		} else {
+		case "5200":
+			r.ServiceCosts = r.ServiceCosts.Add(amt)
+		default:
 			r.ExpensesByCat = append(r.ExpensesByCat, map[string]any{"code": code, "name": ln["name"], "amount": amt})
 		}
 	}
@@ -98,10 +109,18 @@ func (s *Service) ProfitLoss(ctx context.Context, p *auth.Principal, f Filter) (
 }
 
 func summary(r plResult) map[string]any {
+	opex := r.Expense.Sub(r.COGS).Sub(r.ServiceCosts)
 	return map[string]any{
 		"income": r.Income, "expenses": r.Expense, "net_profit": r.Income.Sub(r.Expense),
 		"sales_revenue": r.Revenue, "cost_of_goods_sold": r.COGS, "gross_profit": r.Revenue.Sub(r.COGS),
-		"other_income": r.OtherIncome, "operating_expenses": r.Expense.Sub(r.COGS), "expenses_by_category": r.ExpensesByCat,
+		"service_income": r.ServiceIncome, "service_costs": r.ServiceCosts, "service_profit": r.ServiceIncome.Sub(r.ServiceCosts),
+		"other_income": r.OtherIncome, "operating_expenses": opex, "expenses_by_category": r.ExpensesByCat,
+		"businesses": map[string]any{
+			"shop":     map[string]any{"income": r.Revenue, "cost_of_goods": r.COGS, "profit": r.Revenue.Sub(r.COGS)},
+			"services": map[string]any{"income": r.ServiceIncome, "direct_costs": r.ServiceCosts, "profit": r.ServiceIncome.Sub(r.ServiceCosts)},
+			"shared":   map[string]any{"other_income": r.OtherIncome, "operating_expenses": opex},
+			"total":    map[string]any{"income": r.Income, "expenses": r.Expense, "net_profit": r.Income.Sub(r.Expense)},
+		},
 	}
 }
 

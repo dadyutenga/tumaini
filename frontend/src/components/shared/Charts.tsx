@@ -5,6 +5,7 @@ import {
   BarChart,
   CartesianGrid,
   Cell,
+  Legend,
   Line,
   LineChart,
   Pie,
@@ -39,15 +40,60 @@ export function LineChartView({ data, label = "Line chart" }: Props) {
     </Frame>
   );
 }
+export function IncomeExpenseChart({
+  data,
+  label = "Income versus expenses by day",
+  onDayClick,
+}: {
+  data: { name: string; date?: string; income: number; expenses: number }[];
+  label?: string;
+  onDayClick?: (date: string) => void;
+}) {
+  return (
+    <Frame label={label}>
+      <LineChart
+        data={data}
+        onClick={(state) => {
+          const active = state?.activeLabel;
+          if (!onDayClick || !active) return;
+          const match = data.find((d) => d.name === String(active));
+          if (match?.date) onDayClick(match.date);
+        }}
+      >
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="name" fontSize={12} />
+        <YAxis fontSize={12} />
+        <Tooltip />
+        <Legend />
+        <Line
+          type="monotone"
+          dataKey="income"
+          name="Income"
+          stroke="#1c9c70"
+          strokeWidth={2}
+          dot={false}
+        />
+        <Line
+          type="monotone"
+          dataKey="expenses"
+          name="Expenses"
+          stroke="#e45c50"
+          strokeWidth={2}
+          dot={false}
+        />
+      </LineChart>
+    </Frame>
+  );
+}
 export function BarChartView({ data, label = "Bar chart" }: Props) {
   return (
     <Frame label={label}>
       <BarChart data={data}>
         <CartesianGrid strokeDasharray="3 3" />
-        <XAxis dataKey="name" />
-        <YAxis />
+        <XAxis dataKey="name" fontSize={12} />
+        <YAxis fontSize={12} />
         <Tooltip />
-        <Bar dataKey="value" fill={colors[0]} />
+        <Bar dataKey="value" fill={colors[0]} radius={[4, 4, 0, 0]} />
       </BarChart>
     </Frame>
   );
