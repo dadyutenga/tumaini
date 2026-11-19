@@ -680,15 +680,8 @@ paths:
           type: string
           format: uuid
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+        '204':
+          description: No Content
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -826,15 +819,8 @@ paths:
           type: string
           format: uuid
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+        '204':
+          description: No Content
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -1683,15 +1669,8 @@ paths:
           type: string
           format: uuid
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+        '204':
+          description: No Content
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -2596,15 +2575,8 @@ paths:
           type: string
           format: uuid
       responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
+        '204':
+          description: No Content
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':

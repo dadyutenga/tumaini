@@ -29,6 +29,10 @@ type fixed decimal.Decimal
 func (f fixed) MarshalJSON() ([]byte, error) {
 	d := decimal.Decimal(f)
 	s := d.String()
+	// A zero made in Go (decimal.Zero) has no scale at all; print it as money.
+	if d.IsZero() && d.Exponent() >= 0 {
+		return json.Marshal("0.00")
+	}
 	if exp := d.Exponent(); exp < 0 {
 		s = d.StringFixed(-exp)
 	}

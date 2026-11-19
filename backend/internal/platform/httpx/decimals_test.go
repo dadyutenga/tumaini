@@ -41,6 +41,8 @@ func TestDecimalsKeepTheirScale(t *testing.T) {
 	require.Equal(t, `{"data":"1200.0000"}`, enc(t, decimal.RequireFromString("1200.0000")))
 	require.Equal(t, `{"data":"5"}`, enc(t, decimal.NewFromInt(5)), "an integer-scale decimal stays an integer")
 	require.Equal(t, `{"data":"0.00"}`, enc(t, decimal.Zero.Round(2)))
+	require.Equal(t, `{"data":"0.00"}`, enc(t, decimal.Zero), "a zero with no scale prints as money")
+	require.Equal(t, `{"data":"0.000"}`, enc(t, decimal.RequireFromString("0.000")), "a zero that has a scale keeps it")
 	require.Equal(t, `{"data":"-12.50"}`, enc(t, decimal.RequireFromString("-12.5").Round(2)))
 }
 
