@@ -12,6 +12,7 @@ import (
 	"bms/internal/platform/auth"
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
+	"bms/internal/platform/setting"
 )
 
 // TaxIn is a create or update body. On update every field is optional, so renaming
@@ -181,8 +182,7 @@ func (s *Service) UpdatePaymentMethods(ctx context.Context, p *auth.Principal, b
 	}
 	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		cur := map[string]any{}
-		var raw []byte
-		if err := tx.QueryRow(ctx, `SELECT value FROM settings WHERE key='payment.methods'`).Scan(&raw); err == nil {
+		if raw, err := setting.Raw(ctx, tx, "payment.methods"); err == nil {
 			_ = json.Unmarshal(raw, &cur)
 		}
 		before, _ := json.Marshal(cur)
@@ -200,7 +200,7 @@ func (s *Service) UpdatePaymentMethods(ctx context.Context, p *auth.Principal, b
 			if c.account != nil {
 				var typ string
 				var active bool
-				if err := tx.QueryRow(ctx, `SELECT type, is_active FROM money_accounts WHERE id=$1`, *c.account).Scan(&typ, &active); err != nil {
+				if err := tx.QueryRow(ctx, `SELECT kind::text, status = 'active' FROM app.financial_accounts WHERE id=$1`, *c.account).Scan(&typ, &active); err != nil {
 					return invalid(map[string]string{method + ".money_account_id": "account not found"})
 				}
 				if !active {
@@ -221,10 +221,7 @@ func (s *Service) UpdatePaymentMethods(ctx context.Context, p *auth.Principal, b
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO settings (business_id, key, value, updated_by) VALUES ($1,'payment.methods',$2,$3)
-			ON CONFLICT (business_id, key) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by
-		`, p.BusinessID, out, p.UserID); err != nil {
+		if err := s.writeSetting(ctx, tx, p, "payment.methods", json.RawMessage(out)); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "payment_methods.updated", "settings", p.BusinessID, json.RawMessage(before), json.RawMessage(out))

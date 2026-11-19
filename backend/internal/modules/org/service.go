@@ -19,6 +19,7 @@ import (
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
+	"bms/internal/platform/setting"
 	"bms/internal/platform/storage"
 	"bms/internal/platform/upload"
 )
@@ -406,15 +407,16 @@ func (s *Service) ListTax(ctx context.Context, p *auth.Principal) ([]TaxRate, er
 }
 
 func (s *Service) PaymentMethods(ctx context.Context, p *auth.Principal) (any, error) {
-	var raw []byte
-	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT value FROM settings WHERE key='payment.methods'`).Scan(&raw)
+	var v any = setting.Defaults["payment.methods"]
+	_ = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if raw, err := setting.Raw(ctx, tx, "payment.methods"); err == nil {
+			var stored any
+			if json.Unmarshal(raw, &stored) == nil {
+				v = stored
+			}
+		}
+		return nil
 	})
-	if err != nil {
-		return map[string]any{}, nil
-	}
-	var v any
-	_ = json.Unmarshal(raw, &v)
 	return v, nil
 }
 

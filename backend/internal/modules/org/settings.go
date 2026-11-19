@@ -16,6 +16,7 @@ import (
 
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
+	"bms/internal/platform/setting"
 )
 
 // A settings value that is the wrong type, or a timezone that does not exist,
@@ -89,7 +90,7 @@ func oneOf(options ...any) check {
 	}
 }
 
-var invoicePrefix = regexp.MustCompile(`^[A-Z0-9]{1,10}$`)
+var invoicePrefix = regexp.MustCompile(`^[A-Z]{1,6}$`)
 var currencyCode = regexp.MustCompile(`^[A-Z]{3}$`)
 var clockTime = regexp.MustCompile(`^([01][0-9]|2[0-3]):[0-5][0-9]$`)
 
@@ -152,7 +153,7 @@ var settingsSpec = map[string]map[string]check{
 		"code": pattern(currencyCode, "must be a three-letter code such as TZS"), "symbol": text(8),
 		"decimals": whole(0, 4), "thousands_separator": oneOf(",", ".", " ", ""),
 	},
-	"invoice": {"prefix": pattern(invoicePrefix, "use 1 to 10 capital letters or digits"), "terms": text(500), "footer": text(500), "due_days": whole(0, 365), "quotation_valid_days": whole(1, 365)},
+	"invoice": {"prefix": pattern(invoicePrefix, "use 1 to 6 capital letters"), "terms": text(500), "footer": text(500), "due_days": whole(0, 365), "quotation_valid_days": whole(1, 365)},
 	"receipt": {"header": text(200), "footer": text(200), "show_logo": isBool, "paper_width": oneOf(58, 80), "show_cashier": isBool, "show_tax": isBool},
 	"payroll": {
 		"pay_day": whole(1, 31), "working_days": whole(1, 31), "standard_hours": number(1, 24), "overtime_multiplier": number(1, 5),
@@ -160,7 +161,7 @@ var settingsSpec = map[string]map[string]check{
 	},
 	"system": {
 		"timezone": timezone, "date_format": text(30), "language": oneOf("en", "sw"), "allow_negative_stock": isBool,
-		"business_day_start": pattern(clockTime, "must be a time such as 00:00 or 04:30"), "session_timeout_minutes": whole(5, 1440),
+		"business_day_start": pattern(clockTime, "must be a time such as 00:00 or 04:30"), "session_timeout_minutes": whole(5, 240),
 		"till_difference_threshold": number(0, 1e12), "default_low_stock": whole(0, 100000),
 	},
 	"sales": {"discount_limit_percent": number(0, 100)},
@@ -171,13 +172,13 @@ var settingsSpec = map[string]map[string]check{
 	},
 }
 
-// NotificationTypes are the events whose channels the Owner can configure (FR-SET-08).
+// NotificationTypes are the events whose channels an admin can configure: the values of the
+// app.notification_type enum.
 var NotificationTypes = []string{
-	"low_stock", "approval_request", "approval_decision", "salary_due", "customer_debt", "customer_credit", "supplier_debt",
-	"pending_payment", "security", "daily_summary", "transfer_difference", "till_difference", "payroll_awaiting_approval",
-	"attendance_review", "leave_decision", "export_ready",
-	"project_completed", "design_assigned", "design_feedback", "design_client_decision", "design_print_ready",
-	"renewal_due", "design_deadline", "task_due", "task_assigned",
+	"low_stock", "debt_due", "task_overdue", "task_assigned", "renewal_due", "salary_due",
+	"approval_waiting", "approval_decided", "design_brief_assigned", "design_feedback",
+	"design_deadline", "design_approved", "print_ready", "account_locked", "day_closed",
+	"project_stage_changed", "payment_received",
 }
 
 func invalid(fields map[string]string) error {
@@ -186,31 +187,10 @@ func invalid(fields map[string]string) error {
 
 // Settings returns every setting grouped, with the notification rules under notifications.rules.
 func (s *Service) Settings(ctx context.Context, p *auth.Principal) (map[string]any, error) {
-	grouped := map[string]map[string]any{}
+	out := map[string]any{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT key, value FROM settings ORDER BY key`)
+		grouped, err := setting.All(ctx, tx)
 		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var key string
-			var raw []byte
-			if err := rows.Scan(&key, &raw); err != nil {
-				return err
-			}
-			group, name, ok := strings.Cut(key, ".")
-			if !ok {
-				group, name = "system", key
-			}
-			if grouped[group] == nil {
-				grouped[group] = map[string]any{}
-			}
-			var v any
-			_ = json.Unmarshal(raw, &v)
-			grouped[group][name] = v
-		}
-		if err := rows.Err(); err != nil {
 			return err
 		}
 		rules, err := s.rules(ctx, tx)
@@ -221,35 +201,79 @@ func (s *Service) Settings(ctx context.Context, p *auth.Principal) (map[string]a
 			grouped["notifications"] = map[string]any{}
 		}
 		grouped["notifications"]["rules"] = rules
+		for k, v := range grouped {
+			out[k] = v
+		}
 		return nil
 	})
-	out := map[string]any{}
-	for k, v := range grouped {
-		out[k] = v
-	}
 	return out, err
 }
 
 func (s *Service) rules(ctx context.Context, tx pgx.Tx) (map[string]any, error) {
 	out := map[string]any{}
 	for _, t := range NotificationTypes {
-		out[t] = map[string]any{"in_app": true, "email": false, "sms": false, "days_before": nil}
+		out[t] = map[string]any{"enabled": true, "in_app": true, "email": false, "sms": false, "whatsapp": false, "days_before": nil}
 	}
-	rows, err := tx.Query(ctx, `SELECT type, in_app, email, sms, days_before FROM notification_rules`)
+	rows, err := tx.Query(ctx, `SELECT notification_type::text, enabled, in_app, email, sms, whatsapp FROM app.notification_rules`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	for rows.Next() {
 		var typ string
-		var inApp, email, sms bool
-		var days *int
-		if err := rows.Scan(&typ, &inApp, &email, &sms, &days); err != nil {
+		var enabled, inApp, email, sms, wa bool
+		if err := rows.Scan(&typ, &enabled, &inApp, &email, &sms, &wa); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		out[typ] = map[string]any{"in_app": inApp, "email": email, "sms": sms, "days_before": days}
+		out[typ] = map[string]any{"enabled": enabled, "in_app": inApp, "email": email, "sms": sms, "whatsapp": wa, "days_before": nil}
 	}
-	return out, rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, t := range NotificationTypes {
+		if raw, err := setting.Raw(ctx, tx, "notifications.days_before_"+t); err == nil {
+			var n int
+			if json.Unmarshal(raw, &n) == nil {
+				out[t].(map[string]any)["days_before"] = n
+			}
+		}
+	}
+	return out, nil
+}
+
+// writeSetting stores one validated value where it belongs: a typed column, the invoice numbering
+// prefix, or the key/value table.
+func (s *Service) writeSetting(ctx context.Context, tx pgx.Tx, p *auth.Principal, key string, val any) error {
+	switch {
+	case key == "invoice.prefix":
+		_, err := tx.Exec(ctx, `UPDATE app.document_sequences SET prefix = $2 WHERE tenant_id = $1 AND doc_type = 'invoice'`, p.TenantID, fmt.Sprint(val)+"-")
+		return err
+	case setting.Typed[key].Column != "":
+		c := setting.Typed[key]
+		keyCol := "tenant_id"
+		if c.Table == "app.tenants" {
+			keyCol = "id"
+		}
+		// c comes from the fixed setting.Typed map, never from the request.
+		if _, err := tx.Exec(ctx, `UPDATE `+c.Table+` SET `+c.Column+` = $2 WHERE `+keyCol+` = $1`, p.TenantID, val); err != nil {
+			return err
+		}
+		if key == "currency.code" {
+			_, err := tx.Exec(ctx, `UPDATE app.tenants SET default_currency = $2 WHERE id = $1`, p.TenantID, val)
+			return err
+		}
+		return nil
+	}
+	raw, err := json.Marshal(val)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `
+		INSERT INTO app.tenant_setting_values (tenant_id, key, value, updated_by) VALUES ($1,$2,$3,$4)
+		ON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+		p.TenantID, key, raw, p.MembershipID)
+	return err
 }
 
 // UpdateSettings validates every value before writing any, so a bad request changes nothing.
@@ -298,40 +322,15 @@ func (s *Service) UpdateSettings(ctx context.Context, p *auth.Principal, group s
 		for _, name := range names {
 			val := clean[name]
 			key := group + "." + name
-			raw, err := json.Marshal(val)
-			if err != nil {
-				return err
-			}
-			var old []byte
-			_ = tx.QueryRow(ctx, `SELECT value FROM settings WHERE key=$1`, key).Scan(&old)
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO settings (business_id, key, value, updated_by) VALUES ($1,$2,$3,$4)
-				ON CONFLICT (business_id, key) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by
-			`, p.BusinessID, key, raw, p.UserID); err != nil {
-				return err
-			}
-			if group == "currency" && name == "code" {
-				if _, err := tx.Exec(ctx, `UPDATE businesses SET currency=$2 WHERE id=$1`, p.BusinessID, val); err != nil {
-					return err
-				}
-			}
-			// The invoice prefix is stored per branch with the document sequence; this applies it to all of them.
-			if group == "invoice" && name == "prefix" {
-				if _, err := tx.Exec(ctx, `UPDATE document_sequences SET prefix=$1 WHERE doc_type='invoice'`, val); err != nil {
-					return err
-				}
-			}
-			if group == "system" && name == "timezone" {
-				if _, err := tx.Exec(ctx, `UPDATE businesses SET timezone=$2 WHERE id=$1`, p.BusinessID, val); err != nil {
-					return err
-				}
-			}
 			var before any
-			if len(old) > 0 {
+			if old, err := setting.Raw(ctx, tx, key); err == nil {
 				before = json.RawMessage(old)
 			}
-			// FR-SET-10: every change is logged with its old and new value.
-			if err := s.Audit.Record(ctx, tx, p, "settings.updated", "settings", p.BusinessID,
+			if err := s.writeSetting(ctx, tx, p, key, val); err != nil {
+				return err
+			}
+			// Every change is logged with its old and new value.
+			if err := s.Audit.Record(ctx, tx, p, "settings.updated", "settings", p.TenantID,
 				map[string]any{"key": key, "value": before}, map[string]any{"key": key, "value": val}); err != nil {
 				return err
 			}
@@ -364,7 +363,7 @@ func parseRules(v any) (map[string]map[string]any, error) {
 		clean := map[string]any{}
 		for k, val := range rule {
 			switch k {
-			case "in_app", "email", "sms":
+			case "enabled", "in_app", "email", "sms", "whatsapp":
 				b, err := isBool(val)
 				if err != nil {
 					return nil, fmt.Errorf("%s.%s %v", typ, k, err)
@@ -395,32 +394,34 @@ func (s *Service) saveRules(ctx context.Context, tx pgx.Tx, p *auth.Principal, r
 		types = append(types, t)
 	}
 	sort.Strings(types)
-	oldRules := map[string]map[string]any{}
-	for _, typ := range types {
-		var inApp, email, sms bool
-		var days *int
-		if err := tx.QueryRow(ctx, `SELECT in_app, email, sms, days_before FROM notification_rules WHERE type=$1`, typ).Scan(&inApp, &email, &sms, &days); err == nil {
-			oldRules[typ] = map[string]any{"in_app": inApp, "email": email, "sms": sms, "days_before": days}
-		}
+	oldRules, err := s.rules(ctx, tx)
+	if err != nil {
+		return err
 	}
 	for _, typ := range types {
 		r := rules[typ]
-		if _, err := tx.Exec(ctx, `INSERT INTO notification_rules (business_id, type) VALUES ($1,$2) ON CONFLICT DO NOTHING`, p.BusinessID, typ); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO app.notification_rules (tenant_id, notification_type) VALUES ($1,$2::app.notification_type) ON CONFLICT DO NOTHING`, p.TenantID, typ); err != nil {
 			return err
 		}
-		for _, col := range []string{"in_app", "email", "sms"} {
+		for _, col := range []string{"enabled", "in_app", "email", "sms", "whatsapp"} {
 			if v, ok := r[col]; ok {
 				// col comes from the fixed list above, never from the request.
-				if _, err := tx.Exec(ctx, `UPDATE notification_rules SET `+col+` = $2 WHERE type = $1`, typ, v); err != nil {
+				if _, err := tx.Exec(ctx, `UPDATE app.notification_rules SET `+col+` = $3, updated_at = now(), updated_by = $4 WHERE tenant_id = $1 AND notification_type = $2::app.notification_type`,
+					p.TenantID, typ, v, p.MembershipID); err != nil {
 					return err
 				}
 			}
 		}
 		if v, set := r["days_before"]; set {
-			if _, err := tx.Exec(ctx, `UPDATE notification_rules SET days_before = $2 WHERE type = $1`, typ, v); err != nil {
+			key := "notifications.days_before_" + typ
+			if v == nil {
+				if _, err := tx.Exec(ctx, `DELETE FROM app.tenant_setting_values WHERE tenant_id = $1 AND key = $2`, p.TenantID, key); err != nil {
+					return err
+				}
+			} else if err := s.writeSetting(ctx, tx, p, key, v); err != nil {
 				return err
 			}
 		}
 	}
-	return s.Audit.Record(ctx, tx, p, "settings.updated", "settings", p.BusinessID, map[string]any{"key": "notifications.rules", "value": oldRules}, map[string]any{"key": "notifications.rules", "value": rules})
+	return s.Audit.Record(ctx, tx, p, "settings.updated", "settings", p.TenantID, map[string]any{"key": "notifications.rules", "value": oldRules}, map[string]any{"key": "notifications.rules", "value": rules})
 }
