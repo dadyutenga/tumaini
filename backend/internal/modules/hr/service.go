@@ -15,6 +15,7 @@ import (
 	"bms/internal/kernel/notify"
 	"bms/internal/kernel/sequence"
 	"bms/internal/modules/hr/hrkit"
+	"bms/internal/modules/identity"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
@@ -427,6 +428,10 @@ func (s *Service) CreateLogin(ctx context.Context, p *auth.Principal, id uuid.UU
 		var n int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM roles WHERE id=$1`, in.RoleID).Scan(&n); err != nil || n == 0 {
 			return httpx.BadRequest("invalid_body", "Role not found")
+		}
+		// The same rule as POST /users: only an Owner assigns the Owner role, and nobody a stronger role than their own.
+		if err := identity.GuardAssignRole(ctx, tx, p, in.RoleID); err != nil {
+			return err
 		}
 		branches := in.BranchIDs
 		if len(branches) == 0 {
