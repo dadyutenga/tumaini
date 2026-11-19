@@ -9,11 +9,11 @@ Last updated at commit `a8f286a` on branch `claude/loving-noether-4idp7v`. The f
 | Routes in the API reference | 313 | 313 implemented |
 | Operations in `docs/api/openapi.yaml` | none | 323 on 260 paths |
 | Functional requirements (SRS) | 261: 227 Must, 26 Should, 8 Could | see below |
-| Migrations | 12 | versions 1 to 25 (no 18), all with working down files, all with working down files |
-| Test functions | 2 | 85 in 38 files |
+| Migrations | 12 | versions 1 to 26 (no 18), all with working down files |
+| Test functions | 2 | 99 |
 | Statement coverage | not measured | 78% of about 15,000 statements |
 
-Requirement status: all Must and Should requirements are implemented except where the independent audit below lists a gap; 7 of 8 Could requirements are implemented. FR-EXP-12 (an expense owed to a supplier) is deliberately not built.
+Requirement status: Must and Should requirements are implemented except the gaps under "Known open items" in the report; 7 of 8 Could requirements are implemented. FR-EXP-12 (an expense owed to a supplier) is deliberately not built.
 
 ## Done and verified
 
@@ -41,7 +41,7 @@ No test currently fails. Failures met on the way and fixed are listed under "Bug
 
 ## In progress
 
-An independent audit of the SRS against the code is running (three read-only reviewers, one per range of sections). Its findings will be fixed or recorded here and in the report.
+The audit's confirmed security and correctness findings are fixed (see the report, "Audit fixes"). Remaining audit items are listed under "Known open items" in the report and are being worked through in the order: audit-log coverage, report exports and filters, smaller requirement gaps.
 
 ## Real blockers (cannot be resolved from this environment)
 

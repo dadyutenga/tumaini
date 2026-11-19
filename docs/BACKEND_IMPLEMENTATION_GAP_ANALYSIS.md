@@ -153,3 +153,7 @@ State at baseline. COMPLETE means implemented and covered by the acceptance test
 - The design names sqlc and River. The code uses hand-written pgx queries and a small PostgreSQL job table. Both work and are tested, so they are kept; replacing them is churn without a requirement behind it.
 - PDFs are written by a small built-in writer (`internal/platform/pdf`) instead of headless Chrome, so the single binary has no browser dependency.
 - Large report exports stay synchronous; the business-wide data export runs as a background job.
+
+## Final status
+
+This file is the baseline. The state after the work, including the second audit, the fixes made and the gaps still open, is in `BACKEND_IMPLEMENTATION_REPORT.md` (sections "Audit fixes" and "Known open items") and `BACKEND_COMPLETION_PROGRESS.md`.

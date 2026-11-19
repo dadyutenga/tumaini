@@ -3,6 +3,7 @@ package sales
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -276,6 +277,20 @@ func insertItems(ctx context.Context, tx pgx.Tx, businessID, saleID uuid.UUID, l
 
 // checkPayments rejects unknown methods and inactive or missing money accounts.
 func (s *Service) checkPayments(ctx context.Context, tx pgx.Tx, pays []PayIn) error {
+	disabled := map[string]bool{}
+	var raw []byte
+	if err := tx.QueryRow(ctx, `SELECT value FROM settings WHERE key='payment.methods'`).Scan(&raw); err == nil {
+		var cfg map[string]struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if json.Unmarshal(raw, &cfg) == nil {
+			for m, c := range cfg {
+				if c.Enabled != nil && !*c.Enabled {
+					disabled[m] = true
+				}
+			}
+		}
+	}
 	for _, pay := range pays {
 		if !pay.Amount.IsPositive() {
 			continue
@@ -285,11 +300,31 @@ func (s *Service) checkPayments(ctx context.Context, tx pgx.Tx, pays []PayIn) er
 		default:
 			return httpx.BadRequest("invalid_body", "Payment method must be cash, mobile_money or bank")
 		}
+		if disabled[pay.Method] {
+			return httpx.Conflict("method_disabled", "This payment method is switched off in the settings")
+		}
+		if pay.Method != "cash" && strings.TrimSpace(pay.Reference) == "" {
+			return &httpx.Error{Status: 422, Code: "validation_failed", Message: "A reference is required for mobile money and bank payments", Fields: map[string]string{"reference": "required"}}
+		}
 		if err := checkAccount(ctx, tx, pay.MoneyAccountID); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// creditEnabled reports whether credit sales are switched on (FR-SET-04).
+func creditEnabled(ctx context.Context, tx pgx.Tx) bool {
+	var raw []byte
+	if err := tx.QueryRow(ctx, `SELECT value FROM settings WHERE key='payment.methods'`).Scan(&raw); err != nil {
+		return true
+	}
+	var cfg struct {
+		Credit struct {
+			Enabled *bool `json:"enabled"`
+		} `json:"credit"`
+	}
+	return json.Unmarshal(raw, &cfg) != nil || cfg.Credit.Enabled == nil || *cfg.Credit.Enabled
 }
 
 func checkAccount(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
@@ -575,6 +610,9 @@ func openTill(ctx context.Context, tx pgx.Tx, user uuid.UUID) (uuid.UUID, uuid.U
 }
 
 func (s *Service) resolveCustomer(ctx context.Context, tx pgx.Tx, id *uuid.UUID, balance decimal.Decimal) (uuid.UUID, error) {
+	if balance.IsPositive() && !creditEnabled(ctx, tx) {
+		return uuid.Nil, httpx.Conflict("method_disabled", "Credit sales are switched off in the settings")
+	}
 	if id == nil || *id == uuid.Nil {
 		var walk uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT id FROM customers WHERE is_walk_in LIMIT 1`).Scan(&walk); err != nil {

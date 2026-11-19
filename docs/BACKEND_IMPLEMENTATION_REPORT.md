@@ -4,9 +4,9 @@ Branch `claude/loving-noether-4idp7v`, against the baseline recorded in `BACKEND
 
 ## Summary
 
-Every route in `docs/spec/API reference.md` (313) is implemented, documented in `docs/api/openapi.yaml`, and checked by a contract test. At the start, 124 were. All 227 "Must" and 26 "Should" functional requirements of the SRS are implemented; 7 of the 8 "Could" requirements are too. The one that is not is FR-EXP-12 (an expense owed to a supplier).
+Every route in `docs/spec/API reference.md` (313) is implemented, documented in `docs/api/openapi.yaml`, and checked by a contract test. At the start, 124 were. The core of the 227 "Must" and 26 "Should" functional requirements is implemented and tested. A second, independent audit of the SRS against the code found real gaps, most of which were fixed with failing-then-passing tests (see "Audit fixes"); the remaining known gaps are listed under "Known open items" and are not claimed as done. 7 of the 8 "Could" requirements are implemented; FR-EXP-12 is not.
 
-The backend builds, `go vet` and `gofmt` are clean, and 83 test functions pass under the race detector against a real PostgreSQL 16 as the `bms_app` role, at 78.3% statement coverage. The application boots from a freshly migrated database, answers health checks, and stops cleanly on SIGTERM. Docker builds, real email/SMS delivery, off-server backups and load tests could not be run here; they are listed under "Not verified".
+The backend builds, `go vet` and `gofmt` are clean, and 99 test functions pass under the race detector against a real PostgreSQL 16 as the `bms_app` role, at 78.3% statement coverage. The application boots from a freshly migrated database, answers health checks, and stops cleanly on SIGTERM. Docker builds, real email/SMS delivery, off-server backups and load tests could not be run here; they are listed under "Not verified".
 
 ## Modules
 
@@ -88,7 +88,7 @@ Found by running the tests and reading the code, and fixed:
 
 ## Database changes
 
-Migrations 0013 to 0025 (there is no 0018; 0020 and 0021 are the services module from `main`), each with a working down file. The full set was applied from an empty database, reverted one by one to version 0, and applied again.
+Migrations 0013 to 0026 (there is no 0018; 0020 and 0021 are the services module from `main`), each with a working down file. The full set was applied from an empty database, reverted one by one to version 0, and applied again.
 
 | Migration | Change |
 | --- | --- |
@@ -102,6 +102,24 @@ Migrations 0013 to 0025 (there is no 0018; 0020 and 0021 are the services module
 | 0023 | `employee_documents` with row-level security |
 | 0024 | batch number and expiry date on receipt lines |
 | 0025 | `sales.invoice_number` |
+| 0026 | `notifications.in_app` |
+
+## Audit fixes
+
+After the first completion pass an audit of the SRS against the code was run; each confirmed finding was reproduced, fixed and covered by a test that fails without the fix (`internal/app/audit_fixes_test.go`):
+
+- Approvals inbox listed and let users act on requests above their permission or limit; `approval.Decide` now requires the kind's permission, branch scope and limit.
+- Cashiers saw `unit_cost` on sales; now only holders of the cost permission do.
+- Bank and mobile reconcile leaked balances without `accounts.view_balance`; reconcile needs a note when there is a difference and supports a dry run.
+- A locked-period entry could be reversed into the open period; reversal now checks the original date.
+- Purchasing: pay-now and direct-receipt limits and money-account branch scope were bypassable.
+- Attendance and leave edits are blocked once an approved or paid payroll run covers the day.
+- Notification rules (in-app, email, SMS, days before) were stored but ignored; they are now honoured, and approval requests reach only users who can decide them at that amount.
+- Payment methods switched off in settings (including credit) are refused on sales, and mobile money and bank payments need a reference (FR-SET-04, FR-SAL-05).
+
+## Known open items
+
+Not implemented or only partly: FR-CUS-07 (credit spending), BR-02 (in-place sale-return totals), FR-EXP-12, FR-SEC-07 (backup scheduling is the operator's), FR-INV-15 (account mapping), FR-EMP-13, FR-USR-04 own-scope validation, FR-INV-01 product image, FR-SEC-01 audit coverage and report-export audit, FR-REP-14/16 exports, NFR-17 slow-query tracing and HSTS, FR-SET-10 old value, FR-EXP-10 / FR-PUR-12 / FR-FIN-14 filters, FR-SUP-06 statement refunds, FR-ATT-04 half-day and day-off, FR-PAY-03 base. Currency and date formatting are left to clients.
 
 ## Security fixes
 
@@ -136,7 +154,7 @@ go run ./cmd/openapi -check      # docs/api/openapi.yaml is up to date
 go test -race -count=1 ./...     # all packages pass
 ```
 
-Result on the final commit: 12 packages pass; 83 test functions in 37 files (5,082 lines of tests for 29,883 lines of code); statement coverage 78.3% of 14,997 statements.
+Result on the final commit: 12 packages pass; 99 test functions in 37 files (5,082 lines of tests for 29,883 lines of code); statement coverage 78.3% of 14,997 statements.
 
 | Area | Coverage |
 | --- | --- |

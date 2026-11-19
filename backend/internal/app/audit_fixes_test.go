@@ -335,3 +335,34 @@ func TestNotificationRulesAreHonoured(t *testing.T) {
 	remind()
 	require.GreaterOrEqual(t, countTitle(t, o, "Supplier invoices due"), 1, "inside a 14-day window")
 }
+
+// FR-SAL-05, FR-SET-04: mobile money and bank payments carry a reference; a method switched off cannot be used.
+func TestSalePaymentMethodRules(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	o := e.owner
+	product := e.product(t, "Soap", "1000", "50", "600")
+	bankAcc := o.call(t, http.MethodPost, "/api/v1/money-accounts", map[string]any{"name": "CRDB", "type": "bank", "opening_balance": "0"}, "")
+	require.Equal(t, 201, bankAcc.code, bankAcc.raw)
+	bank := str(bankAcc.data["id"])
+	sale := func(pay map[string]any, customer any) result {
+		return o.call(t, http.MethodPost, "/api/v1/sales", map[string]any{"customer_id": customer, "items": []map[string]any{{"product_id": product, "qty": "1"}}, "payments": []map[string]any{pay}}, key())
+	}
+	noRef := sale(map[string]any{"method": "bank", "money_account_id": bank, "amount": "1000"}, nil)
+	require.Equal(t, 422, noRef.code, noRef.raw)
+	require.Equal(t, 201, sale(map[string]any{"method": "bank", "money_account_id": bank, "amount": "1000", "reference": "TXN-1"}, nil).code)
+
+	set := func(m map[string]any) {
+		res := o.call(t, http.MethodPut, "/api/v1/payment-methods", m, "")
+		require.Equal(t, 200, res.code, res.raw)
+	}
+	set(map[string]any{"bank": map[string]any{"enabled": false}})
+	off := sale(map[string]any{"method": "bank", "money_account_id": bank, "amount": "1000", "reference": "TXN-2"}, nil)
+	require.Equal(t, 409, off.code, off.raw)
+	require.Equal(t, "method_disabled", str(off.body["error"].(map[string]any)["code"]))
+
+	set(map[string]any{"credit": map[string]any{"enabled": false}})
+	cust := o.call(t, http.MethodPost, "/api/v1/customers", map[string]any{"name": "Neema", "phone": "0711222333", "credit_limit": "100000"}, "")
+	require.Equal(t, 201, cust.code, cust.raw)
+	credit := o.call(t, http.MethodPost, "/api/v1/sales", map[string]any{"customer_id": cust.data["id"], "items": []map[string]any{{"product_id": product, "qty": "1"}}, "payments": []map[string]any{}}, key())
+	require.Equal(t, 409, credit.code, credit.raw)
+}
