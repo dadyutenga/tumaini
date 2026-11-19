@@ -115,6 +115,7 @@ func Register(r fiber.Router, h *Handler) {
 	inv("/reports/inventory/low-stock", h.Svc.LowStock)
 	inv("/reports/inventory/dead-stock", h.Svc.DeadStock)
 	inv("/reports/inventory/losses", h.Svc.Losses)
+	inv("/reports/inventory/expiring", h.Svc.Expiring)
 
 	r.Get("/reports/purchases", middleware.Require("reports.purchases"), h.run("reports.purchases", h.Svc.Purchases))
 	r.Get("/reports/customer-debt", middleware.Require("reports.debts"), h.run("reports.debts", h.Svc.CustomerDebt))

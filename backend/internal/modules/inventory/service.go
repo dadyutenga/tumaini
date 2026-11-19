@@ -54,6 +54,9 @@ type Item struct {
 	ProductID uuid.UUID       `json:"product_id" validate:"required"`
 	Qty       decimal.Decimal `json:"qty" validate:"dpos"`
 	UnitCost  decimal.Decimal `json:"unit_cost" validate:"dgte0"`
+	// BatchNo and ExpiryDate are recorded on stock-in lines only (FR-INV-32).
+	BatchNo    string `json:"batch_no" validate:"max=60"`
+	ExpiryDate string `json:"expiry_date" validate:"omitempty,date"`
 }
 
 type EntryInput struct {
@@ -113,6 +116,13 @@ func (s *Service) PostEntry(ctx context.Context, p *auth.Principal, in EntryInpu
 	if in.Direction == "out" && !outReasons[in.Reason] {
 		return 0, nil, httpx.BadRequest("invalid_body", "That reason is not valid for stock out")
 	}
+	if in.Direction == "out" {
+		for _, it := range in.Items {
+			if it.BatchNo != "" || it.ExpiryDate != "" {
+				return 0, nil, httpx.BadRequest("invalid_body", "Batch number and expiry date apply to stock in only")
+			}
+		}
+	}
 	var status int
 	var body []byte
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
@@ -152,8 +162,9 @@ func (s *Service) PostEntry(ctx context.Context, p *auth.Principal, in EntryInpu
 			}
 			for _, it := range in.Items {
 				if _, err := tx.Exec(ctx, `
-					INSERT INTO stock_entry_items (id, business_id, entry_id, product_id, qty, unit_cost) VALUES ($1,$2,$3,$4,$5,$6)
-				`, ids.New(), p.BusinessID, id, it.ProductID, it.Qty, money.Cost(it.UnitCost)); err != nil {
+					INSERT INTO stock_entry_items (id, business_id, entry_id, product_id, qty, unit_cost, batch_no, expiry_date)
+					VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,'')::date)
+				`, ids.New(), p.BusinessID, id, it.ProductID, it.Qty, money.Cost(it.UnitCost), strings.TrimSpace(it.BatchNo), it.ExpiryDate); err != nil {
 					return err
 				}
 			}

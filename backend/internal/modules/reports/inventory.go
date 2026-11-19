@@ -220,6 +220,47 @@ func (s *Service) DeadStock(ctx context.Context, p *auth.Principal, f Filter) (e
 		Totals: totals(list, "Total", stripCost(p, []string{"qty_on_hand", "value"})...)}, map[string]any{"days": days}, err
 }
 
+// Expiring lists receipt lines whose expiry date falls within the next N days, or has passed (FR-INV-32).
+// Expiry is recorded per receipt, not per batch of stock on hand, so qty_received is what arrived with
+// that receipt, and qty_on_hand is the product's total in that branch today.
+func (s *Service) Expiring(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
+	days := f.Int("days", 30, 0, 3650)
+	var list []map[string]any
+	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
+		ref := f.To
+		if ref == "" {
+			ref = f.today
+		}
+		q := sqlq.New()
+		r := q.Arg(ref)
+		d := q.Arg(days)
+		q.Add("x.expiry_date <= " + r + "::date + " + d + "::int")
+		f.branch(q, "x.branch_id")
+		var err error
+		list, err = rows(ctx, tx, `
+			SELECT x.source, x.number, pr.name AS product, pr.sku, b.name AS branch, x.batch_no,
+			       x.expiry_date::text AS expiry_date, (x.expiry_date - `+r+`::date) AS days_left,
+			       x.qty_received, COALESCE(sl.qty_on_hand, 0) AS qty_on_hand
+			FROM (
+				SELECT 'stock_entry' AS source, e.number, e.branch_id, i.product_id, i.batch_no, i.expiry_date, i.qty AS qty_received
+				FROM stock_entry_items i JOIN stock_entries e ON e.id = i.entry_id
+				WHERE e.direction = 'in' AND i.expiry_date IS NOT NULL
+				UNION ALL
+				SELECT 'goods_receipt', g.number, g.branch_id, gi.product_id, gi.batch_no, gi.expiry_date, gi.qty_received
+				FROM goods_receipt_items gi JOIN goods_receipts g ON g.id = gi.receipt_id
+				WHERE gi.expiry_date IS NOT NULL
+			) x
+			JOIN products pr ON pr.id = x.product_id
+			JOIN branches b ON b.id = x.branch_id
+			LEFT JOIN stock_levels sl ON sl.product_id = x.product_id AND sl.branch_id = x.branch_id`+q.Where()+`
+			ORDER BY x.expiry_date, pr.name`, q.Args...)
+		return err
+	})
+	return export.Table{Title: "Expiring stock", Subtitle: "Receipt lines expiring within the chosen number of days, or already expired",
+		Columns: cols("source", "number", "product", "sku", "branch", "batch_no", "expiry_date", "days_left", "qty_received", "qty_on_hand"),
+		Rows:    list}, map[string]any{"days": days}, err
+}
+
 // Losses lists stock out, downward adjustments and transfer shortfalls with their cost.
 func (s *Service) Losses(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any

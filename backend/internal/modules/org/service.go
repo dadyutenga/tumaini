@@ -22,6 +22,7 @@ import (
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/ids"
 	"bms/internal/platform/storage"
+	"bms/internal/platform/upload"
 )
 
 type Service struct {
@@ -124,11 +125,11 @@ func (s *Service) scanBusiness(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Bu
 }
 
 func (s *Service) SaveLogo(ctx context.Context, p *auth.Principal, name string, r io.Reader) (string, error) {
-	buf, mime, err := readUpload(r, 2<<20, true)
+	buf, mime, err := upload.Read(r, 2<<20, true)
 	if err != nil {
 		return "", err
 	}
-	file, err := s.Store.Save(ctx, p.BusinessID.String(), name, reader(buf), 2<<20)
+	file, err := s.Store.Save(ctx, p.BusinessID.String(), name, upload.Reader(buf), 2<<20)
 	if err != nil {
 		return "", httpx.BadRequest("invalid_body", err.Error())
 	}
@@ -440,11 +441,11 @@ func (s *Service) PaymentMethods(ctx context.Context, p *auth.Principal) (any, e
 
 // Upload stores a file after checking its content. The client's Content-Type is ignored.
 func (s *Service) Upload(ctx context.Context, p *auth.Principal, name, _ string, r io.Reader) (uuid.UUID, error) {
-	buf, mime, err := readUpload(r, 10<<20, false)
+	buf, mime, err := upload.Read(r, 10<<20, false)
 	if err != nil {
 		return uuid.Nil, err
 	}
-	file, err := s.Store.Save(ctx, p.BusinessID.String(), name, reader(buf), 10<<20)
+	file, err := s.Store.Save(ctx, p.BusinessID.String(), name, upload.Reader(buf), 10<<20)
 	if err != nil {
 		return uuid.Nil, httpx.BadRequest("invalid_body", err.Error())
 	}
@@ -470,6 +471,17 @@ func (s *Service) OpenFile(ctx context.Context, p *auth.Principal, id uuid.UUID)
 		var exportOwner *uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT user_id FROM export_jobs WHERE file_id=$1 LIMIT 1`, id).Scan(&exportOwner); err == nil {
 			if exportOwner != nil && *exportOwner != p.UserID && !p.IsOwner {
+				return httpx.NotFound("not_found", "File not found")
+			}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		// Employee documents (contracts, ID copies) are for the people who manage employees and the employee.
+		var docEmployee, docBranch uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			SELECT d.employee_id, e.branch_id FROM employee_documents d JOIN employees e ON e.id = d.employee_id WHERE d.file_id=$1`, id).Scan(&docEmployee, &docBranch); err == nil {
+			own := p.EmployeeID != nil && *p.EmployeeID == docEmployee
+			if !own && !p.SeesBranch("employees.manage", docBranch) {
 				return httpx.NotFound("not_found", "File not found")
 			}
 		} else if !errors.Is(err, pgx.ErrNoRows) {

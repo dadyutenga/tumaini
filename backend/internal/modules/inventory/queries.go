@@ -317,6 +317,29 @@ func (s *Service) GetEntry(ctx context.Context, p *auth.Principal, id uuid.UUID)
 		if err != nil {
 			return err
 		}
+		// Batch and expiry (FR-INV-32) are strings, so they are merged in beside the decimal columns.
+		batches, err := tx.Query(ctx, `SELECT product_id, batch_no, expiry_date::text FROM stock_entry_items WHERE entry_id=$1 AND (batch_no IS NOT NULL OR expiry_date IS NOT NULL)`, id)
+		if err != nil {
+			return err
+		}
+		byProduct := map[uuid.UUID][2]*string{}
+		for batches.Next() {
+			var pid uuid.UUID
+			var batch, expiry *string
+			if err := batches.Scan(&pid, &batch, &expiry); err != nil {
+				batches.Close()
+				return err
+			}
+			byProduct[pid] = [2]*string{batch, expiry}
+		}
+		batches.Close()
+		if err := batches.Err(); err != nil {
+			return err
+		}
+		for _, it := range items {
+			b := byProduct[it["product_id"].(uuid.UUID)]
+			it["batch_no"], it["expiry_date"] = b[0], b[1]
+		}
 		out = map[string]any{"id": id, "number": number, "branch_id": branch, "direction": dir, "reason": reason, "note": note, "total_value": value, "created_by": by, "created_at": at, "items": items}
 		return nil
 	})

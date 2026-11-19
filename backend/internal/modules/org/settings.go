@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net"
 	"regexp"
 	"sort"
 	"strings"
@@ -112,8 +113,40 @@ func timezone(v any) (any, error) {
 	return s, nil
 }
 
+// networks accepts up to 20 IP addresses or CIDR ranges and stores them normalised.
+func networks(v any) (any, error) {
+	list, ok := v.([]any)
+	if !ok {
+		return nil, fmt.Errorf("must be a list of IP addresses or CIDR ranges")
+	}
+	if len(list) > 20 {
+		return nil, fmt.Errorf("at most 20 entries")
+	}
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		s, ok := item.(string)
+		if !ok {
+			return nil, fmt.Errorf("every entry must be text")
+		}
+		s = strings.TrimSpace(s)
+		if _, n, err := net.ParseCIDR(s); err == nil {
+			out = append(out, n.String())
+			continue
+		}
+		ip := net.ParseIP(s)
+		if ip == nil {
+			return nil, fmt.Errorf("%q is not an IP address or CIDR range", s)
+		}
+		out = append(out, ip.String())
+	}
+	return out, nil
+}
+
 var settingsSpec = map[string]map[string]check{
-	"tax": {"prices_include_tax": isBool},
+	// FR-ATT-12: with restrict_clock_in on and at least one network listed, staff can only
+	// clock themselves in from those addresses.
+	"attendance": {"restrict_clock_in": isBool, "allowed_networks": networks},
+	"tax":        {"prices_include_tax": isBool},
 	"currency": {
 		"code": pattern(currencyCode, "must be a three-letter code such as TZS"), "symbol": text(8),
 		"decimals": whole(0, 4), "thousands_separator": oneOf(",", ".", " ", ""),

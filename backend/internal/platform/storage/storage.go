@@ -19,6 +19,7 @@ type File struct {
 type Store interface {
 	Save(ctx context.Context, businessID, name string, r io.Reader, max int64) (File, error)
 	Open(ctx context.Context, path string) (io.ReadCloser, error)
+	Delete(ctx context.Context, path string) error
 }
 
 type Local struct{ Root string }
@@ -65,4 +66,16 @@ func (l *Local) Open(_ context.Context, path string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("invalid path")
 	}
 	return os.Open(filepath.Join(l.Root, clean))
+}
+
+// Delete removes a stored file; a file that is already gone is not an error.
+func (l *Local) Delete(_ context.Context, path string) error {
+	clean := filepath.Clean(path)
+	if strings.Contains(clean, "..") {
+		return fmt.Errorf("invalid path")
+	}
+	if err := os.Remove(filepath.Join(l.Root, clean)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }

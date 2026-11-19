@@ -1929,6 +1929,14 @@ paths:
                         type: string
                         pattern: ^-?[0-9]+(\.[0-9]+)?$
                         example: '2500.00'
+                      batch_no:
+                        type: string
+                        maxLength: 60
+                        description: Stock in only
+                      expiry_date:
+                        type: string
+                        format: date
+                        description: Stock in only
                     required:
                     - product_id
                     - qty

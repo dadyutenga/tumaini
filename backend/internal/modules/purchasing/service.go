@@ -3,6 +3,7 @@ package purchasing
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -356,6 +357,9 @@ type ReceiptItem struct {
 	ProductID uuid.UUID       `json:"product_id" validate:"required"`
 	Qty       decimal.Decimal `json:"qty" validate:"dpos"`
 	UnitCost  decimal.Decimal `json:"unit_cost" validate:"dgte0"`
+	// BatchNo and ExpiryDate are recorded with the receipt line (FR-INV-32).
+	BatchNo    string `json:"batch_no" validate:"max=60"`
+	ExpiryDate string `json:"expiry_date" validate:"omitempty,date"`
 }
 
 type ReceiptIn struct {
@@ -446,7 +450,7 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, in ReceiptIn) 
 			cost := money.Cost(it.UnitCost)
 			value := money.Money(qty.Mul(cost))
 			goods = goods.Add(value)
-			lines = append(lines, line{poItem: poItem, item: ReceiptItem{ProductID: it.ProductID, Qty: qty, UnitCost: cost}, cost: cost, goodValue: value})
+			lines = append(lines, line{poItem: poItem, item: ReceiptItem{ProductID: it.ProductID, Qty: qty, UnitCost: cost, BatchNo: it.BatchNo, ExpiryDate: it.ExpiryDate}, cost: cost, goodValue: value})
 		}
 		// Extra costs are spread across lines by value and raise each unit cost (FR-PUR-08).
 		extra := money.Money(in.ExtraCosts)
@@ -477,9 +481,9 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, in ReceiptIn) 
 				return 0, nil, err
 			}
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO goods_receipt_items (id, business_id, receipt_id, po_item_id, product_id, qty_received, unit_cost)
-				VALUES ($1,$2,$3,$4,$5,$6,$7)
-			`, ids.New(), p.BusinessID, id, ln.poItem, ln.item.ProductID, ln.item.Qty, cost); err != nil {
+				INSERT INTO goods_receipt_items (id, business_id, receipt_id, po_item_id, product_id, qty_received, unit_cost, batch_no, expiry_date)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,NULLIF($8,''),NULLIF($9,'')::date)
+			`, ids.New(), p.BusinessID, id, ln.poItem, ln.item.ProductID, ln.item.Qty, cost, strings.TrimSpace(ln.item.BatchNo), ln.item.ExpiryDate); err != nil {
 				return 0, nil, err
 			}
 			stockLines = append(stockLines, stock.Line{ProductID: ln.item.ProductID, Qty: ln.item.Qty, UnitCost: cost})

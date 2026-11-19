@@ -442,6 +442,9 @@ func Register(r fiber.Router, h *Handler) {
 	r.Get("/employees/:id/statement", req("employees.view_salary"), h.Statement)
 	r.Get("/employees/:id/components", req("components.manage"), h.Components)
 	r.Put("/employees/:id/components", req("components.manage"), h.PutComponents)
+	r.Get("/employees/:id/documents", req("employees.manage"), h.ListDocuments)
+	r.Post("/employees/:id/documents", req("employees.manage"), h.AddDocument)
+	r.Delete("/employees/:id/documents/:doc_id", req("employees.manage"), h.DeleteDocument)
 	r.Get("/employees/:id/leave-balance", req("employees.view"), h.LeaveBalance)
 
 	r.Get("/departments", req("departments.manage"), h.Departments)

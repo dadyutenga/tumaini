@@ -24,6 +24,7 @@ import (
 	"bms/internal/platform/money"
 	"bms/internal/platform/setting"
 	"bms/internal/platform/sqlq"
+	"bms/internal/platform/storage"
 )
 
 type Service struct {
@@ -34,10 +35,11 @@ type Service struct {
 	Notify   *notify.Service
 	Clock    clock.Clock
 	Hash     auth.Params
+	Store    storage.Store
 }
 
-func New(database *db.DB, led *ledger.Service, aud *audit.Service, ap *approval.Service, n *notify.Service, clk clock.Clock, hash auth.Params) *Service {
-	return &Service{DB: database, Ledger: led, Audit: aud, Approval: ap, Notify: n, Clock: clk, Hash: hash}
+func New(database *db.DB, led *ledger.Service, aud *audit.Service, ap *approval.Service, n *notify.Service, clk clock.Clock, hash auth.Params, store storage.Store) *Service {
+	return &Service{DB: database, Ledger: led, Audit: aud, Approval: ap, Notify: n, Clock: clk, Hash: hash, Store: store}
 }
 
 // today is the business-local date.

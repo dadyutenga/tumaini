@@ -3669,6 +3669,130 @@ paths:
       tags:
         - Employees
       x-permission: components.manage
+  /employees/{id}/documents:
+    get:
+      operationId: get_employees__id__documents
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+      summary: List an employee's documents (contract, ID copy, certificate). Only people who manage employees see them
+      tags:
+        - Employees
+      x-permission: employees.manage
+    post:
+      operationId: post_employees__id__documents
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              properties:
+                file:
+                  format: binary
+                  type: string
+                kind:
+                  enum:
+                    - contract
+                    - id_copy
+                    - certificate
+                    - other
+                  type: string
+                name:
+                  type: string
+              required:
+                - file
+              type: object
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: Created
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: File type not allowed (images, PDF, text and zip files only)
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      summary: Upload a document (multipart field file, up to 10 MB; kind and name as form fields or query parameters). The type is checked from the file content
+      tags:
+        - Employees
+      x-permission: employees.manage
+  /employees/{id}/documents/{doc_id}:
+    delete:
+      operationId: delete_employees__id__documents__doc_id
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: doc_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+      summary: Remove a document and its stored file
+      tags:
+        - Employees
+      x-permission: employees.manage
   /employees/{id}/leave-balance:
     get:
       operationId: get_employees__id__leave_balance
@@ -5069,6 +5193,12 @@ paths:
                 items:
                   items:
                     properties:
+                      batch_no:
+                        maxLength: 60
+                        type: string
+                      expiry_date:
+                        format: date
+                        type: string
                       product_id:
                         format: uuid
                         type: string
@@ -13491,6 +13621,142 @@ paths:
       tags:
         - Reports
       x-permission: reports.inventory
+  /reports/inventory/expiring:
+    get:
+      operationId: get_reports_inventory_expiring
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - description: Start date (inclusive)
+          in: query
+          name: from
+          schema:
+            format: date
+            type: string
+        - description: End date (inclusive)
+          in: query
+          name: to
+          schema:
+            format: date
+            type: string
+        - description: One branch inside the caller's scope; 404 when outside
+          in: query
+          name: branch_id
+          schema:
+            format: uuid
+            type: string
+        - description: json returns the table; csv
+          in: query
+          name: format
+          schema:
+            default: json
+            enum:
+              - json
+              - csv
+              - xlsx
+              - pdf
+            type: string
+          xlsx and pdf return a file attachment: null
+        - description: Look-ahead window in days (0 to 3650)
+          in: query
+          name: days
+          schema:
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              example:
+                data:
+                  columns:
+                    - key: product
+                      label: product
+                    - key: sku
+                      label: sku
+                    - key: branch
+                      label: branch
+                    - key: qty_on_hand
+                      label: qty_on_hand
+                  rows:
+                    - branch: "6000.00"
+                      product: Rice
+                      qty_on_hand: "6000.00"
+                      sku: "6000.00"
+                  title: Products in stock with no sale for at least `days` days
+              schema:
+                properties:
+                  data:
+                    additionalProperties: true
+                    properties:
+                      columns:
+                        items:
+                          properties:
+                            key:
+                              type: string
+                            label:
+                              type: string
+                          type: object
+                        type: array
+                      rows:
+                        items:
+                          additionalProperties: true
+                          type: object
+                        type: array
+                      subtitle:
+                        type: string
+                      title:
+                        type: string
+                      totals:
+                        additionalProperties: true
+                        type: object
+                    required:
+                      - title
+                      - columns
+                      - rows
+                    type: object
+                type: object
+            application/pdf:
+              schema:
+                format: binary
+                type: string
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                format: binary
+                type: string
+            text/csv:
+              schema:
+                type: string
+          description: Report table, or a file when format is csv, xlsx or pdf
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid query parameter
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not signed in
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing permission
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: branch_id outside the caller's scope
+      security:
+        - bearerAuth: []
+      summary: Receipt lines expiring within N days (default 30) or already expired, soonest first. Expiry is recorded per receipt, not per batch on hand
+      tags:
+        - Reports
+      x-permission: reports.inventory
   /reports/inventory/losses:
     get:
       operationId: reportInventoryLosses
@@ -17834,7 +18100,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "422":
           $ref: '#/components/responses/Unprocessable'
-      summary: 'Update one group: tax, currency, invoice, receipt, payroll, notifications, system. Every key is type- and range-checked (unknown keys, bad timezones and wrong types are 422 field errors and change nothing); each change is audited with old and new value. In the notifications group, `rules` maps an event type (low_stock, approval_request, salary_due, ...) to {in_app, email, sms, days_before}'
+      summary: 'Update one group: tax, currency, invoice, receipt, payroll, notifications, system, attendance. In attendance, `restrict_clock_in` with `allowed_networks` (IPs or CIDRs) limits staff clock-in to those addresses (403 network_not_allowed). Every key is type- and range-checked (unknown keys, bad timezones and wrong types are 422 field errors and change nothing); each change is audited with old and new value. In the notifications group, `rules` maps an event type (low_stock, approval_request, salary_due, ...) to {in_app, email, sms, days_before}'
       tags:
         - Business and settings
       x-permission: settings.manage
@@ -18687,6 +18953,14 @@ paths:
                 items:
                   items:
                     properties:
+                      batch_no:
+                        description: Stock in only
+                        maxLength: 60
+                        type: string
+                      expiry_date:
+                        description: Stock in only
+                        format: date
+                        type: string
                       product_id:
                         format: uuid
                         type: string

@@ -1,4 +1,5 @@
-package org
+// Package upload checks uploaded files by their content before they are stored.
+package upload
 
 import (
 	"bytes"
@@ -19,8 +20,8 @@ var allowedTypes = map[string]bool{
 
 var imageTypes = map[string]bool{"image/png": true, "image/jpeg": true, "image/gif": true, "image/webp": true}
 
-// readUpload reads at most max bytes and returns them with the detected type.
-func readUpload(r io.Reader, max int64, imagesOnly bool) ([]byte, string, error) {
+// Read reads at most max bytes and returns them with the detected type.
+func Read(r io.Reader, max int64, imagesOnly bool) ([]byte, string, error) {
 	buf, err := io.ReadAll(io.LimitReader(r, max+1))
 	if err != nil {
 		return nil, "", err
@@ -52,4 +53,5 @@ func detect(buf []byte) string {
 	return mime
 }
 
-func reader(b []byte) io.Reader { return bytes.NewReader(b) }
+// Reader returns the bytes as a reader again, for the storage layer.
+func Reader(b []byte) io.Reader { return bytes.NewReader(b) }

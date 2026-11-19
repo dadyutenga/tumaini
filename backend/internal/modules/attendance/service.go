@@ -3,6 +3,7 @@ package attendance
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"strings"
 	"time"
 
@@ -107,6 +108,11 @@ func (s *Service) clock(ctx context.Context, p *auth.Principal, employeeID *uuid
 		}
 		if _, err := tx.Exec(ctx, `SELECT 1 FROM employees WHERE id=$1 FOR UPDATE`, e.ID); err != nil {
 			return err
+		}
+		if source == "self" {
+			if err := checkNetwork(ctx, tx, p.IP); err != nil {
+				return err
+			}
 		}
 		last, lastAt := lastEvent(ctx, tx, e.ID)
 		loc := s.loc(ctx, tx)
@@ -884,4 +890,27 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// checkNetwork enforces FR-ATT-12. It only applies when the Owner switched the restriction on
+// and listed at least one network, so a half-finished setting cannot lock everyone out.
+func checkNetwork(ctx context.Context, tx pgx.Tx, ip string) error {
+	if !setting.Bool(ctx, tx, "attendance.restrict_clock_in", false) {
+		return nil
+	}
+	allowed := setting.Strings(ctx, tx, "attendance.allowed_networks")
+	if len(allowed) == 0 {
+		return nil
+	}
+	addr := net.ParseIP(ip)
+	for _, entry := range allowed {
+		if _, n, err := net.ParseCIDR(entry); err == nil {
+			if addr != nil && n.Contains(addr) {
+				return nil
+			}
+		} else if a := net.ParseIP(entry); a != nil && addr != nil && a.Equal(addr) {
+			return nil
+		}
+	}
+	return httpx.Forbidden("network_not_allowed", "Clock in from the branch network. Ask your manager to clock you in if you are elsewhere.")
 }
