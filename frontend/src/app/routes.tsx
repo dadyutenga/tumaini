@@ -34,6 +34,9 @@ import {
   Files,
   ClipboardList,
   BellRing,
+  Bell,
+  DatabaseBackup,
+  History,
   Hammer,
 } from "lucide-react";
 
@@ -371,6 +374,13 @@ export const routes: AppRoute[] = [
     permission: ["approvals.view"],
   },
   {
+    path: "/notifications",
+    label: "Notifications",
+    icon: Bell,
+    component: lazy(() => import("@/pages/Notifications")),
+    navigation: true,
+  },
+  {
     path: "/team",
     group: "Administration",
     label: "Team and roles",
@@ -386,6 +396,22 @@ export const routes: AppRoute[] = [
     component: lazy(() => import("@/pages/Audit")),
     navigation: true,
     permission: ["audit.view"],
+  },
+  {
+    path: "/login-history",
+    label: "Login history",
+    icon: History,
+    component: lazy(() => import("@/pages/LoginHistory")),
+    navigation: true,
+    permission: ["login_history.view"],
+  },
+  {
+    path: "/backups",
+    label: "Backups",
+    icon: DatabaseBackup,
+    component: lazy(() => import("@/pages/Backups")),
+    navigation: true,
+    permission: ["backup.manage"],
   },
   {
     path: "/settings",

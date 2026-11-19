@@ -9350,6 +9350,32 @@ paths:
       tags:
         - Employees
       x-permission: any signed-in user
+  /me/login-history:
+    get:
+      operationId: get_me_login_history
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      type: object
+                    type: array
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+                type: object
+          description: OK
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      summary: Recent sign-in events for the signed-in user
+      tags:
+        - Auth
   /me/payments:
     get:
       operationId: get_me_payments
@@ -22535,6 +22561,33 @@ paths:
       tags:
         - Attendance
       x-permission: schedules.manage
+  /search:
+    get:
+      operationId: get_search
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: query
+          name: q
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      type: object
+                    type: array
+                type: object
+          description: OK
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      summary: Global search across products, customers, clients, projects, design jobs, sales and invoices
+      tags:
+        - Search
   /service-catalog:
     get:
       operationId: get_service_catalog
@@ -28503,6 +28556,7 @@ tags:
   - name: Reports
   - name: Returns
   - name: Sales
+  - name: Search
   - name: 'Services: Billing'
   - name: 'Services: Catalog'
   - name: 'Services: Clients'

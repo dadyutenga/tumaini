@@ -173,7 +173,13 @@ func (h *Handler) Export(c fiber.Ctx) error {
 	return httpx.OK(c, out, err)
 }
 
+func (h *Handler) Search(c fiber.Ctx) error {
+	hits, err := h.Svc.GlobalSearch(c.Context(), middleware.Principal(c), c.Query("q"))
+	return httpx.OK(c, hits, err)
+}
+
 func Register(r fiber.Router, h *Handler) {
+	r.Get("/search", h.Search)
 	r.Get("/approvals", middleware.Require("approvals.view"), h.List)
 	r.Get("/approvals/count", middleware.Require("approvals.view"), h.Count)
 	r.Get("/approvals/:id", middleware.Require("approvals.view"), h.Get)

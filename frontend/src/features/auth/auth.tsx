@@ -4,12 +4,24 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  type FormEvent,
   type ReactNode,
 } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { api, ApiError, get, refreshSession, session } from "@/lib/api";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type { Me } from "@/types";
 
 type Status = "loading" | "authed" | "anon";
@@ -28,6 +40,7 @@ export interface RegisterInput {
 interface SessionResult {
   access_token: string;
   branch_id: string;
+  must_change_password?: boolean;
 }
 
 interface Auth {
@@ -42,10 +55,13 @@ interface Auth {
   login: (input: Credentials) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
+  reloadMe: () => Promise<void>;
 }
 
 const Context = createContext<Auth | null>(null);
 const BRANCH_KEY = "bms-branch";
+const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+const WARN_BEFORE_MS = 60 * 1000;
 
 function storedBranch() {
   try {
@@ -60,6 +76,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<Status>("loading");
   const [me, setMe] = useState<Me | null>(null);
   const [branchId, setBranch] = useState<string | null>(storedBranch);
+  const [warnSeconds, setWarnSeconds] = useState<number | null>(null);
+  const lastActiveRef = useRef(Date.now());
 
   const loadMe = useCallback(
     async (defaultBranch?: string) => {
@@ -79,6 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     session.setToken(null);
     session.setBranch(null);
     setMe(null);
+    setWarnSeconds(null);
     setStatus("anon");
     queryClient.clear();
   }, [queryClient]);
@@ -112,6 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const enter = useCallback(
     async (result: SessionResult) => {
       session.setToken(result.access_token);
+      lastActiveRef.current = Date.now();
       await loadMe(result.branch_id);
     },
     [loadMe],
@@ -142,6 +162,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     clear();
   }, [clear]);
 
+  const reloadMe = useCallback(async () => {
+    await loadMe();
+  }, [loadMe]);
+
+  // SRS Section 4: auto sign out after 30 minutes of inactivity, with a warning 1 minute before.
+  useEffect(() => {
+    if (status !== "authed") return;
+    lastActiveRef.current = Date.now();
+    const touch = () => {
+      if (Date.now() - lastActiveRef.current < IDLE_TIMEOUT_MS - WARN_BEFORE_MS) {
+        lastActiveRef.current = Date.now();
+      }
+    };
+    const events: (keyof WindowEventMap)[] = ["pointerdown", "keydown", "scroll", "touchstart"];
+    for (const ev of events) window.addEventListener(ev, touch, { passive: true });
+    const timer = window.setInterval(() => {
+      const elapsed = Date.now() - lastActiveRef.current;
+      if (elapsed >= IDLE_TIMEOUT_MS) {
+        setWarnSeconds(null);
+        void logout();
+      } else if (elapsed >= IDLE_TIMEOUT_MS - WARN_BEFORE_MS) {
+        setWarnSeconds(Math.max(1, Math.ceil((IDLE_TIMEOUT_MS - elapsed) / 1000)));
+      } else {
+        setWarnSeconds(null);
+      }
+    }, 1000);
+    return () => {
+      for (const ev of events) window.removeEventListener(ev, touch);
+      window.clearInterval(timer);
+    };
+  }, [status, logout]);
+
   const setBranchId = useCallback(
     (id: string) => {
       session.setBranch(id);
@@ -170,16 +222,137 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       login,
       register,
       logout,
+      reloadMe,
     };
-  }, [status, me, branchId, setBranchId, login, register, logout]);
+  }, [status, me, branchId, setBranchId, login, register, logout, reloadMe]);
 
-  return <Context.Provider value={value}>{children}</Context.Provider>;
+  return (
+    <Context.Provider value={value}>
+      {children}
+      <Dialog open={warnSeconds !== null} onOpenChange={() => {}}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Session expiring soon</DialogTitle>
+            <DialogDescription>
+              You have been inactive for 29 minutes. You will be signed out in {warnSeconds ?? 60}{" "}
+              seconds. Any POS sale in progress is saved as a draft.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => void logout()}>
+              Sign out now
+            </Button>
+            <Button
+              onClick={() => {
+                lastActiveRef.current = Date.now();
+                setWarnSeconds(null);
+              }}
+            >
+              Stay signed in
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </Context.Provider>
+  );
 }
 
 export function useAuth() {
   const value = useContext(Context);
   if (!value) throw new Error("AuthProvider is missing");
   return value;
+}
+
+function FirstLoginPasswordScreen() {
+  const { user, reloadMe, logout } = useAuth();
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    if (newPassword !== confirm) {
+      setError("New passwords do not match.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api.put("/auth/password", {
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      await reloadMe();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not update password.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="grid min-h-screen place-items-center bg-background p-4">
+      <form
+        onSubmit={submit}
+        className="w-full max-w-md space-y-4 rounded-2xl border bg-card p-6 shadow-sm"
+      >
+        <div>
+          <h1 className="text-xl font-semibold">Change your temporary password</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Welcome, {user?.name}. Before continuing, choose a personal password of at least 8
+            characters.
+          </p>
+        </div>
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Temporary password *</label>
+          <Input
+            required
+            type="password"
+            autoComplete="current-password"
+            value={currentPassword}
+            onChange={(e) => setCurrentPassword(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-sm font-medium">New password *</label>
+          <Input
+            required
+            minLength={8}
+            type="password"
+            autoComplete="new-password"
+            value={newPassword}
+            onChange={(e) => setNewPassword(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-sm font-medium">Confirm new password *</label>
+          <Input
+            required
+            minLength={8}
+            type="password"
+            autoComplete="new-password"
+            value={confirm}
+            onChange={(e) => setConfirm(e.target.value)}
+          />
+        </div>
+        {error && (
+          <p role="alert" className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+            {error}
+          </p>
+        )}
+        <div className="flex items-center justify-between gap-2 pt-2">
+          <Button type="button" variant="ghost" onClick={() => void logout()}>
+            Sign out
+          </Button>
+          <Button type="submit" disabled={busy}>
+            {busy ? "Saving…" : "Update password"}
+          </Button>
+        </div>
+      </form>
+    </div>
+  );
 }
 
 export function ProtectedRoute({
@@ -189,7 +362,7 @@ export function ProtectedRoute({
   children: ReactNode;
   permission?: string | string[];
 }) {
-  const { status, can } = useAuth();
+  const { status, user, can } = useAuth();
   const location = useLocation();
   if (status === "loading")
     return (
@@ -199,6 +372,7 @@ export function ProtectedRoute({
     );
   if (status === "anon")
     return <Navigate to="/login" state={{ from: location.pathname }} replace />;
+  if (user?.must_change_password) return <FirstLoginPasswordScreen />;
   const needed =
     permission === undefined ? [] : Array.isArray(permission) ? permission : [permission];
   if (needed.length > 0 && !needed.some(can)) return <Navigate to="/403" replace />;

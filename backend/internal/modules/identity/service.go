@@ -53,12 +53,13 @@ func (s *Service) ccy() string {
 }
 
 type SessionResult struct {
-	AccessToken string    `json:"access_token"`
-	ExpiresIn   int       `json:"expires_in"`
-	Refresh     string    `json:"-"`
-	UserID      uuid.UUID `json:"user_id"`
-	BusinessID  uuid.UUID `json:"business_id"`
-	BranchID    uuid.UUID `json:"branch_id"`
+	AccessToken        string    `json:"access_token"`
+	ExpiresIn          int       `json:"expires_in"`
+	Refresh            string    `json:"-"`
+	UserID             uuid.UUID `json:"user_id"`
+	BusinessID         uuid.UUID `json:"business_id"`
+	BranchID           uuid.UUID `json:"branch_id"`
+	MustChangePassword bool      `json:"must_change_password"`
 }
 
 type RegisterInput struct {
@@ -377,7 +378,7 @@ func (s *Service) Login(ctx context.Context, identifier, password, ip, ua string
 		}
 		var branchID uuid.UUID
 		_ = tx.QueryRow(ctx, `SELECT branch_id FROM user_branches WHERE user_id = $1 AND is_default LIMIT 1`, u.ID).Scan(&branchID)
-		out = SessionResult{AccessToken: access, ExpiresIn: int(s.Auth.Access.Seconds()), Refresh: refresh, UserID: u.ID, BusinessID: u.BusinessID, BranchID: branchID}
+		out = SessionResult{AccessToken: access, ExpiresIn: int(s.Auth.Access.Seconds()), Refresh: refresh, UserID: u.ID, BusinessID: u.BusinessID, BranchID: branchID, MustChangePassword: u.MustChange}
 		// FR-NTF-08: tell the user when their account is used from a device it has not been used from before.
 		// The first sign-in ever is not "new"; there is nothing to compare it with.
 		var prior, same int

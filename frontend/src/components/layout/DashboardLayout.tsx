@@ -1,12 +1,13 @@
 import { APP_NAME } from "@/lib/constants";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, NavLink, Outlet, matchPath, useLocation } from "react-router-dom";
-import { Menu, PanelLeftClose } from "lucide-react";
-import { routes } from "@/app/routes";
+import { ChevronDown, ChevronRight, Menu, PanelLeftClose } from "lucide-react";
+import { routes, type AppRoute } from "@/app/routes";
 import { useVisibleRoutes } from "@/app/useVisibleRoutes";
 import { BranchSwitcher } from "@/components/layout/BranchSwitcher";
 import {
   NotificationBell,
+  QuickNewMenu,
   SearchPalette,
   ThemeToggle,
   UserMenu,
@@ -41,34 +42,65 @@ function Navigation({
   onNavigate?: () => void;
 }) {
   const visible = useVisibleRoutes().filter((route) => route.navigation);
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+
+  const sections = useMemo(() => {
+    const out: { name: string | null; items: AppRoute[] }[] = [];
+    let current: { name: string | null; items: AppRoute[] } = { name: null, items: [] };
+    for (const r of visible) {
+      if (r.group) {
+        if (current.items.length > 0) out.push(current);
+        current = { name: r.group, items: [r] };
+      } else {
+        current.items.push(r);
+      }
+    }
+    if (current.items.length > 0) out.push(current);
+    return out;
+  }, [visible]);
+
   return (
-    <nav aria-label="Main navigation" className="space-y-1">
-      {visible.map(({ path, label, icon: Icon, group }) => (
-        <div key={path}>
-          {group && !compact && (
-            <p className="mt-4 px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground/70">
-              {group}
-            </p>
-          )}
-          {group && compact && <div className="my-2 border-t" />}
-          <NavLink
-            end={path === "/"}
-            onClick={onNavigate}
-            to={path}
-            title={compact ? label : undefined}
-            className={({ isActive }) =>
-              `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition ${
-                isActive
-                  ? "bg-primary/15 text-primary"
-                  : "text-muted-foreground hover:bg-muted hover:text-foreground"
-              }`
-            }
-          >
-            <Icon size={19} />
-            {!compact && <span>{label}</span>}
-          </NavLink>
-        </div>
-      ))}
+    <nav aria-label="Main navigation" className="space-y-1 pb-6">
+      {sections.map((sec, idx) => {
+        const isCollapsed = sec.name ? Boolean(collapsed[sec.name]) : false;
+        return (
+          <div key={sec.name ?? `root-${idx}`}>
+            {sec.name && !compact && (
+              <button
+                type="button"
+                onClick={() =>
+                  setCollapsed((c) => ({ ...c, [sec.name!]: !c[sec.name!] }))
+                }
+                className="mt-4 flex w-full items-center justify-between px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground/80 hover:text-foreground"
+              >
+                <span>{sec.name}</span>
+                {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+              </button>
+            )}
+            {sec.name && compact && <div className="my-2 border-t" />}
+            {(!isCollapsed || compact) &&
+              sec.items.map(({ path, label, icon: Icon }) => (
+                <NavLink
+                  key={path}
+                  end={path === "/"}
+                  onClick={onNavigate}
+                  to={path}
+                  title={compact ? label : undefined}
+                  className={({ isActive }) =>
+                    `flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition ${
+                      isActive
+                        ? "bg-primary/15 text-primary"
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                    }`
+                  }
+                >
+                  <Icon size={18} className="shrink-0" />
+                  {!compact && <span className="truncate">{label}</span>}
+                </NavLink>
+              ))}
+          </div>
+        );
+      })}
     </nav>
   );
 }
@@ -79,10 +111,16 @@ export default function DashboardLayout() {
   const location = useLocation();
   const { t } = useI18n();
   const { can } = useAuth();
-  const business = useGet<{ currency: string }>("/business", undefined, {
+  const business = useGet<{ name?: string; currency: string }>("/business", undefined, {
     enabled: can("settings.view"),
   });
   setActiveCurrency(business.data?.currency);
+  const brand = business.data?.name || APP_NAME;
+  const initials = brand
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("") || APP_NAME;
 
   const currentRoute = routes.find((r) =>
     matchPath({ path: r.path, end: true }, location.pathname),
@@ -91,17 +129,17 @@ export default function DashboardLayout() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      {/* Desktop Collapsible Sidebar */}
+      {/* Desktop Collapsible Scrollable Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-20 hidden border-r bg-card p-4 transition-all md:block ${
+        className={`fixed inset-y-0 left-0 z-20 hidden overflow-y-auto border-r bg-card p-4 transition-all md:block ${
           compact ? "w-20" : "w-64"
         }`}
       >
-        <Link to="/" className="mb-8 flex h-10 items-center gap-3 px-2 font-bold">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary text-sm font-black text-primary-foreground">
-            {APP_NAME}
+        <Link to="/" className="mb-6 flex h-10 items-center gap-3 px-2 font-bold">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary text-xs font-black text-primary-foreground">
+            {initials}
           </span>
-          {!compact && <span className="text-base tracking-tight">{APP_NAME}</span>}
+          {!compact && <span className="truncate text-base tracking-tight">{brand}</span>}
         </Link>
         <Navigation compact={compact} />
       </aside>
@@ -121,8 +159,8 @@ export default function DashboardLayout() {
                 <Menu />
               </Button>
             </SheetTrigger>
-            <SheetContent side="left">
-              <SheetTitle className="mb-6">{APP_NAME}</SheetTitle>
+            <SheetContent side="left" className="overflow-y-auto">
+              <SheetTitle className="mb-4">{brand}</SheetTitle>
               <SheetDescription className="sr-only">Choose a page to navigate to.</SheetDescription>
               <Navigation onNavigate={() => setOpen(false)} />
             </SheetContent>
@@ -159,8 +197,9 @@ export default function DashboardLayout() {
 
           {/* Topbar Actions */}
           <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-            <BranchSwitcher />
             <SearchPalette />
+            <QuickNewMenu />
+            <BranchSwitcher />
             <LanguageSwitcher />
             <ThemeToggle />
             <NotificationBell />
@@ -172,8 +211,11 @@ export default function DashboardLayout() {
           <Outlet />
         </main>
 
-        <footer className="border-t px-8 py-6 text-xs text-muted-foreground">{APP_NAME}</footer>
+        <footer className="border-t px-8 py-6 text-xs text-muted-foreground">{brand}</footer>
       </div>
+
+      {/* Mobile Floating + New Button (SRS Section 3) */}
+      <QuickNewMenu floating />
     </div>
   );
 }

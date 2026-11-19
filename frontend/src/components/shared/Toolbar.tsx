@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { Bell, Search, SunMoon, UserRound } from "lucide-react";
+import { Bell, KeyRound, Plus, Search, SunMoon, UserRound } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useVisibleRoutes } from "@/app/useVisibleRoutes";
+import { useDebounce } from "@/hooks/useDebounce";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDateTime } from "@/lib/formatters";
 import { useAuth } from "@/features/auth/auth";
@@ -19,13 +20,42 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { cn } from "@/lib/utils";
+
+interface SearchHit {
+  kind: string;
+  id: string;
+  title: string;
+  subtitle: string;
+  link: string;
+}
+
+const KIND_LABELS: Record<string, string> = {
+  product: "Product",
+  customer: "Shop customer",
+  client: "Service client",
+  project: "Project",
+  design_job: "Design job",
+  sale: "Sale / receipt",
+  service_invoice: "Service invoice",
+};
+
 export function SearchPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const debounced = useDebounce(query.trim(), 220);
   const navigate = useNavigate();
   const routes = useVisibleRoutes();
+  const hits = useGet<SearchHit[]>(
+    "/search",
+    { q: debounced },
+    { enabled: open && debounced.length >= 2 },
+  );
+
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
@@ -36,64 +66,170 @@ export function SearchPalette() {
     window.addEventListener("keydown", listener);
     return () => window.removeEventListener("keydown", listener);
   }, []);
+
+  const matchedRoutes = routes
+    .filter((route) => route.navigation)
+    .filter((route) => !query.trim() || route.label.toLowerCase().includes(query.toLowerCase()));
+
+  const go = (to: string) => {
+    setOpen(false);
+    setQuery("");
+    navigate(to);
+  };
+
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button size="icon" variant="ghost" aria-label="Search pages">
-          <Search size={19} />
+        <Button variant="outline" size="sm" className="gap-2 text-muted-foreground" aria-label="Global search">
+          <Search size={16} />
+          <span className="hidden lg:inline">Search clients, products, invoices…</span>
+          <kbd className="hidden rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium xl:inline">
+            Ctrl K
+          </kbd>
         </Button>
       </DialogTrigger>
-      <DialogContent>
-        <DialogTitle>Search pages</DialogTitle>
+      <DialogContent className="sm:max-w-xl">
+        <DialogTitle>Global search</DialogTitle>
         <DialogDescription>
-          Find a page by name or press Control K to open search.
+          Find clients, customers, products, invoices, projects, receipts or pages.
         </DialogDescription>
         <Input
           autoFocus
-          aria-label="Search pages"
-          placeholder="Search pages…"
+          aria-label="Global search input"
+          placeholder="Type a name, phone, number, SKU or barcode…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <ul className="max-h-64 overflow-auto">
-          {routes
-            .filter((route) => route.navigation)
-            .filter((route) => route.label.toLowerCase().includes(query.toLowerCase()))
-            .map((route) => (
-              <li key={route.path}>
-                <button
-                  className="w-full rounded p-3 text-left hover:bg-muted focus-visible:bg-muted"
-                  onClick={() => {
-                    setOpen(false);
-                    setQuery("");
-                    navigate(route.path);
-                  }}
-                >
-                  {route.label}
-                </button>
-              </li>
-            ))}
-        </ul>
+        <div className="max-h-80 space-y-3 overflow-auto">
+          {debounced.length >= 2 && (
+            <div>
+              <p className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Records {hits.isFetching ? "…" : `(${hits.data?.length ?? 0})`}
+              </p>
+              {(hits.data ?? []).length === 0 && !hits.isFetching ? (
+                <p className="px-2 py-2 text-sm text-muted-foreground">No matching records.</p>
+              ) : (
+                <ul>
+                  {(hits.data ?? []).map((h) => (
+                    <li key={`${h.kind}-${h.id}`}>
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted focus-visible:bg-muted"
+                        onClick={() => go(h.link)}
+                      >
+                        <span className="min-w-0 truncate">
+                          <span className="font-medium">{h.title}</span>
+                          {h.subtitle && (
+                            <span className="ml-2 text-xs text-muted-foreground">{h.subtitle}</span>
+                          )}
+                        </span>
+                        <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                          {KIND_LABELS[h.kind] ?? h.kind}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+          {matchedRoutes.length > 0 && (
+            <div>
+              <p className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Pages
+              </p>
+              <ul>
+                {matchedRoutes.slice(0, 8).map((route) => (
+                  <li key={route.path}>
+                    <button
+                      type="button"
+                      className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted focus-visible:bg-muted"
+                      onClick={() => go(route.path)}
+                    >
+                      {route.label}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
       </DialogContent>
     </Dialog>
   );
 }
+
+export function QuickNewMenu({ floating = false }: { floating?: boolean }) {
+  const { can } = useAuth();
+  const navigate = useNavigate();
+  const actions = [
+    { label: "New sale (POS)", to: "/pos", show: can("sales.create") },
+    { label: "New client", to: "/clients", show: can("clients.manage") },
+    { label: "New project", to: "/projects", show: can("projects.manage") },
+    { label: "New design job", to: "/design-jobs", show: can("design.manage") },
+    { label: "Receive payment", to: "/service-invoices", show: can("service_billing.manage") },
+    { label: "Customer payment", to: "/customers", show: can("customers.view") },
+    { label: "New expense", to: "/expenses", show: can("expenses.create") },
+    { label: "New task", to: "/service-tasks", show: can("tasks.manage") },
+  ].filter((a) => a.show);
+
+  if (actions.length === 0) return null;
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        {floating ? (
+          <Button
+            size="lg"
+            className="fixed bottom-5 right-5 z-30 h-12 rounded-full px-5 shadow-lg md:hidden"
+            aria-label="Quick create menu"
+          >
+            <Plus size={18} /> New
+          </Button>
+        ) : (
+          <Button size="sm" className="hidden sm:inline-flex" aria-label="Quick create menu">
+            <Plus size={16} /> New
+          </Button>
+        )}
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuLabel>Quick actions</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {actions.map((a) => (
+          <DropdownMenuItem key={a.label} onSelect={() => navigate(a.to)}>
+            {a.label}
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 interface Notice {
   id: string;
   title?: string;
   body?: string;
   message?: string;
+  link?: string | null;
   is_read?: boolean;
   read_at?: string | null;
   created_at?: string;
 }
+
 export function NotificationBell() {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
   const { data } = useGet<Notice[]>("/notifications");
+  const markRead = useWrite<{ id: string }>("POST", (b) => `/notifications/${b.id}/read`, {
+    invalidate: ["/notifications"],
+    toBody: () => undefined,
+  });
   const readAll = useWrite("POST", "/notifications/read-all", { invalidate: ["/notifications"] });
   const items = data ?? [];
   const unread = items.filter((n) => !(n.is_read ?? Boolean(n.read_at))).length;
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           variant="ghost"
@@ -103,33 +239,59 @@ export function NotificationBell() {
         >
           <Bell size={19} />
           {unread > 0 && (
-            <span
-              className="absolute right-1 top-1 h-2 w-2 rounded-full bg-destructive"
-              aria-hidden="true"
-            />
+            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+              {unread > 99 ? "99+" : unread}
+            </span>
           )}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80">
-        <h2 className="font-semibold">Notifications</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">Notifications</h2>
+          <Link
+            to="/notifications"
+            onClick={() => setOpen(false)}
+            className="text-xs text-primary underline"
+          >
+            View all
+          </Link>
+        </div>
         {items.length === 0 ? (
           <p className="mt-2 text-sm text-muted-foreground">You are all caught up.</p>
         ) : (
           <ul className="mt-2 max-h-72 space-y-2 overflow-auto text-sm">
-            {items.slice(0, 20).map((n) => (
-              <li key={n.id} className="rounded-md border p-2">
-                <p className="font-medium">{n.title ?? n.message}</p>
-                {n.body && <p className="text-muted-foreground">{n.body}</p>}
-                <p className="mt-1 text-xs text-muted-foreground">{formatDateTime(n.created_at)}</p>
-              </li>
-            ))}
+            {items.slice(0, 15).map((n) => {
+              const read = n.is_read ?? Boolean(n.read_at);
+              return (
+                <li key={n.id}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!read) markRead.mutate({ id: n.id });
+                      setOpen(false);
+                      if (n.link) navigate(n.link);
+                    }}
+                    className={cn(
+                      "w-full rounded-md border p-2 text-left transition hover:bg-muted/60",
+                      !read && "border-primary/40 bg-primary/5",
+                    )}
+                  >
+                    <p className={read ? "font-normal" : "font-semibold"}>{n.title ?? n.message}</p>
+                    {n.body && <p className="line-clamp-2 text-muted-foreground">{n.body}</p>}
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {formatDateTime(n.created_at)}
+                    </p>
+                  </button>
+                </li>
+              );
+            })}
           </ul>
         )}
         {unread > 0 && (
           <Button
             variant="outline"
             size="sm"
-            className="mt-3"
+            className="mt-3 w-full"
             onClick={() => readAll.mutate(undefined)}
           >
             Mark all read
@@ -139,6 +301,7 @@ export function NotificationBell() {
     </Popover>
   );
 }
+
 export function ThemeToggle() {
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") ?? "system");
   useEffect(() => {
@@ -163,20 +326,39 @@ export function ThemeToggle() {
     </Button>
   );
 }
+
 export function UserMenu() {
-  const { user, logout } = useAuth();
+  const { user, me, logout } = useAuth();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" aria-label="Open user menu">
+        <Button variant="ghost" aria-label="Open user menu" className="gap-2">
           <UserRound size={19} />
-          <span className="hidden sm:inline">{user?.name}</span>
+          <span className="hidden text-left sm:inline">
+            <span className="block text-sm leading-tight">{user?.name}</span>
+            <span className="block text-[10px] leading-tight text-muted-foreground">
+              {me?.is_owner ? "Owner" : user?.role_name}
+            </span>
+          </span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
+      <DropdownMenuContent align="end" className="w-48">
+        <DropdownMenuLabel>
+          <p className="truncate font-medium">{user?.name}</p>
+          <p className="text-xs font-normal text-muted-foreground">
+            {me?.is_owner ? "Owner / Admin" : user?.role_name}
+          </p>
+        </DropdownMenuLabel>
+        <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to="/profile">My account</Link>
+          <Link to="/profile">My profile</Link>
         </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link to="/profile#password">
+            <KeyRound size={14} className="mr-1.5" /> Change password
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
         <DropdownMenuItem onSelect={() => void logout()}>Sign out</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

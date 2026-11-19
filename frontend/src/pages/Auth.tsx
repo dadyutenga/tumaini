@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Eye, EyeOff } from "lucide-react";
 import { AuthLayout } from "@/components/layout/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,14 +15,32 @@ export default function AuthPage({ mode }: { mode: string }) {
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from ?? "/";
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(() => {
+    try {
+      return localStorage.getItem("bms-remember") === "1";
+    } catch {
+      return false;
+    }
+  });
   const [error, setError] = useState<ApiError | null>(null);
-  const [form, setForm] = useState({
-    identifier: "",
-    password: "",
-    business_name: "",
-    owner_name: "",
-    phone: "",
-    email: "",
+  const [form, setForm] = useState(() => {
+    let savedId = "";
+    try {
+      if (localStorage.getItem("bms-remember") === "1") {
+        savedId = localStorage.getItem("bms-saved-identifier") ?? "";
+      }
+    } catch {
+      /* ignore */
+    }
+    return {
+      identifier: savedId,
+      password: "",
+      business_name: "",
+      owner_name: "",
+      phone: "",
+      email: "",
+    };
   });
   const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
@@ -43,6 +62,17 @@ export default function AuthPage({ mode }: { mode: string }) {
         });
       } else {
         await login({ identifier: form.identifier, password: form.password });
+        try {
+          if (remember) {
+            localStorage.setItem("bms-remember", "1");
+            localStorage.setItem("bms-saved-identifier", form.identifier);
+          } else {
+            localStorage.removeItem("bms-remember");
+            localStorage.removeItem("bms-saved-identifier");
+          }
+        } catch {
+          /* ignore */
+        }
       }
       navigate(from, { replace: true });
     } catch (err) {
@@ -107,21 +137,40 @@ export default function AuthPage({ mode }: { mode: string }) {
           </Field>
         )}
         <Field label="Password" error={error?.fields.password}>
-          <Input
-            required
-            type="password"
-            minLength={isRegister ? 8 : undefined}
-            value={form.password}
-            onChange={set("password")}
-            autoComplete={isRegister ? "new-password" : "current-password"}
-          />
+          <div className="relative">
+            <Input
+              required
+              type={showPassword ? "text" : "password"}
+              minLength={isRegister ? 8 : undefined}
+              value={form.password}
+              onChange={set("password")}
+              autoComplete={isRegister ? "new-password" : "current-password"}
+              className="pr-10"
+            />
+            <button
+              type="button"
+              aria-label={showPassword ? "Hide password" : "Show password"}
+              onClick={() => setShowPassword((s) => !s)}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
         </Field>
         {!isRegister && (
-          <p className="text-right text-sm">
+          <div className="flex items-center justify-between text-sm">
+            <label className="flex items-center gap-2 text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(e) => setRemember(e.target.checked)}
+              />
+              Remember me
+            </label>
             <Link className="text-primary underline" to="/forgot-password">
               Forgot password?
             </Link>
-          </p>
+          </div>
         )}
         {error && (
           <p role="alert" className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">

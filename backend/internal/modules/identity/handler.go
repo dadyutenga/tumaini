@@ -290,6 +290,17 @@ func (h *Handler) Permissions(c fiber.Ctx) error {
 	return c.JSON(httpx.Data(list))
 }
 
+func (h *Handler) MyLoginHistory(c fiber.Ctx) error {
+	p := middleware.Principal(c)
+	page := httpx.PageFrom(c)
+	uid := p.UserID
+	list, total, err := h.Svc.LoginHistory(c.Context(), p, &uid, "", "", page)
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"data": list, "meta": httpx.Meta{Page: page.Page, PerPage: page.PerPage, Total: total}})
+}
+
 func (h *Handler) ListRoles(c fiber.Ctx) error {
 	list, err := h.Svc.ListRoles(c.Context(), middleware.Principal(c))
 	if err != nil {
@@ -364,6 +375,7 @@ func Register(r fiber.Router, h *Handler) {
 	r.Put("/me", h.UpdateMe)
 	r.Get("/me/sessions", h.Sessions)
 	r.Delete("/me/sessions/:id", h.EndSession)
+	r.Get("/me/login-history", h.MyLoginHistory)
 	r.Get("/users", middleware.Require("users.view"), h.ListUsers)
 	r.Post("/users", middleware.Require("users.manage"), h.CreateUser)
 	r.Get("/users/:id", middleware.Require("users.view"), h.GetUser)
