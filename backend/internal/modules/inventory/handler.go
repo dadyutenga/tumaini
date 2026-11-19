@@ -15,13 +15,7 @@ func (h *Handler) PostEntry(c fiber.Ctx) error {
 		return err
 	}
 	p := middleware.Principal(c)
-	// stock.in and stock.out are separate keys; the route accepts either and
-	// the direction decides which one is required.
-	key := "stock.in"
-	if body.Direction == "out" {
-		key = "stock.out"
-	}
-	if _, ok := p.Can(key); !ok {
+	if !p.Has("shop.stock.manage") {
 		return httpx.Forbidden("permission_denied", "You do not have permission to do that")
 	}
 	status, raw, err := h.Svc.PostEntry(c.Context(), p, body)
