@@ -99,7 +99,7 @@ func (h *Handler) Mark(c fiber.Ctx) error {
 	var in struct {
 		EmployeeID uuid.UUID `json:"employee_id" validate:"required"`
 		Day        string    `json:"day" validate:"required,date"`
-		Status     string    `json:"status" validate:"required,oneof=present late absent half_day leave holiday day_off"`
+		Status     string    `json:"status" validate:"required,oneof=present late absent half_day on_leave leave holiday day_off"`
 		Note       string    `json:"note"`
 	}
 	if err := httpx.Bind(c, &in); err != nil {
@@ -185,21 +185,23 @@ func (h *Handler) DeleteHoliday(c fiber.Ctx) error {
 
 func Register(r fiber.Router, h *Handler) {
 	req := middleware.Require
-	r.Post("/attendance/clock-in", req("attendance.clock"), h.ClockIn)
-	r.Post("/attendance/clock-out", req("attendance.clock"), h.ClockOut)
-	r.Get("/attendance/today", req("attendance.view"), h.Today)
-	r.Get("/attendance/days", req("attendance.view"), h.list(nil))
-	r.Post("/attendance/days", req("attendance.edit"), h.Mark)
-	r.Put("/attendance/days/:id", req("attendance.edit"), h.PutDay)
-	r.Post("/attendance/events", req("attendance.edit"), h.AddEvent)
-	r.Get("/attendance/late", req("attendance.view"), h.list(func(f *DayFilter) { f.LateOnly = true }))
-	r.Get("/attendance/overtime", req("attendance.view"), h.list(func(f *DayFilter) { f.OTOnly = true }))
-	r.Post("/attendance/overtime/:day_id/approve", req("overtime.approve"), h.decideOvertime(true))
-	r.Post("/attendance/overtime/:day_id/reject", req("overtime.approve"), h.decideOvertime(false))
-	r.Get("/attendance/summary", req("attendance.view"), h.Summary)
-	r.Get("/schedules", req("schedules.manage"), h.Schedules)
-	r.Put("/schedules", req("schedules.manage"), h.PutSchedule)
-	r.Get("/holidays", req("schedules.manage"), h.Holidays)
-	r.Post("/holidays", req("schedules.manage"), h.CreateHoliday)
-	r.Delete("/holidays/:id", req("schedules.manage"), h.DeleteHoliday)
+	// Every signed-in employee can clock themselves in/out and view their own attendance;
+	// clocking or editing others requires hr.attendance.manage.
+	r.Post("/attendance/clock-in", h.ClockIn)
+	r.Post("/attendance/clock-out", h.ClockOut)
+	r.Get("/attendance/today", h.Today)
+	r.Get("/attendance/days", h.list(nil))
+	r.Post("/attendance/days", req("hr.attendance.manage"), h.Mark)
+	r.Put("/attendance/days/:id", req("hr.attendance.manage"), h.PutDay)
+	r.Post("/attendance/events", req("hr.attendance.manage"), h.AddEvent)
+	r.Get("/attendance/late", h.list(func(f *DayFilter) { f.LateOnly = true }))
+	r.Get("/attendance/overtime", h.list(func(f *DayFilter) { f.OTOnly = true }))
+	r.Post("/attendance/overtime/:day_id/approve", req("hr.attendance.manage"), h.decideOvertime(true))
+	r.Post("/attendance/overtime/:day_id/reject", req("hr.attendance.manage"), h.decideOvertime(false))
+	r.Get("/attendance/summary", h.Summary)
+	r.Get("/schedules", req("hr.attendance.manage"), h.Schedules)
+	r.Put("/schedules", req("hr.attendance.manage"), h.PutSchedule)
+	r.Get("/holidays", req("hr.attendance.manage"), h.Holidays)
+	r.Post("/holidays", req("hr.attendance.manage"), h.CreateHoliday)
+	r.Delete("/holidays/:id", req("hr.attendance.manage"), h.DeleteHoliday)
 }
