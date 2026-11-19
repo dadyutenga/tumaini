@@ -42,6 +42,7 @@ function Navigation({
   onNavigate?: () => void;
 }) {
   const visible = useVisibleRoutes().filter((route) => route.navigation);
+  const { groupLabel, routeLabel } = useI18n();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const sections = useMemo(() => {
@@ -73,31 +74,34 @@ function Navigation({
                 }
                 className="mt-4 flex w-full items-center justify-between px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground/80 hover:text-foreground"
               >
-                <span>{sec.name}</span>
+                <span>{groupLabel(sec.name)}</span>
                 {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
               </button>
             )}
             {sec.name && compact && <div className="my-2 border-t" />}
             {(!isCollapsed || compact) &&
-              sec.items.map(({ path, label, icon: Icon }) => (
-                <NavLink
-                  key={path}
-                  end={path === "/"}
-                  onClick={onNavigate}
-                  to={path}
-                  title={compact ? label : undefined}
-                  className={({ isActive }) =>
-                    `flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition ${
-                      isActive
-                        ? "bg-primary/15 text-primary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                    }`
-                  }
-                >
-                  <Icon size={18} className="shrink-0" />
-                  {!compact && <span className="truncate">{label}</span>}
-                </NavLink>
-              ))}
+              sec.items.map(({ path, label, icon: Icon }) => {
+                const display = routeLabel(path, label);
+                return (
+                  <NavLink
+                    key={path}
+                    end={path === "/"}
+                    onClick={onNavigate}
+                    to={path}
+                    title={compact ? display : undefined}
+                    className={({ isActive }) =>
+                      `flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition ${
+                        isActive
+                          ? "bg-primary/15 text-primary"
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                      }`
+                    }
+                  >
+                    <Icon size={18} className="shrink-0" />
+                    {!compact && <span className="truncate">{display}</span>}
+                  </NavLink>
+                );
+              })}
           </div>
         );
       })}
@@ -109,7 +113,7 @@ export default function DashboardLayout() {
   const [compact, setCompact] = useState(false);
   const [open, setOpen] = useState(false);
   const location = useLocation();
-  const { t } = useI18n();
+  const { t, routeLabel } = useI18n();
   const { can } = useAuth();
   const business = useGet<{ name?: string; currency: string }>("/business", undefined, {
     enabled: can("settings.view"),
@@ -125,7 +129,7 @@ export default function DashboardLayout() {
   const currentRoute = routes.find((r) =>
     matchPath({ path: r.path, end: true }, location.pathname),
   );
-  const title = currentRoute?.label ?? "Page";
+  const title = currentRoute ? routeLabel(currentRoute.path, currentRoute.label) : "Page";
 
   return (
     <div className="min-h-screen bg-background text-foreground">

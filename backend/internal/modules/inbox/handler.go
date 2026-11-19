@@ -113,6 +113,19 @@ func (h *Handler) ReadAll(c fiber.Ctx) error {
 	return httpx.OK(c, fiber.Map{"marked": n}, err)
 }
 
+func (h *Handler) TestNotification(c fiber.Ctx) error {
+	var body struct {
+		Channel   string `json:"channel"`
+		Recipient string `json:"recipient"`
+		Message   string `json:"message"`
+	}
+	if err := httpx.BindOptional(c, &body); err != nil {
+		return err
+	}
+	out, err := h.Svc.SendTestNotification(c.Context(), middleware.Principal(c), body.Channel, body.Recipient, body.Message)
+	return httpx.OK(c, out, err)
+}
+
 func (h *Handler) Audit(c fiber.Ctx) error {
 	f := AuditFilter{Action: c.Query("action"), EntityType: c.Query("entity_type")}
 	var err error
@@ -192,6 +205,7 @@ func Register(r fiber.Router, h *Handler) {
 	r.Get("/notifications", h.Notifications)
 	r.Get("/notifications/unread-count", h.UnreadCount)
 	r.Post("/notifications/read-all", h.ReadAll)
+	r.Post("/notifications/test", middleware.Require("settings.manage"), h.TestNotification)
 	r.Post("/notifications/:id/read", h.MarkRead)
 	r.Get("/audit-logs", middleware.Require("audit.view"), h.Audit)
 	r.Get("/audit-logs/entity/:type/:id", middleware.Require("audit.view"), h.AuditEntity)

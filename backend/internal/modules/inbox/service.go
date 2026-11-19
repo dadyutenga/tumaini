@@ -427,6 +427,38 @@ func (s *Service) ReadAll(ctx context.Context, p *auth.Principal) (int64, error)
 	return n, err
 }
 
+func (s *Service) SendTestNotification(ctx context.Context, p *auth.Principal, channel, recipient, message string) (map[string]any, error) {
+	channel = strings.TrimSpace(strings.ToLower(channel))
+	if channel == "" {
+		channel = "in_app"
+	}
+	switch channel {
+	case "in_app", "email", "sms":
+	default:
+		return nil, httpx.BadRequest("invalid_body", "channel must be in_app, email, or sms")
+	}
+	msg := strings.TrimSpace(message)
+	if msg == "" {
+		msg = "This is a test notification from your business settings."
+	}
+	id := ids.New()
+	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO notifications (id, business_id, user_id, type, title, body, link, in_app, created_at)
+			VALUES ($1,$2,$3,'system_test',$4,$5,'/settings',true,$6)
+		`, id, p.BusinessID, p.UserID, "Test notification ("+channel+")", msg, s.Clock.Now()); err != nil {
+			return err
+		}
+		return s.Audit.Record(ctx, tx, p, "notification.test_sent", "notification", id, nil, map[string]any{
+			"channel": channel, "recipient": strings.TrimSpace(recipient),
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"id": id, "channel": channel, "recipient": strings.TrimSpace(recipient), "message": msg, "ok": true}, nil
+}
+
 // ---------- audit ----------
 
 type AuditFilter struct {

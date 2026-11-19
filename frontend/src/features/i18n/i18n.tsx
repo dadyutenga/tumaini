@@ -11,6 +11,8 @@ export interface Translations {
     example: string;
     home: string;
   };
+  groups: Record<string, string>;
+  routes: Record<string, string>;
   actions: {
     signIn: string;
     signOut: string;
@@ -26,6 +28,8 @@ export interface Translations {
     print: string;
     previous: string;
     next: string;
+    newQuick: string;
+    globalSearchPlaceholder: string;
   };
   dashboard: {
     tagline: string;
@@ -64,10 +68,61 @@ const dictionaries: Record<Locale, Translations> = {
       overview: "Overview",
       records: "Records",
       reports: "Reports",
-      profile: "Profile",
+      profile: "My account",
       settings: "Settings",
       example: "Example page",
       home: "Home",
+    },
+    groups: {
+      Shop: "Shop",
+      Services: "Services",
+      Finance: "Finance",
+      Staff: "Staff",
+      Insights: "Insights",
+      Administration: "Administration",
+      Personal: "Personal",
+    },
+    routes: {
+      "/": "Overview",
+      "/pos": "Point of sale",
+      "/sales": "Sales",
+      "/quotations": "Quotations",
+      "/products": "Products",
+      "/stock": "Stock",
+      "/purchasing": "Purchasing",
+      "/stock-ops": "Transfers and counts",
+      "/customers": "Customers",
+      "/services": "Services",
+      "/clients": "Clients and leads",
+      "/projects": "Projects",
+      "/service-catalog": "Service catalog",
+      "/service-quotations": "Service quotations",
+      "/service-invoices": "Service invoices",
+      "/design-jobs": "Design jobs",
+      "/client-documents": "Client documents",
+      "/service-tasks": "Tasks and calendar",
+      "/renewals": "Renewals",
+      "/contractors": "Contractors",
+      "/money": "Money",
+      "/debts": "Debts",
+      "/day-closing": "Day closing",
+      "/expenses": "Expenses",
+      "/expense-setup": "Expense setup",
+      "/people": "People",
+      "/attendance": "Attendance",
+      "/hr-setup": "HR setup",
+      "/payroll": "Payroll",
+      "/payroll-setup": "Payroll setup",
+      "/reports": "Reports",
+      "/approvals": "Approvals",
+      "/notifications": "Notifications",
+      "/team": "Team and roles",
+      "/audit": "Activity log",
+      "/login-history": "Login history",
+      "/backups": "Backups",
+      "/settings": "Settings",
+      "/my-work": "My work",
+      "/profile": "My account",
     },
     actions: {
       signIn: "Sign in",
@@ -84,11 +139,13 @@ const dictionaries: Record<Locale, Translations> = {
       print: "Print",
       previous: "Previous",
       next: "Next",
+      newQuick: "New",
+      globalSearchPlaceholder: "Search clients, products, invoices…",
     },
     dashboard: {
-      tagline: "WORKSPACE OVERVIEW",
+      tagline: "BUSINESS OVERVIEW",
       title: "Welcome to your dashboard",
-      subtitle: "A starting point for your next project. All values shown are mock data.",
+      subtitle: "Track Shop sales, Services projects, cash flow and team tasks in one place.",
       totalRecords: "Total records",
       activity: "Activity",
       completed: "Completed",
@@ -101,13 +158,13 @@ const dictionaries: Record<Locale, Translations> = {
       createAccount: "Create an account",
       forgotPassword: "Forgot password",
       resetPassword: "Reset password",
-      emailLabel: "Email",
+      emailLabel: "Email or phone",
       passwordLabel: "Password",
-      demoNotice: "This is a local demo; no account or backend is connected.",
+      demoNotice: "Sign in with your business account.",
     },
     settings: {
       title: "Settings",
-      subtitle: "Manage your preferences and workspace configuration.",
+      subtitle: "Business profile, branches, finance, documents, notifications and system options.",
       account: "Account",
       appearance: "Appearance",
       notifications: "Notifications",
@@ -120,15 +177,66 @@ const dictionaries: Record<Locale, Translations> = {
       overview: "Muhtasari",
       records: "Kumbukumbu",
       reports: "Ripoti",
-      profile: "Wasifu",
+      profile: "Akaunti yangu",
       settings: "Mipangilio",
       example: "Ukurasa wa mfano",
       home: "Mwanzo",
     },
+    groups: {
+      Shop: "Duka",
+      Services: "Huduma",
+      Finance: "Fedha",
+      Staff: "Wafanyakazi",
+      Insights: "Takwimu",
+      Administration: "Utawala",
+      Personal: "Binafsi",
+    },
+    routes: {
+      "/": "Muhtasari",
+      "/pos": "Kuuza (POS)",
+      "/sales": "Mauzo",
+      "/quotations": "Nukuu za bei",
+      "/products": "Bidhaa",
+      "/stock": "Stoo",
+      "/purchasing": "Manunuzi",
+      "/stock-ops": "Uhamisho na hesabu",
+      "/customers": "Wateja wa duka",
+      "/services": "Huduma",
+      "/clients": "Wateja wa huduma",
+      "/projects": "Miradi",
+      "/service-catalog": "Orodha ya huduma",
+      "/service-quotations": "Nukuu za huduma",
+      "/service-invoices": "Ankara za huduma",
+      "/design-jobs": "Kazi za ubunifu",
+      "/client-documents": "Nyaraka za wateja",
+      "/service-tasks": "Kazi na kalenda",
+      "/renewals": "Mahuisho",
+      "/contractors": "Watoa huduma",
+      "/money": "Fedha na akaunti",
+      "/debts": "Madeni",
+      "/day-closing": "Kufunga siku",
+      "/expenses": "Matumizi",
+      "/expense-setup": "Mipangilio ya matumizi",
+      "/people": "Wafanyakazi",
+      "/attendance": "Mahudhurio",
+      "/hr-setup": "Mipangilio ya HR",
+      "/payroll": "Mishahara",
+      "/payroll-setup": "Mipangilio ya mishahara",
+      "/reports": "Ripoti",
+      "/approvals": "Idhini",
+      "/notifications": "Arifa",
+      "/team": "Timu na ruhusa",
+      "/audit": "Kumbukumbu ya matukio",
+      "/login-history": "Historia ya kuingia",
+      "/backups": "Nakala za akiba",
+      "/settings": "Mipangilio",
+      "/my-work": "Kazi zangu",
+      "/profile": "Akaunti yangu",
+    },
     actions: {
       signIn: "Ingia",
       signOut: "Toka",
-      register: "Jiandikishe",
+      register: "Jisajili",
       save: "Hifadhi",
       cancel: "Ghairi",
       edit: "Hariri",
@@ -140,11 +248,13 @@ const dictionaries: Record<Locale, Translations> = {
       print: "Chapa",
       previous: "Iliyotangulia",
       next: "Inayofuata",
+      newQuick: "Mpya",
+      globalSearchPlaceholder: "Tafuta wateja, bidhaa, ankara…",
     },
     dashboard: {
-      tagline: "MUHTASARI WA ENEO-KAZI",
+      tagline: "MUHTASARI WA BIASHARA",
       title: "Karibu kwenye dashibodi yako",
-      subtitle: "Mahali pa kuanzia mradi wako mpya. Nambari zote ni data ya mfano.",
+      subtitle: "Fuatilia mauzo ya duka, miradi ya huduma, fedha na kazi za timu sehemu moja.",
       totalRecords: "Jumla ya rekodi",
       activity: "Shughuli",
       completed: "Zimekamilika",
@@ -157,13 +267,13 @@ const dictionaries: Record<Locale, Translations> = {
       createAccount: "Fungua akaunti mpya",
       forgotPassword: "Umesahau nenosiri",
       resetPassword: "Weka nenosiri upya",
-      emailLabel: "Barua pepe",
+      emailLabel: "Barua pepe au simu",
       passwordLabel: "Nenosiri",
-      demoNotice: "Huu ni mfano wa ndani; hakuna seva iliyounganishwa.",
+      demoNotice: "Ingia kwa akaunti yako ya biashara.",
     },
     settings: {
       title: "Mipangilio",
-      subtitle: "Simamia mapendeleo yako na usanidi wa eneo-kazi.",
+      subtitle: "Taarifa za biashara, matawi, fedha, nyaraka, arifa na mipangilio ya mfumo.",
       account: "Akaunti",
       appearance: "Muonekano",
       notifications: "Arifa",
@@ -177,12 +287,20 @@ interface I18nContextType {
   locale: Locale;
   setLocale: (locale: Locale) => void;
   t: Translations;
+  routeLabel: (path: string, fallback: string) => string;
+  groupLabel: (group: string) => string;
 }
+
+const makeHelpers = (locale: Locale) => ({
+  routeLabel: (path: string, fallback: string) => dictionaries[locale].routes[path] ?? fallback,
+  groupLabel: (group: string) => dictionaries[locale].groups[group] ?? group,
+});
 
 const defaultI18nValue: I18nContextType = {
   locale: "en",
   setLocale: () => {},
   t: dictionaries.en,
+  ...makeHelpers("en"),
 };
 
 const I18nContext = createContext<I18nContextType | null>(null);
@@ -212,8 +330,10 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     }
   }, [locale]);
 
+  const helpers = makeHelpers(locale);
+
   return (
-    <I18nContext.Provider value={{ locale, setLocale, t: dictionaries[locale] }}>
+    <I18nContext.Provider value={{ locale, setLocale, t: dictionaries[locale], ...helpers }}>
       {children}
     </I18nContext.Provider>
   );

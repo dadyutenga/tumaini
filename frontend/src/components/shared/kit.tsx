@@ -1,5 +1,12 @@
-import { forwardRef, type ComponentProps, type ReactNode } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  forwardRef,
+  useEffect,
+  useMemo,
+  useState,
+  type ComponentProps,
+  type ReactNode,
+} from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -129,6 +136,8 @@ export interface Col<T> {
   cell: (row: T) => ReactNode;
   className?: string;
   align?: "right";
+  /** Optional value extractor to enable click-to-sort on this column header. */
+  sortValue?: (row: T) => string | number | null | undefined;
 }
 
 export function DataGrid<T>({
@@ -138,6 +147,7 @@ export function DataGrid<T>({
   empty = "Nothing here yet",
   onRowClick,
   rowKey,
+  totals,
 }: {
   rows: T[] | undefined;
   columns: Col<T>[];
@@ -145,25 +155,76 @@ export function DataGrid<T>({
   empty?: string;
   onRowClick?: (row: T) => void;
   rowKey: (row: T) => string;
+  /** Optional footer cells aligned 1:1 with columns to show a bold totals row. */
+  totals?: ReactNode[];
 }) {
+  const [sort, setSort] = useState<{ header: string; dir: "asc" | "desc" } | null>(null);
+
+  const sortedRows = useMemo(() => {
+    if (!rows || !sort) return rows;
+    const col = columns.find((c) => c.header === sort.header);
+    if (!col?.sortValue) return rows;
+    const fn = col.sortValue;
+    return [...rows].sort((a, b) => {
+      const va = fn(a) ?? "";
+      const vb = fn(b) ?? "";
+      const cmp =
+        typeof va === "number" && typeof vb === "number"
+          ? va - vb
+          : String(va).localeCompare(String(vb), undefined, { numeric: true });
+      return sort.dir === "asc" ? cmp : -cmp;
+    });
+  }, [rows, columns, sort]);
+
   if (loading && !rows) return <PageLoader />;
   return (
     <div className="overflow-x-auto rounded-2xl border bg-card">
       <Table>
         <TableHeader>
           <TableRow>
-            {columns.map((c) => (
-              <TableHead
-                key={c.header}
-                className={cn(c.align === "right" && "text-right", c.className)}
-              >
-                {c.header}
-              </TableHead>
-            ))}
+            {columns.map((c) => {
+              const active = sort?.header === c.header;
+              return (
+                <TableHead
+                  key={c.header}
+                  className={cn(c.align === "right" && "text-right", c.className)}
+                >
+                  {c.sortValue ? (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSort((prev) =>
+                          prev?.header === c.header
+                            ? { header: c.header, dir: prev.dir === "asc" ? "desc" : "asc" }
+                            : { header: c.header, dir: "asc" },
+                        )
+                      }
+                      className={cn(
+                        "inline-flex items-center gap-1 hover:text-foreground",
+                        c.align === "right" && "ml-auto",
+                      )}
+                    >
+                      <span>{c.header}</span>
+                      {active ? (
+                        sort.dir === "asc" ? (
+                          <ArrowUp size={12} />
+                        ) : (
+                          <ArrowDown size={12} />
+                        )
+                      ) : (
+                        <ArrowUpDown size={12} className="opacity-40" />
+                      )}
+                    </button>
+                  ) : (
+                    c.header
+                  )}
+                </TableHead>
+              );
+            })}
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows?.map((row) => (
+          {sortedRows?.map((row) => (
             <TableRow
               key={rowKey(row)}
               className={onRowClick ? "cursor-pointer" : undefined}
@@ -180,10 +241,37 @@ export function DataGrid<T>({
             </TableRow>
           ))}
         </TableBody>
+        {totals && sortedRows && sortedRows.length > 0 && (
+          <tfoot className="border-t bg-muted/40 font-semibold">
+            <TableRow>
+              {columns.map((c, idx) => (
+                <TableCell
+                  key={c.header || idx}
+                  className={cn(c.align === "right" && "text-right tabular-nums", c.className)}
+                >
+                  {totals[idx] ?? ""}
+                </TableCell>
+              ))}
+            </TableRow>
+          </tfoot>
+        )}
       </Table>
       {rows?.length === 0 && <EmptyState title={empty} />}
     </div>
   );
+}
+
+/** Warn the user before leaving/closing the tab when a form has unsaved edits. */
+export function useUnsavedChanges(dirty: boolean) {
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
 }
 
 export function Pager({ meta, onPage }: { meta?: Meta; onPage: (page: number) => void }) {

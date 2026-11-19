@@ -161,9 +161,14 @@ var settingsSpec = map[string]map[string]check{
 	"system": {
 		"timezone": timezone, "date_format": text(30), "language": oneOf("en", "sw"), "allow_negative_stock": isBool,
 		"business_day_start": pattern(clockTime, "must be a time such as 00:00 or 04:30"), "session_timeout_minutes": whole(5, 1440),
-		"till_difference_threshold": number(0, 1e12),
+		"till_difference_threshold": number(0, 1e12), "default_low_stock": whole(0, 100000),
 	},
-	"notifications": {"supplier_due_days": whole(0, 90), "salary_due_days": whole(0, 30)},
+	"sales": {"discount_limit_percent": number(0, 100)},
+	"notifications": {
+		"supplier_due_days": whole(0, 90), "salary_due_days": whole(0, 30),
+		"sms_template_receipt": text(500), "sms_template_debt": text(500),
+		"sms_template_renewal": text(500), "whatsapp_template_update": text(500),
+	},
 }
 
 // NotificationTypes are the events whose channels the Owner can configure (FR-SET-08).

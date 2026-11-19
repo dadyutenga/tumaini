@@ -647,3 +647,33 @@ paths:
                       type: object
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /notifications/test:
+    post:
+      tags: [Notifications]
+      summary: Send a test notification (in-app, email, or SMS)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel: { type: string }
+                recipient: { type: string }
+                message: { type: string }
+      responses:
+        '200':
+          description: Test notification recorded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'

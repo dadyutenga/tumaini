@@ -6,6 +6,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDateTime } from "@/lib/formatters";
 import { useAuth } from "@/features/auth/auth";
+import { useI18n } from "@/features/i18n/i18n";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -45,6 +46,7 @@ const KIND_LABELS: Record<string, string> = {
 };
 
 export function SearchPalette() {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const debounced = useDebounce(query.trim(), 220);
@@ -82,7 +84,7 @@ export function SearchPalette() {
       <DialogTrigger asChild>
         <Button variant="outline" size="sm" className="gap-2 text-muted-foreground" aria-label="Global search">
           <Search size={16} />
-          <span className="hidden lg:inline">Search clients, products, invoices…</span>
+          <span className="hidden lg:inline">{t.actions.globalSearchPlaceholder}</span>
           <kbd className="hidden rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium xl:inline">
             Ctrl K
           </kbd>
@@ -329,6 +331,7 @@ export function ThemeToggle() {
 
 export function UserMenu() {
   const { user, me, logout } = useAuth();
+  const { t } = useI18n();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -351,7 +354,7 @@ export function UserMenu() {
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         <DropdownMenuItem asChild>
-          <Link to="/profile">My profile</Link>
+          <Link to="/profile">{t.nav.profile}</Link>
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <Link to="/profile#password">
@@ -359,7 +362,7 @@ export function UserMenu() {
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void logout()}>Sign out</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => void logout()}>{t.actions.signOut}</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

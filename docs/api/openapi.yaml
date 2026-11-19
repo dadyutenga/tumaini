@@ -10556,6 +10556,40 @@ paths:
       tags:
         - Notifications
       x-permission: any
+  /notifications/test:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                channel:
+                  type: string
+                message:
+                  type: string
+                recipient:
+                  type: string
+              type: object
+        required: false
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: Test notification recorded
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+      summary: Send a test notification (in-app, email, or SMS)
+      tags:
+        - Notifications
   /notifications/unread-count:
     get:
       operationId: get_notifications_unread_count
