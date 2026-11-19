@@ -11,15 +11,15 @@ import (
 )
 
 type DebtRow struct {
-	ID      uuid.UUID       `json:"id"`
-	Name    string          `json:"name"`
-	Phone   string          `json:"phone"`
-	Source  string          `json:"source"`
-	Link    string          `json:"link"`
-	D0_30   decimal.Decimal `json:"d0_30"`
-	D31_60  decimal.Decimal `json:"d31_60"`
-	Over60  decimal.Decimal `json:"over_60"`
-	Total   decimal.Decimal `json:"total"`
+	ID     uuid.UUID       `json:"id"`
+	Name   string          `json:"name"`
+	Phone  string          `json:"phone"`
+	Source string          `json:"source"`
+	Link   string          `json:"link"`
+	D0_30  decimal.Decimal `json:"d0_30"`
+	D31_60 decimal.Decimal `json:"d31_60"`
+	Over60 decimal.Decimal `json:"over_60"`
+	Total  decimal.Decimal `json:"total"`
 }
 
 // UnifiedDebts returns Owed to us (Shop customers + Service clients) and We owe
@@ -51,57 +51,57 @@ func (s *Service) UnifiedDebts(ctx context.Context, p *auth.Principal) (map[stri
 			return rows.Err()
 		}
 
-		// Owed to us: Shop customers
+		// Owed to us: shop customers (completed sales with a balance).
 		if err := collect(&owedToUs, "shop_customer", "/customers/", `
-			SELECT c.id, c.name, COALESCE(c.phone,''),
-			       COALESCE(SUM(s.balance) FILTER (WHERE ($1::date - COALESCE(s.due_date, s.business_date)) <= 30), 0),
-			       COALESCE(SUM(s.balance) FILTER (WHERE ($1::date - COALESCE(s.due_date, s.business_date)) BETWEEN 31 AND 60), 0),
-			       COALESCE(SUM(s.balance) FILTER (WHERE ($1::date - COALESCE(s.due_date, s.business_date)) > 60), 0),
-			       COALESCE(SUM(s.balance), 0)
-			FROM sales s JOIN customers c ON c.id = s.customer_id
-			WHERE s.kind='sale' AND s.status IN ('completed','partially_refunded') AND s.balance > 0
-			GROUP BY c.id, c.name, c.phone
+			SELECT c.id, c.full_name::text, COALESCE(c.phone::text,''),
+			       COALESCE(SUM(s.balance_due) FILTER (WHERE ($1::date - COALESCE(s.due_date, s.business_date)) <= 30), 0),
+			       COALESCE(SUM(s.balance_due) FILTER (WHERE ($1::date - COALESCE(s.due_date, s.business_date)) BETWEEN 31 AND 60), 0),
+			       COALESCE(SUM(s.balance_due) FILTER (WHERE ($1::date - COALESCE(s.due_date, s.business_date)) > 60), 0),
+			       COALESCE(SUM(s.balance_due), 0)
+			FROM app.sales s JOIN app.customers c ON c.tenant_id = s.tenant_id AND c.id = s.customer_id
+			WHERE s.status = 'completed' AND s.balance_due > 0
+			GROUP BY c.id, c.full_name, c.phone
 			ORDER BY 7 DESC`); err != nil {
 			return err
 		}
 
-		// Owed to us: Service clients
+		// Owed to us: service clients (issued invoices with a balance).
 		if err := collect(&owedToUs, "service_client", "/clients/", `
-			SELECT c.id, c.name, COALESCE(c.phone,''),
-			       COALESCE(SUM(i.balance) FILTER (WHERE ($1::date - COALESCE(i.due_date, i.issue_date, i.created_at::date)) <= 30), 0),
-			       COALESCE(SUM(i.balance) FILTER (WHERE ($1::date - COALESCE(i.due_date, i.issue_date, i.created_at::date)) BETWEEN 31 AND 60), 0),
-			       COALESCE(SUM(i.balance) FILTER (WHERE ($1::date - COALESCE(i.due_date, i.issue_date, i.created_at::date)) > 60), 0),
-			       COALESCE(SUM(i.balance), 0)
-			FROM svc_invoices i JOIN svc_clients c ON c.id = i.client_id
-			WHERE i.status IN ('issued','partial') AND i.balance > 0
-			GROUP BY c.id, c.name, c.phone
+			SELECT c.id, c.full_name::text, COALESCE(c.phone::text,''),
+			       COALESCE(SUM(i.balance_due) FILTER (WHERE ($1::date - i.due_date) <= 30), 0),
+			       COALESCE(SUM(i.balance_due) FILTER (WHERE ($1::date - i.due_date) BETWEEN 31 AND 60), 0),
+			       COALESCE(SUM(i.balance_due) FILTER (WHERE ($1::date - i.due_date) > 60), 0),
+			       COALESCE(SUM(i.balance_due), 0)
+			FROM app.invoices i JOIN app.customers c ON c.tenant_id = i.tenant_id AND c.id = i.customer_id
+			WHERE i.status IN ('issued','partially_paid') AND i.balance_due > 0
+			GROUP BY c.id, c.full_name, c.phone
 			ORDER BY 7 DESC`); err != nil {
 			return err
 		}
 
-		// We owe: Suppliers
+		// We owe: suppliers (received purchases with a balance).
 		if err := collect(&weOwe, "supplier", "/purchasing", `
-			SELECT sp.id, sp.name, COALESCE(sp.phone,''),
-			       COALESCE(SUM(i.balance) FILTER (WHERE ($1::date - COALESCE(i.due_date, i.invoice_date)) <= 30), 0),
-			       COALESCE(SUM(i.balance) FILTER (WHERE ($1::date - COALESCE(i.due_date, i.invoice_date)) BETWEEN 31 AND 60), 0),
-			       COALESCE(SUM(i.balance) FILTER (WHERE ($1::date - COALESCE(i.due_date, i.invoice_date)) > 60), 0),
-			       COALESCE(SUM(i.balance), 0)
-			FROM purchase_invoices i JOIN suppliers sp ON sp.id = i.supplier_id
-			WHERE i.status = 'posted' AND i.balance > 0
+			SELECT sp.id, sp.name::text, COALESCE(sp.phone::text,''),
+			       COALESCE(SUM(i.balance_due) FILTER (WHERE ($1::date - COALESCE(i.due_date, i.order_date)) <= 30), 0),
+			       COALESCE(SUM(i.balance_due) FILTER (WHERE ($1::date - COALESCE(i.due_date, i.order_date)) BETWEEN 31 AND 60), 0),
+			       COALESCE(SUM(i.balance_due) FILTER (WHERE ($1::date - COALESCE(i.due_date, i.order_date)) > 60), 0),
+			       COALESCE(SUM(i.balance_due), 0)
+			FROM app.purchases i JOIN app.suppliers sp ON sp.tenant_id = i.tenant_id AND sp.id = i.supplier_id
+			WHERE i.status IN ('partially_received','received') AND i.balance_due > 0
 			GROUP BY sp.id, sp.name, sp.phone
 			ORDER BY 7 DESC`); err != nil {
 			return err
 		}
 
-		// We owe: Contractors
+		// We owe: contractors (open bills).
 		if err := collect(&weOwe, "contractor", "/contractors", `
-			SELECT ct.id, ct.name, COALESCE(ct.phone,''),
-			       COALESCE(SUM(k.amount - k.settled) FILTER (WHERE ($1::date - k.cost_date) <= 30), 0),
-			       COALESCE(SUM(k.amount - k.settled) FILTER (WHERE ($1::date - k.cost_date) BETWEEN 31 AND 60), 0),
-			       COALESCE(SUM(k.amount - k.settled) FILTER (WHERE ($1::date - k.cost_date) > 60), 0),
-			       COALESCE(SUM(k.amount - k.settled), 0)
-			FROM svc_costs k JOIN contractors ct ON ct.id = k.contractor_id
-			WHERE k.status = 'owed' AND k.amount > k.settled
+			SELECT ct.id, ct.name::text, COALESCE(ct.phone::text,''),
+			       COALESCE(SUM(k.balance_due) FILTER (WHERE ($1::date - k.bill_date) <= 30), 0),
+			       COALESCE(SUM(k.balance_due) FILTER (WHERE ($1::date - k.bill_date) BETWEEN 31 AND 60), 0),
+			       COALESCE(SUM(k.balance_due) FILTER (WHERE ($1::date - k.bill_date) > 60), 0),
+			       COALESCE(SUM(k.balance_due), 0)
+			FROM app.contractor_bills k JOIN app.contractors ct ON ct.tenant_id = k.tenant_id AND ct.id = k.contractor_id
+			WHERE k.status IN ('open','partially_paid') AND k.balance_due > 0
 			GROUP BY ct.id, ct.name, ct.phone
 			ORDER BY 7 DESC`); err != nil {
 			return err
