@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/shopspring/decimal"
 
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
@@ -236,7 +237,7 @@ func Maps(rows pgx.Rows) ([]map[string]any, error) {
 		}
 		m := make(map[string]any, len(vals))
 		for i, f := range fields {
-			m[f.Name] = convert(f.DataTypeOID, vals[i])
+			m[f.Name] = convert(f.DataTypeOID, f.TypeModifier, vals[i])
 		}
 		out = append(out, m)
 	}
@@ -273,7 +274,7 @@ const (
 	oidNumeric = 1700
 )
 
-func convert(oid uint32, v any) any {
+func convert(oid uint32, typmod int32, v any) any {
 	switch x := v.(type) {
 	case nil:
 		return nil
@@ -283,11 +284,25 @@ func convert(oid uint32, v any) any {
 		if !x.Valid {
 			return nil
 		}
-		d, err := x.Value()
-		if err != nil {
+		if x.NaN || x.InfinityModifier != pgtype.Finite || x.Int == nil {
 			return nil
 		}
-		return d
+		// Keep the column's scale: pgtype decodes a zero with no scale, so it would print "0".
+		// numeric(p,s) carries s in the type modifier; computed values fall back to the
+		// value's own exponent, and money-like zero gets two decimals.
+		scale := int32(-1)
+		if typmod >= 4 {
+			scale = (typmod - 4) & 0xffff
+		} else if x.Exp < 0 {
+			scale = -x.Exp
+		} else if x.Int.Sign() == 0 {
+			scale = 2
+		}
+		d := decimal.NewFromBigInt(x.Int, x.Exp)
+		if scale >= 0 {
+			return d.StringFixed(scale)
+		}
+		return d.String()
 	case time.Time:
 		if oid == oidDate {
 			return x.Format(DateFmt)

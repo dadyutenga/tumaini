@@ -1,0 +1,730 @@
+paths:
+  /salary-components:
+    get:
+      summary: Allowances, deductions and employer contributions
+      operationId: get_salary_components
+      tags:
+      - Payroll
+      x-permission: components.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: 'Create a salary component: fixed, percent of base or gross, or a bracket table'
+      operationId: post_salary_components
+      tags:
+      - Payroll
+      x-permission: components.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                kind:
+                  type: string
+                  enum:
+                  - allowance
+                  - deduction
+                  - employer_contribution
+                calc:
+                  type: string
+                  enum:
+                  - fixed
+                  - percent_of_base
+                  - percent_of_gross
+                  - bracket
+                value:
+                  $ref: '#/components/schemas/Money'
+                brackets: &id001
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      from:
+                        $ref: '#/components/schemas/Money'
+                      to:
+                        $ref: '#/components/schemas/Money'
+                      rate:
+                        $ref: '#/components/schemas/Money'
+                      fixed:
+                        $ref: '#/components/schemas/Money'
+                is_taxable:
+                  type: boolean
+                is_statutory:
+                  type: boolean
+                applies_to_all:
+                  type: boolean
+                sort_order:
+                  type: integer
+                is_active:
+                  type: boolean
+              required:
+              - name
+              - kind
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /salary-components/{id}:
+    put:
+      summary: Edit a salary component
+      operationId: put_salary_components__id
+      tags:
+      - Payroll
+      x-permission: components.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                kind:
+                  type: string
+                  enum:
+                  - allowance
+                  - deduction
+                  - employer_contribution
+                calc:
+                  type: string
+                  enum:
+                  - fixed
+                  - percent_of_base
+                  - percent_of_gross
+                  - bracket
+                value:
+                  $ref: '#/components/schemas/Money'
+                brackets: *id001
+                is_taxable:
+                  type: boolean
+                is_statutory:
+                  type: boolean
+                applies_to_all:
+                  type: boolean
+                sort_order:
+                  type: integer
+                is_active:
+                  type: boolean
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /payroll-runs:
+    get:
+      summary: List runs
+      operationId: get_payroll_runs
+      tags:
+      - Payroll
+      x-permission: payroll.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: status
+        in: query
+        schema:
+          type: string
+          enum:
+          - draft
+          - calculated
+          - pending_approval
+          - approved
+          - paid
+          - locked
+          - reversed
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Create a run for a period and scope. One run per period per scope
+      operationId: post_payroll_runs
+      tags:
+      - Payroll
+      x-permission: payroll.prepare
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                period_start:
+                  type: string
+                  format: date
+                period_end:
+                  type: string
+                  format: date
+                branch_id:
+                  type: string
+                  format: uuid
+                scope:
+                  type: string
+                  enum:
+                  - branch
+                  - business
+              required:
+              - period_start
+              - period_end
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /payroll-runs/{id}:
+    get:
+      summary: Run with payslip summary
+      operationId: get_payroll_runs__id
+      tags:
+      - Payroll
+      x-permission: payroll.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /payroll-runs/{id}/calculate:
+    post:
+      summary: 'Calculate or recalculate in draft or calculated state: prorated base, allowances, approved overtime, commission,
+        bonuses, deductions, loan repayment'
+      operationId: post_payroll_runs__id__calculate
+      tags:
+      - Payroll
+      x-permission: payroll.prepare
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /payroll-runs/{id}/payslips/{pid}/lines:
+    put:
+      summary: Adjust payslip lines with a reason before approval
+      operationId: put_payroll_runs__id__payslips__pid__lines
+      tags:
+      - Payroll
+      x-permission: payroll.prepare
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: pid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                lines:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      kind:
+                        type: string
+                      label:
+                        type: string
+                      amount:
+                        $ref: '#/components/schemas/Money'
+                      note:
+                        type: string
+                    required:
+                    - label
+                    - amount
+                reason:
+                  type: string
+              required:
+              - lines
+              - reason
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /payroll-runs/{id}/submit:
+    post:
+      summary: Send for approval; creates an approval request
+      operationId: post_payroll_runs__id__submit
+      tags:
+      - Payroll
+      x-permission: payroll.prepare
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /payroll-runs/{id}/approve:
+    post:
+      summary: Freeze payslips, post salary expense and liabilities, and lock attendance for the period
+      operationId: post_payroll_runs__id__approve
+      tags:
+      - Payroll
+      x-permission: payroll.approve
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /payroll-runs/{id}/pay:
+    post:
+      summary: Pay all or listed payslips from a money account. Partial payment allowed; the run locks when all are paid
+      operationId: post_payroll_runs__id__pay
+      tags:
+      - Payroll
+      x-permission: payroll.pay
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                money_account_id:
+                  type: string
+                  format: uuid
+                payslip_ids:
+                  oneOf:
+                  - type: string
+                    enum:
+                    - all
+                  - type: array
+                    items:
+                      type: string
+                      format: uuid
+                reference:
+                  type: string
+                date:
+                  type: string
+                  format: date
+              required:
+              - money_account_id
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /payroll-runs/{id}/reverse:
+    post:
+      summary: Reverse an approved run with no payments
+      operationId: post_payroll_runs__id__reverse
+      tags:
+      - Payroll
+      x-permission: payroll.reverse
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /payroll-runs/{id}/payment-list:
+    get:
+      summary: Bank or mobile money payment file (format=csv)
+      operationId: get_payroll_runs__id__payment_list
+      tags:
+      - Payroll
+      x-permission: payroll.pay
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: format
+        in: query
+        schema:
+          type: string
+          enum:
+          - json
+          - csv
+          - xlsx
+          - pdf
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /payslips/{id}:
+    get:
+      summary: One payslip (format=pdf). Staff see only their own
+      operationId: get_payslips__id
+      tags:
+      - Payroll
+      x-permission: payslips.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: format
+        in: query
+        schema:
+          type: string
+          enum:
+          - json
+          - pdf
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /salary-payments:
+    get:
+      summary: Salary payment history
+      operationId: get_salary_payments
+      tags:
+      - Payroll
+      x-permission: payroll.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: employee_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: run_id
+        in: query
+        schema:
+          type: string
+          format: uuid
+      - name: from
+        in: query
+        schema:
+          type: string
+          format: date
+      - name: to
+        in: query
+        schema:
+          type: string
+          format: date
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                  meta:
+                    $ref: '#/components/schemas/Meta'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'

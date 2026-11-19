@@ -365,7 +365,7 @@ func (s *Service) Repay(ctx context.Context, p *auth.Principal, loanID uuid.UUID
 			return err
 		}
 		newBal := bal.Sub(amount)
-		if _, err := tx.Exec(ctx, `UPDATE employee_loans SET balance=$2, status=CASE WHEN $2 <= 0 THEN 'settled' ELSE status END WHERE id=$1`, loanID, newBal); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE employee_loans SET balance=$2::numeric, status=CASE WHEN $2::numeric <= 0 THEN 'settled' ELSE status END WHERE id=$1`, loanID, newBal); err != nil {
 			return err
 		}
 		if err := s.Audit.Record(ctx, tx, p, "loan.repaid", "loan", loanID, map[string]any{"balance": bal}, map[string]any{"balance": newBal, "payment_id": res.ID}); err != nil {

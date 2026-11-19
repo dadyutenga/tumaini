@@ -155,7 +155,7 @@ func (r *Recovery) Reset(ctx context.Context, identifier, code, password string)
 		}
 		if subtle.ConstantTimeCompare(stored, resetHash(u.ID, code)) != 1 {
 			// Count the miss and retire the code after too many; this must commit.
-			_, err := tx.Exec(ctx, `UPDATE password_resets SET attempts = attempts + 1, used_at = CASE WHEN attempts + 1 >= $2 THEN $3 ELSE NULL END WHERE id=$1`, id, resetMaxAttempts, now)
+			_, err := tx.Exec(ctx, `UPDATE password_resets SET attempts = attempts + 1, used_at = CASE WHEN attempts + 1 >= $2 THEN $3::timestamptz ELSE NULL END WHERE id=$1`, id, resetMaxAttempts, now)
 			return err
 		}
 		matched = true

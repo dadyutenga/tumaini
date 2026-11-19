@@ -61,7 +61,7 @@ func TestInboxApprovalsNotificationsAuditBackups(t *testing.T) {
 	require.Equal(t, 200, ok.code, ok.raw)
 	replay := mgr.call(t, http.MethodPost, "/api/v1/approvals/"+second+"/approve", map[string]any{"note": "fine"}, k)
 	require.Equal(t, 200, replay.code, replay.raw)
-	require.Equal(t, ok.raw, replay.raw)
+	require.JSONEq(t, ok.raw, replay.raw)
 
 	// Nobody approves their own request (BR-11), except the Owner.
 	own := submit(mgr, "2000000")
