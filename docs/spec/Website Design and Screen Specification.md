@@ -1,6 +1,6 @@
 # **Website Design and Screen Specification** 
 
-Nov 15, 2026 · @tumaini 
+Nov 15, 2026 · @BMS
 
 ## **1. Overview and design principles** 
 

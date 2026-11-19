@@ -1,8 +1,10 @@
-# Tumaini BMS
+# BMS
 
 Business management system for a company with one or more branches: sales, stock, purchasing, money, staff, and payroll. The backend (`backend/`) is a Go modular monolith. The frontend (`frontend/`) is a Vite + React template, imported without its git history; see `frontend/README.md`.
 
 The product contract is the specification in `docs/spec/`: `SRS.md`, `Backend design.md`, `Database schema.md`, and `API reference.md`.
+
+The full specification is not implemented yet. See [the implementation status and gaps](docs/IMPLEMENTATION_STATUS.md) for current coverage and the completion order.
 
 ## Layout
 

@@ -14,6 +14,7 @@ var Prefixes = map[string]string{
 	"adjustment": "ADJ", "expense": "EXP", "payment_in": "PIN", "payment_out": "POUT",
 	"money_transfer": "MTX", "payroll": "PAY", "payslip": "PSL", "loan": "LON",
 	"stock_entry": "STK", "employee": "EMP", "income": "INC", "drawing": "DRW",
+	"svc_project": "PRJ", "svc_quotation": "SQT", "svc_invoice": "SIN", "design_job": "DSJ", "svc_cost": "SCT",
 }
 
 func Ensure(ctx context.Context, tx pgx.Tx, businessID, branchID uuid.UUID) error {

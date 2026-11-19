@@ -8,10 +8,11 @@ import {
   FormDialog,
   NativeSelect,
   PageHeader,
+  Pager,
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
-import { useGet, useWrite } from "@/hooks/useApi";
+import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { isPendingApproval } from "@/lib/api";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
@@ -27,6 +28,9 @@ interface Expense {
   amount?: string;
   description: string;
   date?: string;
+  category_name?: string;
+  payee?: string;
+  submitted_by_name?: string;
 }
 
 export default function Expenses() {
@@ -35,7 +39,9 @@ export default function Expenses() {
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
     enabled: can("accounts.view"),
   });
-  const [mine, setMine] = useState<Expense[]>([]);
+  const [status, setStatus] = useState("");
+  const [page, setPage] = useState(1);
+  const list = useGetPage<Expense>("/expenses", { status: status || undefined, page });
   const [open, setOpen] = useState(false);
   const [paying, setPaying] = useState<Expense | null>(null);
   const [account, setAccount] = useState("");
@@ -50,18 +56,10 @@ export default function Expenses() {
   const create = useWrite<typeof draft, Expense & { status: string }>("POST", "/expenses", {
     idempotent: true,
     success: "Expense submitted",
+    invalidate: ["/expenses", "/dashboard"],
     onSuccess: (result) => {
       setOpen(false);
       if (isPendingApproval(result)) return;
-      setMine((m) => [
-        {
-          ...result,
-          description: draft.description,
-          amount: result.amount ?? draft.amount,
-          date: draft.date,
-        },
-        ...m,
-      ]);
       setDraft({ category_id: "", amount: "", description: "", payee: "", date: today() });
     },
   });
@@ -71,11 +69,8 @@ export default function Expenses() {
     {
       idempotent: true,
       success: "Expense paid",
-      invalidate: ["/money"],
-      onSuccess: () => {
-        setMine((m) => m.map((e) => (e.id === paying?.id ? { ...e, status: "paid" } : e)));
-        setPaying(null);
-      },
+      invalidate: ["/money", "/expenses"],
+      onSuccess: () => setPaying(null),
     },
   );
   const usable = (accounts.data ?? []).filter((a) => a.is_active);
@@ -93,18 +88,41 @@ export default function Expenses() {
           )
         }
       />
-      <p className="mb-3 text-sm text-muted-foreground">
-        Expenses you submit in this session appear below. The API has no expense list yet, so
-        earlier ones are not shown; pending ones are in Approvals.
-      </p>
+      <NativeSelect
+        aria-label="Filter by status"
+        className="mb-4 max-w-[12rem]"
+        value={status}
+        onChange={(e) => {
+          setStatus(e.target.value);
+          setPage(1);
+        }}
+      >
+        <option value="">All statuses</option>
+        {["pending_approval", "approved", "paid", "rejected", "reversed"].map((v) => (
+          <option key={v} value={v}>
+            {v.replace("_", " ")}
+          </option>
+        ))}
+      </NativeSelect>
       <DataGrid
-        rows={mine}
+        rows={list.data?.data}
+        loading={list.isLoading}
         rowKey={(e) => e.id}
-        empty="Nothing submitted in this session"
+        empty="No expenses found"
         columns={[
           { header: "Number", cell: (e) => e.number ?? "-" },
           { header: "Date", cell: (e) => (e.date ? formatDate(e.date) : "-") },
-          { header: "Description", cell: (e) => e.description },
+          { header: "Category", cell: (e) => e.category_name ?? "-" },
+          {
+            header: "Description",
+            cell: (e) => (
+              <>
+                {e.description}
+                {e.payee && <span className="text-muted-foreground"> · {e.payee}</span>}
+              </>
+            ),
+          },
+          { header: "By", cell: (e) => e.submitted_by_name ?? "-" },
           { header: "Amount", align: "right", cell: (e) => formatMoney(e.amount) },
           { header: "Status", cell: (e) => <StatusBadge value={e.status} /> },
           {
@@ -119,6 +137,7 @@ export default function Expenses() {
           },
         ]}
       />
+      <Pager meta={list.data?.meta} onPage={setPage} />
       <FormDialog
         open={open}
         onOpenChange={setOpen}

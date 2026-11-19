@@ -145,7 +145,7 @@ func (h *Handler) Schedules(c fiber.Ctx) error {
 		return err
 	}
 	out, err := h.Svc.Schedules(c.Context(), pr(c), branch, emp)
-	return httpx.OK(c, out, err)
+	return httpx.OKList(c, out, err)
 }
 
 func (h *Handler) PutSchedule(c fiber.Ctx) error {
@@ -160,7 +160,7 @@ func (h *Handler) PutSchedule(c fiber.Ctx) error {
 func (h *Handler) Holidays(c fiber.Ctx) error {
 	year, _ := strconv.Atoi(c.Query("year"))
 	out, err := h.Svc.Holidays(c.Context(), pr(c), year)
-	return httpx.OK(c, out, err)
+	return httpx.OKList(c, out, err)
 }
 
 func (h *Handler) CreateHoliday(c fiber.Ctx) error {

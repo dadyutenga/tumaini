@@ -1,3 +1,4 @@
+import { APP_NAME } from "@/lib/constants";
 import { useState } from "react";
 import { Link, NavLink, Outlet, matchPath, useLocation } from "react-router-dom";
 import { Menu, PanelLeftClose } from "lucide-react";
@@ -93,9 +94,9 @@ export default function DashboardLayout() {
       >
         <Link to="/" className="mb-8 flex h-10 items-center gap-3 px-2 font-bold">
           <span className="grid h-9 w-9 place-items-center rounded-xl bg-primary text-sm font-black text-primary-foreground">
-            T
+            {APP_NAME}
           </span>
-          {!compact && <span className="text-base tracking-tight">Tumaini BMS</span>}
+          {!compact && <span className="text-base tracking-tight">{APP_NAME}</span>}
         </Link>
         <Navigation compact={compact} />
       </aside>
@@ -116,7 +117,7 @@ export default function DashboardLayout() {
               </Button>
             </SheetTrigger>
             <SheetContent side="left">
-              <SheetTitle className="mb-6">Tumaini BMS</SheetTitle>
+              <SheetTitle className="mb-6">{APP_NAME}</SheetTitle>
               <SheetDescription className="sr-only">Choose a page to navigate to.</SheetDescription>
               <Navigation onNavigate={() => setOpen(false)} />
             </SheetContent>
@@ -166,7 +167,7 @@ export default function DashboardLayout() {
           <Outlet />
         </main>
 
-        <footer className="border-t px-8 py-6 text-xs text-muted-foreground">Tumaini BMS</footer>
+        <footer className="border-t px-8 py-6 text-xs text-muted-foreground">{APP_NAME}</footer>
       </div>
     </div>
   );

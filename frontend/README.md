@@ -1,4 +1,4 @@
-# Tumaini BMS frontend
+# BMS frontend
 
 Vite, React 19, TypeScript, Tailwind 4, TanStack Query, React Router, and shadcn/Radix components. It talks to the Go API in `../backend`. The layout and UI kit come from the template this project started from; the pages, auth, and API client are written for the BMS API.
 
@@ -14,7 +14,7 @@ npm run dev        # http://localhost:5173
 
 Open `http://localhost:5173` (not `127.0.0.1`) and choose **Register** to create a business and its owner.
 
-In development Vite proxies `/api` to the API, so the browser sees a single origin. The refresh cookie is `SameSite=Strict` and needs that. Set `API_PROXY_TARGET` to proxy somewhere else. Set `VITE_API_BASE_URL` only if you serve the API from a different origin; then the API's `CORS_ORIGINS` must include the frontend and the cookie rules need a shared site.
+In development Vite proxies `/api` to the API, so the browser sees a single origin. The refresh cookie is `SameSite=Strict` and needs that. Set `API_PROXY_TARGET` in your shell or `frontend/.env.local` to proxy somewhere else (for example, `API_PROXY_TARGET=http://127.0.0.1:8081` when port 8080 is occupied). Set `VITE_API_BASE_URL` only if you serve the API from a different origin; then the API's `CORS_ORIGINS` must include the frontend and the cookie rules need a shared site.
 
 Scripts: `npm run lint`, `npm test`, `npm run build`.
 
@@ -50,7 +50,9 @@ Money and quantities stay strings end to end. `toNumber` and `formatMoney` are f
 
 ## Not built yet
 
-The backend has no endpoint for these, so there is no screen yet: suppliers and purchase orders lists, employees, attendance, payroll runs, quotations, held carts, and reports beyond profit and loss. Add the screens as the endpoints land. Expenses has no list endpoint, so that page only shows expenses submitted in the current session.
+The full screen inventory in `docs/spec/Frontend design.md` is not implemented. Suppliers, purchase orders, employees, attendance, payroll, and the reports index have no pages. Several backend write actions exist for those modules, but list/detail APIs are still missing; attendance does expose an employee day list. Expenses has no list endpoint, so that page only shows expenses submitted in the current session.
+
+See [the implementation gap audit](../docs/IMPLEMENTATION_STATUS.md) for current coverage, missing workflows, and the recommended completion order.
 
 The language switcher and its dictionary come from the template and are not wired into the new pages, which are in English.
 

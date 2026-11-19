@@ -158,7 +158,7 @@ func respond(c fiber.Ctx, id *uuid.UUID, out any, err error) error {
 
 func (h *Handler) Departments(c fiber.Ctx) error {
 	out, err := h.Svc.Departments(c.Context(), P(c))
-	return httpx.OK(c, out, err)
+	return httpx.OKList(c, out, err)
 }
 
 func (h *Handler) SaveDepartment(c fiber.Ctx) error {
@@ -187,7 +187,7 @@ func (h *Handler) DeleteDepartment(c fiber.Ctx) error {
 
 func (h *Handler) Positions(c fiber.Ctx) error {
 	out, err := h.Svc.Positions(c.Context(), P(c))
-	return httpx.OK(c, out, err)
+	return httpx.OKList(c, out, err)
 }
 
 func (h *Handler) SavePosition(c fiber.Ctx) error {
@@ -216,7 +216,7 @@ func (h *Handler) DeletePosition(c fiber.Ctx) error {
 
 func (h *Handler) LeaveTypes(c fiber.Ctx) error {
 	out, err := h.Svc.LeaveTypes(c.Context(), P(c))
-	return httpx.OK(c, out, err)
+	return httpx.OKList(c, out, err)
 }
 
 func (h *Handler) SaveLeaveType(c fiber.Ctx) error {
@@ -340,7 +340,7 @@ func (h *Handler) Repay(c fiber.Ctx) error {
 
 func (h *Handler) CommissionRules(c fiber.Ctx) error {
 	out, err := h.Svc.CommissionRules(c.Context(), P(c))
-	return httpx.OK(c, out, err)
+	return httpx.OKList(c, out, err)
 }
 
 func (h *Handler) SaveCommissionRule(c fiber.Ctx) error {
@@ -412,7 +412,7 @@ func (h *Handler) MeLeave(c fiber.Ctx) error {
 
 func (h *Handler) MeLoans(c fiber.Ctx) error {
 	out, err := h.Svc.MeLoans(c.Context(), P(c))
-	return httpx.OK(c, out, err)
+	return httpx.OKList(c, out, err)
 }
 
 func (h *Handler) MePayslips(c fiber.Ctx) error {

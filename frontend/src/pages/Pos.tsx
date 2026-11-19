@@ -19,6 +19,15 @@ interface CartLine {
   qty: string;
 }
 type Method = "cash" | "mobile_money" | "bank";
+interface HeldCart {
+  id: string;
+  number: string;
+  note: string | null;
+  item_count: number;
+  customer_name: string | null;
+  created_at: string;
+  cart: { customer_id: string | null; items: { product_id: string; qty: string }[] };
+}
 
 export default function Pos() {
   const { can } = useAuth();
@@ -38,6 +47,24 @@ export default function Pos() {
   const [tendered, setTendered] = useState("");
   const [receipt, setReceipt] = useState<Sale | null>(null);
   const [closing, setClosing] = useState(false);
+  const [heldOpen, setHeldOpen] = useState(false);
+  const [payingOut, setPayingOut] = useState(false);
+  const [payout, setPayout] = useState({ to_account_id: "", amount: "", note: "" });
+  const payOutCash = useWrite<typeof payout, unknown>(
+    "POST",
+    () => `/tills/${till.data?.id}/pay-out`,
+    {
+      idempotent: true,
+      invalidate: ["/tills", "/money"],
+      success: "Cash paid out of the till",
+      onSuccess: () => {
+        setPayingOut(false);
+        setPayout({ to_account_id: "", amount: "", note: "" });
+      },
+    },
+  );
+  const [heldId, setHeldId] = useState<string | null>(null);
+  const held = useGet<HeldCart[]>("/sales/held", undefined, { enabled: can("sales.create") });
   const idempotencyKey = useRef(newIdempotencyKey());
   const [busy, setBusy] = useState(false);
 
@@ -90,6 +117,43 @@ export default function Pos() {
   const setQty = (id: string, qty: string) =>
     setCart((c) => c.map((l) => (l.product.id === id ? { ...l, qty } : l)));
 
+  async function holdCart() {
+    try {
+      await api.post("/sales/hold", { items, customer_id: customerId || null });
+      toast.success("Cart held. Resume it from Held carts.");
+      setCart([]);
+      setCustomerId("");
+      setHeldId(null);
+      void queryClient.invalidateQueries({ queryKey: ["/sales/held"] });
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  }
+  async function resume(h: HeldCart) {
+    try {
+      const lines = await Promise.all(
+        h.cart.items.map(async (i) => ({
+          product: (await api.get<{ product: Product }>(`/products/${i.product_id}`)).product,
+          qty: i.qty,
+        })),
+      );
+      setCart(lines);
+      setCustomerId(h.cart.customer_id ?? "");
+      setHeldId(h.id);
+      setHeldOpen(false);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  }
+  async function discard(h: HeldCart) {
+    try {
+      await api.del(`/sales/held/${h.id}`);
+      if (heldId === h.id) setHeldId(null);
+      void queryClient.invalidateQueries({ queryKey: ["/sales/held"] });
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+  }
   async function checkout() {
     setBusy(true);
     try {
@@ -97,7 +161,7 @@ export default function Pos() {
         paying > 0 ? [{ method, money_account_id: payAccount, amount: String(paying) }] : [];
       const result = await api.post<Sale | { status: string }>(
         "/sales",
-        { items, customer_id: customerId || null, payments },
+        { items, customer_id: customerId || null, payments, held_id: heldId ?? undefined },
         { idempotencyKey: idempotencyKey.current },
       );
       if (isPendingApproval(result)) {
@@ -107,6 +171,7 @@ export default function Pos() {
         setCart([]);
         setTendered("");
         setCustomerId("");
+        setHeldId(null);
         void queryClient.invalidateQueries({
           predicate: (q) => /^\/(sales|products|stock|customers|money)/.test(String(q.queryKey[0])),
         });
@@ -130,9 +195,17 @@ export default function Pos() {
         title="Point of sale"
         description={`Till open since ${new Date(till.data.opened_at).toLocaleTimeString()} · float ${formatMoney(till.data.opening_float)}`}
         actions={
-          <Button variant="outline" onClick={() => setClosing(true)}>
-            Close till
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setHeldOpen(true)}>
+              Held carts{held.data?.length ? ` (${held.data.length})` : ""}
+            </Button>
+            <Button variant="outline" onClick={() => setPayingOut(true)}>
+              Pay out cash
+            </Button>
+            <Button variant="outline" onClick={() => setClosing(true)}>
+              Close till
+            </Button>
+          </div>
         }
       />
       <div className="grid gap-6 lg:grid-cols-[1fr_380px]">
@@ -311,9 +384,92 @@ export default function Pos() {
           >
             {busy ? "Completing…" : `Complete sale ${total ? formatMoney(total) : ""}`}
           </Button>
+          <Button
+            className="w-full"
+            variant="outline"
+            disabled={cart.length === 0 || busy}
+            onClick={() => void holdCart()}
+          >
+            Hold cart for later
+          </Button>
         </aside>
       </div>
 
+      <FormDialog
+        open={payingOut}
+        onOpenChange={setPayingOut}
+        title="Pay out cash"
+        busy={payOutCash.isPending}
+        onSubmit={() => payOutCash.mutate(payout)}
+      >
+        <p className="text-sm text-muted-foreground">
+          Move cash from this till to the safe or the bank. It is recorded as a transfer.
+        </p>
+        <Field label="Send to">
+          <NativeSelect
+            required
+            value={payout.to_account_id}
+            onChange={(e) => setPayout((p) => ({ ...p, to_account_id: e.target.value }))}
+          >
+            <option value="">Choose…</option>
+            {accounts.data
+              ?.filter((a) => a.is_active && a.id !== till.data?.money_account_id)
+              .map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+          </NativeSelect>
+        </Field>
+        <Field label="Amount">
+          <Input
+            required
+            inputMode="decimal"
+            value={payout.amount}
+            onChange={(e) => setPayout((p) => ({ ...p, amount: e.target.value }))}
+          />
+        </Field>
+        <Field label="Note">
+          <Input
+            value={payout.note}
+            onChange={(e) => setPayout((p) => ({ ...p, note: e.target.value }))}
+          />
+        </Field>
+      </FormDialog>
+      <FormDialog
+        open={heldOpen}
+        onOpenChange={setHeldOpen}
+        title="Held carts"
+        submitLabel="Close"
+        onSubmit={() => setHeldOpen(false)}
+      >
+        {held.data?.length ? (
+          <ul className="space-y-2">
+            {held.data.map((h) => (
+              <li key={h.id} className="flex items-center gap-2 rounded-lg border p-3 text-sm">
+                <div className="mr-auto">
+                  <p className="font-medium">
+                    {h.item_count} item{h.item_count === 1 ? "" : "s"}
+                    {h.customer_name ? ` · ${h.customer_name}` : ""}
+                  </p>
+                  <p className="text-muted-foreground">
+                    {new Date(h.created_at).toLocaleTimeString()}
+                    {h.note ? ` · ${h.note}` : ""}
+                  </p>
+                </div>
+                <Button size="sm" type="button" onClick={() => void resume(h)}>
+                  Resume
+                </Button>
+                <Button size="sm" type="button" variant="ghost" onClick={() => void discard(h)}>
+                  Discard
+                </Button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="text-sm text-muted-foreground">No held carts.</p>
+        )}
+      </FormDialog>
       {receipt && <ReceiptDialog sale={receipt} onClose={() => setReceipt(null)} />}
       {closing && <CloseTill till={till.data} onClose={() => setClosing(false)} />}
     </>

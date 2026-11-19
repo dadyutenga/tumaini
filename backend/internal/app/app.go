@@ -33,6 +33,7 @@ import (
 	"bms/internal/modules/purchasing"
 	"bms/internal/modules/reports"
 	"bms/internal/modules/sales"
+	"bms/internal/modules/services"
 	"bms/internal/modules/system"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
@@ -119,6 +120,9 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	authGroup.Post("/forgot-password", limit, recovery.ForgotHandler)
 	authGroup.Post("/reset-password", limit, recovery.ResetHandler)
 
+	svcHandler := services.Build(d)
+	svcHandler.RegisterPublic(api.Group("/public"), limit)
+
 	private := api.Group("", middleware.Auth(auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, ident.Load), middleware.Branch(database))
 	identity.Register(private, &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL})
 	for _, mount := range []func(fiber.Router, deps.Deps){
@@ -129,6 +133,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	} {
 		mount(private, d)
 	}
+	svcHandler.Register(private)
 
 	return &App{Fiber: fiberApp, DB: database, Jobs: worker, Recovery: recovery}, nil
 }

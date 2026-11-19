@@ -88,7 +88,7 @@ Found by running the tests and reading the code, and fixed:
 
 ## Database changes
 
-Migrations 0013 to 0022 (21 files; there is no 0018), each with a working down file. The full set was applied from an empty database, reverted one by one to version 0, and applied again.
+Migrations 0013 to 0025 (there is no 0018; 0020 and 0021 are the services module from `main`), each with a working down file. The full set was applied from an empty database, reverted one by one to version 0, and applied again.
 
 | Migration | Change |
 | --- | --- |
@@ -98,9 +98,10 @@ Migrations 0013 to 0022 (21 files; there is no 0018), each with a working down f
 | 0016 | expense reversal columns, recurring-expense uniqueness per date, indexes |
 | 0017 | HR and payroll indexes |
 | 0019 | password reset attempt counter |
-| 0020 | `loan_repayments.voided_at` |
-| 0021 | `employee_documents` with row-level security |
-| 0022 | batch number and expiry date on receipt lines |
+| 0022 | `loan_repayments.voided_at` |
+| 0023 | `employee_documents` with row-level security |
+| 0024 | batch number and expiry date on receipt lines |
+| 0025 | `sales.invoice_number` |
 
 ## Security fixes
 
@@ -117,7 +118,7 @@ Migrations 0013 to 0022 (21 files; there is no 0018), each with a working down f
 
 No load test was run, so no speed claim is made. What changed:
 
-- 46 indexes added across migrations 0013 to 0022 for the list, lookup and report queries of the new endpoints.
+- 46 indexes added across migrations 0013 to 0025 for the list, lookup and report queries of the new endpoints.
 - Reports aggregate in SQL; there are no per-row queries in report paths. All lists are paginated with a maximum of 100 rows. Imports are capped at 5,000 rows and uploads at 10 MB.
 - Payroll above 200 employees calculates as a background job.
 - A panicking job is recorded as a failed attempt instead of stopping the worker; daily jobs are idempotent per business per date.

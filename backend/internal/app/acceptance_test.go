@@ -41,7 +41,7 @@ func TestAcceptance(t *testing.T) {
 	c := &client{app: application.Fiber}
 
 	reg := c.call(t, http.MethodPost, "/api/v1/auth/register", map[string]any{
-		"business_name": "Tumaini Shop", "owner_name": "Amina", "phone": uniquePhone(), "password": "correct-horse",
+		"business_name": "BMS Shop", "owner_name": "Amina", "phone": uniquePhone(), "password": "correct-horse",
 	}, "")
 	require.Equal(t, 201, reg.code, reg.raw)
 	token := str(reg.data["access_token"])
@@ -315,6 +315,44 @@ func TestAcceptance(t *testing.T) {
 	paidRun := c.call(t, http.MethodPost, "/api/v1/payroll-runs/"+str(run.data["id"])+"/pay", map[string]any{"money_account_id": payrollCash.data["id"]}, "")
 	require.Equal(t, 200, paidRun.code, paidRun.raw)
 	require.Equal(t, "locked", str(paidRun.data["status"]))
+
+	// Read APIs return persisted documents with decimal strings and proper scope.
+	for _, path := range []string{"/suppliers", "/purchase-orders", "/goods-receipts", "/purchase-invoices", "/purchase-returns", "/employees", "/loans", "/departments", "/positions", "/leave-types", "/leave-requests", "/commission-rules", "/pay-adjustments", "/salary-components", "/payroll-runs", "/expenses", "/recurring-expenses"} {
+		listed := c.call(t, http.MethodGet, "/api/v1"+path+"?per_page=1", nil, "")
+		require.Equal(t, 200, listed.code, path+" "+listed.raw)
+		require.Contains(t, listed.body, "meta", path)
+		require.IsType(t, []any{}, listed.body["data"])
+	}
+	poDetail := c.call(t, http.MethodGet, "/api/v1/purchase-orders/"+str(po.data["id"]), nil, "")
+	require.Equal(t, 200, poDetail.code, poDetail.raw)
+	require.IsType(t, "", poDetail.data["total"])
+	require.Len(t, asList(poDetail.data["items"]), 1)
+	grnDetail := c.call(t, http.MethodGet, "/api/v1/goods-receipts/"+str(r1.data["id"]), nil, "")
+	require.Equal(t, 200, grnDetail.code, grnDetail.raw)
+	require.Len(t, asList(grnDetail.data["items"]), 1)
+	invoiceDetail := c.call(t, http.MethodGet, "/api/v1/purchase-invoices/"+str(inv.data["id"]), nil, "")
+	require.Equal(t, 200, invoiceDetail.code, invoiceDetail.raw)
+	require.Len(t, asList(invoiceDetail.data["receipts"]), 2)
+	runDetail := c.call(t, http.MethodGet, "/api/v1/payroll-runs/"+str(run.data["id"]), nil, "")
+	require.Equal(t, 200, runDetail.code, runDetail.raw)
+	require.Len(t, asList(runDetail.data["payslips"]), 1)
+	managerClient := &client{app: application.Fiber, token: login(t, application.Fiber, str(mgr.data["phone"]), "manager-pass"), branch: branchA}
+	profile := managerClient.call(t, http.MethodGet, "/api/v1/employees/"+str(emp.data["id"]), nil, "")
+	require.Equal(t, 200, profile.code, profile.raw)
+	require.NotContains(t, profile.data, "base_pay")
+	ownerExpense := c.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": catID, "amount": "100", "description": "Owner only"}, uuid.NewString())
+	require.Equal(t, 201, ownerExpense.code, ownerExpense.raw)
+	ownExpenses := cashClient.call(t, http.MethodGet, "/api/v1/expenses", nil, "")
+	require.Equal(t, 200, ownExpenses.code, ownExpenses.raw)
+	require.Len(t, asList(ownExpenses.body["data"]), 1)
+	forbiddenExpense := cashClient.call(t, http.MethodGet, "/api/v1/expenses/"+str(ownerExpense.data["id"]), nil, "")
+	require.Equal(t, 404, forbiddenExpense.code, forbiddenExpense.raw)
+	invalidFilter := c.call(t, http.MethodGet, "/api/v1/purchase-orders?supplier_id=broken", nil, "")
+	require.Equal(t, 400, invalidFilter.code, invalidFilter.raw)
+	c.branch = branchBID
+	wrongBranch := c.call(t, http.MethodGet, "/api/v1/employees/"+str(emp.data["id"]), nil, "")
+	require.Equal(t, 200, wrongBranch.code, wrongBranch.raw) // the Owner sees every branch
+	c.branch = branchA
 
 	audit := c.call(t, http.MethodGet, "/api/v1/audit-logs?action=sale.completed", nil, "")
 	require.Equal(t, 200, audit.code, audit.raw)

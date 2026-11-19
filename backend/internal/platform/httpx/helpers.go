@@ -160,3 +160,14 @@ func QueryBool(c fiber.Ctx, key string) *bool {
 func SortFrom(c fiber.Ctx, allowed map[string]string, fallback string) string {
 	return Sort(c.Query("sort"), allowed, fallback)
 }
+
+// OKList writes a complete, unpaged collection with the standard meta block.
+func OKList(c fiber.Ctx, v []map[string]any, err error) error {
+	if err != nil {
+		return err
+	}
+	if v == nil {
+		v = []map[string]any{}
+	}
+	return c.JSON(List(v, Meta{Page: 1, PerPage: max(len(v), 1), Total: len(v)}))
+}

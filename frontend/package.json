@@ -1,5 +1,5 @@
 {
-  "name": "frontend-template",
+  "name": "bms-frontend",
   "private": true,
   "sideEffects": false,
   "type": "module",

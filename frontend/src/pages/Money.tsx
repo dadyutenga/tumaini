@@ -12,6 +12,7 @@ import {
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
+import { IncomeButton, PaymentsTab, PeriodLock } from "@/pages/MoneyExtras";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
@@ -89,6 +90,7 @@ export default function Money() {
                 <ArrowRightLeft size={16} /> Transfer
               </Button>
             )}
+            <IncomeButton accounts={active} />
             {can("accounts.manage") && (
               <Button onClick={() => setCreating(true)}>
                 <Plus size={16} /> New account
@@ -97,10 +99,12 @@ export default function Money() {
           </>
         }
       />
+      <PeriodLock />
       <Tabs defaultValue="accounts">
         <TabsList>
           <TabsTrigger value="accounts">Accounts</TabsTrigger>
           {can("transactions.view") && <TabsTrigger value="transactions">Transactions</TabsTrigger>}
+          {can("payments.view") && <TabsTrigger value="payments">Payments</TabsTrigger>}
         </TabsList>
         <TabsContent value="accounts">
           <DataGrid
@@ -153,6 +157,11 @@ export default function Money() {
             ]}
           />
         </TabsContent>
+        {can("payments.view") && (
+          <TabsContent value="payments">
+            <PaymentsTab />
+          </TabsContent>
+        )}
       </Tabs>
 
       <FormDialog

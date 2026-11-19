@@ -3911,40 +3911,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
-  /reports/trial-balance:
-    get:
-      summary: Trial balance of every ledger account with debit and credit totals
-      operationId: get_reports_trial_balance
-      tags:
-      - Reports
-      x-permission: reports.financial
-      parameters:
-      - $ref: '#/components/parameters/BranchId'
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      lines:
-                        type: array
-                        items:
-                          type: object
-                      debit_total:
-                        $ref: '#/components/schemas/Money'
-                      credit_total:
-                        $ref: '#/components/schemas/Money'
-                      balanced:
-                        type: boolean
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
   /reports/inventory/expiring:
     get:
       operationId: get_reports_inventory_expiring

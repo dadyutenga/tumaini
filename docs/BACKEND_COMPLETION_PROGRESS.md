@@ -9,7 +9,7 @@ Last updated at commit `a8f286a` on branch `claude/loving-noether-4idp7v`. The f
 | Routes in the API reference | 313 | 313 implemented |
 | Operations in `docs/api/openapi.yaml` | none | 323 on 260 paths |
 | Functional requirements (SRS) | 261: 227 Must, 26 Should, 8 Could | see below |
-| Migrations | 12 | 21 files, versions 1 to 23 (no 18), all with working down files |
+| Migrations | 12 | versions 1 to 25 (no 18), all with working down files, all with working down files |
 | Test functions | 2 | 85 in 38 files |
 | Statement coverage | not measured | 78% of about 15,000 statements |
 

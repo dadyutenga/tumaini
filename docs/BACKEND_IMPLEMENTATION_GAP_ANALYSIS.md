@@ -1,6 +1,6 @@
 # Backend implementation gap analysis
 
-Baseline: commit `3e82692` (16 Nov 2026), before this round of work. Sources of truth: `docs/spec/SRS.md`, `docs/spec/API reference.md`, `docs/spec/Backend design.md`, `docs/spec/Database schema.md`. The website screen spec's services scope (projects, design jobs, renewals) is not in the SRS, schema or API reference and is out of scope, as the previous report already recorded.
+Baseline: commit `3e82692` (16 Nov 2026), before this round of work. Sources of truth: `docs/spec/SRS.md`, `docs/spec/API reference.md`, `docs/spec/Backend design.md`, `docs/spec/Database schema.md`. The website screen spec's services scope (projects, design jobs, renewals) was out of scope at the time of this analysis. It was added afterwards as section 9 of the API reference and section 9 of the database schema.
 
 ## Method
 

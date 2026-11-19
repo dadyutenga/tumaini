@@ -28,6 +28,7 @@ export default function Approvals() {
     (b) => `/approvals/${b.id}/${b.action}`,
     {
       idempotent: true,
+      toBody: (b) => ({ note: b.note }),
       invalidate: ["/approvals", "/expenses", "/sales", "/stock", "/money"],
       success: "Decision recorded",
       onSuccess: () => {

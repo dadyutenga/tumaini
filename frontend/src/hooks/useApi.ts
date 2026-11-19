@@ -38,19 +38,25 @@ interface MutateOptions<R> {
   onSuccess?: (result: R) => void;
 }
 
+interface BodyOption<B> {
+  /** Map the mutation variables to the JSON body. Use it when the variables also carry the target id. */
+  toBody?: (variables: B) => unknown;
+}
+
 /** POST, PUT, or DELETE with toast feedback, approval handling, and idempotency keys. */
 export function useWrite<B = unknown, R = unknown>(
   method: "POST" | "PUT" | "DELETE",
   path: string | ((body: B) => string),
-  options: MutateOptions<R> = {},
+  options: MutateOptions<R> & BodyOption<B> = {},
 ) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: B) => {
       const target = typeof path === "function" ? path(body) : path;
       const key = options.idempotent ? newIdempotencyKey() : undefined;
-      if (method === "POST") return api.post<R>(target, body, { idempotencyKey: key });
-      if (method === "PUT") return api.put<R>(target, body);
+      const payload = options.toBody ? options.toBody(body) : body;
+      if (method === "POST") return api.post<R>(target, payload, { idempotencyKey: key });
+      if (method === "PUT") return api.put<R>(target, payload);
       return api.del<R>(target);
     },
     onSuccess: (result) => {

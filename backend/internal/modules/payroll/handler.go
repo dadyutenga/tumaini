@@ -208,7 +208,7 @@ func (h *Handler) SalaryPayments(c fiber.Ctx) error {
 
 func (h *Handler) Components(c fiber.Ctx) error {
 	out, err := h.Svc.ComponentsList(c.Context(), pr(c))
-	return httpx.OK(c, out, err)
+	return httpx.OKList(c, out, err)
 }
 
 func (h *Handler) SaveComponent(c fiber.Ctx) error {
