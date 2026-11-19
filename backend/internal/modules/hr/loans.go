@@ -2,20 +2,17 @@ package hr
 
 import (
 	"context"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
-	"bms/internal/kernel/approval"
-	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/payments"
-	"bms/internal/kernel/sequence"
 	"bms/internal/modules/hr/hrkit"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/idem"
-	"bms/internal/platform/ids"
 	"bms/internal/platform/money"
 	"bms/internal/platform/sqlq"
 )
@@ -25,14 +22,19 @@ type LoanIn struct {
 	Kind             string           `json:"kind" validate:"omitempty,oneof=loan advance"`
 	Principal        decimal.Decimal  `json:"principal" validate:"dpos"`
 	MonthlyDeduction *decimal.Decimal `json:"monthly_deduction"`
-	StartPeriod      string           `json:"start_period" validate:"date"`
-	Reason           string           `json:"reason"`
+	IssuedOn         string           `json:"issued_on" validate:"date"`
+	StartPeriod      string           `json:"start_period" validate:"date"` // legacy alias for issued_on
+	MoneyAccountID   *uuid.UUID       `json:"money_account_id"`
+	Reference        string           `json:"reference" validate:"max=60"`
+	Reason           string           `json:"reason" validate:"max=1000"`
 }
 
-const loanSQL = `SELECT l.id, l.number, l.employee_id, e.name AS employee_name, e.branch_id AS employee_branch_id, l.branch_id, l.kind,
-	l.principal, l.monthly_deduction, l.balance, l.principal - l.balance AS repaid, l.start_period, l.status, l.payment_id,
-	l.approved_by, l.created_by, l.created_at
-	FROM employee_loans l JOIN employees e ON e.id = l.employee_id`
+const loanSQL = `SELECT l.id, l.employee_id, e.full_name::text AS employee_name, e.location_id AS branch_id,
+	l.kind::text AS kind, l.principal, l.monthly_deduction, l.amount_repaid AS repaid, l.balance,
+	l.issued_on AS start_period, l.status::text AS status, l.payment_made_id AS payment_id,
+	l.approved_by, l.notes, l.created_by, l.created_at
+	FROM app.employee_advances l
+	JOIN app.employees e ON e.tenant_id = l.tenant_id AND e.id = l.employee_id`
 
 type LoanFilter struct {
 	EmployeeID *uuid.UUID
@@ -44,14 +46,13 @@ func (s *Service) Loans(ctx context.Context, p *auth.Principal, f LoanFilter, pa
 	var out []map[string]any
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		if br := p.ScopeBranches("loans.view"); br != nil {
-			q.Add("e.branch_id = ANY(?)", br)
-		}
+		q := sqlq.New(p.TenantID)
+		q.Add("l.tenant_id = $1")
+		q.If(p.BranchID != nil, "e.location_id = ?", p.BranchID)
 		q.If(f.EmployeeID != nil, "l.employee_id = ?", f.EmployeeID)
-		q.If(f.Status != "", "l.status = ?", f.Status)
-		q.If(f.Kind != "", "l.kind = ?", f.Kind)
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM employee_loans l JOIN employees e ON e.id = l.employee_id`+q.Where(), q.Args...).Scan(&total); err != nil {
+		q.If(f.Status != "", "l.status = ?::app.advance_status", f.Status)
+		q.If(f.Kind != "", "l.kind = ?::app.advance_kind", f.Kind)
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.employee_advances l JOIN app.employees e ON e.tenant_id = l.tenant_id AND e.id = l.employee_id`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		var err error
@@ -61,37 +62,27 @@ func (s *Service) Loans(ctx context.Context, p *auth.Principal, f LoanFilter, pa
 	return out, total, err
 }
 
-func (s *Service) loadLoan(ctx context.Context, tx pgx.Tx, p *auth.Principal, key string, id uuid.UUID, lock bool) (map[string]any, error) {
+func (s *Service) loadLoan(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, lock bool) (map[string]any, error) {
 	if lock {
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM employee_loans WHERE id=$1 FOR UPDATE`, id); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM app.employee_advances WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, tenantID, id); err != nil {
 			return nil, err
 		}
 	}
-	l, err := hrkit.One(ctx, tx, "Loan not found", loanSQL+` WHERE l.id=$1`, id)
-	if err != nil {
-		return nil, err
-	}
-	branch, _ := uuid.Parse(asString(l["employee_branch_id"]))
-	own := p.EmployeeID != nil && asString(l["employee_id"]) == p.EmployeeID.String()
-	if key != "" && !own && !p.SeesBranch(key, branch) {
-		return nil, httpx.NotFound("not_found", "Loan not found")
-	}
-	return l, nil
+	return hrkit.One(ctx, tx, "Loan not found", loanSQL+` WHERE l.tenant_id = $1 AND l.id = $2`, tenantID, id)
 }
 
-// GetLoan returns the loan with its repayment schedule and repayments.
 func (s *Service) GetLoan(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		l, err := s.loadLoan(ctx, tx, p, "loans.view", id, false)
+		l, err := s.loadLoan(ctx, tx, p.TenantID, id, false)
 		if err != nil {
 			return err
 		}
 		reps, err := hrkit.All(ctx, tx, `
-			SELECT lr.id, lr.amount, lr.source, lr.payslip_id, ps.number AS payslip_number, lr.payment_id, lr.created_at, lr.voided_at
-			FROM loan_repayments lr LEFT JOIN payslips ps ON ps.id = lr.payslip_id
-			WHERE lr.loan_id = $1 ORDER BY lr.created_at
-		`, id)
+			SELECT ar.id, ar.amount, ar.payroll_line_id, ps.payslip_no AS payslip_number, ar.created_at
+			FROM app.advance_repayments ar
+			LEFT JOIN app.payslips ps ON ps.tenant_id = ar.tenant_id AND ps.payroll_line_id = ar.payroll_line_id
+			WHERE ar.tenant_id = $1 AND ar.advance_id = $2 ORDER BY ar.created_at`, p.TenantID, id)
 		if err != nil {
 			return err
 		}
@@ -103,7 +94,6 @@ func (s *Service) GetLoan(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 	return out, err
 }
 
-// schedule projects the remaining monthly deductions from the next period.
 func schedule(l map[string]any) []map[string]any {
 	bal, _ := decimal.NewFromString(asString(l["balance"]))
 	monthly, _ := decimal.NewFromString(asString(l["monthly_deduction"]))
@@ -120,8 +110,8 @@ func schedule(l map[string]any) []map[string]any {
 	return out
 }
 
-// CreateLoan records a loan or advance. Within the creator's loans.create
-// limit it is approved at once (201); otherwise it waits for approval (202).
+// CreateLoan records an active advance or loan on app.employee_advances. If money_account_id is
+// supplied, the disbursement payment is posted immediately in the same transaction.
 func (s *Service) CreateLoan(ctx context.Context, p *auth.Principal, in LoanIn) (int, []byte, error) {
 	if in.Kind == "" {
 		in.Kind = "loan"
@@ -140,61 +130,57 @@ func (s *Service) CreateLoan(ctx context.Context, p *auth.Principal, in LoanIn) 
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
 			return err
 		}
-		emp, err := s.loadEmployee(ctx, tx, p, "loans.create", in.EmployeeID)
+		emp, err := s.loadEmployee(ctx, tx, p, in.EmployeeID)
 		if err != nil {
 			return err
 		}
 		if emp["status"] != "active" {
-			return httpx.Conflict("invalid_status", "Only an active employee can take a loan")
+			return httpx.Conflict("invalid_status", "Only an active employee can take an advance or loan")
 		}
-		branch, _ := uuid.Parse(asString(emp["branch_id"]))
-		start := in.StartPeriod
-		if start == "" {
-			start = s.today(ctx, tx)
+		issuedOn := strings.TrimSpace(in.IssuedOn)
+		if issuedOn == "" {
+			issuedOn = strings.TrimSpace(in.StartPeriod)
 		}
-		t := hrkit.MustDate(start)
-		start = t.AddDate(0, 0, 1-t.Day()).Format(hrkit.DateFmt)
-		g, ok := p.Can("loans.create")
-		approved := p.IsOwner || auth.WithinLimit(g, ok, principal)
-		state := "pending"
-		var approvedBy any
-		if approved {
-			state, approvedBy = "approved", p.UserID
+		if issuedOn == "" {
+			issuedOn = s.today(ctx, tx)
 		}
-		number, err := sequence.Next(ctx, tx, branch, "loan")
-		if err != nil {
-			return err
-		}
-		id := ids.New()
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO employee_loans (id, business_id, branch_id, number, employee_id, kind, principal, monthly_deduction, balance, start_period, status, approved_by, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$7,$9,$10,$11,$12)
-		`, id, p.BusinessID, branch, number, in.EmployeeID, in.Kind, principal, monthly, start, state, approvedBy, p.UserID); err != nil {
-			return err
-		}
-		if err := s.Audit.Record(ctx, tx, p, "loan.created", "loan", id, nil, map[string]any{"number": number, "principal": principal, "status": state, "reason": in.Reason}); err != nil {
-			return err
-		}
-		if !approved {
-			reqID, err := s.Approval.Request(ctx, tx, p, approval.Input{
-				BranchID: &branch, Kind: "loan", SubjectType: "loan", SubjectID: id,
-				Amount: decimal.NullDecimal{Decimal: principal, Valid: true}, Summary: "Loan " + number + " for " + asString(emp["name"]),
+		var payID *uuid.UUID
+		if in.MoneyAccountID != nil {
+			locID, err := s.resolveLoanLoc(ctx, tx, p, emp)
+			if err != nil {
+				return err
+			}
+			empID := in.EmployeeID
+			res, err := payments.Pay(ctx, tx, payments.PayInput{
+				TenantID: p.TenantID, LocationID: locID, AccountID: *in.MoneyAccountID, EmployeeID: &empID,
+				Amount: principal, Reference: strings.TrimSpace(in.Reference), BusinessDate: issuedOn,
+				Notes: "Staff " + in.Kind + " for " + asString(emp["name"]),
 			})
 			if err != nil {
 				return err
 			}
-			raw, err := idem.Complete(ctx, tx, p.UserID, 202, httpx.Data(map[string]any{"id": id, "number": number, "approval_request_id": reqID, "status": "pending_approval"}))
-			status, body = 202, raw
+			payID = &res.ID
+		}
+		var id uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO app.employee_advances
+				(tenant_id, employee_id, kind, principal, issued_on, monthly_deduction, status, approved_by, payment_made_id, notes)
+			VALUES ($1,$2,$3::app.advance_kind,$4,$5::date,$6,'active',$7,$8,NULLIF($9,''))
+			RETURNING id`,
+			p.TenantID, in.EmployeeID, in.Kind, principal, issuedOn, monthly, p.MembershipID, payID, strings.TrimSpace(in.Reason)).Scan(&id); err != nil {
 			return err
 		}
-		l, err := s.loadLoan(ctx, tx, p, "", id, false)
+		l, err := s.loadLoan(ctx, tx, p.TenantID, id, false)
 		if err != nil {
+			return err
+		}
+		if err := s.Audit.Record(ctx, tx, p, "loan.created", "employee_advances", id, nil, l); err != nil {
 			return err
 		}
 		raw, err := idem.Complete(ctx, tx, p.UserID, 201, httpx.Data(l))
@@ -204,86 +190,60 @@ func (s *Service) CreateLoan(ctx context.Context, p *auth.Principal, in LoanIn) 
 	return status, body, err
 }
 
-func (s *Service) onLoanDecided(approve bool) func(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
-	return func(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
-		l, err := s.loadLoan(ctx, tx, p, "", req.SubjectID, true)
-		if err != nil {
-			return err
-		}
-		if l["status"] != "pending" {
-			return httpx.Conflict("invalid_status", "This loan is no longer pending")
-		}
-		state := "rejected"
-		var by any
-		if approve {
-			state, by = "approved", p.UserID
-		}
-		if _, err := tx.Exec(ctx, `UPDATE employee_loans SET status=$2, approved_by=$3 WHERE id=$1`, req.SubjectID, state, by); err != nil {
-			return err
-		}
-		return s.Audit.Record(ctx, tx, p, "loan."+state, "loan", req.SubjectID, map[string]any{"status": "pending"}, map[string]any{"status": state})
+func (s *Service) resolveLoanLoc(ctx context.Context, tx pgx.Tx, p *auth.Principal, emp map[string]any) (uuid.UUID, error) {
+	if b, err := uuid.Parse(asString(emp["branch_id"])); err == nil {
+		return b, nil
 	}
+	if p.BranchID != nil {
+		return *p.BranchID, nil
+	}
+	var loc uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT id FROM app.locations WHERE tenant_id = $1 AND is_default`, p.TenantID).Scan(&loc); err != nil {
+		return uuid.Nil, httpx.BadRequest("branch_required", "Choose a branch first")
+	}
+	return loc, nil
 }
 
-// Disburse pays out an approved loan from a money account.
+// Disburse pays out an active advance/loan that has not been disbursed yet.
 func (s *Service) Disburse(ctx context.Context, p *auth.Principal, loanID, account uuid.UUID) (int, []byte, error) {
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
 			return err
 		}
-		l, err := s.loadLoan(ctx, tx, p, "loans.approve", loanID, true)
+		l, err := s.loadLoan(ctx, tx, p.TenantID, loanID, true)
 		if err != nil {
 			return err
 		}
-		if l["status"] != "approved" {
-			return httpx.Conflict("invalid_status", "This loan is not waiting to be paid out")
+		if l["status"] != "active" || l["payment_id"] != nil {
+			return httpx.Conflict("invalid_status", "This advance is already disbursed or closed")
 		}
-		g, ok := p.Can("loans.approve")
 		amount, _ := decimal.NewFromString(asString(l["principal"]))
-		if !p.IsOwner && !auth.WithinLimit(g, ok, amount) {
-			return httpx.Forbidden("over_limit", "This loan is above your limit")
-		}
-		method, err := hrkit.MethodFor(ctx, tx, p, "loans.approve", account)
+		empID, _ := uuid.Parse(asString(l["employee_id"]))
+		locID, err := s.resolveLoanLoc(ctx, tx, p, l)
 		if err != nil {
 			return err
 		}
-		if err := s.Ledger.EnsureFunds(ctx, tx, account, amount); err != nil {
-			return err
-		}
-		employee, _ := uuid.Parse(asString(l["employee_id"]))
-		branch, _ := uuid.Parse(asString(l["branch_id"]))
 		date := s.today(ctx, tx)
-		res, err := payments.Insert(ctx, tx, payments.Input{
-			BusinessID: p.BusinessID, BranchID: branch, MoneyAccountID: account, UserID: p.UserID,
-			Direction: "out", Kind: "loan_disbursement", Method: method, PartyType: "employee", PartyID: &employee,
-			Amount: amount, Date: date, AllocType: "loan", AllocID: loanID, AllocAmount: amount,
+		res, err := payments.Pay(ctx, tx, payments.PayInput{
+			TenantID: p.TenantID, LocationID: locID, AccountID: account, EmployeeID: &empID,
+			Amount: amount, BusinessDate: date, Notes: "Staff " + asString(l["kind"]) + " disbursement",
 		})
 		if err != nil {
 			return err
 		}
-		code, _, err := s.Ledger.AccountCodeForMoney(ctx, tx, account)
-		if err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.employee_advances SET payment_made_id = $3 WHERE tenant_id = $1 AND id = $2`, p.TenantID, loanID, res.ID); err != nil {
 			return err
 		}
-		user := p.UserID
-		if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "loan", loanID, "Staff "+asString(l["kind"])+" "+asString(l["number"]), &user, []ledger.Line{
-			{Code: "1300", BranchID: &branch, PartyType: "employee", PartyID: &employee, Debit: amount},
-			{Code: code, BranchID: &branch, MoneyAccountID: &account, Credit: amount},
-		}); err != nil {
+		out := map[string]any{"id": loanID, "status": "active", "payment_id": res.ID, "payment_number": res.Number}
+		if err := s.Audit.Record(ctx, tx, p, "loan.disbursed", "employee_advances", loanID, nil, out); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE employee_loans SET status='disbursed', payment_id=$2 WHERE id=$1`, loanID, res.ID); err != nil {
-			return err
-		}
-		if err := s.Audit.Record(ctx, tx, p, "loan.disbursed", "loan", loanID, map[string]any{"status": "approved"}, map[string]any{"status": "disbursed", "payment_id": res.ID}); err != nil {
-			return err
-		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": loanID, "status": "disbursed", "payment_id": res.ID, "payment_number": res.Number}))
+		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(out))
 		status, body = 200, raw
 		return err
 	})
@@ -297,86 +257,65 @@ type RepayIn struct {
 	Date           string          `json:"date" validate:"date"`
 }
 
-// Repay records a direct cash repayment: Dr money account, Cr 1300.
+// Repay records a direct cash repayment outside payroll.
 func (s *Service) Repay(ctx context.Context, p *auth.Principal, loanID uuid.UUID, in RepayIn) (int, []byte, error) {
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
 			return err
 		}
-		l, err := s.loadLoan(ctx, tx, p, "payments.receive", loanID, true)
+		l, err := s.loadLoan(ctx, tx, p.TenantID, loanID, true)
 		if err != nil {
 			return err
 		}
-		if l["status"] != "disbursed" {
-			return httpx.Conflict("invalid_status", "Only a disbursed loan can be repaid")
+		if l["status"] != "active" {
+			return httpx.Conflict("invalid_status", "Only an active advance can be repaid")
 		}
 		bal, _ := decimal.NewFromString(asString(l["balance"]))
 		amount := money.Money(in.Amount)
 		if amount.GreaterThan(bal) {
-			return httpx.Conflict("invalid_amount", "The repayment is more than the loan balance")
+			return httpx.Conflict("invalid_amount", "The repayment is more than the remaining balance")
 		}
-		// Payroll deductions on an approved but unpaid payslip already count
-		// against this balance, so keep room for them.
-		var reserved decimal.Decimal
-		if err := tx.QueryRow(ctx, `
-			SELECT COALESCE(SUM(pl.amount),0) FROM payslip_lines pl JOIN payslips ps ON ps.id = pl.payslip_id JOIN payroll_runs r ON r.id = ps.run_id
-			WHERE pl.loan_id = $1 AND pl.kind = 'loan' AND r.status IN ('approved','paid')
-		`, loanID).Scan(&reserved); err != nil {
+		if _, err := payments.ActiveFin(ctx, tx, in.MoneyAccountID); err != nil {
 			return err
 		}
-		if amount.Add(reserved).GreaterThan(bal) {
-			return httpx.Conflict("invalid_amount", "An approved payroll already deducts part of this balance")
-		}
-		method, err := hrkit.MethodFor(ctx, tx, p, "payments.receive", in.MoneyAccountID)
+		locID, err := s.resolveLoanLoc(ctx, tx, p, l)
 		if err != nil {
 			return err
 		}
-		employee, _ := uuid.Parse(asString(l["employee_id"]))
-		branch, _ := uuid.Parse(asString(l["branch_id"]))
-		date := in.Date
+		date := strings.TrimSpace(in.Date)
 		if date == "" {
 			date = s.today(ctx, tx)
 		}
-		res, err := payments.Insert(ctx, tx, payments.Input{
-			BusinessID: p.BusinessID, BranchID: branch, MoneyAccountID: in.MoneyAccountID, UserID: p.UserID,
-			Direction: "in", Kind: "loan_repayment", Method: method, PartyType: "employee", PartyID: &employee,
-			Amount: amount, Reference: in.Reference, Date: date, AllocType: "loan", AllocID: loanID, AllocAmount: amount,
-		})
+		desc := "Staff advance repayment"
+		if ref := strings.TrimSpace(in.Reference); ref != "" {
+			desc += " (" + ref + ")"
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.financial_transactions
+				(tenant_id, account_id, direction, amount, txn_type, business_unit_id, location_id, business_date, description)
+			VALUES ($1,$2,'in',$3,'other_payment',(SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $4),$4,$5::date,$6)`,
+			p.TenantID, in.MoneyAccountID, amount, locID, date, desc); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE app.employee_advances
+			SET amount_repaid = amount_repaid + $3,
+			    status = CASE WHEN amount_repaid + $3 = principal THEN 'settled'::app.advance_status ELSE status END
+			WHERE tenant_id = $1 AND id = $2`, p.TenantID, loanID, amount); err != nil {
+			return err
+		}
+		out, err := s.loadLoan(ctx, tx, p.TenantID, loanID, false)
 		if err != nil {
 			return err
 		}
-		code, _, err := s.Ledger.AccountCodeForMoney(ctx, tx, in.MoneyAccountID)
-		if err != nil {
+		if err := s.Audit.Record(ctx, tx, p, "loan.repaid", "employee_advances", loanID, map[string]any{"balance": bal}, out); err != nil {
 			return err
 		}
-		user := p.UserID
-		if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "loan_repayment", res.ID, "Loan repayment "+asString(l["number"]), &user, []ledger.Line{
-			{Code: code, BranchID: &branch, MoneyAccountID: &in.MoneyAccountID, Debit: amount},
-			{Code: "1300", BranchID: &branch, PartyType: "employee", PartyID: &employee, Credit: amount},
-		}); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO loan_repayments (id, business_id, loan_id, amount, source, payment_id) VALUES ($1,$2,$3,$4,'cash',$5)`, ids.New(), p.BusinessID, loanID, amount, res.ID); err != nil {
-			return err
-		}
-		newBal := bal.Sub(amount)
-		if _, err := tx.Exec(ctx, `UPDATE employee_loans SET balance=$2::numeric, status=CASE WHEN $2::numeric <= 0 THEN 'settled' ELSE status END WHERE id=$1`, loanID, newBal); err != nil {
-			return err
-		}
-		if err := s.Audit.Record(ctx, tx, p, "loan.repaid", "loan", loanID, map[string]any{"balance": bal}, map[string]any{"balance": newBal, "payment_id": res.ID}); err != nil {
-			return err
-		}
-		out, err := s.loadLoan(ctx, tx, p, "", loanID, false)
-		if err != nil {
-			return err
-		}
-		out["payment_id"] = res.ID
-		out["payment_number"] = res.Number
 		raw, err := idem.Complete(ctx, tx, p.UserID, 201, httpx.Data(out))
 		status, body = 201, raw
 		return err

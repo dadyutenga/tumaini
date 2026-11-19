@@ -2,6 +2,7 @@ package hr
 
 import (
 	"context"
+	"crypto/sha256"
 	"strings"
 
 	"github.com/gofiber/fiber/v3"
@@ -11,31 +12,30 @@ import (
 	"bms/internal/modules/hr/hrkit"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
-	"bms/internal/platform/ids"
 	"bms/internal/platform/middleware"
 	"bms/internal/platform/upload"
 )
-
-// FR-EMP-19: documents such as a contract or an ID copy attached to an employee.
-// They are sensitive, so only people who manage employees, and the employee, can read them;
-// GET /files/:id enforces the same rule.
 
 const documentMax = 10 << 20
 
 var documentKinds = map[string]bool{"contract": true, "id_copy": true, "certificate": true, "other": true}
 
+// Employee documents are stored as app.files linked through app.attachments(employee_id).
 func (s *Service) ListDocuments(ctx context.Context, p *auth.Principal, employeeID uuid.UUID) ([]map[string]any, error) {
 	var out []map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := s.loadEmployee(ctx, tx, p, "employees.manage", employeeID); err != nil {
+		if _, err := s.loadEmployee(ctx, tx, p, employeeID); err != nil {
 			return err
 		}
 		var err error
 		out, err = hrkit.All(ctx, tx, `
-			SELECT d.id, d.kind, d.name, d.file_id, f.mime_type, f.size_bytes, d.uploaded_by, d.created_at,
-			       '/api/v1/files/' || d.file_id::text AS download_url
-			FROM employee_documents d JOIN files f ON f.id = d.file_id
-			WHERE d.employee_id = $1 ORDER BY d.created_at DESC, d.id`, employeeID)
+			SELECT a.id, COALESCE(a.caption, f.original_name) AS name, a.file_id, f.mime_type, f.size_bytes,
+			       a.created_by AS uploaded_by, a.created_at,
+			       '/api/v1/files/' || a.file_id::text AS download_url
+			FROM app.attachments a
+			JOIN app.files f ON f.tenant_id = a.tenant_id AND f.id = a.file_id
+			WHERE a.tenant_id = $1 AND a.employee_id = $2 AND f.deleted_at IS NULL
+			ORDER BY a.created_at DESC, a.id`, p.TenantID, employeeID)
 		return err
 	})
 	return out, err
@@ -49,36 +49,42 @@ func (s *Service) AddDocument(ctx context.Context, p *auth.Principal, employeeID
 	if name == "" {
 		name = filename
 	}
-	if len(name) > 200 {
-		return nil, invalidFields(map[string]string{"name": "at most 200 characters"})
+	caption := kind + ": " + name
+	if len(caption) > 200 {
+		caption = caption[:200]
 	}
+	sum := sha256.Sum256(content)
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := s.loadEmployee(ctx, tx, p, "employees.manage", employeeID); err != nil {
+		if _, err := s.loadEmployee(ctx, tx, p, employeeID); err != nil {
 			return err
 		}
-		file, err := s.Store.Save(ctx, p.BusinessID.String(), filename, upload.Reader(content), documentMax)
+		file, err := s.Store.Save(ctx, p.TenantID.String(), filename, upload.Reader(content), documentMax)
 		if err != nil {
 			return httpx.BadRequest("invalid_body", err.Error())
 		}
-		fileID, docID := ids.New(), ids.New()
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO files (id, business_id, path, original_name, mime_type, size_bytes, uploaded_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)`, fileID, p.BusinessID, file.Path, filename, mime, file.Size, p.UserID); err != nil {
+		var fileID, docID uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO app.files (tenant_id, storage_key, original_name, mime_type, size_bytes, sha256, classification)
+			VALUES ($1,$2,$3,$4,$5,$6,'restricted') RETURNING id`,
+			p.TenantID, file.Path, filename, mime, file.Size, sum[:]).Scan(&fileID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO employee_documents (id, business_id, employee_id, file_id, kind, name, uploaded_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)`, docID, p.BusinessID, employeeID, fileID, kind, name, p.UserID); err != nil {
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO app.attachments (tenant_id, file_id, caption, employee_id)
+			VALUES ($1,$2,$3,$4) RETURNING id`, p.TenantID, fileID, caption, employeeID).Scan(&docID); err != nil {
 			return err
 		}
 		if out, err = hrkit.One(ctx, tx, "Document not found", `
-			SELECT d.id, d.kind, d.name, d.file_id, f.mime_type, f.size_bytes, d.uploaded_by, d.created_at,
-			       '/api/v1/files/' || d.file_id::text AS download_url
-			FROM employee_documents d JOIN files f ON f.id = d.file_id WHERE d.id = $1`, docID); err != nil {
+			SELECT a.id, COALESCE(a.caption, f.original_name) AS name, a.file_id, f.mime_type, f.size_bytes,
+			       a.created_by AS uploaded_by, a.created_at,
+			       '/api/v1/files/' || a.file_id::text AS download_url
+			FROM app.attachments a JOIN app.files f ON f.tenant_id = a.tenant_id AND f.id = a.file_id
+			WHERE a.tenant_id = $1 AND a.id = $2`, p.TenantID, docID); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "employee.document_added", "employee", employeeID, nil, map[string]any{"document_id": docID, "kind": kind, "name": name})
+		out["kind"] = kind
+		return s.Audit.Record(ctx, tx, p, "employee.document_added", "employees", employeeID, nil, map[string]any{"document_id": docID, "kind": kind, "name": name})
 	})
 	return out, err
 }
@@ -86,23 +92,23 @@ func (s *Service) AddDocument(ctx context.Context, p *auth.Principal, employeeID
 func (s *Service) DeleteDocument(ctx context.Context, p *auth.Principal, employeeID, docID uuid.UUID) error {
 	var path string
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := s.loadEmployee(ctx, tx, p, "employees.manage", employeeID); err != nil {
+		if _, err := s.loadEmployee(ctx, tx, p, employeeID); err != nil {
 			return err
 		}
 		var fileID uuid.UUID
 		if err := tx.QueryRow(ctx, `
-			DELETE FROM employee_documents WHERE id = $1 AND employee_id = $2 RETURNING file_id`, docID, employeeID).Scan(&fileID); err != nil {
+			DELETE FROM app.attachments WHERE tenant_id = $1 AND id = $2 AND employee_id = $3 RETURNING file_id`,
+			p.TenantID, docID, employeeID).Scan(&fileID); err != nil {
 			return httpx.NotFound("not_found", "Document not found")
 		}
-		if err := tx.QueryRow(ctx, `DELETE FROM files WHERE id = $1 RETURNING path`, fileID).Scan(&path); err != nil {
+		if err := tx.QueryRow(ctx, `UPDATE app.files SET deleted_at = now() WHERE tenant_id = $1 AND id = $2 RETURNING storage_key`, p.TenantID, fileID).Scan(&path); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "employee.document_removed", "employee", employeeID, map[string]any{"document_id": docID}, nil)
+		return s.Audit.Record(ctx, tx, p, "employee.document_removed", "employees", employeeID, map[string]any{"document_id": docID}, nil)
 	})
 	if err != nil {
 		return err
 	}
-	// The record is gone; removing the bytes is best effort and never fails the request.
 	_ = s.Store.Delete(ctx, path)
 	return nil
 }
@@ -134,7 +140,6 @@ func (h *Handler) AddDocument(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	// kind and name may be form fields beside the file, or query parameters.
 	kind := strings.TrimSpace(c.FormValue("kind"))
 	if kind == "" {
 		kind = strings.TrimSpace(c.Query("kind"))

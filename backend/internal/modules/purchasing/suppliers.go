@@ -45,7 +45,7 @@ func (s *Service) CreateSupplier(ctx context.Context, p *auth.Principal, in Supp
 	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			INSERT INTO app.suppliers (tenant_id, name, contact_person, phone, email, address, tin, goods_supplied, payment_terms_days)
-			VALUES ($1,$2,NULLIF($3,''),$4,NULLIF($5,'')::app.email,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),$9)
+			VALUES ($1,$2,NULLIF($3,''),NULLIF($4,'')::app.phone_e164,NULLIF($5,'')::app.email,NULLIF($6,''),NULLIF($7,''),NULLIF($8,''),$9)
 			RETURNING id`,
 			p.TenantID, in.Name, strings.TrimSpace(in.ContactPerson), ph, strings.TrimSpace(in.Email),
 			strings.TrimSpace(in.Address), strings.TrimSpace(in.TaxNumber), strings.TrimSpace(in.GoodsSupplied), in.Terms).Scan(&id)
@@ -79,7 +79,7 @@ func (s *Service) UpdateSupplier(ctx context.Context, p *auth.Principal, id uuid
 		}
 		_, err = tx.Exec(ctx, `
 			UPDATE app.suppliers
-			SET name = $3, contact_person = NULLIF($4,''), phone = $5, email = NULLIF($6,'')::app.email,
+			SET name = $3, contact_person = NULLIF($4,''), phone = NULLIF($5,'')::app.phone_e164, email = NULLIF($6,'')::app.email,
 			    address = NULLIF($7,''), tin = NULLIF($8,''), goods_supplied = NULLIF($9,''), payment_terms_days = $10
 			WHERE tenant_id = $1 AND id = $2`,
 			p.TenantID, id, in.Name, strings.TrimSpace(in.ContactPerson), ph, strings.TrimSpace(in.Email),
