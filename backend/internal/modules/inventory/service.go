@@ -21,7 +21,6 @@ import (
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/idem"
-	"bms/internal/platform/ids"
 	"bms/internal/platform/jobs"
 	"bms/internal/platform/money"
 	"bms/internal/platform/setting"
@@ -527,15 +526,11 @@ func (s *Service) checkTransferInput(ctx context.Context, tx pgx.Tx, from uuid.U
 		return httpx.BadRequest("invalid_body", "Choose a different receiving branch")
 	}
 	var active bool
-	if err := tx.QueryRow(ctx, `SELECT is_active FROM branches WHERE id=$1`, in.ToBranchID).Scan(&active); err != nil || !active {
+	if err := tx.QueryRow(ctx, `SELECT status = 'active' FROM app.locations WHERE id = $1`, in.ToBranchID).Scan(&active); err != nil || !active {
 		return httpx.NotFound("not_found", "Receiving branch not found")
 	}
-	seen := map[uuid.UUID]bool{}
-	for _, it := range in.Items {
-		if seen[it.ProductID] {
-			return httpx.BadRequest("invalid_body", "Each product may appear only once")
-		}
-		seen[it.ProductID] = true
+	if err := uniqueItems(in.Items); err != nil {
+		return err
 	}
 	return stockProducts(ctx, tx, productIDs(in.Items))
 }
@@ -552,31 +547,30 @@ func (s *Service) CreateTransfer(ctx context.Context, p *auth.Principal, in Tran
 		if err := s.checkTransferInput(ctx, tx, *p.BranchID, in); err != nil {
 			return err
 		}
-		number, err := sequence.Next(ctx, tx, *p.BranchID, "transfer")
+		number, err := sequence.Next(ctx, tx, *p.BranchID, "stock_transfer")
 		if err != nil {
 			return err
 		}
-		id := ids.New()
+		id := uuid.New()
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO stock_transfers (id, business_id, number, from_branch_id, to_branch_id, note, created_by)
-			VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),$7)
-		`, id, p.BusinessID, number, *p.BranchID, in.ToBranchID, in.Note, p.UserID); err != nil {
+			INSERT INTO app.stock_transfers (id, tenant_id, transfer_no, from_location_id, to_location_id, note) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''))`,
+			id, p.TenantID, number, *p.BranchID, in.ToBranchID, in.Note); err != nil {
 			return err
 		}
-		if err := insertTransferItems(ctx, tx, p.BusinessID, id, in.Items); err != nil {
+		if err := insertTransferItems(ctx, tx, p.TenantID, id, in.Items); err != nil {
 			return err
 		}
 		result = map[string]any{"id": id, "number": number, "status": "draft", "from_branch_id": *p.BranchID, "to_branch_id": in.ToBranchID}
-		return s.Audit.Record(ctx, tx, p, "transfer.created", "stock_transfer", id, nil, result)
+		return s.Audit.Record(ctx, tx, p, "transfer.created", "stock_transfers", id, nil, result)
 	})
 	return result, err
 }
 
-func insertTransferItems(ctx context.Context, tx pgx.Tx, businessID, id uuid.UUID, items []Item) error {
+func insertTransferItems(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, items []Item) error {
 	for _, it := range items {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO stock_transfer_items (id, business_id, transfer_id, product_id, qty_sent) VALUES ($1,$2,$3,$4,$5)
-		`, ids.New(), businessID, id, it.ProductID, money.Qty(it.Qty)); err != nil {
+			INSERT INTO app.stock_transfer_lines (tenant_id, stock_transfer_id, product_id, quantity) VALUES ($1,$2,$3,$4)`,
+			tenantID, id, it.ProductID, money.Qty(it.Qty)); err != nil {
 			return err
 		}
 	}
@@ -589,19 +583,12 @@ type transferRow struct {
 	number   string
 }
 
-// lockTransfer loads a transfer under lock. side is "from" or "to": the branch
-// the caller must be able to act in for the permission key.
-func lockTransfer(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID, key, side string) (transferRow, error) {
+// lockTransfer loads a transfer under lock.
+func lockTransfer(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (transferRow, error) {
 	var t transferRow
-	err := tx.QueryRow(ctx, `SELECT from_branch_id, to_branch_id, status, number FROM stock_transfers WHERE id=$1 FOR UPDATE`, id).Scan(&t.from, &t.to, &t.status, &t.number)
+	err := tx.QueryRow(ctx, `SELECT from_location_id, to_location_id, status::text, transfer_no FROM app.stock_transfers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+		p.TenantID, id).Scan(&t.from, &t.to, &t.status, &t.number)
 	if err != nil {
-		return t, httpx.NotFound("not_found", "Transfer not found")
-	}
-	branch := t.from
-	if side == "to" {
-		branch = t.to
-	}
-	if !p.SeesBranch(key, branch) {
 		return t, httpx.NotFound("not_found", "Transfer not found")
 	}
 	return t, nil
@@ -612,7 +599,7 @@ func (s *Service) UpdateTransfer(ctx context.Context, p *auth.Principal, id uuid
 		return nil, err
 	}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		t, err := lockTransfer(ctx, tx, p, id, "transfers.create", "from")
+		t, err := lockTransfer(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
@@ -622,16 +609,16 @@ func (s *Service) UpdateTransfer(ctx context.Context, p *auth.Principal, id uuid
 		if err := s.checkTransferInput(ctx, tx, t.from, in); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM stock_transfer_items WHERE transfer_id=$1`, id); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM app.stock_transfer_lines WHERE tenant_id = $1 AND stock_transfer_id = $2`, p.TenantID, id); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE stock_transfers SET to_branch_id=$2, note=NULLIF($3,'') WHERE id=$1`, id, in.ToBranchID, in.Note); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_transfers SET to_location_id = $2, note = NULLIF($3,'') WHERE id = $1`, id, in.ToBranchID, in.Note); err != nil {
 			return err
 		}
-		if err := insertTransferItems(ctx, tx, p.BusinessID, id, in.Items); err != nil {
+		if err := insertTransferItems(ctx, tx, p.TenantID, id, in.Items); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "transfer.updated", "stock_transfer", id, nil, in)
+		return s.Audit.Record(ctx, tx, p, "transfer.updated", "stock_transfers", id, nil, in)
 	})
 	if err != nil {
 		return nil, err
@@ -641,17 +628,17 @@ func (s *Service) UpdateTransfer(ctx context.Context, p *auth.Principal, id uuid
 
 func (s *Service) CancelTransfer(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		t, err := lockTransfer(ctx, tx, p, id, "transfers.create", "from")
+		t, err := lockTransfer(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
 		if t.status != "draft" {
 			return httpx.Conflict("invalid_status", "Only a draft transfer can be cancelled. A dispatched transfer must be received")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE stock_transfers SET status='cancelled' WHERE id=$1`, id); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_transfers SET status = 'cancelled' WHERE id = $1`, id); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "transfer.cancelled", "stock_transfer", id, map[string]any{"status": "draft"}, map[string]any{"status": "cancelled"})
+		return s.Audit.Record(ctx, tx, p, "transfer.cancelled", "stock_transfers", id, map[string]any{"status": "draft"}, map[string]any{"status": "cancelled"})
 	})
 	if err != nil {
 		return nil, err
@@ -659,77 +646,60 @@ func (s *Service) CancelTransfer(ctx context.Context, p *auth.Principal, id uuid
 	return map[string]any{"id": id, "status": "cancelled"}, nil
 }
 
+// transferValue is the cost of what a transfer moves, at each product's current average cost.
+func transferValue(ctx context.Context, tx pgx.Tx, id uuid.UUID) (decimal.Decimal, []uuid.UUID, error) {
+	var value decimal.Decimal
+	var pids []uuid.UUID
+	rows, err := tx.Query(ctx, `
+		SELECT l.product_id, round(l.quantity * pr.average_cost, 2)
+		FROM app.stock_transfer_lines l JOIN app.products pr ON pr.tenant_id = l.tenant_id AND pr.id = l.product_id
+		WHERE l.stock_transfer_id = $1`, id)
+	if err != nil {
+		return value, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pid uuid.UUID
+		var v decimal.Decimal
+		if err := rows.Scan(&pid, &v); err != nil {
+			return value, nil, err
+		}
+		pids = append(pids, pid)
+		value = value.Add(v)
+	}
+	return value, pids, rows.Err()
+}
+
+// Dispatch sends a draft transfer. The database writes the transfer-out movements and refuses with
+// "insufficient stock" if the sending branch does not hold the quantities.
 func (s *Service) Dispatch(ctx context.Context, p *auth.Principal, id uuid.UUID) (int, []byte, error) {
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
 			return err
 		}
-		t, err := lockTransfer(ctx, tx, p, id, "transfers.dispatch", "from")
+		t, err := lockTransfer(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
 		if t.status != "draft" {
 			return httpx.Conflict("invalid_status", "Only a draft transfer can be dispatched")
 		}
-		rows, err := tx.Query(ctx, `SELECT product_id, qty_sent FROM stock_transfer_items WHERE transfer_id=$1`, id)
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_transfers SET status = 'dispatched', dispatched_at = now(), dispatched_by = $2 WHERE id = $1`, id, p.MembershipID); err != nil {
+			return err
+		}
+		value, pids, err := transferValue(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		var lines []stock.Line
-		var pids []uuid.UUID
-		for rows.Next() {
-			var pid uuid.UUID
-			var qty decimal.Decimal
-			if err := rows.Scan(&pid, &qty); err != nil {
-				rows.Close()
-				return err
-			}
-			lines = append(lines, stock.Line{ProductID: pid, Qty: qty})
-			pids = append(pids, pid)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		if err := jobs.EnqueueTx(ctx, tx, p.TenantID, jobs.CheckLowStock, map[string]any{"branch_id": t.from, "product_ids": pids}); err != nil {
 			return err
 		}
-		if len(lines) == 0 {
-			return httpx.Conflict("invalid_status", "The transfer has no items")
-		}
-		user := p.UserID
-		costs, err := s.Stock.Deduct(ctx, tx, p.BusinessID, t.from, &user, "transfer_out", "stock_transfer", id, lines)
-		if err != nil {
-			return err
-		}
-		value := money.Zero
-		for _, ln := range lines {
-			value = value.Add(money.Money(ln.Qty.Mul(costs[ln.ProductID])))
-			if _, err := tx.Exec(ctx, `UPDATE stock_transfer_items SET unit_cost=$3 WHERE transfer_id=$1 AND product_id=$2`, id, ln.ProductID, costs[ln.ProductID]); err != nil {
-				return err
-			}
-		}
-		if value.IsPositive() {
-			if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, s.bizDate(ctx, tx), "stock_transfer", id, "Transfer dispatch "+t.number, &user, []ledger.Line{
-				{Code: "1210", BranchID: &t.from, Debit: value},
-				{Code: "1200", BranchID: &t.from, Credit: value},
-			}); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.Exec(ctx, `UPDATE stock_transfers SET status='dispatched', dispatched_by=$2, dispatched_at=now() WHERE id=$1`, id, p.UserID); err != nil {
-			return err
-		}
-		if err := jobs.EnqueueTx(ctx, tx, p.BusinessID, jobs.CheckLowStock, map[string]any{"branch_id": t.from, "product_ids": pids}); err != nil {
-			return err
-		}
-		_ = s.Notify.ToPermission(ctx, tx, p.BusinessID, &t.to, "transfers.receive", notify.Message{
-			Type: "transfer_dispatched", Title: "Stock on the way", Body: t.number + " was dispatched to your branch",
-			Link: "/stock-transfers/" + id.String(), EntityType: "stock_transfer", EntityID: &id,
-		})
-		if err := s.Audit.Record(ctx, tx, p, "transfer.dispatched", "stock_transfer", id, nil, map[string]any{"number": t.number, "value": value}); err != nil {
+		if err := s.Audit.Record(ctx, tx, p, "transfer.dispatched", "stock_transfers", id, nil, map[string]any{"number": t.number, "value": value}); err != nil {
 			return err
 		}
 		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "number": t.number, "status": "dispatched", "value": value}))
@@ -739,68 +709,10 @@ func (s *Service) Dispatch(ctx context.Context, p *auth.Principal, id uuid.UUID)
 	return status, body, err
 }
 
-// ReturnTransfer sends a dispatched transfer back to the sender in full
-// (FR-INV-25). Every item re-enters the sending branch at the cost it left,
-// and the dispatch journal entry is mirrored (1200 Dr / 1210 Cr).
+// ReturnTransfer is not supported: the approved model has no return leg for a dispatched transfer.
+// Receive it, then send the goods back with a new transfer.
 func (s *Service) ReturnTransfer(ctx context.Context, p *auth.Principal, id uuid.UUID, reason string) (int, []byte, error) {
-	var status int
-	var body []byte
-	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
-			if rep != nil {
-				status, body = rep.Status, rep.Body
-			}
-			return err
-		}
-		t, err := lockTransfer(ctx, tx, p, id, "transfers.dispatch", "from")
-		if err != nil {
-			return err
-		}
-		if t.status != "dispatched" {
-			return httpx.Conflict("invalid_status", "Only a dispatched transfer can be returned")
-		}
-		rows, err := tx.Query(ctx, `SELECT product_id, qty_sent, unit_cost FROM stock_transfer_items WHERE transfer_id=$1`, id)
-		if err != nil {
-			return err
-		}
-		var lines []stock.Line
-		var pids []uuid.UUID
-		value := money.Zero
-		for rows.Next() {
-			var ln stock.Line
-			if err := rows.Scan(&ln.ProductID, &ln.Qty, &ln.UnitCost); err != nil {
-				rows.Close()
-				return err
-			}
-			lines = append(lines, ln)
-			pids = append(pids, ln.ProductID)
-			value = value.Add(money.Money(ln.Qty.Mul(ln.UnitCost)))
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		user := p.UserID
-		if err := s.Stock.Receive(ctx, tx, p.BusinessID, t.from, &user, "transfer_in", "stock_transfer_return", id, lines); err != nil {
-			return err
-		}
-		if err := s.Ledger.Reverse(ctx, tx, p.BusinessID, "stock_transfer", id, s.bizDate(ctx, tx), "Transfer returned "+t.number, &user); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE stock_transfers SET status='returned', note=COALESCE(NULLIF($2,''), note) WHERE id=$1`, id, reason); err != nil {
-			return err
-		}
-		if err := jobs.EnqueueTx(ctx, tx, p.BusinessID, jobs.CheckLowStock, map[string]any{"branch_id": t.from, "product_ids": pids}); err != nil {
-			return err
-		}
-		if err := s.Audit.Record(ctx, tx, p, "transfer.returned", "stock_transfer", id, map[string]any{"status": "dispatched"}, map[string]any{"status": "returned", "value": value, "reason": reason}); err != nil {
-			return err
-		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "number": t.number, "status": "returned", "value": value}))
-		status, body = 200, raw
-		return err
-	})
-	return status, body, err
+	return 0, nil, httpx.New(410, "transfer_return_removed", "A dispatched transfer cannot be returned. Receive it, then create a transfer back")
 }
 
 type ReceiveLine struct {
@@ -813,6 +725,9 @@ type ReceiveIn struct {
 	Note  string        `json:"note" validate:"max=500"`
 }
 
+// ReceiveTransfer receives a dispatched transfer in full; the database writes the transfer-in
+// movements. A partial receipt (a different quantity per line) is not part of the approved model:
+// receive in full and correct the difference with a stock adjustment.
 func (s *Service) ReceiveTransfer(ctx context.Context, p *auth.Principal, id uuid.UUID, in ReceiveIn) (int, []byte, error) {
 	if err := httpx.Check(in); err != nil {
 		return 0, nil, err
@@ -820,129 +735,55 @@ func (s *Service) ReceiveTransfer(ctx context.Context, p *auth.Principal, id uui
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
 			return err
 		}
-		t, err := lockTransfer(ctx, tx, p, id, "transfers.receive", "to")
+		t, err := lockTransfer(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
 		if t.status != "dispatched" {
-			return httpx.Conflict("invalid_status", "This transfer is not in transit")
+			return httpx.Conflict("invalid_status", "Only a dispatched transfer can be received")
 		}
-		rows, err := tx.Query(ctx, `
-			SELECT ti.product_id, ti.qty_sent, ti.unit_cost, p.name
-			FROM stock_transfer_items ti JOIN products p ON p.id=ti.product_id WHERE ti.transfer_id=$1
-		`, id)
+		if len(in.Items) > 0 {
+			sent := map[uuid.UUID]decimal.Decimal{}
+			rows, err := tx.Query(ctx, `SELECT product_id, quantity FROM app.stock_transfer_lines WHERE stock_transfer_id = $1`, id)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var pid uuid.UUID
+				var q decimal.Decimal
+				if err := rows.Scan(&pid, &q); err != nil {
+					rows.Close()
+					return err
+				}
+				sent[pid] = q
+			}
+			rows.Close()
+			for _, ln := range in.Items {
+				if q, ok := sent[ln.ProductID]; !ok || !q.Equal(money.Qty(ln.QtyReceived)) {
+					return httpx.BadRequest("partial_receipt_not_supported", "A transfer is received in full. Receive it, then correct any difference with a stock adjustment")
+				}
+			}
+		}
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_transfers SET status = 'received', received_at = now(), received_by = $2 WHERE id = $1`, id, p.MembershipID); err != nil {
+			return err
+		}
+		value, pids, err := transferValue(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		type item struct {
-			id         uuid.UUID
-			sent, cost decimal.Decimal
-			name       string
-		}
-		var items []item
-		onTransfer := map[uuid.UUID]bool{}
-		for rows.Next() {
-			var it item
-			if err := rows.Scan(&it.id, &it.sent, &it.cost, &it.name); err != nil {
-				rows.Close()
-				return err
-			}
-			items = append(items, it)
-			onTransfer[it.id] = true
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		if err := jobs.EnqueueTx(ctx, tx, p.TenantID, jobs.CheckLowStock, map[string]any{"branch_id": t.to, "product_ids": pids}); err != nil {
 			return err
 		}
-		got := map[uuid.UUID]decimal.Decimal{}
-		for _, ln := range in.Items {
-			if !onTransfer[ln.ProductID] {
-				return httpx.BadRequest("invalid_body", "A received product is not on this transfer")
-			}
-			got[ln.ProductID] = money.Qty(ln.QtyReceived)
-		}
-		user := p.UserID
-		receivedValue, lossValue := money.Zero, money.Zero
-		var recvLines []stock.Line
-		var shortages []string
-		var pids []uuid.UUID
-		for _, it := range items {
-			qty, ok := got[it.id]
-			if !ok {
-				qty = it.sent
-			}
-			if qty.GreaterThan(it.sent) {
-				return httpx.BadRequest("invalid_body", "Received quantity cannot exceed the quantity sent")
-			}
-			if _, err := tx.Exec(ctx, `UPDATE stock_transfer_items SET qty_received=$3 WHERE transfer_id=$1 AND product_id=$2`, id, it.id, qty); err != nil {
-				return err
-			}
-			if qty.IsPositive() {
-				recvLines = append(recvLines, stock.Line{ProductID: it.id, Qty: qty, UnitCost: it.cost})
-				receivedValue = receivedValue.Add(money.Money(qty.Mul(it.cost)))
-				pids = append(pids, it.id)
-			}
-			if short := it.sent.Sub(qty); short.IsPositive() {
-				lossValue = lossValue.Add(money.Money(short.Mul(it.cost)))
-				shortages = append(shortages, it.name+" short by "+short.String())
-			}
-		}
-		if len(recvLines) > 0 {
-			if err := s.Stock.Receive(ctx, tx, p.BusinessID, t.to, &user, "transfer_in", "stock_transfer", id, recvLines); err != nil {
-				return err
-			}
-		}
-		// The dispatch moved exactly sent x cost into transit; clear it fully.
-		var transit decimal.Decimal
-		if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(round(qty_sent*unit_cost, 2)),0) FROM stock_transfer_items WHERE transfer_id=$1`, id).Scan(&transit); err != nil {
+		if err := s.Audit.Record(ctx, tx, p, "transfer.received", "stock_transfers", id, nil, map[string]any{"number": t.number, "value": value}); err != nil {
 			return err
 		}
-		lossValue = transit.Sub(receivedValue)
-		if lossValue.IsNegative() {
-			receivedValue, lossValue = transit, money.Zero
-		}
-		var jlines []ledger.Line
-		if receivedValue.IsPositive() {
-			jlines = append(jlines, ledger.Line{Code: "1200", BranchID: &t.to, Debit: receivedValue})
-		}
-		if lossValue.IsPositive() {
-			jlines = append(jlines, ledger.Line{Code: "5110", BranchID: &t.from, Debit: lossValue})
-		}
-		if transit.IsPositive() {
-			jlines = append(jlines, ledger.Line{Code: "1210", BranchID: &t.from, Credit: transit})
-			if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, s.bizDate(ctx, tx), "stock_transfer_receive", id, "Transfer receive "+t.number, &user, jlines); err != nil {
-				return err
-			}
-		}
-		final := "received"
-		if len(shortages) > 0 {
-			final = "received_with_difference"
-			// FR-INV-24: the Owner is told about every transfer difference.
-			if err := s.notifyOwners(ctx, tx, p.BusinessID, notify.Message{
-				Type: "transfer_difference", Title: "Transfer difference", Body: t.number + ": " + strings.Join(shortages, ", "),
-				Link: "/stock-transfers/" + id.String(), EntityType: "stock_transfer", EntityID: &id,
-			}); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.Exec(ctx, `UPDATE stock_transfers SET status=$2, received_by=$3, received_at=now(), note=COALESCE(NULLIF($4,''), note) WHERE id=$1`, id, final, p.UserID, in.Note); err != nil {
-			return err
-		}
-		if len(pids) > 0 {
-			if err := jobs.EnqueueTx(ctx, tx, p.BusinessID, jobs.CheckLowStock, map[string]any{"branch_id": t.to, "product_ids": pids}); err != nil {
-				return err
-			}
-		}
-		if err := s.Audit.Record(ctx, tx, p, "transfer.received", "stock_transfer", id, nil, map[string]any{"status": final, "received_value": receivedValue, "loss_value": lossValue}); err != nil {
-			return err
-		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "number": t.number, "status": final, "received_value": receivedValue, "loss_value": lossValue}))
+		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "number": t.number, "status": "received", "received_value": value, "loss_value": money.Zero}))
 		status, body = 200, raw
 		return err
 	})

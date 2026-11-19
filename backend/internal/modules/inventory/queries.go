@@ -12,7 +12,6 @@ import (
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/money"
-	"bms/internal/platform/sqlq"
 )
 
 func orEmpty(rows []map[string]any) []map[string]any {
@@ -477,40 +476,31 @@ func (s *Service) GetAdjustment(ctx context.Context, p *auth.Principal, id uuid.
 }
 
 func (s *Service) Transfers(ctx context.Context, p *auth.Principal, direction string, f DocFilter, page httpx.Page) ([]map[string]any, int, error) {
-	var out []map[string]any
+	out := []map[string]any{}
 	var total int
+	if direction != "" && direction != "in" && direction != "out" {
+		return out, 0, httpx.BadRequest("invalid_query", "direction must be in or out")
+	}
+	if direction != "" && p.BranchID == nil {
+		return out, 0, httpx.BadRequest("branch_required", "Choose a branch to see transfers "+direction)
+	}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		branches := p.ScopeBranches("transfers.view")
-		switch direction {
-		case "in":
-			if p.BranchID == nil {
-				return httpx.BadRequest("branch_required", "Choose a branch to see transfers in")
-			}
-			q.Add("t.to_branch_id = ?", *p.BranchID)
-		case "out":
-			if p.BranchID == nil {
-				return httpx.BadRequest("branch_required", "Choose a branch to see transfers out")
-			}
-			q.Add("t.from_branch_id = ?", *p.BranchID)
-		case "":
-			if branches != nil {
-				q.Add("(t.from_branch_id = ANY(?) OR t.to_branch_id = ANY(?))", branches, branches)
-			}
-		default:
-			return httpx.BadRequest("invalid_query", "direction must be in or out")
-		}
-		q.If(f.Status != "", "t.status = ?", f.Status)
-		q.If(f.From != "", "t.created_at >= ?::date", f.From)
-		q.If(f.To != "", "t.created_at < ?::date + 1", f.To)
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM stock_transfers t`+q.Where(), q.Args...).Scan(&total); err != nil {
+		const where = ` WHERE t.tenant_id = $1
+			AND (CASE $2 WHEN 'in' THEN t.to_location_id = $3 WHEN 'out' THEN t.from_location_id = $3
+			             ELSE ($3::uuid IS NULL OR t.from_location_id = $3 OR t.to_location_id = $3) END)
+			AND ($4 = '' OR t.status::text = $4) AND ($5 = '' OR t.created_at >= $5::date) AND ($6 = '' OR t.created_at < $6::date + 1)`
+		args := []any{p.TenantID, direction, p.BranchID, f.Status, f.From, f.To}
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.stock_transfers t`+where, args...).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT t.id, t.number, t.from_branch_id, fb.name, t.to_branch_id, tb.name, t.status, t.note, t.created_at, t.dispatched_at, t.received_at,
-			       (SELECT COALESCE(SUM(round(i.qty_sent*i.unit_cost,2)),0) FROM stock_transfer_items i WHERE i.transfer_id=t.id)
-			FROM stock_transfers t JOIN branches fb ON fb.id=t.from_branch_id JOIN branches tb ON tb.id=t.to_branch_id`+q.Where()+
-			` ORDER BY t.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
+			SELECT t.id, t.transfer_no, t.from_location_id, fb.name::text, t.to_location_id, tb.name::text, t.status::text, t.note, t.created_at, t.dispatched_at, t.received_at,
+			       (SELECT coalesce(sum(round(l.quantity * pr.average_cost, 2)), 0) FROM app.stock_transfer_lines l
+			         JOIN app.products pr ON pr.tenant_id = l.tenant_id AND pr.id = l.product_id WHERE l.stock_transfer_id = t.id)
+			FROM app.stock_transfers t
+			JOIN app.locations fb ON fb.tenant_id = t.tenant_id AND fb.id = t.from_location_id
+			JOIN app.locations tb ON tb.tenant_id = t.tenant_id AND tb.id = t.to_location_id`+where+`
+			ORDER BY t.created_at DESC LIMIT $7 OFFSET $8`, append(args, page.PerPage, page.Offset)...)
 		if err != nil {
 			return err
 		}
@@ -525,36 +515,43 @@ func (s *Service) Transfers(ctx context.Context, p *auth.Principal, direction st
 			if err := rows.Scan(&id, &number, &from, &fname, &to, &tname, &st, &note, &at, &disp, &recv, &value); err != nil {
 				return err
 			}
-			out = append(out, map[string]any{"id": id, "number": number, "from_branch_id": from, "from_branch": fname, "to_branch_id": to, "to_branch": tname, "status": st, "note": note, "created_at": at, "dispatched_at": disp, "received_at": recv, "value": value})
+			out = append(out, map[string]any{"id": id, "number": number, "from_branch_id": from, "from_branch": fname, "to_branch_id": to, "to_branch": tname,
+				"status": st, "note": note, "created_at": at, "dispatched_at": disp, "received_at": recv, "value": value})
 		}
 		return rows.Err()
 	})
-	return orEmpty(out), total, err
+	return out, total, err
 }
 
 func (s *Service) GetTransfer(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		var from, to, by uuid.UUID
+		var from, to uuid.UUID
+		var by *uuid.UUID
 		var number, fname, tname, st string
 		var note *string
 		var at time.Time
 		var disp, recv *time.Time
-		err := tx.QueryRow(ctx, `
-			SELECT t.number, t.from_branch_id, fb.name, t.to_branch_id, tb.name, t.status, t.note, t.created_by, t.created_at, t.dispatched_at, t.received_at
-			FROM stock_transfers t JOIN branches fb ON fb.id=t.from_branch_id JOIN branches tb ON tb.id=t.to_branch_id WHERE t.id=$1
-		`, id).Scan(&number, &from, &fname, &to, &tname, &st, &note, &by, &at, &disp, &recv)
-		if err != nil || !(p.SeesBranch("transfers.view", from) || p.SeesBranch("transfers.view", to)) {
+		if err := tx.QueryRow(ctx, `
+			SELECT t.transfer_no, t.from_location_id, fb.name::text, t.to_location_id, tb.name::text, t.status::text, t.note, m.user_id, t.created_at, t.dispatched_at, t.received_at
+			FROM app.stock_transfers t
+			JOIN app.locations fb ON fb.tenant_id = t.tenant_id AND fb.id = t.from_location_id
+			JOIN app.locations tb ON tb.tenant_id = t.tenant_id AND tb.id = t.to_location_id
+			LEFT JOIN app.memberships m ON m.tenant_id = t.tenant_id AND m.id = t.created_by
+			WHERE t.tenant_id = $1 AND t.id = $2`, p.TenantID, id).Scan(&number, &from, &fname, &to, &tname, &st, &note, &by, &at, &disp, &recv); err != nil {
 			return httpx.NotFound("not_found", "Transfer not found")
 		}
 		items, err := itemRows(ctx, tx, `
-			SELECT i.product_id, p.name, p.sku, i.qty_sent, i.qty_received, i.qty_sent - COALESCE(i.qty_received, i.qty_sent), i.unit_cost
-			FROM stock_transfer_items i JOIN products p ON p.id=i.product_id WHERE i.transfer_id=$1 ORDER BY p.name`, id,
+			SELECT l.product_id, pr.name::text, coalesce(pr.sku, ''), l.quantity,
+			       CASE WHEN (SELECT t.status FROM app.stock_transfers t WHERE t.tenant_id = l.tenant_id AND t.id = l.stock_transfer_id) = 'received' THEN l.quantity END, 0::numeric, pr.average_cost
+			FROM app.stock_transfer_lines l JOIN app.products pr ON pr.tenant_id = l.tenant_id AND pr.id = l.product_id
+			WHERE l.stock_transfer_id = $1 ORDER BY pr.name`, id,
 			[]string{"product_id", "product_name", "sku", "qty_sent", "qty_received", "qty_difference", "unit_cost"})
 		if err != nil {
 			return err
 		}
-		out = map[string]any{"id": id, "number": number, "from_branch_id": from, "from_branch": fname, "to_branch_id": to, "to_branch": tname, "status": st, "note": note, "created_by": by, "created_at": at, "dispatched_at": disp, "received_at": recv, "items": items}
+		out = map[string]any{"id": id, "number": number, "from_branch_id": from, "from_branch": fname, "to_branch_id": to, "to_branch": tname, "status": st,
+			"note": note, "created_by": by, "created_at": at, "dispatched_at": disp, "received_at": recv, "items": items}
 		return nil
 	})
 	return out, err
