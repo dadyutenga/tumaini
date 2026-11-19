@@ -17,7 +17,7 @@ import (
 type Handler struct{ Svc *Service }
 
 func showCost(p *auth.Principal) bool {
-	_, ok := p.Can("products.view_cost")
+	_, ok := p.Can("shop.product.view_cost")
 	return ok
 }
 
@@ -189,17 +189,17 @@ func (h *Handler) BarcodeLabel(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
-	r.Get("/products", middleware.Require("products.view"), h.List)
-	r.Get("/products/lookup", middleware.Require("products.view"), h.Lookup)
-	r.Get("/products/export", middleware.Require("products.view"), h.Export)
-	r.Post("/products", middleware.Require("products.manage"), h.Create)
-	r.Get("/products/:id", middleware.Require("products.view"), h.Get)
-	r.Get("/products/:id/barcode-label", middleware.Require("products.view"), h.BarcodeLabel)
-	r.Put("/products/:id", middleware.Require("products.manage"), h.Update)
-	r.Put("/products/:id/branch-prices", middleware.Require("products.manage"), h.BranchPrices)
-	r.Post("/products/:id/deactivate", middleware.Require("products.manage"), h.active(false))
-	r.Post("/products/:id/activate", middleware.Require("products.manage"), h.active(true))
-	r.Get("/products/:id/price-history", middleware.Require("products.view"), func(c fiber.Ctx) error {
+	r.Get("/products", middleware.Require("shop.product.view"), h.List)
+	r.Get("/products/lookup", middleware.Require("shop.product.view"), h.Lookup)
+	r.Get("/products/export", middleware.Require("shop.product.view"), h.Export)
+	r.Post("/products", middleware.Require("shop.product.manage"), h.Create)
+	r.Get("/products/:id", middleware.Require("shop.product.view"), h.Get)
+	r.Get("/products/:id/barcode-label", middleware.Require("shop.product.view"), h.BarcodeLabel)
+	r.Put("/products/:id", middleware.Require("shop.product.manage"), h.Update)
+	r.Put("/products/:id/branch-prices", middleware.Require("shop.product.manage"), h.BranchPrices)
+	r.Post("/products/:id/deactivate", middleware.Require("shop.product.manage"), h.active(false))
+	r.Post("/products/:id/activate", middleware.Require("shop.product.manage"), h.active(true))
+	r.Get("/products/:id/price-history", middleware.Require("shop.product.view"), func(c fiber.Ctx) error {
 		id, err := httpx.UUIDParam(c, "id")
 		if err != nil {
 			return err
@@ -210,7 +210,7 @@ func Register(r fiber.Router, h *Handler) {
 		}
 		return c.JSON(httpx.Data(list))
 	})
-	r.Post("/products/import", middleware.Require("products.import"), func(c fiber.Ctx) error {
+	r.Post("/products/import", middleware.Require("shop.product.manage"), func(c fiber.Ctx) error {
 		fh, err := c.FormFile("file")
 		if err != nil {
 			return httpx.BadRequest("invalid_body", "Upload a file field named file")
@@ -227,14 +227,14 @@ func Register(r fiber.Router, h *Handler) {
 		}
 		return c.JSON(httpx.Data(rep))
 	})
-	r.Get("/categories", middleware.Require("products.view"), func(c fiber.Ctx) error {
+	r.Get("/categories", middleware.Require("shop.product.view"), func(c fiber.Ctx) error {
 		list, err := h.Svc.Categories(c.Context(), middleware.Principal(c))
 		if err != nil {
 			return err
 		}
 		return c.JSON(httpx.Data(list))
 	})
-	r.Post("/categories", middleware.Require("categories.manage"), func(c fiber.Ctx) error {
+	r.Post("/categories", middleware.Require("shop.product.manage"), func(c fiber.Ctx) error {
 		var body CategoryIn
 		if err := c.Bind().Body(&body); err != nil {
 			return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
@@ -245,7 +245,7 @@ func Register(r fiber.Router, h *Handler) {
 		}
 		return c.Status(fiber.StatusCreated).JSON(httpx.Data(cat))
 	})
-	r.Put("/categories/:id", middleware.Require("categories.manage"), func(c fiber.Ctx) error {
+	r.Put("/categories/:id", middleware.Require("shop.product.manage"), func(c fiber.Ctx) error {
 		id, err := httpx.UUIDParam(c, "id")
 		if err != nil {
 			return err
@@ -260,7 +260,7 @@ func Register(r fiber.Router, h *Handler) {
 		}
 		return c.JSON(httpx.Data(cat))
 	})
-	r.Delete("/categories/:id", middleware.Require("categories.manage"), func(c fiber.Ctx) error {
+	r.Delete("/categories/:id", middleware.Require("shop.product.manage"), func(c fiber.Ctx) error {
 		id, err := httpx.UUIDParam(c, "id")
 		if err != nil {
 			return err
@@ -270,14 +270,14 @@ func Register(r fiber.Router, h *Handler) {
 		}
 		return c.JSON(httpx.Data(fiber.Map{"ok": true}))
 	})
-	r.Get("/units", middleware.Require("products.view"), func(c fiber.Ctx) error {
+	r.Get("/units", middleware.Require("shop.product.view"), func(c fiber.Ctx) error {
 		list, err := h.Svc.Units(c.Context(), middleware.Principal(c))
 		if err != nil {
 			return err
 		}
 		return c.JSON(httpx.Data(list))
 	})
-	r.Post("/units", middleware.Require("categories.manage"), func(c fiber.Ctx) error {
+	r.Post("/units", middleware.Require("shop.product.manage"), func(c fiber.Ctx) error {
 		var body UnitIn
 		if err := c.Bind().Body(&body); err != nil {
 			return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
@@ -288,7 +288,7 @@ func Register(r fiber.Router, h *Handler) {
 		}
 		return c.Status(fiber.StatusCreated).JSON(httpx.Data(u))
 	})
-	r.Put("/units/:id", middleware.Require("categories.manage"), func(c fiber.Ctx) error {
+	r.Put("/units/:id", middleware.Require("shop.product.manage"), func(c fiber.Ctx) error {
 		id, err := httpx.UUIDParam(c, "id")
 		if err != nil {
 			return err

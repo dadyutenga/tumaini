@@ -26,6 +26,7 @@ The legacy migrations are frozen in `backend/database/legacy/` for auditability.
 7. **Migration 170** (additive): `app.tenant_setting_values`, a validated key/value table for operational settings the specification has no column for (payroll parameters, receipt layout, reminder lead times, clock-in networks, payment-method mapping, currency display). Settings that do have a column (`tenant_settings`, `tenants`, `document_sequences`) are read and written there; `platform/setting` hides the difference from modules.
 8. **Notification types** are the 17 values of `app.notification_type`; the old 25 event names are mapped when the notification module is ported. `days_before` per type is stored as `notifications.days_before_<type>`.
 9. **Branches** lose `code`, `manager_id` and per-branch invoice prefix: numbering is per tenant (`app.document_sequences`) and locations have no such columns.
+10. **Catalog.** A unit of measure is a lowercase code on the product, with no master table; `/units` lists common codes plus those in use, writes only validate. Per-branch selling prices do not exist in the approved model (`PUT /products/:id/branch-prices` answers 410). Products are stock items only; the `service` kind belongs to the services catalogue. Selling-price changes are logged and permission/approval-gated by the database (`tg_product_price_guard`); the optional `reason` field feeds `app.product_price_changes.reason`.
 6. **API vocabulary kept where possible.** `business_id`, `branch_id`, `X-Branch-Id` and `slug` still appear in JSON/headers and now carry tenant id, location id and role code. Permission codes are new; the web client is updated in a later step.
 
 ## Backend port checklist
@@ -38,7 +39,7 @@ Legend: [x] done (compiles, not yet integration-tested), [ ] not started.
 - [x] Identity: users, roles, sessions, login history, overrides, recovery
 - [x] Audit kernel via `audit.log_event`; every transaction attributed
 - [x] Org and settings (profile, locations, tax, files, attachments, settings, notification rules; migration 170 adds `tenant_setting_values`)
-- [ ] Catalog (products, categories, price changes)
+- [x] Catalog (products, categories, price history; units are codes, per-branch prices and the product `kind` are gone)
 - [ ] Inventory (stock balances, movements, adjustments, transfers, counts, receipts)
 - [ ] Customers, suppliers
 - [ ] Sales and POS (sales, lines, units, returns)
