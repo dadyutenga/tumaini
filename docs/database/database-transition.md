@@ -43,7 +43,7 @@ Legend: [x] done (compiles, not yet integration-tested), [ ] not started.
 - [x] Audit kernel via `audit.log_event`; every transaction attributed
 - [x] Org and settings (profile, locations, tax, files, attachments, settings, notification rules; migration 170 adds `tenant_setting_values`)
 - [x] Catalog (products, categories, price history; units are codes, per-branch prices and the product `kind` are gone)
-- [ ] Inventory (stock balances, movements, adjustments, transfers, counts, receipts)
+- [x] Inventory (reads, entries, counts, adjustments, transfers)
 - [ ] Customers, suppliers
 - [ ] Sales and POS (sales, lines, units, returns)
 - [ ] Purchasing
