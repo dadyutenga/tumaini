@@ -344,13 +344,13 @@ func (h *Handler) UnifiedDebts(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
-	r.Get("/money-accounts", middleware.RequireAny("accounts.view", "sales.create", "tills.open_close", "payments.receive"), h.List)
-	r.Post("/money-accounts", middleware.Require("accounts.manage"), h.Create)
-	r.Get("/money-accounts/:id", middleware.Require("accounts.view"), h.Get)
-	r.Put("/money-accounts/:id", middleware.Require("accounts.manage"), h.Update)
-	r.Post("/money-accounts/:id/deactivate", middleware.Require("accounts.manage"), h.Deactivate)
-	r.Get("/money-accounts/:id/statement", middleware.Require("accounts.view_balance"), h.Statement)
-	r.Post("/money-accounts/:id/reconcile", middleware.Require("reconcile.manage"), middleware.Idempotent(), h.Reconcile)
+	r.Get("/money-accounts", middleware.RequireAny("finance.account.view", "finance.payment.receive", "shop.sale.create", "finance.expense.enter"), h.List)
+	r.Post("/money-accounts", middleware.Require("finance.account.manage"), h.Create)
+	r.Get("/money-accounts/:id", middleware.Require("finance.account.view"), h.Get)
+	r.Put("/money-accounts/:id", middleware.Require("finance.account.manage"), h.Update)
+	r.Post("/money-accounts/:id/deactivate", middleware.Require("finance.account.manage"), h.Deactivate)
+	r.Get("/money-accounts/:id/statement", middleware.Require("finance.account.view"), h.Statement)
+	r.Post("/money-accounts/:id/reconcile", middleware.Require("finance.account.manage"), middleware.Idempotent(), h.Reconcile)
 
 	r.Get("/payments", middleware.Require("payments.view"), h.payments(""))
 	r.Get("/payments/customers", middleware.Require("payments.view"), h.payments("customer"))
@@ -360,8 +360,8 @@ func Register(r fiber.Router, h *Handler) {
 	r.Get("/payments/:id/voucher", middleware.Require("payments.view"), h.Voucher)
 	r.Post("/payments/:id/void", middleware.Require("payments.void"), middleware.Idempotent(), h.Void)
 
-	r.Get("/money-transfers", middleware.Require("accounts.view"), h.Transfers)
-	r.Post("/money-transfers", middleware.Require("transfers_money.create"), middleware.Idempotent(), h.Transfer)
+	r.Get("/money-transfers", middleware.Require("finance.account.view"), h.Transfers)
+	r.Post("/money-transfers", middleware.Require("finance.account.manage"), middleware.Idempotent(), h.Transfer)
 	r.Get("/income", middleware.Require("payments.view"), h.Income)
 	r.Post("/income", middleware.Require("income.create"), middleware.Idempotent(), h.RecordIncome)
 	r.Get("/income-categories", middleware.Require("income.create"), h.IncomeCategories)
@@ -369,7 +369,7 @@ func Register(r fiber.Router, h *Handler) {
 	r.Post("/drawings", middleware.Require("drawings.create"), middleware.Idempotent(), h.Drawing)
 	r.Post("/statutory-payments", middleware.Require("payments.pay"), middleware.Idempotent(), h.Statutory)
 
-	r.Get("/transactions", middleware.Require("transactions.view"), h.Transactions)
+	r.Get("/transactions", middleware.Require("finance.transaction.view"), h.Transactions)
 	r.Get("/ledger/accounts", middleware.Require("reports.financial"), h.LedgerAccounts)
 	r.Get("/ledger/entries", middleware.Require("reports.financial"), h.Entries)
 	r.Get("/reports/trial-balance", middleware.Require("reports.financial"), h.Trial)
