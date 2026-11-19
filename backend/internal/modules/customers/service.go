@@ -20,6 +20,7 @@ import (
 	"bms/internal/platform/idem"
 	"bms/internal/platform/ids"
 	"bms/internal/platform/money"
+	"bms/internal/platform/phone"
 	"bms/internal/platform/setting"
 	"bms/internal/platform/sqlq"
 )
@@ -35,23 +36,28 @@ func New(database *db.DB, led *ledger.Service, aud *audit.Service, clk clock.Clo
 	return &Service{DB: database, Ledger: led, Audit: aud, Clock: clk}
 }
 
+// Customer is a person or business that buys from the shop (app.customers with is_shop_customer).
+// The same table holds services clients; the services module reads them as clients. Walk-in sales
+// have no customer row, so there is no "walk-in customer" any more. Tax number and payment terms are
+// not part of the approved model (a customer has a credit limit, and a national id kept encrypted).
 type Customer struct {
-	ID          uuid.UUID       `json:"id"`
-	Name        string          `json:"name"`
-	Phone       *string         `json:"phone"`
-	Email       *string         `json:"email"`
-	Address     *string         `json:"address"`
-	TaxNumber   *string         `json:"tax_number"`
-	CreditLimit decimal.Decimal `json:"credit_limit"`
-	TermsDays   int             `json:"payment_terms_days"`
-	IsWalkIn    bool            `json:"is_walk_in"`
-	IsActive    bool            `json:"is_active"`
-	Balance     decimal.Decimal `json:"balance"`
-	Credit      decimal.Decimal `json:"credit"`
-	Notes       *string         `json:"notes"`
-	CreatedAt   time.Time       `json:"created_at"`
+	ID           uuid.UUID       `json:"id"`
+	Name         string          `json:"name"`
+	BusinessName *string         `json:"business_name"`
+	Phone        *string         `json:"phone"`
+	Email        *string         `json:"email"`
+	Address      *string         `json:"address"`
+	TaxNumber    *string         `json:"tax_number"`
+	CreditLimit  decimal.Decimal `json:"credit_limit"`
+	TermsDays    int             `json:"payment_terms_days"`
+	IsWalkIn     bool            `json:"is_walk_in"`
+	IsActive     bool            `json:"is_active"`
+	Balance      decimal.Decimal `json:"balance"`
+	Credit       decimal.Decimal `json:"credit"`
+	Notes        *string         `json:"notes"`
+	CreatedAt    time.Time       `json:"created_at"`
 
-	// Account summary, filled on the profile (FR-CUS-03).
+	// Account summary, filled on the profile.
 	TotalPurchases *decimal.Decimal `json:"total_purchases,omitempty"`
 	TotalPaid      *decimal.Decimal `json:"total_paid,omitempty"`
 	Available      *decimal.Decimal `json:"available_credit,omitempty"`
@@ -60,23 +66,31 @@ type Customer struct {
 }
 
 type Input struct {
-	Name        string          `json:"name" validate:"max=200"`
-	Phone       string          `json:"phone" validate:"max=40"`
-	Email       string          `json:"email" validate:"omitempty,email"`
-	Address     string          `json:"address" validate:"max=500"`
-	TaxNumber   string          `json:"tax_number" validate:"max=60"`
-	CreditLimit decimal.Decimal `json:"credit_limit" validate:"dgte0"`
-	TermsDays   int             `json:"payment_terms_days" validate:"gte=0,lte=365"`
-	Notes       string          `json:"notes" validate:"max=2000"`
+	Name         string          `json:"name" validate:"max=200"`
+	BusinessName string          `json:"business_name" validate:"max=200"`
+	Phone        string          `json:"phone" validate:"max=40"`
+	Email        string          `json:"email" validate:"omitempty,email"`
+	Address      string          `json:"address" validate:"max=500"`
+	TaxNumber    string          `json:"tax_number" validate:"max=60"`
+	CreditLimit  decimal.Decimal `json:"credit_limit" validate:"dgte0"`
+	TermsDays    int             `json:"payment_terms_days" validate:"gte=0,lte=365"`
+	Notes        string          `json:"notes" validate:"max=2000"`
 }
 
-const custCols = `c.id, c.name, c.phone, c.email::text, c.address, c.tax_number, c.credit_limit, c.payment_terms_days, c.is_walk_in, c.is_active, c.notes, c.created_at,
-	COALESCE((SELECT SUM(s.balance) FROM sales s WHERE s.customer_id=c.id AND s.kind='sale' AND s.status IN ('completed','partially_refunded')),0),
-	COALESCE((SELECT SUM(jl.credit - jl.debit) FROM journal_lines jl JOIN ledger_accounts la ON la.id=jl.ledger_account_id
-	          WHERE jl.party_type='customer' AND jl.party_id=c.id AND la.code='2300'),0)`
+// custCols: balance is what the customer owes on completed sales; credit is money received from them
+// that is not yet applied to any sale or invoice.
+const custCols = `c.id, c.full_name::text, c.business_name, c.phone::text, c.email::text, c.address, c.credit_limit, c.notes, c.created_at, c.archived_at IS NULL,
+	COALESCE((SELECT SUM(s.balance_due) FROM app.sales s WHERE s.tenant_id=c.tenant_id AND s.customer_id=c.id AND s.status='completed'),0),
+	COALESCE((SELECT SUM(pr.amount - COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.tenant_id=pr.tenant_id AND a.payment_received_id=pr.id),0))
+	          FROM app.payments_received pr WHERE pr.tenant_id=c.tenant_id AND pr.customer_id=c.id AND pr.status='posted'),0)`
 
 func scanCustomer(row pgx.Row, c *Customer) error {
-	return row.Scan(&c.ID, &c.Name, &c.Phone, &c.Email, &c.Address, &c.TaxNumber, &c.CreditLimit, &c.TermsDays, &c.IsWalkIn, &c.IsActive, &c.Notes, &c.CreatedAt, &c.Balance, &c.Credit)
+	var limit *decimal.Decimal
+	err := row.Scan(&c.ID, &c.Name, &c.BusinessName, &c.Phone, &c.Email, &c.Address, &limit, &c.Notes, &c.CreatedAt, &c.IsActive, &c.Balance, &c.Credit)
+	if limit != nil {
+		c.CreditLimit = *limit
+	}
+	return err
 }
 
 type Filter struct {
@@ -89,16 +103,19 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, f Filter, page ht
 	out := []Customer{}
 	total := 0
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
+		q := sqlq.New(p.TenantID)
+		q.Add("c.tenant_id = $1 AND c.is_shop_customer")
+		// Without "view all customers" a person sees only the customers they registered.
+		q.If(!p.Has("shop.customer.view_all"), "c.registered_by = ?", p.MembershipID)
 		if qq := strings.TrimSpace(f.Q); qq != "" {
-			q.Add("(c.name ILIKE '%' || ? || '%' OR c.phone ILIKE '%' || ? || '%' OR c.email::text ILIKE '%' || ? || '%')", qq, qq, qq)
+			q.Add("(c.full_name ILIKE '%' || ? || '%' OR c.phone ILIKE '%' || ? || '%' OR c.email::text ILIKE '%' || ? || '%')", qq, qq, qq)
 		}
-		q.If(f.Active != nil, "c.is_active = ?", f.Active)
-		q.If(f.HasBalance, "EXISTS (SELECT 1 FROM sales s WHERE s.customer_id=c.id AND s.balance > 0 AND s.status IN ('completed','partially_refunded'))")
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM customers c`+q.Where(), q.Args...).Scan(&total); err != nil {
+		q.If(f.Active != nil, "(c.archived_at IS NULL) = ?", f.Active)
+		q.If(f.HasBalance, "EXISTS (SELECT 1 FROM app.sales s WHERE s.tenant_id=c.tenant_id AND s.customer_id=c.id AND s.balance_due > 0 AND s.status='completed')")
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.customers c`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT `+custCols+` FROM customers c`+q.Where()+` ORDER BY c.is_walk_in DESC, c.name, c.id`+q.Page(page.PerPage, page.Offset), q.Args...)
+		rows, err := tx.Query(ctx, `SELECT `+custCols+` FROM app.customers c`+q.Where()+` ORDER BY c.full_name, c.id`+q.Page(page.PerPage, page.Offset), q.Args...)
 		if err != nil {
 			return err
 		}
@@ -119,24 +136,28 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in Input) (Cust
 	if strings.TrimSpace(in.Name) == "" {
 		return Customer{}, httpx.BadRequest("invalid_body", "Customer name is required")
 	}
-	id := ids.New()
-	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		limit := money.Money(in.CreditLimit)
+	ph, err := phone.Optional(in.Phone)
+	if err != nil {
+		return Customer{}, httpx.BadRequest("invalid_phone", err.Error())
+	}
+	id := uuid.New()
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		var limit any
 		// Setting a credit limit needs its own permission.
-		if _, ok := p.Can("customers.credit_limit"); !ok {
-			limit, in.TermsDays = money.Zero, 0
+		if p.Has("shop.customer.manage") && in.CreditLimit.IsPositive() && p.Has("finance.debt.view") {
+			limit = money.Money(in.CreditLimit)
 		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO customers (id, business_id, name, phone, email, address, tax_number, credit_limit, payment_terms_days, notes, created_by)
-			VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,'')::citext,NULLIF($6,''),NULLIF($7,''),$8,$9,NULLIF($10,''),$11)
-		`, id, p.BusinessID, strings.TrimSpace(in.Name), strings.TrimSpace(in.Phone), strings.TrimSpace(in.Email), in.Address, in.TaxNumber, limit, in.TermsDays, in.Notes, p.UserID)
+			INSERT INTO app.customers (id, tenant_id, full_name, business_name, phone, email, address, is_shop_customer, credit_limit, notes)
+			VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,'')::app.phone_e164,NULLIF($6,'')::app.email,NULLIF($7,''),true,$8,NULLIF($9,''))`,
+			id, p.TenantID, strings.TrimSpace(in.Name), strings.TrimSpace(in.BusinessName), ph, strings.ToLower(strings.TrimSpace(in.Email)), in.Address, limit, in.Notes)
 		if db.IsUnique(err) {
 			return httpx.Conflict("duplicate", "A customer with that phone already exists")
 		}
 		if err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "customer.created", "customer", id, nil, in)
+		return s.Audit.Record(ctx, tx, p, "customer.created", "customers", id, nil, in)
 	})
 	if err != nil {
 		return Customer{}, err
@@ -149,22 +170,26 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (Cus
 	var c Customer
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		c, err = s.load(ctx, tx, id)
+		c, err = s.load(ctx, tx, p.TenantID, id)
 		if err != nil {
 			return err
+		}
+		if !p.Has("shop.customer.view_all") {
+			var mine bool
+			if err := tx.QueryRow(ctx, `SELECT registered_by = $3 FROM app.customers WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, p.MembershipID).Scan(&mine); err != nil || !mine {
+				return httpx.NotFound("not_found", "Customer not found")
+			}
 		}
 		var purchases, paid decimal.Decimal
 		var n int
 		var last *time.Time
 		if err := tx.QueryRow(ctx, `
-			SELECT COALESCE((SELECT SUM(si.line_total) FROM sale_items si JOIN sales s ON s.id=si.sale_id
-			                 WHERE s.customer_id=$1 AND s.kind='sale' AND s.status IN ('completed','partially_refunded','refunded')),0),
-			       COALESCE((SELECT SUM(CASE WHEN direction='in' THEN amount ELSE -amount END) FROM payments
-			                 WHERE party_type='customer' AND party_id=$1 AND status='posted'),0),
-			       (SELECT count(*) FROM sales WHERE customer_id=$1 AND kind='sale' AND status IN ('completed','partially_refunded','refunded')),
-			       GREATEST((SELECT max(created_at) FROM sales WHERE customer_id=$1 AND kind='sale' AND status NOT IN ('held','cancelled')),
-			                (SELECT max(created_at) FROM payments WHERE party_type='customer' AND party_id=$1))
-		`, id).Scan(&purchases, &paid, &n, &last); err != nil {
+			SELECT COALESCE((SELECT SUM(s.total) FROM app.sales s WHERE s.tenant_id=$1 AND s.customer_id=$2 AND s.status='completed'),0),
+			       COALESCE((SELECT SUM(pr.amount) FROM app.payments_received pr WHERE pr.tenant_id=$1 AND pr.customer_id=$2 AND pr.status='posted'),0),
+			       (SELECT count(*) FROM app.sales WHERE tenant_id=$1 AND customer_id=$2 AND status='completed'),
+			       GREATEST((SELECT max(created_at) FROM app.sales WHERE tenant_id=$1 AND customer_id=$2 AND status NOT IN ('held','draft')),
+			                (SELECT max(created_at) FROM app.payments_received WHERE tenant_id=$1 AND customer_id=$2))
+		`, p.TenantID, id).Scan(&purchases, &paid, &n, &last); err != nil {
 			return err
 		}
 		avail := c.CreditLimit.Sub(c.Balance)
@@ -177,9 +202,9 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (Cus
 	return c, err
 }
 
-func (s *Service) load(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Customer, error) {
+func (s *Service) load(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (Customer, error) {
 	var c Customer
-	err := scanCustomer(tx.QueryRow(ctx, `SELECT `+custCols+` FROM customers c WHERE c.id=$1`, id), &c)
+	err := scanCustomer(tx.QueryRow(ctx, `SELECT `+custCols+` FROM app.customers c WHERE c.tenant_id=$1 AND c.id=$2 AND c.is_shop_customer`, tenantID, id), &c)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, httpx.NotFound("not_found", "Customer not found")
 	}
@@ -187,27 +212,28 @@ func (s *Service) load(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Customer, 
 }
 
 func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, in Input) (Customer, error) {
-	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		before, err := s.load(ctx, tx, id)
+	ph, err := phone.Optional(in.Phone)
+	if err != nil {
+		return Customer{}, httpx.BadRequest("invalid_phone", err.Error())
+	}
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		before, err := s.load(ctx, tx, p.TenantID, id)
 		if err != nil {
 			return err
 		}
-		if before.IsWalkIn {
-			return httpx.Conflict("invalid_status", "The walk-in customer cannot be edited")
-		}
 		_, err = tx.Exec(ctx, `
-			UPDATE customers SET name=COALESCE(NULLIF($2,''), name), phone=COALESCE(NULLIF($3,''), phone),
-			email=COALESCE(NULLIF($4,'')::citext, email), address=COALESCE(NULLIF($5,''), address),
-			tax_number=COALESCE(NULLIF($6,''), tax_number), notes=COALESCE(NULLIF($7,''), notes)
-			WHERE id=$1
-		`, id, strings.TrimSpace(in.Name), strings.TrimSpace(in.Phone), strings.TrimSpace(in.Email), in.Address, in.TaxNumber, in.Notes)
+			UPDATE app.customers SET full_name=COALESCE(NULLIF($2,''), full_name), business_name=COALESCE(NULLIF($3,''), business_name),
+			phone=COALESCE(NULLIF($4,'')::app.phone_e164, phone), email=COALESCE(NULLIF($5,'')::app.email, email),
+			address=COALESCE(NULLIF($6,''), address), notes=COALESCE(NULLIF($7,''), notes)
+			WHERE tenant_id=$1 AND id=$8`,
+			p.TenantID, strings.TrimSpace(in.Name), strings.TrimSpace(in.BusinessName), ph, strings.ToLower(strings.TrimSpace(in.Email)), in.Address, in.Notes, id)
 		if db.IsUnique(err) {
 			return httpx.Conflict("duplicate", "A customer with that phone already exists")
 		}
 		if err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "customer.updated", "customer", id, before, in)
+		return s.Audit.Record(ctx, tx, p, "customer.updated", "customers", id, before, in)
 	})
 	if err != nil {
 		return Customer{}, err
@@ -215,43 +241,39 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 	return s.Get(ctx, p, id)
 }
 
+// CreditLimit sets how much the customer may owe. Payment terms are not part of the approved model, so
+// days is validated and ignored.
 func (s *Service) CreditLimit(ctx context.Context, p *auth.Principal, id uuid.UUID, limit decimal.Decimal, days int) error {
 	if limit.IsNegative() || days < 0 || days > 365 {
 		return httpx.BadRequest("invalid_body", "Credit limit cannot be negative and terms must be 0 to 365 days")
 	}
 	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		before, err := s.load(ctx, tx, id)
+		before, err := s.load(ctx, tx, p.TenantID, id)
 		if err != nil {
 			return err
 		}
-		if before.IsWalkIn {
-			return httpx.Conflict("invalid_status", "The walk-in customer cannot have credit")
-		}
-		if _, err := tx.Exec(ctx, `UPDATE customers SET credit_limit=$2, payment_terms_days=$3 WHERE id=$1`, id, money.Money(limit), days); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.customers SET credit_limit=$3 WHERE tenant_id=$1 AND id=$2`, p.TenantID, id, money.Money(limit)); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "customer.credit_limit", "customer", id,
-			map[string]any{"credit_limit": before.CreditLimit, "days": before.TermsDays}, map[string]any{"credit_limit": money.Money(limit), "days": days})
+		return s.Audit.Record(ctx, tx, p, "customer.credit_limit", "customers", id,
+			map[string]any{"credit_limit": before.CreditLimit}, map[string]any{"credit_limit": money.Money(limit)})
 	})
 }
 
-// Deactivate hides a customer from new sales. A customer who still owes cannot be deactivated.
+// Deactivate archives a customer so they are hidden from new sales. A customer who still owes cannot be archived.
 func (s *Service) Deactivate(ctx context.Context, p *auth.Principal, id uuid.UUID) (Customer, error) {
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		c, err := s.load(ctx, tx, id)
+		c, err := s.load(ctx, tx, p.TenantID, id)
 		if err != nil {
 			return err
 		}
-		if c.IsWalkIn {
-			return httpx.Conflict("invalid_status", "The walk-in customer cannot be deactivated")
-		}
 		if c.Balance.IsPositive() {
-			return httpx.Conflict("has_balance", "This customer still owes "+c.Balance.StringFixed(2)+". Collect or write off the debt first")
+			return httpx.Conflict("has_balance", "This customer still owes "+c.Balance.StringFixed(2)+". Collect the debt first")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE customers SET is_active=false WHERE id=$1`, id); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.customers SET archived_at=now() WHERE tenant_id=$1 AND id=$2`, p.TenantID, id); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "customer.deactivated", "customer", id, map[string]any{"is_active": c.IsActive}, map[string]any{"is_active": false})
+		return s.Audit.Record(ctx, tx, p, "customer.deactivated", "customers", id, map[string]any{"is_active": c.IsActive}, map[string]any{"is_active": false})
 	})
 	if err != nil {
 		return Customer{}, err
@@ -429,7 +451,7 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, customerID uui
 func (s *Service) Unpaid(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := s.load(ctx, tx, id); err != nil {
+		if _, err := s.load(ctx, tx, p.TenantID, id); err != nil {
 			return err
 		}
 		today, err := s.bizDate(ctx, tx)
@@ -475,7 +497,7 @@ func (s *Service) Unpaid(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 func (s *Service) Statement(ctx context.Context, p *auth.Principal, id uuid.UUID, from, to string) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		c, err := s.load(ctx, tx, id)
+		c, err := s.load(ctx, tx, p.TenantID, id)
 		if err != nil {
 			return err
 		}

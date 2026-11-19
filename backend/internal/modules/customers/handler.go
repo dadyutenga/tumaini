@@ -167,15 +167,15 @@ func (h *Handler) Debts(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
-	r.Get("/customers", middleware.Require("customers.view"), h.List)
-	r.Post("/customers", middleware.Require("customers.manage"), h.Create)
-	r.Get("/customers/debts", middleware.Require("customers.view"), h.Debts)
-	r.Get("/customers/:id", middleware.Require("customers.view"), h.Get)
-	r.Put("/customers/:id", middleware.Require("customers.manage"), h.Update)
-	r.Put("/customers/:id/credit-limit", middleware.Require("customers.credit_limit"), h.Credit)
-	r.Post("/customers/:id/deactivate", middleware.Require("customers.manage"), h.Deactivate)
-	r.Get("/customers/:id/unpaid", middleware.Require("customers.view"), h.Unpaid)
-	r.Post("/customers/:id/payments", middleware.Require("payments.receive"), middleware.Idempotent(), h.Pay)
-	r.Post("/customers/:id/write-off", middleware.Require("customers.write_off"), middleware.Idempotent(), h.WriteOff)
-	r.Get("/customers/:id/statement", middleware.Require("customers.statement"), h.Statement)
+	r.Get("/customers", middleware.RequireAny("shop.customer.view_all", "shop.customer.manage"), h.List)
+	r.Post("/customers", middleware.Require("shop.customer.manage"), h.Create)
+	r.Get("/customers/debts", middleware.Require("finance.debt.view"), h.Debts)
+	r.Get("/customers/:id", middleware.RequireAny("shop.customer.view_all", "shop.customer.manage"), h.Get)
+	r.Put("/customers/:id", middleware.Require("shop.customer.manage"), h.Update)
+	r.Put("/customers/:id/credit-limit", middleware.Require("finance.debt.view"), h.Credit)
+	r.Post("/customers/:id/deactivate", middleware.Require("shop.customer.manage"), h.Deactivate)
+	r.Get("/customers/:id/unpaid", middleware.RequireAny("shop.customer.view_all", "shop.customer.manage"), h.Unpaid)
+	r.Post("/customers/:id/payments", middleware.Require("finance.payment.receive"), middleware.Idempotent(), h.Pay)
+	r.Post("/customers/:id/write-off", middleware.Require("finance.transaction.correct"), middleware.Idempotent(), h.WriteOff)
+	r.Get("/customers/:id/statement", middleware.Require("finance.debt.view"), h.Statement)
 }
