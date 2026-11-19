@@ -254,7 +254,7 @@ func (s *Service) SaveLeaveType(ctx context.Context, p *auth.Principal, id *uuid
 type CommissionIn struct {
 	EmployeeID *uuid.UUID       `json:"employee_id"`
 	PositionID *uuid.UUID       `json:"position_id"`
-	Calc       string           `json:"calc" validate:"omitempty,oneof=percent_of_sales fixed_per_sale"`
+	Calc       string           `json:"calc" validate:"omitempty,oneof=percent_of_sales fixed_per_sale fixed_per_project"`
 	Value      *decimal.Decimal `json:"value"`
 	MinTarget  *decimal.Decimal `json:"min_target"`
 	IsActive   *bool            `json:"is_active"`

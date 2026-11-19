@@ -684,3 +684,91 @@ paths:
           $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /attachments:
+    get:
+      tags: [Files]
+      summary: List attachments linked to a record
+      parameters:
+        - name: entity_type
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: entity_id
+          in: query
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: List of attachments
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      tags: [Files]
+      summary: Link an uploaded file to a record
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [entity_type, entity_id, file_id]
+              properties:
+                entity_type: { type: string }
+                entity_id: { type: string, format: uuid }
+                file_id: { type: string, format: uuid }
+                label: { type: string }
+      responses:
+        '201':
+          description: Created attachment
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /attachments/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    delete:
+      tags: [Files]
+      summary: Remove an attachment link
+      responses:
+        '200':
+          description: Attachment removed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'

@@ -617,3 +617,117 @@ func (s *Service) UpdateMe(ctx context.Context, p *auth.Principal, name, languag
 		return err
 	})
 }
+
+type UserPermissionOverride struct {
+	PermissionKey string           `json:"permission_key"`
+	Allowed       bool             `json:"allowed"`
+	Scope         string           `json:"scope"`
+	ApprovalLimit *decimal.Decimal `json:"approval_limit"`
+}
+
+func (s *Service) GetUserPermissions(ctx context.Context, p *auth.Principal, userID uuid.UUID) (map[string]any, error) {
+	var out map[string]any
+	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		var roleID uuid.UUID
+		var roleSlug string
+		if err := tx.QueryRow(ctx, `SELECT u.role_id, r.slug FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, userID).Scan(&roleID, &roleSlug); err != nil {
+			return httpx.NotFound("not_found", "User not found")
+		}
+		rolePerms := []map[string]any{}
+		rrows, err := tx.Query(ctx, `SELECT permission_key, scope, approval_limit FROM role_permissions WHERE role_id = $1 ORDER BY permission_key`, roleID)
+		if err != nil {
+			return err
+		}
+		for rrows.Next() {
+			var k, sc string
+			var lim *decimal.Decimal
+			if err := rrows.Scan(&k, &sc, &lim); err != nil {
+				rrows.Close()
+				return err
+			}
+			rolePerms = append(rolePerms, map[string]any{"permission_key": k, "scope": sc, "approval_limit": lim})
+		}
+		rrows.Close()
+		if err := rrows.Err(); err != nil {
+			return err
+		}
+
+		overrides := []UserPermissionOverride{}
+		orows, err := tx.Query(ctx, `SELECT permission_key, allowed, scope, approval_limit FROM user_permissions WHERE user_id = $1 ORDER BY permission_key`, userID)
+		if err != nil {
+			return err
+		}
+		for orows.Next() {
+			var ov UserPermissionOverride
+			if err := orows.Scan(&ov.PermissionKey, &ov.Allowed, &ov.Scope, &ov.ApprovalLimit); err != nil {
+				orows.Close()
+				return err
+			}
+			overrides = append(overrides, ov)
+		}
+		orows.Close()
+		if err := orows.Err(); err != nil {
+			return err
+		}
+
+		out = map[string]any{
+			"user_id":          userID,
+			"role_id":          roleID,
+			"role_slug":        roleSlug,
+			"role_permissions": rolePerms,
+			"overrides":        overrides,
+		}
+		return nil
+	})
+	return out, err
+}
+
+func (s *Service) PutUserPermissions(ctx context.Context, p *auth.Principal, userID uuid.UUID, overrides []UserPermissionOverride) (map[string]any, error) {
+	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		var roleSlug string
+		if err := tx.QueryRow(ctx, `SELECT r.slug FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, userID).Scan(&roleSlug); err != nil {
+			return httpx.NotFound("not_found", "User not found")
+		}
+		if roleSlug == "owner" {
+			return httpx.Forbidden("owner_immutable", "Owner permissions cannot be overridden")
+		}
+		// Validate every key exists in permissions catalogue and prevent privilege escalation by non-owners.
+		for _, ov := range overrides {
+			if ov.Scope == "" {
+				ov.Scope = "all"
+			}
+			if ov.Scope != "all" && ov.Scope != "branch" && ov.Scope != "own" {
+				return httpx.BadRequest("invalid_body", "scope must be all, branch, or own")
+			}
+			var exists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM permissions WHERE key = $1)`, ov.PermissionKey).Scan(&exists); err != nil || !exists {
+				return httpx.BadRequest("invalid_body", "Unknown permission: "+ov.PermissionKey)
+			}
+			if ov.Allowed && !p.IsOwner {
+				if _, ok := p.Can(ov.PermissionKey); !ok {
+					return httpx.Forbidden("privilege_escalation", "You cannot grant a permission you do not hold: "+ov.PermissionKey)
+				}
+			}
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM user_permissions WHERE user_id = $1`, userID); err != nil {
+			return err
+		}
+		for _, ov := range overrides {
+			sc := ov.Scope
+			if sc == "" {
+				sc = "all"
+			}
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO user_permissions (business_id, user_id, permission_key, allowed, scope, approval_limit)
+				VALUES ($1,$2,$3,$4,$5,$6)
+			`, p.BusinessID, userID, ov.PermissionKey, ov.Allowed, sc, ov.ApprovalLimit); err != nil {
+				return err
+			}
+		}
+		return s.Audit.Record(ctx, tx, p, "user.permissions_updated", "user", userID, nil, map[string]any{"overrides_count": len(overrides)})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetUserPermissions(ctx, p, userID)
+}

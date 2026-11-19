@@ -104,3 +104,35 @@ func regexpID(t *testing.T, raw string) string {
 	require.NotNil(t, m, raw)
 	return m[1]
 }
+
+func TestAttachmentsFlow(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	code, raw := upload(t, e.app.Fiber, e.owner, "/api/v1/files", "contract.png", "image/png", pngBytes)
+	require.Equal(t, 201, code, raw)
+	fileID := regexpID(t, raw)
+
+	cust := e.owner.call(t, http.MethodPost, "/api/v1/customers", map[string]any{"name": "Asha"}, "")
+	require.Equal(t, 201, cust.code, cust.raw)
+	custID := str(cust.data["id"])
+
+	att := e.owner.call(t, http.MethodPost, "/api/v1/attachments", map[string]any{
+		"entity_type": "customer",
+		"entity_id":   custID,
+		"file_id":     fileID,
+		"label":       "Signed contract",
+	}, "")
+	require.Equal(t, 201, att.code, att.raw)
+	attID := str(att.data["id"])
+
+	list := e.owner.call(t, http.MethodGet, "/api/v1/attachments?entity_type=customer&entity_id="+custID, nil, "")
+	require.Equal(t, 200, list.code, list.raw)
+	require.Len(t, asList(list.body["data"]), 1)
+
+	other := newEnv(t, defaultNow)
+	require.Equal(t, 404, other.owner.call(t, http.MethodDelete, "/api/v1/attachments/"+attID, nil, "").code)
+
+	del := e.owner.call(t, http.MethodDelete, "/api/v1/attachments/"+attID, nil, "")
+	require.Equal(t, 200, del.code, del.raw)
+	list2 := e.owner.call(t, http.MethodGet, "/api/v1/attachments?entity_type=customer&entity_id="+custID, nil, "")
+	require.Len(t, asList(list2.body["data"]), 0)
+}

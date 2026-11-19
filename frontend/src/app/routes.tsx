@@ -332,6 +332,14 @@ export const routes: AppRoute[] = [
     permission: ["employees.view", "leave.request", "attendance.clock", "attendance.view"],
   },
   {
+    path: "/employees/:id",
+    label: "Employee",
+    icon: Contact,
+    component: lazy(() => import("@/pages/EmployeeDetail")),
+    navigation: false,
+    permission: ["employees.view"],
+  },
+  {
     path: "/attendance",
     label: "Attendance",
     icon: CalendarClock,

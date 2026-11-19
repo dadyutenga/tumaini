@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { Download, Pencil, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -14,6 +14,7 @@ import {
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
+import { downloadCsv } from "@/lib/csv";
 import { formatDate, today } from "@/lib/formatters";
 
 interface Day {
@@ -41,9 +42,32 @@ interface ScheduleRow {
   end_time: string | null;
   break_minutes: number;
 }
+interface SummaryEmp {
+  employee_id: string;
+  employee_name: string;
+  employee_no: string;
+  days_present: number;
+  late_count: number;
+  late_minutes: number;
+  days_absent: number;
+  half_days: number;
+  leave_days: number;
+  holidays: number;
+  needs_review: number;
+  overtime_hours: string;
+  worked_hours: string;
+}
+interface SummaryRes {
+  month: string;
+  from: string;
+  to: string;
+  employees: SummaryEmp[];
+}
 
 const time = (v: string | null) =>
   v ? new Date(v).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "-";
+const timeInput = (v: string | null) =>
+  v ? new Date(v).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
 const hours = (m: number | null) => (m ? `${Math.floor(m / 60)}h ${m % 60}m` : "-");
 const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const statuses = ["present", "late", "absent", "half_day", "leave", "holiday", "day_off"];
@@ -68,6 +92,15 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
   const [marking, setMarking] = useState(false);
   const blank = { employee_id: "", day: today(), status: "absent", note: "" };
   const [draft, setDraft] = useState(blank);
+
+  const [correcting, setCorrecting] = useState<Day | null>(null);
+  const [corrForm, setCorrForm] = useState({
+    status: "present",
+    first_in: "",
+    last_out: "",
+    reason: "",
+  });
+
   const refresh = ["/attendance"];
   const mark = useWrite<typeof draft, unknown>("POST", "/attendance/days", {
     invalidate: refresh,
@@ -77,11 +110,46 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
       setDraft(blank);
     },
   });
+  const correct = useWrite<Record<string, unknown>, unknown>(
+    "PUT",
+    () => `/attendance/days/${correcting?.id}`,
+    {
+      invalidate: refresh,
+      success: "Attendance corrected",
+      onSuccess: () => {
+        setCorrecting(null);
+        setCorrForm({ status: "present", first_in: "", last_out: "", reason: "" });
+      },
+    },
+  );
   const decide = useWrite<{ day: Day; action: string }, unknown>(
     "POST",
     (b) => `/attendance/overtime/${b.day.id}/${b.action}`,
     { invalidate: refresh, success: "Overtime updated", toBody: () => ({}) },
   );
+
+  function openCorrect(d: Day) {
+    setCorrecting(d);
+    setCorrForm({
+      status: d.status,
+      first_in: timeInput(d.first_in),
+      last_out: timeInput(d.last_out),
+      reason: "",
+    });
+  }
+
+  function submitCorrection() {
+    if (!correcting) return;
+    const dayStr = correcting.day.slice(0, 10);
+    const toIso = (hhmm: string) => (hhmm ? new Date(`${dayStr}T${hhmm}:00`).toISOString() : null);
+    correct.mutate({
+      status: corrForm.status,
+      first_in: corrForm.first_in ? toIso(corrForm.first_in) : undefined,
+      last_out: corrForm.last_out ? toIso(corrForm.last_out) : undefined,
+      reason: corrForm.reason,
+    });
+  }
+
   return (
     <>
       <div className="mb-4 flex flex-wrap items-end gap-3">
@@ -127,27 +195,36 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
           },
           {
             header: "",
-            cell: (d) =>
-              overtimeOnly &&
-              d.overtime_status === "pending" &&
-              can("overtime.approve") && (
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={() => decide.mutate({ day: d, action: "approve" })}>
-                    Approve
+            cell: (d) => (
+              <div className="flex justify-end gap-1.5">
+                {!overtimeOnly && can("attendance.edit") && (
+                  <Button size="sm" variant="ghost" onClick={() => openCorrect(d)}>
+                    <Pencil size={13} /> Correct
                   </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => decide.mutate({ day: d, action: "reject" })}
-                  >
-                    Reject
-                  </Button>
-                </div>
-              ),
+                )}
+                {overtimeOnly &&
+                  d.overtime_status === "pending" &&
+                  can("overtime.approve") && (
+                    <>
+                      <Button size="sm" onClick={() => decide.mutate({ day: d, action: "approve" })}>
+                        Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => decide.mutate({ day: d, action: "reject" })}
+                      >
+                        Reject
+                      </Button>
+                    </>
+                  )}
+              </div>
+            ),
           },
         ]}
       />
       <Pager meta={list.data?.meta} onPage={setPage} />
+
       <FormDialog
         open={marking}
         onOpenChange={setMarking}
@@ -198,6 +275,133 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
           />
         </Field>
       </FormDialog>
+
+      <FormDialog
+        open={correcting !== null}
+        onOpenChange={(o) => !o && setCorrecting(null)}
+        title={`Correct attendance — ${correcting?.employee_name ?? ""} (${correcting ? formatDate(correcting.day) : ""})`}
+        submitLabel="Save correction"
+        busy={correct.isPending}
+        onSubmit={submitCorrection}
+      >
+        <Field label="Status">
+          <NativeSelect
+            value={corrForm.status}
+            onChange={(e) => setCorrForm((c) => ({ ...c, status: e.target.value }))}
+          >
+            {statuses.map((s) => (
+              <option key={s} value={s}>
+                {s.replace("_", " ")}
+              </option>
+            ))}
+          </NativeSelect>
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Clock in time">
+            <Input
+              type="time"
+              value={corrForm.first_in}
+              onChange={(e) => setCorrForm((c) => ({ ...c, first_in: e.target.value }))}
+            />
+          </Field>
+          <Field label="Clock out time">
+            <Input
+              type="time"
+              value={corrForm.last_out}
+              onChange={(e) => setCorrForm((c) => ({ ...c, last_out: e.target.value }))}
+            />
+          </Field>
+        </div>
+        <Field label="Reason for correction (required)">
+          <Input
+            required
+            value={corrForm.reason}
+            onChange={(e) => setCorrForm((c) => ({ ...c, reason: e.target.value }))}
+            placeholder="e.g. Forgot to clock out, verified by manager"
+          />
+        </Field>
+      </FormDialog>
+    </>
+  );
+}
+
+function MonthlySummary() {
+  const [month, setMonth] = useState(() => today().slice(0, 7));
+  const res = useGet<SummaryRes>("/attendance/summary", { month });
+  const rows = res.data?.employees ?? [];
+
+  function exportCsv() {
+    downloadCsv(`attendance-summary-${month}.csv`, [
+      [
+        "Employee No",
+        "Name",
+        "Present",
+        "Late",
+        "Late mins",
+        "Absent",
+        "Half day",
+        "Leave",
+        "Worked hrs",
+        "Overtime hrs",
+      ],
+      ...rows.map((r) => [
+        r.employee_no,
+        r.employee_name,
+        r.days_present,
+        r.late_count,
+        r.late_minutes,
+        r.days_absent,
+        r.half_days,
+        r.leave_days,
+        r.worked_hours,
+        r.overtime_hours,
+      ]),
+    ]);
+  }
+
+  return (
+    <>
+      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <Field label="Month">
+          <Input
+            type="month"
+            className="w-44"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+          />
+        </Field>
+        <Button variant="outline" size="sm" disabled={!rows.length} onClick={exportCsv}>
+          <Download size={14} /> Export CSV
+        </Button>
+      </div>
+      <DataGrid
+        rows={rows}
+        loading={res.isLoading}
+        rowKey={(r) => r.employee_id}
+        empty="No attendance records for this month"
+        columns={[
+          {
+            header: "Employee",
+            cell: (r) => (
+              <div>
+                <p className="font-medium">{r.employee_name}</p>
+                <p className="text-xs text-muted-foreground">{r.employee_no}</p>
+              </div>
+            ),
+          },
+          { header: "Present", align: "right", cell: (r) => r.days_present },
+          {
+            header: "Late",
+            align: "right",
+            cell: (r) => (r.late_count ? `${r.late_count} (${r.late_minutes}m)` : "0"),
+          },
+          { header: "Absent", align: "right", cell: (r) => r.days_absent },
+          { header: "Half day", align: "right", cell: (r) => r.half_days },
+          { header: "Leave", align: "right", cell: (r) => r.leave_days },
+          { header: "Worked hrs", align: "right", cell: (r) => `${r.worked_hours}h` },
+          { header: "OT hrs", align: "right", cell: (r) => `${r.overtime_hours}h` },
+        ]}
+      />
     </>
   );
 }
@@ -296,16 +500,20 @@ export default function AttendanceAdmin() {
     <>
       <PageHeader
         title="Attendance"
-        description="Daily records, overtime approval and the working week."
+        description="Daily records, monthly summaries, corrections, overtime approval and the working week."
       />
       <Tabs defaultValue="days">
         <TabsList className="mb-4">
           <TabsTrigger value="days">Daily records</TabsTrigger>
+          <TabsTrigger value="summary">Monthly summary</TabsTrigger>
           <TabsTrigger value="overtime">Overtime</TabsTrigger>
           {can("schedules.manage") && <TabsTrigger value="schedule">Working week</TabsTrigger>}
         </TabsList>
         <TabsContent value="days">
           <History overtimeOnly={false} />
+        </TabsContent>
+        <TabsContent value="summary">
+          <MonthlySummary />
         </TabsContent>
         <TabsContent value="overtime">
           <History overtimeOnly />

@@ -455,7 +455,7 @@ func Register(r fiber.Router, h *Handler) {
 	r.Post("/positions", req("departments.manage"), h.SavePosition)
 	r.Put("/positions/:id", req("departments.manage"), h.SavePosition)
 	r.Delete("/positions/:id", req("departments.manage"), h.DeletePosition)
-	r.Get("/leave-types", req("departments.manage"), h.LeaveTypes)
+	r.Get("/leave-types", middleware.RequireAny("leave.request", "leave.approve", "departments.manage", "employees.view"), h.LeaveTypes)
 	r.Post("/leave-types", req("departments.manage"), h.SaveLeaveType)
 	r.Put("/leave-types/:id", req("departments.manage"), h.SaveLeaveType)
 

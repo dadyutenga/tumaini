@@ -13,6 +13,7 @@ import {
 } from "@/components/shared/kit";
 import { PageLoader } from "@/components/shared/Display";
 import { RecordHistoryTab } from "@/components/shared/RecordHistoryTab";
+import { AttachmentsSection } from "@/components/shared/AttachmentsSection";
 import { useAuth } from "@/features/auth/auth";
 import { whatsappUrl } from "@/features/services/helpers";
 import { toast } from "sonner";
@@ -243,6 +244,11 @@ export default function SaleDetail() {
           <Input required value={voidReason} onChange={(e) => setVoidReason(e.target.value)} />
         </Field>
       </FormDialog>
+      {id && (
+        <section className="mt-8">
+          <AttachmentsSection entityType="sale" entityId={id} />
+        </section>
+      )}
       <section className="mt-8">
         <h2 className="mb-3 text-base font-semibold">History</h2>
         <RecordHistoryTab entityType="sale" entityId={id} />

@@ -230,6 +230,41 @@ func (h *Handler) Download(c fiber.Ctx) error {
 	return err
 }
 
+func (h *Handler) ListAttachments(c fiber.Ctx) error {
+	entityID, err := uuid.Parse(c.Query("entity_id"))
+	if err != nil {
+		return httpx.BadRequest("invalid_query", "entity_id must be a UUID")
+	}
+	list, err := h.Svc.ListAttachments(c.Context(), middleware.Principal(c), c.Query("entity_type"), entityID)
+	if err != nil {
+		return err
+	}
+	return c.JSON(httpx.Data(list))
+}
+
+func (h *Handler) CreateAttachment(c fiber.Ctx) error {
+	var body AttachmentIn
+	if err := c.Bind().Body(&body); err != nil {
+		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
+	}
+	att, err := h.Svc.CreateAttachment(c.Context(), middleware.Principal(c), body)
+	if err != nil {
+		return err
+	}
+	return c.Status(fiber.StatusCreated).JSON(httpx.Data(att))
+}
+
+func (h *Handler) DeleteAttachment(c fiber.Ctx) error {
+	id, err := uuid.Parse(c.Params("id"))
+	if err != nil {
+		return httpx.BadRequest("invalid_id", "id must be a UUID")
+	}
+	if err := h.Svc.DeleteAttachment(c.Context(), middleware.Principal(c), id); err != nil {
+		return err
+	}
+	return c.JSON(httpx.Data(fiber.Map{"ok": true}))
+}
+
 func Register(r fiber.Router, h *Handler) {
 	r.Get("/business", middleware.Require("settings.view"), h.Business)
 	r.Put("/business", middleware.Require("business.manage"), h.UpdateBusiness)
@@ -249,4 +284,7 @@ func Register(r fiber.Router, h *Handler) {
 	r.Put("/payment-methods", middleware.Require("settings.manage"), h.UpdateMethods)
 	r.Post("/files", h.Upload)
 	r.Get("/files/:id", h.Download)
+	r.Get("/attachments", h.ListAttachments)
+	r.Post("/attachments", h.CreateAttachment)
+	r.Delete("/attachments/:id", h.DeleteAttachment)
 }

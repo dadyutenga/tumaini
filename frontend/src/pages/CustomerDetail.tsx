@@ -11,6 +11,7 @@ import {
   StatusBadge,
 } from "@/components/shared/kit";
 import { PageLoader } from "@/components/shared/Display";
+import { AttachmentsSection } from "@/components/shared/AttachmentsSection";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
@@ -162,6 +163,12 @@ export default function CustomerDetail() {
             ]}
           />
         </>
+      )}
+
+      {id && (
+        <section className="mt-6">
+          <AttachmentsSection entityType="customer" entityId={id} />
+        </section>
       )}
 
       <FormDialog

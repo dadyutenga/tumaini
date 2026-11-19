@@ -1,0 +1,889 @@
+import { useEffect, useState } from "react";
+import { Link, useParams } from "react-router-dom";
+import {
+  ArrowLeft,
+  Eye,
+  KeyRound,
+  Plus,
+  Printer,
+  Trash2,
+  Upload,
+  UserX,
+} from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DataGrid,
+  Field,
+  FormDialog,
+  NativeSelect,
+  PageHeader,
+  StatusBadge,
+} from "@/components/shared/kit";
+import { PageLoader } from "@/components/shared/Display";
+import { FilePreviewDialog } from "@/components/shared/FilePreview";
+import { RecordHistoryTab } from "@/components/shared/RecordHistoryTab";
+import { AttachmentsSection } from "@/components/shared/AttachmentsSection";
+import { useAuth } from "@/features/auth/auth";
+import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
+import { session } from "@/lib/api";
+import { formatDate, formatMoney, today } from "@/lib/formatters";
+import { useQueryClient } from "@tanstack/react-query";
+
+interface EmployeeDetailData {
+  id: string;
+  employee_no: string;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  national_id?: string | null;
+  address?: string | null;
+  department_id?: string | null;
+  department_name?: string | null;
+  position_id?: string | null;
+  position_name?: string | null;
+  branch_name?: string | null;
+  status: string;
+  hire_date?: string | null;
+  terminated_on?: string | null;
+  pay_type?: string;
+  base_pay?: string;
+  bank_name?: string | null;
+  bank_account?: string | null;
+  mobile_money_number?: string | null;
+  emergency_contact?: string | null;
+  user_id?: string | null;
+}
+
+interface Option {
+  id: string;
+  name: string;
+}
+
+interface LeaveBal {
+  leave_type_id: string;
+  leave_type: string;
+  entitled: string;
+  used: string;
+  remaining: string;
+}
+
+interface EmpDoc {
+  id: string;
+  kind: string;
+  name: string;
+  file_id: string;
+  mime_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+interface EmpComp {
+  component_id: string;
+  name: string;
+  kind: string;
+  calc: string;
+  default_value: string | null;
+  override_value: string | null;
+  assigned: boolean;
+}
+
+interface LoanRow {
+  id: string;
+  number: string;
+  kind: string;
+  amount: string;
+  balance: string;
+  status: string;
+  created_at: string;
+}
+
+interface StatementRes {
+  from: string;
+  to: string;
+  lines?: Array<{ date: string; description: string; amount: string; kind: string }>;
+  total_paid?: string;
+  loan_balance?: string;
+}
+
+export default function EmployeeDetail() {
+  const { id } = useParams();
+  const { can } = useAuth();
+  const qc = useQueryClient();
+
+  const emp = useGet<EmployeeDetailData>(`/employees/${id}`, undefined, { enabled: Boolean(id) });
+  const depts = useGet<Option[]>("/departments", undefined, { enabled: can("departments.manage") });
+  const positions = useGet<Option[]>("/positions", undefined, { enabled: can("departments.manage") });
+  const roles = useGet<Option[]>("/roles", undefined, { enabled: can("roles.view") });
+  const leaveBal = useGet<LeaveBal[]>(`/employees/${id}/leave-balance`, undefined, {
+    enabled: Boolean(id) && can("employees.view"),
+  });
+  const docs = useGet<EmpDoc[]>(`/employees/${id}/documents`, undefined, {
+    enabled: Boolean(id) && can("employees.manage"),
+  });
+  const comps = useGet<EmpComp[]>(`/employees/${id}/components`, undefined, {
+    enabled: Boolean(id) && can("components.manage"),
+  });
+  const loans = useGet<LoanRow[]>(
+    "/loans",
+    { employee_id: id, per_page: 50 },
+    { enabled: Boolean(id) && can("loans.view") },
+  );
+  const statement = useGet<StatementRes>(`/employees/${id}/statement`, undefined, {
+    enabled: Boolean(id) && can("employees.view_salary"),
+  });
+
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({
+    name: "",
+    phone: "",
+    email: "",
+    national_id: "",
+    address: "",
+    department_id: "",
+    position_id: "",
+    pay_type: "monthly",
+    base_pay: "0",
+    bank_name: "",
+    bank_account: "",
+    mobile_money_number: "",
+    emergency_contact: "",
+  });
+
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [loginForm, setLoginForm] = useState({
+    phone: "",
+    email: "",
+    password: "",
+    role_id: "",
+    language: "en",
+  });
+
+  const [termOpen, setTermOpen] = useState(false);
+  const [termForm, setTermForm] = useState({ date: today(), reason: "" });
+
+  const [adjOpen, setAdjOpen] = useState(false);
+  const [adjForm, setAdjForm] = useState({
+    period: today(),
+    kind: "bonus",
+    amount: "",
+    reason: "",
+  });
+
+  const [docKind, setDocKind] = useState("contract");
+  const [docName, setDocName] = useState("");
+  const [uploadingDoc, setUploadingDoc] = useState(false);
+  const [preview, setPreview] = useState<{ id: string; name: string } | null>(null);
+
+  const [selectedComps, setSelectedComps] = useState<
+    Record<string, { assigned: boolean; override: string }>
+  >({});
+
+  useEffect(() => {
+    if (emp.data) {
+      setForm({
+        name: emp.data.name ?? "",
+        phone: emp.data.phone ?? "",
+        email: emp.data.email ?? "",
+        national_id: emp.data.national_id ?? "",
+        address: emp.data.address ?? "",
+        department_id: emp.data.department_id ?? "",
+        position_id: emp.data.position_id ?? "",
+        pay_type: emp.data.pay_type ?? "monthly",
+        base_pay: emp.data.base_pay ?? "0",
+        bank_name: emp.data.bank_name ?? "",
+        bank_account: emp.data.bank_account ?? "",
+        mobile_money_number: emp.data.mobile_money_number ?? "",
+        emergency_contact: emp.data.emergency_contact ?? "",
+      });
+      setLoginForm((l) => ({
+        ...l,
+        phone: emp.data?.phone ?? "",
+        email: emp.data?.email ?? "",
+      }));
+    }
+  }, [emp.data]);
+
+  useEffect(() => {
+    if (comps.data) {
+      const next: Record<string, { assigned: boolean; override: string }> = {};
+      for (const c of comps.data) {
+        next[c.component_id] = {
+          assigned: Boolean(c.assigned),
+          override: c.override_value ?? "",
+        };
+      }
+      setSelectedComps(next);
+    }
+  }, [comps.data]);
+
+  const updateEmp = useWrite<Record<string, unknown>, unknown>("PUT", `/employees/${id}`, {
+    invalidate: [`/employees/${id}`, "/employees"],
+    success: "Employee updated",
+    onSuccess: () => setEditing(false),
+  });
+
+  const createLogin = useWrite<typeof loginForm, unknown>("POST", `/employees/${id}/user`, {
+    invalidate: [`/employees/${id}`, "/users"],
+    success: "User login created and linked",
+    onSuccess: () => {
+      setLoginOpen(false);
+      setLoginForm((l) => ({ ...l, password: "" }));
+    },
+  });
+
+  const terminate = useWrite<typeof termForm, unknown>("POST", `/employees/${id}/terminate`, {
+    invalidate: [`/employees/${id}`, "/employees"],
+    success: "Employee terminated",
+    onSuccess: () => setTermOpen(false),
+  });
+
+  const addAdj = useWrite<unknown, unknown>("POST", "/pay-adjustments", {
+    invalidate: ["/pay-adjustments"],
+    success: "Bonus / deduction recorded",
+    onSuccess: () => {
+      setAdjOpen(false);
+      setAdjForm({ period: today(), kind: "bonus", amount: "", reason: "" });
+    },
+  });
+
+  const saveComps = useWrite<unknown, unknown>("PUT", `/employees/${id}/components`, {
+    invalidate: [`/employees/${id}/components`],
+    success: "Salary components updated",
+  });
+
+  const deleteDoc = useWrite<string, unknown>(
+    "DELETE",
+    (docId) => `/employees/${id}/documents/${docId}`,
+    {
+      invalidate: [`/employees/${id}/documents`],
+      success: "Document deleted",
+    },
+  );
+
+  async function uploadEmployeeDoc(file: File | undefined) {
+    if (!file || !id) return;
+    setUploadingDoc(true);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("kind", docKind);
+      fd.append("name", docName.trim() || file.name);
+      const headers: Record<string, string> = {};
+      const tok = session.getToken();
+      if (tok) headers.Authorization = `Bearer ${tok}`;
+      const res = await fetch(`/api/v1/employees/${id}/documents`, {
+        method: "POST",
+        headers,
+        credentials: "include",
+        body: fd,
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
+        throw new Error(j?.error?.message ?? "Upload failed");
+      }
+      setDocName("");
+      toast.success("Document uploaded");
+      void qc.invalidateQueries({ queryKey: [`/employees/${id}/documents`] });
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setUploadingDoc(false);
+    }
+  }
+
+  if (emp.isLoading || !emp.data) return <PageLoader />;
+  const e = emp.data;
+
+  return (
+    <>
+      <Link
+        to="/people"
+        className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+      >
+        <ArrowLeft size={14} /> People
+      </Link>
+
+      <PageHeader
+        title={`${e.name} (${e.employee_no})`}
+        description={`${e.position_name ?? "No position"}${e.department_name ? ` · ${e.department_name}` : ""}${e.branch_name ? ` · ${e.branch_name}` : ""}`}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <StatusBadge value={e.status} />
+            {can("employees.view_salary") && (
+              <Button variant="outline" size="sm" onClick={() => window.print()}>
+                <Printer size={14} /> Print statement
+              </Button>
+            )}
+            {can("users.manage") && !e.user_id && e.status !== "terminated" && (
+              <Button variant="outline" size="sm" onClick={() => setLoginOpen(true)}>
+                <KeyRound size={14} /> Create login
+              </Button>
+            )}
+            {can("employees.manage") && (
+              <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+                Edit profile
+              </Button>
+            )}
+            {can("employees.manage") && e.status !== "terminated" && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setTermOpen(true)}
+              >
+                <UserX size={14} /> Terminate
+              </Button>
+            )}
+          </div>
+        }
+      />
+
+      <Tabs defaultValue="profile">
+        <TabsList className="mb-4 flex flex-wrap">
+          <TabsTrigger value="profile">Profile &amp; Statement</TabsTrigger>
+          {(can("components.manage") || can("adjustments.manage")) && (
+            <TabsTrigger value="salary">Salary &amp; Bonuses</TabsTrigger>
+          )}
+          <TabsTrigger value="leave">Leave &amp; Loans</TabsTrigger>
+          <TabsTrigger value="documents">Documents &amp; Attachments</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="profile" className="space-y-6">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2 rounded-2xl border bg-card p-5 text-sm">
+              <h3 className="font-semibold">Contact &amp; Employment</h3>
+              <div className="grid grid-cols-2 gap-y-2 pt-2">
+                <span className="text-muted-foreground">Phone</span>
+                <span>{e.phone || "-"}</span>
+                <span className="text-muted-foreground">Email</span>
+                <span>{e.email || "-"}</span>
+                <span className="text-muted-foreground">National ID</span>
+                <span>{e.national_id || "-"}</span>
+                <span className="text-muted-foreground">Address</span>
+                <span>{e.address || "-"}</span>
+                <span className="text-muted-foreground">Hire date</span>
+                <span>{e.hire_date ? formatDate(e.hire_date) : "-"}</span>
+                <span className="text-muted-foreground">Emergency contact</span>
+                <span>{e.emergency_contact || "-"}</span>
+                <span className="text-muted-foreground">System login</span>
+                <span>{e.user_id ? "Linked" : "Not linked"}</span>
+              </div>
+            </div>
+
+            {can("employees.view_salary") && (
+              <div className="space-y-2 rounded-2xl border bg-card p-5 text-sm">
+                <h3 className="font-semibold">Compensation &amp; Payout Details</h3>
+                <div className="grid grid-cols-2 gap-y-2 pt-2">
+                  <span className="text-muted-foreground">Pay type</span>
+                  <span className="capitalize">{e.pay_type || "monthly"}</span>
+                  <span className="text-muted-foreground">Base pay</span>
+                  <span className="font-semibold">{formatMoney(e.base_pay)}</span>
+                  <span className="text-muted-foreground">Bank</span>
+                  <span>{e.bank_name || "-"}</span>
+                  <span className="text-muted-foreground">Bank account</span>
+                  <span>{e.bank_account || "-"}</span>
+                  <span className="text-muted-foreground">Mobile money</span>
+                  <span>{e.mobile_money_number || "-"}</span>
+                  {statement.data?.loan_balance && (
+                    <>
+                      <span className="text-muted-foreground">Loan balance</span>
+                      <span className="font-semibold text-amber-700">
+                        {formatMoney(statement.data.loan_balance)}
+                      </span>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {can("employees.view_salary") && statement.data && (
+            <div className="space-y-2">
+              <h3 className="font-semibold">
+                Employee Statement ({formatDate(statement.data.from)} –{" "}
+                {formatDate(statement.data.to)})
+              </h3>
+              <DataGrid
+                rows={statement.data.lines ?? []}
+                rowKey={(l) => `${l.date}-${l.kind}-${l.description}-${l.amount}`}
+                empty="No statement entries in this period"
+                columns={[
+                  { header: "Date", cell: (l) => formatDate(l.date) },
+                  { header: "Type", cell: (l) => <span className="capitalize">{l.kind}</span> },
+                  { header: "Description", cell: (l) => l.description },
+                  { header: "Amount", align: "right", cell: (l) => formatMoney(l.amount) },
+                ]}
+              />
+            </div>
+          )}
+        </TabsContent>
+
+        {(can("components.manage") || can("adjustments.manage")) && (
+          <TabsContent value="salary" className="space-y-6">
+            {can("adjustments.manage") && (
+              <div className="flex items-center justify-between rounded-2xl border bg-card p-4">
+                <div>
+                  <h3 className="font-semibold">One-off Bonus or Deduction</h3>
+                  <p className="text-xs text-muted-foreground">
+                    Included automatically in the next payroll calculation for that period.
+                  </p>
+                </div>
+                <Button size="sm" onClick={() => setAdjOpen(true)}>
+                  <Plus size={14} /> Add bonus / deduction
+                </Button>
+              </div>
+            )}
+
+            {can("components.manage") && comps.data && (
+              <div className="space-y-3 rounded-2xl border bg-card p-5">
+                <div className="flex items-center justify-between">
+                  <h3 className="font-semibold">Assigned Salary Components</h3>
+                  <Button
+                    size="sm"
+                    disabled={saveComps.isPending}
+                    onClick={() => {
+                      const payload = Object.entries(selectedComps)
+                        .filter(([, v]) => v.assigned)
+                        .map(([component_id, v]) => ({
+                          component_id,
+                          override_value: v.override.trim() ? v.override.trim() : null,
+                        }));
+                      saveComps.mutate({ components: payload });
+                    }}
+                  >
+                    Save components
+                  </Button>
+                </div>
+                <div className="divide-y rounded-lg border">
+                  {comps.data.map((c) => {
+                    const st = selectedComps[c.component_id] ?? {
+                      assigned: false,
+                      override: "",
+                    };
+                    return (
+                      <div
+                        key={c.component_id}
+                        className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 text-sm"
+                      >
+                        <label className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={st.assigned}
+                            onChange={(ev) =>
+                              setSelectedComps((prev) => ({
+                                ...prev,
+                                [c.component_id]: { ...st, assigned: ev.target.checked },
+                              }))
+                            }
+                          />
+                          <span className="font-medium">{c.name}</span>
+                          <span className="text-xs text-muted-foreground">
+                            ({c.kind} · default {c.default_value ?? "-"})
+                          </span>
+                        </label>
+                        {st.assigned && (
+                          <Input
+                            className="h-8 w-36 text-xs"
+                            inputMode="decimal"
+                            placeholder="Custom override"
+                            value={st.override}
+                            onChange={(ev) =>
+                              setSelectedComps((prev) => ({
+                                ...prev,
+                                [c.component_id]: { ...st, override: ev.target.value },
+                              }))
+                            }
+                          />
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </TabsContent>
+        )}
+
+        <TabsContent value="leave" className="space-y-6">
+          <div className="space-y-2">
+            <h3 className="font-semibold">Leave Balance (This Year)</h3>
+            <DataGrid
+              rows={leaveBal.data}
+              loading={leaveBal.isLoading}
+              rowKey={(l) => l.leave_type_id}
+              empty="No leave types configured"
+              columns={[
+                { header: "Leave type", cell: (l) => <span className="font-medium">{l.leave_type}</span> },
+                { header: "Entitled", align: "right", cell: (l) => l.entitled },
+                { header: "Used", align: "right", cell: (l) => l.used },
+                {
+                  header: "Remaining",
+                  align: "right",
+                  cell: (l) => <span className="font-semibold">{l.remaining}</span>,
+                },
+              ]}
+            />
+          </div>
+
+          {can("loans.view") && (
+            <div className="space-y-2">
+              <h3 className="font-semibold">Loans &amp; Salary Advances</h3>
+              <DataGrid
+                rows={loans.data}
+                loading={loans.isLoading}
+                rowKey={(l) => l.id}
+                empty="No loans or advances for this employee"
+                columns={[
+                  { header: "Number", cell: (l) => l.number },
+                  { header: "Kind", cell: (l) => <span className="capitalize">{l.kind}</span> },
+                  { header: "Amount", align: "right", cell: (l) => formatMoney(l.amount) },
+                  { header: "Balance", align: "right", cell: (l) => formatMoney(l.balance) },
+                  { header: "Status", cell: (l) => <StatusBadge value={l.status} /> },
+                ]}
+              />
+            </div>
+          )}
+        </TabsContent>
+
+        <TabsContent value="documents" className="space-y-6">
+          {can("employees.manage") && (
+            <div className="space-y-3 rounded-2xl border bg-card p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h3 className="font-semibold">Official HR Documents</h3>
+                <div className="flex flex-wrap items-center gap-2">
+                  <NativeSelect
+                    className="h-8 w-36 text-xs"
+                    value={docKind}
+                    onChange={(ev) => setDocKind(ev.target.value)}
+                  >
+                    <option value="contract">Contract</option>
+                    <option value="id_copy">ID Copy</option>
+                    <option value="certificate">Certificate</option>
+                    <option value="other">Other</option>
+                  </NativeSelect>
+                  <Input
+                    className="h-8 w-40 text-xs"
+                    placeholder="Document title…"
+                    value={docName}
+                    onChange={(ev) => setDocName(ev.target.value)}
+                  />
+                  <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 text-xs font-medium shadow-sm hover:bg-accent">
+                    <Upload size={13} />
+                    <span>{uploadingDoc ? "Uploading…" : "Upload"}</span>
+                    <input
+                      type="file"
+                      className="hidden"
+                      disabled={uploadingDoc}
+                      onChange={(ev) => {
+                        void uploadEmployeeDoc(ev.target.files?.[0]);
+                        ev.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+              </div>
+              <DataGrid
+                rows={docs.data}
+                loading={docs.isLoading}
+                rowKey={(d) => d.id}
+                empty="No official documents uploaded yet"
+                columns={[
+                  { header: "Type", cell: (d) => <span className="capitalize">{d.kind.replace("_", " ")}</span> },
+                  { header: "Name", cell: (d) => <span className="font-medium">{d.name}</span> },
+                  { header: "Uploaded", cell: (d) => formatDate(d.created_at) },
+                  {
+                    header: "",
+                    cell: (d) => (
+                      <div className="flex justify-end gap-1">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => setPreview({ id: d.file_id, name: d.name })}
+                        >
+                          <Eye size={13} /> Preview
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive"
+                          onClick={() => deleteDoc.mutate(d.id)}
+                        >
+                          <Trash2 size={13} />
+                        </Button>
+                      </div>
+                    ),
+                  },
+                ]}
+              />
+            </div>
+          )}
+
+          {id && <AttachmentsSection entityType="employee" entityId={id} />}
+        </TabsContent>
+
+        <TabsContent value="history">
+          {id && <RecordHistoryTab entityType="employee" entityId={id} />}
+        </TabsContent>
+      </Tabs>
+
+      <FormDialog
+        open={editing}
+        onOpenChange={setEditing}
+        title="Edit employee profile"
+        busy={updateEmp.isPending}
+        onSubmit={() =>
+          updateEmp.mutate({
+            name: form.name,
+            phone: form.phone,
+            email: form.email,
+            national_id: form.national_id,
+            address: form.address,
+            department_id: form.department_id || null,
+            position_id: form.position_id || null,
+            pay_type: form.pay_type,
+            base_pay: form.base_pay,
+            bank_name: form.bank_name,
+            bank_account: form.bank_account,
+            mobile_money_number: form.mobile_money_number,
+            emergency_contact: form.emergency_contact,
+          })
+        }
+      >
+        <Field label="Full name">
+          <Input
+            required
+            value={form.name}
+            onChange={(ev) => setForm((f) => ({ ...f, name: ev.target.value }))}
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Phone">
+            <Input
+              value={form.phone}
+              onChange={(ev) => setForm((f) => ({ ...f, phone: ev.target.value }))}
+            />
+          </Field>
+          <Field label="Email">
+            <Input
+              type="email"
+              value={form.email}
+              onChange={(ev) => setForm((f) => ({ ...f, email: ev.target.value }))}
+            />
+          </Field>
+          <Field label="National ID">
+            <Input
+              value={form.national_id}
+              onChange={(ev) => setForm((f) => ({ ...f, national_id: ev.target.value }))}
+            />
+          </Field>
+          <Field label="Emergency contact">
+            <Input
+              value={form.emergency_contact}
+              onChange={(ev) => setForm((f) => ({ ...f, emergency_contact: ev.target.value }))}
+            />
+          </Field>
+          {depts.data && (
+            <Field label="Department">
+              <NativeSelect
+                value={form.department_id}
+                onChange={(ev) => setForm((f) => ({ ...f, department_id: ev.target.value }))}
+              >
+                <option value="">None</option>
+                {depts.data.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            </Field>
+          )}
+          {positions.data && (
+            <Field label="Position">
+              <NativeSelect
+                value={form.position_id}
+                onChange={(ev) => setForm((f) => ({ ...f, position_id: ev.target.value }))}
+              >
+                <option value="">None</option>
+                {positions.data.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            </Field>
+          )}
+          <Field label="Pay type">
+            <NativeSelect
+              value={form.pay_type}
+              onChange={(ev) => setForm((f) => ({ ...f, pay_type: ev.target.value }))}
+            >
+              <option value="monthly">Monthly</option>
+              <option value="daily">Daily</option>
+              <option value="hourly">Hourly</option>
+            </NativeSelect>
+          </Field>
+          {can("employees.view_salary") && (
+            <Field label="Base pay">
+              <Input
+                inputMode="decimal"
+                value={form.base_pay}
+                onChange={(ev) => setForm((f) => ({ ...f, base_pay: ev.target.value }))}
+              />
+            </Field>
+          )}
+          <Field label="Bank name">
+            <Input
+              value={form.bank_name}
+              onChange={(ev) => setForm((f) => ({ ...f, bank_name: ev.target.value }))}
+            />
+          </Field>
+          <Field label="Bank account">
+            <Input
+              value={form.bank_account}
+              onChange={(ev) => setForm((f) => ({ ...f, bank_account: ev.target.value }))}
+            />
+          </Field>
+        </div>
+        <Field label="Mobile money number">
+          <Input
+            value={form.mobile_money_number}
+            onChange={(ev) => setForm((f) => ({ ...f, mobile_money_number: ev.target.value }))}
+          />
+        </Field>
+        <Field label="Address">
+          <Input
+            value={form.address}
+            onChange={(ev) => setForm((f) => ({ ...f, address: ev.target.value }))}
+          />
+        </Field>
+      </FormDialog>
+
+      <FormDialog
+        open={loginOpen}
+        onOpenChange={setLoginOpen}
+        title={`Create login for ${e.name}`}
+        submitLabel="Create login"
+        busy={createLogin.isPending}
+        onSubmit={() => createLogin.mutate(loginForm)}
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Phone">
+            <Input
+              required
+              value={loginForm.phone}
+              onChange={(ev) => setLoginForm((l) => ({ ...l, phone: ev.target.value }))}
+            />
+          </Field>
+          <Field label="Email (optional)">
+            <Input
+              type="email"
+              value={loginForm.email}
+              onChange={(ev) => setLoginForm((l) => ({ ...l, email: ev.target.value }))}
+            />
+          </Field>
+        </div>
+        <Field label="Role">
+          <NativeSelect
+            required
+            value={loginForm.role_id}
+            onChange={(ev) => setLoginForm((l) => ({ ...l, role_id: ev.target.value }))}
+          >
+            <option value="">Choose role…</option>
+            {roles.data?.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </NativeSelect>
+        </Field>
+        <Field label="Temporary password">
+          <Input
+            required
+            type="password"
+            value={loginForm.password}
+            onChange={(ev) => setLoginForm((l) => ({ ...l, password: ev.target.value }))}
+          />
+        </Field>
+      </FormDialog>
+
+      <FormDialog
+        open={termOpen}
+        onOpenChange={setTermOpen}
+        title={`Terminate ${e.name}`}
+        submitLabel="Confirm termination"
+        busy={terminate.isPending}
+        onSubmit={() => terminate.mutate(termForm)}
+      >
+        <Field label="Termination date">
+          <Input
+            required
+            type="date"
+            value={termForm.date}
+            onChange={(ev) => setTermForm((t) => ({ ...t, date: ev.target.value }))}
+          />
+        </Field>
+        <Field label="Reason">
+          <Input
+            required
+            value={termForm.reason}
+            onChange={(ev) => setTermForm((t) => ({ ...t, reason: ev.target.value }))}
+            placeholder="Resignation, end of contract, etc."
+          />
+        </Field>
+      </FormDialog>
+
+      <FormDialog
+        open={adjOpen}
+        onOpenChange={setAdjOpen}
+        title="Add bonus or deduction"
+        busy={addAdj.isPending}
+        onSubmit={() => addAdj.mutate({ ...adjForm, employee_id: id })}
+      >
+        <div className="grid grid-cols-3 gap-3">
+          <Field label="Kind">
+            <NativeSelect
+              value={adjForm.kind}
+              onChange={(ev) => setAdjForm((a) => ({ ...a, kind: ev.target.value }))}
+            >
+              <option value="bonus">Bonus</option>
+              <option value="deduction">Deduction</option>
+            </NativeSelect>
+          </Field>
+          <Field label="Amount">
+            <Input
+              required
+              inputMode="decimal"
+              value={adjForm.amount}
+              onChange={(ev) => setAdjForm((a) => ({ ...a, amount: ev.target.value }))}
+            />
+          </Field>
+          <Field label="Period date">
+            <Input
+              required
+              type="date"
+              value={adjForm.period}
+              onChange={(ev) => setAdjForm((a) => ({ ...a, period: ev.target.value }))}
+            />
+          </Field>
+        </div>
+        <Field label="Reason">
+          <Input
+            required
+            value={adjForm.reason}
+            onChange={(ev) => setAdjForm((a) => ({ ...a, reason: ev.target.value }))}
+          />
+        </Field>
+      </FormDialog>
+
+      <FilePreviewDialog
+        fileId={preview?.id ?? null}
+        fileName={preview?.name}
+        onClose={() => setPreview(null)}
+      />
+    </>
+  );
+}

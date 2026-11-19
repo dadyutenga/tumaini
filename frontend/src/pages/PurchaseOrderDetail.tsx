@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataGrid, Field, FormDialog, PageHeader, StatusBadge } from "@/components/shared/kit";
 import { PageLoader } from "@/components/shared/Display";
+import { AttachmentsSection } from "@/components/shared/AttachmentsSection";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, formatQty, toNumber } from "@/lib/formatters";
@@ -127,6 +128,9 @@ export default function PurchaseOrderDetail() {
         ]}
       />
       {o.note && <p className="mt-3 text-sm text-muted-foreground">{o.note}</p>}
+      <section className="mt-6">
+        <AttachmentsSection entityType="purchase_order" entityId={o.id} />
+      </section>
       <FormDialog
         open={receiving}
         onOpenChange={setReceiving}

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Clock, LogIn, LogOut, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -91,6 +92,7 @@ function ClockCard() {
 
 function EmployeesTab() {
   const { can } = useAuth();
+  const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const list = useGetPage<Employee>("/employees", { q: q || undefined, page });
@@ -129,6 +131,7 @@ function EmployeesTab() {
         loading={list.isLoading}
         rowKey={(e) => e.id}
         empty="No employees yet"
+        onRowClick={(e) => navigate(`/employees/${e.id}`)}
         columns={[
           { header: "No.", cell: (e) => e.employee_no },
           { header: "Name", cell: (e) => <span className="font-medium">{e.name}</span> },
@@ -202,7 +205,7 @@ function EmployeesTab() {
 }
 
 function LeaveTab() {
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const approver = can("leave.approve");
   const [status, setStatus] = useState("pending");
   const [page, setPage] = useState(1);
@@ -211,7 +214,7 @@ function LeaveTab() {
     page,
   });
   const types = useGet<LeaveType[]>("/leave-types", undefined, {
-    enabled: can("departments.manage"),
+    enabled: canAny("leave.request", "leave.approve", "departments.manage", "employees.view"),
   });
   const employees = useGet<Employee[]>(
     "/employees",

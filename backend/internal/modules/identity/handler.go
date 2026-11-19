@@ -261,6 +261,36 @@ func (h *Handler) EndUserSessions(c fiber.Ctx) error {
 	return c.JSON(httpx.Data(fiber.Map{"ok": true}))
 }
 
+func (h *Handler) GetUserPermissions(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	out, err := h.Svc.GetUserPermissions(c.Context(), middleware.Principal(c), id)
+	if err != nil {
+		return err
+	}
+	return c.JSON(httpx.Data(out))
+}
+
+func (h *Handler) PutUserPermissions(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Overrides []UserPermissionOverride `json:"overrides"`
+	}
+	if err := c.Bind().Body(&body); err != nil {
+		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
+	}
+	out, err := h.Svc.PutUserPermissions(c.Context(), middleware.Principal(c), id, body.Overrides)
+	if err != nil {
+		return err
+	}
+	return c.JSON(httpx.Data(out))
+}
+
 func (h *Handler) LoginHistory(c fiber.Ctx) error {
 	var userID *uuid.UUID
 	if raw := c.Query("user_id"); raw != "" {
@@ -384,6 +414,8 @@ func Register(r fiber.Router, h *Handler) {
 	r.Post("/users/:id/activate", middleware.Require("users.manage"), h.setActive(true))
 	r.Post("/users/:id/reset-password", middleware.Require("users.manage"), h.ResetPassword)
 	r.Delete("/users/:id/sessions", middleware.Require("sessions.manage"), h.EndUserSessions)
+	r.Get("/users/:id/permissions", middleware.Require("users.view"), h.GetUserPermissions)
+	r.Put("/users/:id/permissions", middleware.Require("users.manage"), h.PutUserPermissions)
 	r.Get("/login-history", middleware.Require("login_history.view"), h.LoginHistory)
 	r.Get("/permissions", middleware.Require("roles.view"), h.Permissions)
 	r.Get("/roles", middleware.Require("roles.view"), h.ListRoles)

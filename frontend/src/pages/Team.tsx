@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { KeyRound, LogOut, Pencil, Plus } from "lucide-react";
+import { KeyRound, LogOut, Pencil, Plus, Shield } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -16,6 +16,7 @@ import { ConfirmDialog, CopyButton } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { RoleEditor } from "@/features/auth/RoleEditor";
+import { UserPermissionsDialog } from "@/features/auth/UserPermissionsDialog";
 import type { Branch, SessionUser } from "@/types";
 
 interface Role {
@@ -47,6 +48,7 @@ export default function Team() {
   const [resetPw, setResetPw] = useState("");
   const [resetResult, setResetResult] = useState<{ name: string; password: string } | null>(null);
   const [kickTarget, setKickTarget] = useState<SessionUser | null>(null);
+  const [permTarget, setPermTarget] = useState<SessionUser | null>(null);
 
   const create = useWrite<typeof blank, unknown>("POST", "/users", {
     invalidate: ["/users"],
@@ -197,6 +199,15 @@ export default function Team() {
                           >
                             <KeyRound size={14} /> Reset PW
                           </Button>
+                          {u.role_slug !== "owner" && (
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setPermTarget(u)}
+                            >
+                              <Shield size={14} /> Perms
+                            </Button>
+                          )}
                         </>
                       )}
                       {canSessions && (
@@ -364,6 +375,14 @@ export default function Team() {
         description="Every active session on all devices for this user will be ended immediately."
         onConfirm={() => forceSignOut.mutate(undefined)}
       />
+      {permTarget && (
+        <UserPermissionsDialog
+          userId={permTarget.id}
+          userName={permTarget.name}
+          open
+          onClose={() => setPermTarget(null)}
+        />
+      )}
     </>
   );
 }

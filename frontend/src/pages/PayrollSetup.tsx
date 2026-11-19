@@ -56,6 +56,7 @@ const calcLabel: Record<string, string> = {
   bracket: "Brackets",
   percent_of_sales: "% of sales",
   fixed_per_sale: "Fixed per sale",
+  fixed_per_project: "Fixed per completed project",
 };
 
 function Components() {
@@ -213,6 +214,7 @@ function Commissions() {
               <NativeSelect value={d.calc} onChange={(e) => set({ calc: e.target.value })}>
                 <option value="percent_of_sales">% of sales</option>
                 <option value="fixed_per_sale">Fixed per sale</option>
+                <option value="fixed_per_project">Fixed per completed project</option>
               </NativeSelect>
             </Field>
             <Field label="Value">

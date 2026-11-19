@@ -512,6 +512,106 @@ paths:
       tags:
         - Approvals
       x-permission: approvals.view
+  /attachments:
+    get:
+      parameters:
+        - in: query
+          name: entity_type
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: entity_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      type: object
+                    type: array
+                type: object
+          description: List of attachments
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      summary: List attachments linked to a record
+      tags:
+        - Files
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                entity_id:
+                  format: uuid
+                  type: string
+                entity_type:
+                  type: string
+                file_id:
+                  format: uuid
+                  type: string
+                label:
+                  type: string
+              required:
+                - entity_type
+                - entity_id
+                - file_id
+              type: object
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: Created attachment
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+      summary: Link an uploaded file to a record
+      tags:
+        - Files
+  /attachments/{id}:
+    delete:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: Attachment removed
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "404":
+          $ref: '#/components/responses/NotFound'
+      summary: Remove an attachment link
+      tags:
+        - Files
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          format: uuid
+          type: string
   /attendance/clock-in:
     post:
       operationId: post_attendance_clock_in
@@ -28612,6 +28712,77 @@ paths:
       tags:
         - Users and roles
       x-permission: users.manage
+  /users/{id}/permissions:
+    get:
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: User permissions and overrides
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+      summary: Get a user's role permissions and per-user permission overrides
+      tags:
+        - Users
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema:
+          format: uuid
+          type: string
+    put:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                overrides:
+                  items:
+                    properties:
+                      allowed:
+                        type: boolean
+                      approval_limit:
+                        nullable: true
+                        type: string
+                      permission_key:
+                        type: string
+                      scope:
+                        type: string
+                    type: object
+                  type: array
+              type: object
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: Updated user permissions
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+      summary: Replace per-user permission overrides
+      tags:
+        - Users
   /users/{id}/reset-password:
     post:
       operationId: post_users__id__reset_password
@@ -28703,6 +28874,7 @@ tags:
   - name: Dashboard
   - name: Employees
   - name: Expenses
+  - name: Files
   - name: Finance
   - name: Notifications
   - name: Payroll
@@ -28727,4 +28899,5 @@ tags:
   - name: Suppliers
   - name: Tills
   - name: Transfers
+  - name: Users
   - name: Users and roles

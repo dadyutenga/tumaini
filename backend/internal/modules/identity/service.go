@@ -695,6 +695,32 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 			}
 			p.Perms[key] = auth.Grant{Scope: scope, Limit: limit}
 		}
+		rows.Close()
+		// Apply per-user permission overrides (SRS Section 11: custom grant or revoke per user).
+		if !p.IsOwner {
+			orows, err := tx.Query(ctx, `SELECT permission_key, allowed, scope, approval_limit FROM user_permissions WHERE user_id = $1`, p.UserID)
+			if err != nil {
+				return err
+			}
+			for orows.Next() {
+				var key, scope string
+				var allowed bool
+				var limit *decimal.Decimal
+				if err := orows.Scan(&key, &allowed, &scope, &limit); err != nil {
+					orows.Close()
+					return err
+				}
+				if !allowed {
+					delete(p.Perms, key)
+				} else {
+					p.Perms[key] = auth.Grant{Scope: scope, Limit: limit}
+				}
+			}
+			orows.Close()
+			if err := orows.Err(); err != nil {
+				return err
+			}
+		}
 		brows, err := tx.Query(ctx, `SELECT branch_id FROM user_branches WHERE user_id = $1`, p.UserID)
 		if err != nil {
 			return err

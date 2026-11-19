@@ -1118,3 +1118,67 @@ paths:
                     $ref: '#/components/schemas/Meta'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /users/{id}/permissions:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Users]
+      summary: Get a user's role permissions and per-user permission overrides
+      responses:
+        '200':
+          description: User permissions and overrides
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      tags: [Users]
+      summary: Replace per-user permission overrides
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                overrides:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      permission_key: { type: string }
+                      allowed: { type: boolean }
+                      scope: { type: string }
+                      approval_limit: { type: string, nullable: true }
+      responses:
+        '200':
+          description: Updated user permissions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'

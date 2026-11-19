@@ -36,3 +36,37 @@ func TestListUsersIncludesBranches(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, []any{c.branch}, rows[0]["branch_ids"], "user list must include assigned branches")
 }
+
+func TestUserPermissionOverrides(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	staff, staffID := e.user(t, "staff")
+
+	// Initially staff cannot view audit log, can create sales.
+	me0 := staff.call(t, http.MethodGet, "/api/v1/me", nil, "")
+	require.Equal(t, 200, me0.code, me0.raw)
+	perms0 := me0.data["permissions"].(map[string]any)
+	_, hasAudit0 := perms0["audit.view"]
+	require.False(t, hasAudit0)
+
+	// Grant audit.view and revoke sales.create for this specific user.
+	put := e.owner.call(t, http.MethodPut, "/api/v1/users/"+staffID+"/permissions", map[string]any{
+		"overrides": []map[string]any{
+			{"permission_key": "audit.view", "allowed": true, "scope": "all"},
+			{"permission_key": "sales.create", "allowed": false, "scope": "all"},
+		},
+	}, "")
+	require.Equal(t, 200, put.code, put.raw)
+
+	me1 := staff.call(t, http.MethodGet, "/api/v1/me", nil, "")
+	require.Equal(t, 200, me1.code, me1.raw)
+	perms1 := me1.data["permissions"].(map[string]any)
+	_, hasAudit1 := perms1["audit.view"]
+	_, hasSales1 := perms1["sales.create"]
+	require.True(t, hasAudit1, "override grant should apply")
+	require.False(t, hasSales1, "override revoke should apply")
+
+	// Get endpoint returns both role_permissions and overrides.
+	got := e.owner.call(t, http.MethodGet, "/api/v1/users/"+staffID+"/permissions", nil, "")
+	require.Equal(t, 200, got.code, got.raw)
+	require.Len(t, asList(got.data["overrides"]), 2)
+}

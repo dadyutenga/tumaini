@@ -1,8 +1,19 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Download, FileText } from "lucide-react";
+import {
+  ArrowLeft,
+  Download,
+  FileText,
+  MessageCircle,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   DataGrid,
   Field,
@@ -33,6 +44,12 @@ interface Slip {
 }
 type Detail = Run & { payslips?: Slip[] };
 
+interface ManualLineDraft {
+  kind: "allowance" | "overtime" | "commission" | "bonus" | "deduction";
+  label: string;
+  amount: string;
+}
+
 export default function PayrollRun() {
   const { id } = useParams();
   const { can } = useAuth();
@@ -42,7 +59,17 @@ export default function PayrollRun() {
   });
   const [paying, setPaying] = useState(false);
   const [account, setAccount] = useState("");
-  const refresh = ["/payroll-runs", "/money", "/dashboard", "/me/payslips"];
+
+  const [editingSlip, setEditingSlip] = useState<Slip | null>(null);
+  const [manualLines, setManualLines] = useState<ManualLineDraft[]>([
+    { kind: "bonus", label: "", amount: "" },
+  ]);
+  const [lineReason, setLineReason] = useState("");
+
+  const [reversing, setReversing] = useState(false);
+  const [reverseReason, setReverseReason] = useState("");
+
+  const refresh = ["/payroll-runs", "/money-accounts", "/transactions", "/dashboard", "/me/payslips"];
   const calculate = useWrite("POST", `/payroll-runs/${id}/calculate`, {
     invalidate: refresh,
     success: "Payroll calculated",
@@ -62,11 +89,35 @@ export default function PayrollRun() {
     success: "Salaries paid",
     onSuccess: () => setPaying(false),
   });
+  const putLines = useWrite<{ lines: ManualLineDraft[]; reason: string }, unknown>(
+    "PUT",
+    () => `/payroll-runs/${id}/payslips/${editingSlip?.id}/lines`,
+    {
+      invalidate: refresh,
+      success: "Payslip lines updated",
+      onSuccess: () => {
+        setEditingSlip(null);
+        setManualLines([{ kind: "bonus", label: "", amount: "" }]);
+        setLineReason("");
+      },
+    },
+  );
+  const reverse = useWrite<{ reason: string }, unknown>("POST", `/payroll-runs/${id}/reverse`, {
+    idempotent: true,
+    invalidate: refresh,
+    success: "Payroll run reversed",
+    onSuccess: () => {
+      setReversing(false);
+      setReverseReason("");
+    },
+  });
 
   if (run.isLoading || !run.data) return <PageLoader />;
   const r = run.data;
   const save = (path: string, query: Record<string, string>, name: string) =>
     download(path, query, name).catch((e) => toast.error(errorMessage(e)));
+
+  const canEditLines = ["draft", "calculated"].includes(r.status) && can("payroll.prepare");
 
   return (
     <>
@@ -118,6 +169,15 @@ export default function PayrollRun() {
                 <Button onClick={() => setPaying(true)}>Pay salaries</Button>
               </>
             )}
+            {["approved", "paid"].includes(r.status) && can("payroll.reverse") && (
+              <Button
+                variant="outline"
+                className="text-destructive hover:text-destructive"
+                onClick={() => setReversing(true)}
+              >
+                <RotateCcw size={15} /> Reverse payroll
+              </Button>
+            )}
           </div>
         }
       />
@@ -134,19 +194,49 @@ export default function PayrollRun() {
           { header: "Paid", align: "right", cell: (s) => formatMoney(s.paid_total) },
           {
             header: "",
-            cell: (s) =>
-              can("payslips.view") && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => save(`/payslips/${s.id}`, { format: "pdf" }, `${s.number}.pdf`)}
-                >
-                  <FileText size={14} /> PDF
-                </Button>
-              ),
+            cell: (s) => (
+              <div className="flex justify-end gap-1">
+                {canEditLines && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setEditingSlip(s);
+                      setManualLines([{ kind: "bonus", label: "", amount: "" }]);
+                      setLineReason("");
+                    }}
+                  >
+                    <Pencil size={13} /> Edit lines
+                  </Button>
+                )}
+                {can("payslips.view") && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => save(`/payslips/${s.id}`, { format: "pdf" }, `${s.number}.pdf`)}
+                    >
+                      <FileText size={14} /> PDF
+                    </Button>
+                    <Button size="sm" variant="ghost" asChild>
+                      <a
+                        href={`https://wa.me/?text=${encodeURIComponent(
+                          `Payslip ${s.number} (${formatDate(r.period_start)} – ${formatDate(r.period_end)})\nEmployee: ${s.name}\nGross: ${formatMoney(s.gross)}\nDeductions: ${formatMoney(s.total_deductions)}\nNet Pay: ${formatMoney(s.net)}`,
+                        )}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <MessageCircle size={14} /> Share
+                      </a>
+                    </Button>
+                  </>
+                )}
+              </div>
+            ),
           },
         ]}
       />
+
       <FormDialog
         open={paying}
         onOpenChange={setPaying}
@@ -166,6 +256,114 @@ export default function PayrollRun() {
                 </option>
               ))}
           </NativeSelect>
+        </Field>
+      </FormDialog>
+
+      <FormDialog
+        open={editingSlip !== null}
+        onOpenChange={(o) => !o && setEditingSlip(null)}
+        title={`Edit manual lines — ${editingSlip?.name ?? ""}`}
+        submitLabel="Save lines"
+        busy={putLines.isPending}
+        onSubmit={() =>
+          putLines.mutate({
+            lines: manualLines.filter((l) => l.label.trim() && Number(l.amount) > 0),
+            reason: lineReason,
+          })
+        }
+      >
+        <p className="text-xs text-muted-foreground">
+          Replaces manual earning/deduction lines on this payslip and recalculates net pay. Leave rows empty to remove manual lines.
+        </p>
+        <div className="space-y-2">
+          {manualLines.map((line, idx) => (
+            <div key={idx} className="grid grid-cols-[7.5rem_1fr_6.5rem_2rem] items-center gap-2">
+              <NativeSelect
+                value={line.kind}
+                onChange={(e) =>
+                  setManualLines((prev) =>
+                    prev.map((l, i) =>
+                      i === idx ? { ...l, kind: e.target.value as ManualLineDraft["kind"] } : l,
+                    ),
+                  )
+                }
+              >
+                <option value="bonus">Bonus</option>
+                <option value="allowance">Allowance</option>
+                <option value="overtime">Overtime</option>
+                <option value="commission">Commission</option>
+                <option value="deduction">Deduction</option>
+              </NativeSelect>
+              <Input
+                placeholder="Description"
+                value={line.label}
+                onChange={(e) =>
+                  setManualLines((prev) =>
+                    prev.map((l, i) => (i === idx ? { ...l, label: e.target.value } : l)),
+                  )
+                }
+              />
+              <Input
+                inputMode="decimal"
+                placeholder="Amount"
+                value={line.amount}
+                onChange={(e) =>
+                  setManualLines((prev) =>
+                    prev.map((l, i) => (i === idx ? { ...l, amount: e.target.value } : l)),
+                  )
+                }
+              />
+              <Button
+                type="button"
+                size="icon"
+                variant="ghost"
+                className="h-8 w-8 text-destructive"
+                onClick={() => setManualLines((prev) => prev.filter((_, i) => i !== idx))}
+              >
+                <Trash2 size={14} />
+              </Button>
+            </div>
+          ))}
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() =>
+              setManualLines((prev) => [...prev, { kind: "bonus", label: "", amount: "" }])
+            }
+          >
+            <Plus size={13} /> Add line
+          </Button>
+        </div>
+        <Field label="Reason (required)">
+          <Input
+            required
+            value={lineReason}
+            onChange={(e) => setLineReason(e.target.value)}
+            placeholder="e.g. Special sales bonus approved by owner"
+          />
+        </Field>
+      </FormDialog>
+
+      <FormDialog
+        open={reversing}
+        onOpenChange={setReversing}
+        title={`Reverse payroll ${r.number}`}
+        submitLabel="Confirm reversal"
+        busy={reverse.isPending}
+        onSubmit={() => reverse.mutate({ reason: reverseReason })}
+      >
+        <p className="text-sm text-muted-foreground">
+          Reversing a payroll run posts mirror journal entries and voids associated salary payments.
+        </p>
+        <Field label="Reason for reversal (required)">
+          <Textarea
+            required
+            rows={3}
+            value={reverseReason}
+            onChange={(e) => setReverseReason(e.target.value)}
+            placeholder="Explain why this payroll run is being reversed…"
+          />
         </Field>
       </FormDialog>
     </>

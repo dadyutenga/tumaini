@@ -597,6 +597,23 @@ func (s *Service) commission(ctx context.Context, tx pgx.Tx, e employee, start, 
 	if err != nil {
 		return zero, err
 	}
+	if calc == "fixed_per_project" {
+		var projTotal decimal.Decimal
+		var projCount int
+		if err := tx.QueryRow(ctx, `
+			SELECT COALESCE(SUM(p.total_price), 0), count(*)
+			FROM svc_projects p
+			WHERE p.status = 'completed'
+			  AND COALESCE(p.completed_at::date, p.updated_at::date) BETWEEN $2::date AND $3::date
+			  AND p.owner_id IN (SELECT u.id FROM users u WHERE u.employee_id = $1)
+		`, e.id, start, end).Scan(&projTotal, &projCount); err != nil {
+			return zero, err
+		}
+		if projCount == 0 || projTotal.LessThan(target) {
+			return zero, nil
+		}
+		return r2(value.Mul(decimal.NewFromInt(int64(projCount)))), nil
+	}
 	var netSales decimal.Decimal
 	var count int
 	if err := tx.QueryRow(ctx, `
