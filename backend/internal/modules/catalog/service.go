@@ -1,8 +1,11 @@
 package catalog
 
 import (
+	"bytes"
 	"context"
 	"encoding/csv"
+	"encoding/json"
+	"errors"
 	"io"
 	"strings"
 
@@ -71,7 +74,7 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, q string, categor
 		f.If(category != nil, "p.category_id = ?", category)
 		f.If(active != nil, "p.is_active = ?", active)
 		if low != nil && *low {
-			f.Add("p.kind = 'stock' AND COALESCE(sl.qty_on_hand,0) <= p.reorder_level")
+			f.Add("p.kind = 'stock' AND p.reorder_level > 0 AND COALESCE(sl.qty_on_hand,0) <= p.reorder_level")
 		}
 		from := ` FROM products p JOIN units u ON u.id=p.unit_id
 			LEFT JOIN stock_levels sl ON sl.product_id=p.id AND sl.branch_id=$1
@@ -409,29 +412,106 @@ func (s *Service) Categories(ctx context.Context, p *auth.Principal) ([]Category
 	return out, err
 }
 
-func (s *Service) SaveCategory(ctx context.Context, p *auth.Principal, id *uuid.UUID, in Category) (Category, error) {
+// CategoryIn is a create or update body. On update every field is optional:
+// parent_id is changed only when the key is sent (null moves the category to the top level).
+type CategoryIn struct {
+	Name     *string         `json:"name"`
+	ParentID json.RawMessage `json:"parent_id"`
+	IsActive *bool           `json:"is_active"`
+}
+
+// parent returns (id, set, error) for the parent_id key.
+func (in CategoryIn) parent() (*uuid.UUID, bool, error) {
+	if in.ParentID == nil {
+		return nil, false, nil
+	}
+	if string(bytes.TrimSpace(in.ParentID)) == "null" {
+		return nil, true, nil
+	}
+	var id uuid.UUID
+	if err := json.Unmarshal(in.ParentID, &id); err != nil {
+		return nil, false, httpx.BadRequest("invalid_body", "parent_id must be a UUID or null")
+	}
+	return &id, true, nil
+}
+
+func (s *Service) SaveCategory(ctx context.Context, p *auth.Principal, id *uuid.UUID, in CategoryIn) (Category, error) {
+	parent, parentSet, err := in.parent()
+	if err != nil {
+		return Category{}, err
+	}
+	var name string
+	if in.Name != nil {
+		name = strings.TrimSpace(*in.Name)
+	}
+	if id == nil && name == "" {
+		return Category{}, httpx.BadRequest("invalid_body", "Category name is required")
+	}
+	if in.Name != nil && name == "" {
+		return Category{}, httpx.BadRequest("invalid_body", "Category name cannot be empty")
+	}
 	var outID uuid.UUID
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		if parent != nil {
+			var exists bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM categories WHERE id=$1)`, *parent).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				return httpx.BadRequest("invalid_body", "Parent category not found")
+			}
+		}
 		if id == nil {
 			outID = ids.New()
-			_, err := tx.Exec(ctx, `INSERT INTO categories (id, business_id, parent_id, name) VALUES ($1,$2,$3,$4)`, outID, p.BusinessID, in.ParentID, strings.TrimSpace(in.Name))
+			_, err := tx.Exec(ctx, `INSERT INTO categories (id, business_id, parent_id, name) VALUES ($1,$2,$3,$4)`, outID, p.BusinessID, parent, name)
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "That category already exists")
 			}
-			return err
+			if err != nil {
+				return err
+			}
+			return s.Audit.Record(ctx, tx, p, "category.created", "category", outID, nil, map[string]any{"name": name})
 		}
 		outID = *id
-		_, err := tx.Exec(ctx, `UPDATE categories SET name=COALESCE(NULLIF($2,''), name), parent_id=$3, is_active=$4 WHERE id=$1`, outID, in.Name, in.ParentID, in.IsActive)
-		return err
+		if parentSet && parent != nil {
+			// A category cannot sit under itself or under one of its own descendants.
+			var cycle bool
+			if err := tx.QueryRow(ctx, `
+				WITH RECURSIVE up AS (
+					SELECT id, parent_id FROM categories WHERE id = $1
+					UNION
+					SELECT c.id, c.parent_id FROM categories c JOIN up ON c.id = up.parent_id
+				) SELECT EXISTS (SELECT 1 FROM up WHERE id = $2)`, *parent, outID).Scan(&cycle); err != nil {
+				return err
+			}
+			if cycle {
+				return httpx.BadRequest("invalid_body", "A category cannot be placed under itself or one of its own subcategories")
+			}
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE categories SET name = COALESCE(NULLIF($2,''), name),
+			  parent_id = CASE WHEN $3 THEN $4::uuid ELSE parent_id END,
+			  is_active = COALESCE($5, is_active)
+			WHERE id = $1`, outID, name, parentSet, parent, in.IsActive)
+		if db.IsUnique(err) {
+			return httpx.Conflict("duplicate", "That category already exists")
+		}
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return httpx.NotFound("not_found", "Category not found")
+		}
+		return s.Audit.Record(ctx, tx, p, "category.updated", "category", outID, nil, map[string]any{"name": name})
 	})
 	if err != nil {
 		return Category{}, err
 	}
 	var c Category
-	_ = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT id, parent_id, name, is_active FROM categories WHERE id=$1`, outID).Scan(&c.ID, &c.ParentID, &c.Name, &c.IsActive)
 	})
-	return c, nil
+	return c, err
 }
 
 func (s *Service) DeleteCategory(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
@@ -484,27 +564,68 @@ func (s *Service) Units(ctx context.Context, p *auth.Principal) ([]Unit, error) 
 	return out, err
 }
 
-func (s *Service) SaveUnit(ctx context.Context, p *auth.Principal, id *uuid.UUID, in Unit) (Unit, error) {
+// UnitIn is a create or update body; on update every field is optional.
+type UnitIn struct {
+	Name         *string `json:"name"`
+	ShortName    *string `json:"short_name"`
+	AllowDecimal *bool   `json:"allow_decimal"`
+}
+
+func (s *Service) SaveUnit(ctx context.Context, p *auth.Principal, id *uuid.UUID, in UnitIn) (Unit, error) {
+	trim := func(v *string) string {
+		if v == nil {
+			return ""
+		}
+		return strings.TrimSpace(*v)
+	}
+	name, short := trim(in.Name), trim(in.ShortName)
+	if id == nil && (name == "" || short == "") {
+		return Unit{}, httpx.BadRequest("invalid_body", "Unit name and short name are required")
+	}
+	if (in.Name != nil && name == "") || (in.ShortName != nil && short == "") {
+		return Unit{}, httpx.BadRequest("invalid_body", "Unit name and short name cannot be empty")
+	}
 	var outID uuid.UUID
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		if id == nil {
 			outID = ids.New()
-			_, err := tx.Exec(ctx, `INSERT INTO units (id, business_id, name, short_name, allow_decimal) VALUES ($1,$2,$3,$4,$5)`, outID, p.BusinessID, in.Name, in.ShortName, in.AllowDecimal)
-			return err
+			allow := in.AllowDecimal != nil && *in.AllowDecimal
+			_, err := tx.Exec(ctx, `INSERT INTO units (id, business_id, name, short_name, allow_decimal) VALUES ($1,$2,$3,$4,$5)`, outID, p.BusinessID, name, short, allow)
+			if db.IsUnique(err) {
+				return httpx.Conflict("duplicate", "A unit with that name already exists")
+			}
+			if err != nil {
+				return err
+			}
+			return s.Audit.Record(ctx, tx, p, "unit.created", "unit", outID, nil, map[string]any{"name": name})
 		}
 		outID = *id
-		_, err := tx.Exec(ctx, `UPDATE units SET name=COALESCE(NULLIF($2,''), name), short_name=COALESCE(NULLIF($3,''), short_name), allow_decimal=$4 WHERE id=$1`, outID, in.Name, in.ShortName, in.AllowDecimal)
-		return err
+		tag, err := tx.Exec(ctx, `
+			UPDATE units SET name = COALESCE(NULLIF($2,''), name), short_name = COALESCE(NULLIF($3,''), short_name),
+			  allow_decimal = COALESCE($4, allow_decimal) WHERE id = $1`, outID, name, short, in.AllowDecimal)
+		if db.IsUnique(err) {
+			return httpx.Conflict("duplicate", "A unit with that name already exists")
+		}
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() == 0 {
+			return httpx.NotFound("not_found", "Unit not found")
+		}
+		return s.Audit.Record(ctx, tx, p, "unit.updated", "unit", outID, nil, map[string]any{"name": name})
 	})
 	if err != nil {
 		return Unit{}, err
 	}
 	var u Unit
-	_ = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT id, name, short_name, allow_decimal FROM units WHERE id=$1`, outID).Scan(&u.ID, &u.Name, &u.ShortName, &u.AllowDecimal)
 	})
-	return u, nil
+	return u, err
 }
+
+// maxImportRows bounds one import so a large file cannot hold a request open for minutes.
+const maxImportRows = 5000
 
 type ImportRow struct {
 	Row     int    `json:"row"`
@@ -521,6 +642,9 @@ func (s *Service) Import(ctx context.Context, p *auth.Principal, filename string
 	}
 	if len(records) < 2 {
 		return nil, httpx.BadRequest("invalid_body", "The file needs a header and at least one row")
+	}
+	if len(records) > maxImportRows+1 {
+		return nil, httpx.BadRequest("too_many_rows", "Import at most 5,000 products at a time")
 	}
 	header := map[string]int{}
 	for i, h := range records[0] {
@@ -544,6 +668,10 @@ func (s *Service) Import(ctx context.Context, p *auth.Principal, filename string
 			if _, err := s.Create(ctx, p, ProductInput{Name: name, SKU: sku, Barcode: col(rec, header, "barcode"), SellPrice: price, Kind: "stock"}); err != nil {
 				report[len(report)-1].Status = "error"
 				report[len(report)-1].Message = err.Error()
+				var he *httpx.Error
+				if errors.As(err, &he) {
+					report[len(report)-1].Message = he.Message
+				}
 				continue
 			}
 			saved++

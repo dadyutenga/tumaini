@@ -304,7 +304,8 @@ func (s *Service) GetGRN(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 			return err
 		}
 		items, err := tx.Query(ctx, `
-			SELECT gi.id, gi.product_id, p.name, p.sku, gi.qty_received, gi.qty_returned, gi.unit_cost, round(gi.qty_received*gi.unit_cost, 2)
+			SELECT gi.id, gi.product_id, p.name, p.sku, gi.qty_received, gi.qty_returned, gi.unit_cost, round(gi.qty_received*gi.unit_cost, 2),
+			       gi.batch_no, gi.expiry_date::text
 			FROM goods_receipt_items gi JOIN products p ON p.id=gi.product_id WHERE gi.receipt_id=$1 ORDER BY p.name
 		`, id)
 		if err != nil {
@@ -316,10 +317,11 @@ func (s *Service) GetGRN(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 			var iid, pid uuid.UUID
 			var name, sku string
 			var qty, ret, cost, value decimal.Decimal
-			if err := items.Scan(&iid, &pid, &name, &sku, &qty, &ret, &cost, &value); err != nil {
+			var batch, expiry *string
+			if err := items.Scan(&iid, &pid, &name, &sku, &qty, &ret, &cost, &value, &batch, &expiry); err != nil {
 				return err
 			}
-			lines = append(lines, map[string]any{"id": iid, "product_id": pid, "product_name": name, "sku": sku, "qty_received": qty, "qty_returned": ret, "unit_cost": cost, "value": value})
+			lines = append(lines, map[string]any{"id": iid, "product_id": pid, "product_name": name, "sku": sku, "qty_received": qty, "qty_returned": ret, "unit_cost": cost, "value": value, "batch_no": batch, "expiry_date": expiry})
 		}
 		if err := items.Err(); err != nil {
 			return err

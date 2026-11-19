@@ -10,6 +10,6 @@ import (
 // approval hooks and background jobs.
 func Mount(r fiber.Router, d deps.Deps) *Service {
 	svc := New(d.DB, d.Clock)
-	Register(r, &Handler{Svc: svc})
+	Register(r, &Handler{Svc: svc, Audit: d.Audit})
 	return svc
 }

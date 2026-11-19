@@ -176,7 +176,7 @@ func Register(r fiber.Router, h *Handler) {
 		return c.JSON(httpx.Data(list))
 	})
 	r.Post("/categories", middleware.Require("categories.manage"), func(c fiber.Ctx) error {
-		var body Category
+		var body CategoryIn
 		if err := c.Bind().Body(&body); err != nil {
 			return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
 		}
@@ -191,7 +191,7 @@ func Register(r fiber.Router, h *Handler) {
 		if err != nil {
 			return err
 		}
-		var body Category
+		var body CategoryIn
 		if err := c.Bind().Body(&body); err != nil {
 			return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
 		}
@@ -219,7 +219,7 @@ func Register(r fiber.Router, h *Handler) {
 		return c.JSON(httpx.Data(list))
 	})
 	r.Post("/units", middleware.Require("categories.manage"), func(c fiber.Ctx) error {
-		var body Unit
+		var body UnitIn
 		if err := c.Bind().Body(&body); err != nil {
 			return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
 		}
@@ -234,7 +234,7 @@ func Register(r fiber.Router, h *Handler) {
 		if err != nil {
 			return err
 		}
-		var body Unit
+		var body UnitIn
 		if err := c.Bind().Body(&body); err != nil {
 			return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
 		}

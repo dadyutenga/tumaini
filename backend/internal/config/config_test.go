@@ -51,3 +51,25 @@ func TestProductionGuards(t *testing.T) {
 	_, err = Load()
 	require.ErrorContains(t, err, "SMTP_FROM")
 }
+
+func TestLogLevelAndDefaultsAreValidated(t *testing.T) {
+	base(t)
+	t.Setenv("LOG_LEVEL", "chatty")
+	_, err := Load()
+	require.ErrorContains(t, err, "LOG_LEVEL")
+	t.Setenv("LOG_LEVEL", "DEBUG")
+	_, err = Load()
+	require.NoError(t, err, "the level is case-insensitive")
+	t.Setenv("DEFAULT_TIMEZONE", "Nowhere/Land")
+	_, err = Load()
+	require.ErrorContains(t, err, "DEFAULT_TIMEZONE")
+	t.Setenv("DEFAULT_TIMEZONE", "Africa/Nairobi")
+	t.Setenv("DEFAULT_CURRENCY", "kes")
+	_, err = Load()
+	require.ErrorContains(t, err, "DEFAULT_CURRENCY")
+	t.Setenv("DEFAULT_CURRENCY", "KES")
+	c, err := Load()
+	require.NoError(t, err)
+	require.Equal(t, "Africa/Nairobi", c.DefaultTimezone)
+	require.Equal(t, "KES", c.DefaultCurrency)
+}

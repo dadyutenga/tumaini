@@ -64,7 +64,7 @@ func (s *Service) Hold(ctx context.Context, p *auth.Principal, in CreateIn) (map
 		if err := s.Audit.Record(ctx, tx, p, "sale.held", "sale", id, nil, map[string]any{"total": tot.Total}); err != nil {
 			return err
 		}
-		out = view(id, number, "held", lines, tot, money.Zero, tot.Total, money.Zero)
+		out = view(id, number, "held", lines, tot, money.Zero, tot.Total, money.Zero, canSeeCost(p))
 		out["note"] = in.Note
 		out["customer_id"] = in.CustomerID
 		out["cart"] = json.RawMessage(cart)

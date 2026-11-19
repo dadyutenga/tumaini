@@ -3,6 +3,7 @@ package payments
 import (
 	"context"
 	"errors"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -147,6 +148,8 @@ type ReconcileInput struct {
 	Actual     decimal.Decimal
 	Date       string
 	Note       string
+	// DryRun only reports the difference (FR-FIN-16); nothing is recorded or posted.
+	DryRun bool
 }
 
 type ReconcileResult struct {
@@ -156,6 +159,7 @@ type ReconcileResult struct {
 	System     decimal.Decimal `json:"system_balance"`
 	Actual     decimal.Decimal `json:"actual_balance"`
 	Difference decimal.Decimal `json:"difference"`
+	Posted     bool            `json:"posted"`
 }
 
 // Reconcile records a counted or statement balance and posts any difference
@@ -178,6 +182,13 @@ func Reconcile(ctx context.Context, tx pgx.Tx, led *ledger.Service, in Reconcile
 		return ReconcileResult{}, err
 	}
 	diff := actual.Sub(system)
+	if in.DryRun {
+		return ReconcileResult{AccountID: in.AccountID, AsOf: in.Date, System: system, Actual: actual, Difference: diff}, nil
+	}
+	// Posting an adjustment needs a reason, so the correction can be explained afterwards.
+	if !diff.IsZero() && strings.TrimSpace(in.Note) == "" {
+		return ReconcileResult{}, &httpx.Error{Status: 422, Code: "validation_failed", Message: "Give a reason for the adjustment", Fields: map[string]string{"note": "required when the counted balance differs"}}
+	}
 	id := ids.New()
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO account_reconciliations (id, business_id, money_account_id, as_of_date, system_balance, actual_balance, difference, note, created_by)
@@ -202,5 +213,5 @@ func Reconcile(ctx context.Context, tx pgx.Tx, led *ledger.Service, in Reconcile
 			return ReconcileResult{}, err
 		}
 	}
-	return ReconcileResult{ID: id, AccountID: in.AccountID, AsOf: in.Date, System: system, Actual: actual, Difference: diff}, nil
+	return ReconcileResult{ID: id, AccountID: in.AccountID, AsOf: in.Date, System: system, Actual: actual, Difference: diff, Posted: true}, nil
 }

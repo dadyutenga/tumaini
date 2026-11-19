@@ -933,7 +933,7 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, runID uuid.UUID, i
 		if run["status"] != "approved" {
 			return httpx.Conflict("invalid_status", "Approve the run before paying it")
 		}
-		method, err := hrkit.MethodFor(ctx, tx, in.MoneyAccountID)
+		method, err := hrkit.MethodFor(ctx, tx, p, "payroll.pay", in.MoneyAccountID)
 		if err != nil {
 			return err
 		}
@@ -1412,7 +1412,7 @@ func (s *Service) SalaryDue(ctx context.Context, businessID uuid.UUID, payload j
 			}
 		}
 		payDay := setting.Int(ctx, tx, "payroll.pay_day", 25)
-		before := setting.Int(ctx, tx, "notifications.salary_due_days", 3)
+		before := s.Notify.DaysBefore(ctx, tx, "salary_due", setting.Int(ctx, tx, "notifications.salary_due_days", 3))
 		last := time.Date(today.Year(), today.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
 		if payDay > last {
 			payDay = last

@@ -195,8 +195,9 @@ info:
     - JSON in and out. Success is `{ "data": ... }`; lists add `meta: {page, per_page, total}`.
     - Errors are `{ "error": { "code", "message", "fields" } }`. 400 malformed, 401 not signed in, 403 no permission,
       404 missing or outside your scope, 409 state conflict, 422 field validation, 429 rate limited.
+    - A session idle longer than the business's session timeout (setting `system.session_timeout_minutes`, default 30) is ended: 401 `session_ended`.
     - 202 means the action waits for approval; the body carries `approval_request_id`.
-    - Money and quantities are decimal strings, never floats. Business dates are `YYYY-MM-DD`; timestamps are RFC 3339 UTC.
+    - Money and quantities are decimal strings, never floats, at the scale of the value: money `"2500.00"`, quantities `"3.000"`, unit costs `"1200.0000"`. Business dates are `YYYY-MM-DD`; timestamps are RFC 3339 UTC.
     - `x-permission` on each operation is the permission key the route checks. Scope (all, branch, own) then limits rows.
     - This file is generated: edit docs/api/base.yaml or docs/api/fragments/*.yaml and run `go run ./cmd/openapi` in backend/.
   title: Tumaini BMS API
@@ -1441,7 +1442,13 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "422":
           $ref: '#/components/responses/Unprocessable'
-      summary: Change own password
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Too many attempts
+      summary: Change own password. Every other session of the user is signed out. Five wrong current passwords in 15 minutes block further tries for 15 minutes (429)
       tags:
         - Auth
       x-permission: any
@@ -1475,7 +1482,13 @@ paths:
           $ref: '#/components/responses/BadRequest'
         "401":
           $ref: '#/components/responses/Unauthorized'
-      summary: Exchange the PIN for a fresh access token on a device where a full login happened
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Too many attempts
+      summary: Exchange the PIN for a fresh access token on a device where a full login happened. Five wrong PINs in 15 minutes block further tries for 15 minutes (429); the password still works
       tags:
         - Auth
       x-permission: any
@@ -1776,7 +1789,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         "422":
           $ref: '#/components/responses/Unprocessable'
-      summary: Create a branch with document sequences and a default cash account
+      summary: Create a branch with document sequences and a default cash account. The code is 1 to 8 letters or digits and appears in document numbers
       tags:
         - Business and settings
       x-permission: branches.manage
@@ -1830,6 +1843,8 @@ paths:
               properties:
                 address:
                   type: string
+                invoice_prefix:
+                  type: string
                 manager_id:
                   format: uuid
                   type: string
@@ -1857,7 +1872,9 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
-      summary: Edit a branch
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      summary: Edit a branch. invoice_prefix (1 to 10 capital letters or digits) sets the prefix of this branch's invoice numbers
       tags:
         - Business and settings
       x-permission: branches.manage
@@ -1890,7 +1907,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         "409":
           $ref: '#/components/responses/Conflict'
-      summary: Deactivate a branch with no stock, open tills or unposted documents
+      summary: Deactivate a branch with no stock, open tills or open documents (drafts, transfers in transit, pending approvals, unpaid expenses). The main branch cannot be deactivated
       tags:
         - Business and settings
       x-permission: branches.manage
@@ -1965,6 +1982,8 @@ paths:
               properties:
                 address:
                   type: string
+                currency:
+                  type: string
                 email:
                   type: string
                 legal_name:
@@ -1976,6 +1995,8 @@ paths:
                 reg_number:
                   type: string
                 tax_number:
+                  type: string
+                timezone:
                   type: string
               type: object
         required: true
@@ -1997,7 +2018,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "422":
           $ref: '#/components/responses/Unprocessable'
-      summary: Update the business profile
+      summary: Update the business profile. Fields not sent are kept. A timezone or currency is validated and mirrored into the settings
       tags:
         - Business and settings
       x-permission: business.manage
@@ -2249,13 +2270,15 @@ paths:
           application/json:
             schema:
               properties:
+                is_active:
+                  type: boolean
                 name:
                   type: string
                 parent_id:
                   format: uuid
-                  type: string
-              required:
-                - name
+                  type:
+                    - string
+                    - "null"
               type: object
         required: true
       responses:
@@ -2326,7 +2349,7 @@ paths:
                     $ref: '#/components/schemas/Error'
                 type: object
           description: Field validation failed (validation_failed with fields)
-      summary: Rename or move a category
+      summary: Rename, move or deactivate a category. Every field is optional; parent_id changes only when sent (null moves it to the top level)
       tags:
         - Products
       x-permission: categories.manage
@@ -5811,6 +5834,130 @@ paths:
       tags:
         - Employees
       x-permission: components.manage
+  /employees/{id}/documents:
+    get:
+      operationId: get_employees__id__documents
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: OK
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+      summary: List an employee's documents (contract, ID copy, certificate). Only people who manage employees see them
+      tags:
+        - Employees
+      x-permission: employees.manage
+    post:
+      operationId: post_employees__id__documents
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              properties:
+                file:
+                  format: binary
+                  type: string
+                kind:
+                  enum:
+                    - contract
+                    - id_copy
+                    - certificate
+                    - other
+                  type: string
+                name:
+                  type: string
+              required:
+                - file
+              type: object
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: Created
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "415":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: File type not allowed (images, PDF, text and zip files only)
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      summary: Upload a document (multipart field file, up to 10 MB; kind and name as form fields or query parameters). The type is checked from the file content
+      tags:
+        - Employees
+      x-permission: employees.manage
+  /employees/{id}/documents/{doc_id}:
+    delete:
+      operationId: delete_employees__id__documents__doc_id
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: path
+          name: doc_id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+      summary: Remove a document and its stored file
+      tags:
+        - Employees
+      x-permission: employees.manage
   /employees/{id}/leave-balance:
     get:
       operationId: get_employees_id_leave_balance
@@ -7281,6 +7428,12 @@ paths:
                 items:
                   items:
                     properties:
+                      batch_no:
+                        maxLength: 60
+                        type: string
+                      expiry_date:
+                        format: date
+                        type: string
                       product_id:
                         format: uuid
                         type: string
@@ -10378,7 +10531,20 @@ paths:
         content:
           application/json:
             schema:
-              additionalProperties: true
+              additionalProperties:
+                properties:
+                  enabled:
+                    type: boolean
+                  money_account_id:
+                    format: uuid
+                    type:
+                      - string
+                      - "null"
+                type: object
+              example:
+                bank:
+                  enabled: true
+                  money_account_id: 0192f0c4-...
               type: object
         required: true
       responses:
@@ -10397,7 +10563,9 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
-      summary: Enable methods and map them to money accounts
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      summary: Enable or disable cash, bank, mobile_money and credit and map each to an active money account of a matching type. Only the methods sent change
       tags:
         - Business and settings
       x-permission: settings.manage
@@ -13363,7 +13531,7 @@ paths:
                     $ref: '#/components/schemas/Error'
                 type: object
           description: Not found or outside your branch scope
-      summary: Upload CSV or Excel; returns a validation report. ?commit=true saves
+      summary: Upload CSV or Excel (up to 5,000 rows); returns a validation report. ?commit=true saves the valid rows
       tags:
         - Products
       x-permission: products.import
@@ -17807,6 +17975,142 @@ paths:
       tags:
         - Reports
       x-permission: reports.inventory
+  /reports/inventory/expiring:
+    get:
+      operationId: get_reports_inventory_expiring
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - description: Start date (inclusive)
+          in: query
+          name: from
+          schema:
+            format: date
+            type: string
+        - description: End date (inclusive)
+          in: query
+          name: to
+          schema:
+            format: date
+            type: string
+        - description: One branch inside the caller's scope; 404 when outside
+          in: query
+          name: branch_id
+          schema:
+            format: uuid
+            type: string
+        - description: json returns the table; csv
+          in: query
+          name: format
+          schema:
+            default: json
+            enum:
+              - json
+              - csv
+              - xlsx
+              - pdf
+            type: string
+          xlsx and pdf return a file attachment: null
+        - description: Look-ahead window in days (0 to 3650)
+          in: query
+          name: days
+          schema:
+            minimum: 1
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              example:
+                data:
+                  columns:
+                    - key: product
+                      label: product
+                    - key: sku
+                      label: sku
+                    - key: branch
+                      label: branch
+                    - key: qty_on_hand
+                      label: qty_on_hand
+                  rows:
+                    - branch: "6000.00"
+                      product: Rice
+                      qty_on_hand: "6000.00"
+                      sku: "6000.00"
+                  title: Products in stock with no sale for at least `days` days
+              schema:
+                properties:
+                  data:
+                    additionalProperties: true
+                    properties:
+                      columns:
+                        items:
+                          properties:
+                            key:
+                              type: string
+                            label:
+                              type: string
+                          type: object
+                        type: array
+                      rows:
+                        items:
+                          additionalProperties: true
+                          type: object
+                        type: array
+                      subtitle:
+                        type: string
+                      title:
+                        type: string
+                      totals:
+                        additionalProperties: true
+                        type: object
+                    required:
+                      - title
+                      - columns
+                      - rows
+                    type: object
+                type: object
+            application/pdf:
+              schema:
+                format: binary
+                type: string
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema:
+                format: binary
+                type: string
+            text/csv:
+              schema:
+                type: string
+          description: Report table, or a file when format is csv, xlsx or pdf
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Invalid query parameter
+        "401":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not signed in
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing permission
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: branch_id outside the caller's scope
+      security:
+        - bearerAuth: []
+      summary: Receipt lines expiring within N days (default 30) or already expired, soonest first. Expiry is recorded per receipt, not per batch on hand
+      tags:
+        - Reports
+      x-permission: reports.inventory
   /reports/inventory/losses:
     get:
       operationId: reportInventoryLosses
@@ -21519,7 +21823,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
-      summary: A4 invoice data, or the PDF with format=pdf
+      summary: Invoice data, or an A4 PDF with format=pdf. The invoice number comes from the branch's invoice sequence the first time an invoice is produced and never changes (invoice_number)
       tags:
         - Sales
       x-permission: sales.view
@@ -23866,6 +24170,9 @@ paths:
           application/json:
             schema:
               additionalProperties: true
+              example:
+                business_day_start: "04:00"
+                timezone: Africa/Dar_es_Salaam
               type: object
         required: true
       responses:
@@ -23886,7 +24193,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "422":
           $ref: '#/components/responses/Unprocessable'
-      summary: 'Update one group: tax, currency, invoice, receipt, payroll, notifications, system'
+      summary: 'Update one group: tax, currency, invoice, receipt, payroll, notifications, system, attendance. `invoice.prefix` (capitals and digits) is applied to every branch''s invoice numbers from the next invoice. In attendance, `restrict_clock_in` with `allowed_networks` (IPs or CIDRs) limits staff clock-in to those addresses (403 network_not_allowed). Every key is type- and range-checked (unknown keys, bad timezones and wrong types are 422 field errors and change nothing); each change is audited with old and new value. In the notifications group, `rules` maps an event type (low_stock, approval_request, salary_due, ...) to {in_app, email, sms, days_before}'
       tags:
         - Business and settings
       x-permission: settings.manage
@@ -24739,6 +25046,14 @@ paths:
                 items:
                   items:
                     properties:
+                      batch_no:
+                        description: Stock in only
+                        maxLength: 60
+                        type: string
+                      expiry_date:
+                        description: Stock in only
+                        format: date
+                        type: string
                       product_id:
                         format: uuid
                         type: string
@@ -27064,7 +27379,9 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "409":
           $ref: '#/components/responses/Conflict'
-      summary: Create a tax rate
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      summary: Create a tax rate (0 to 100). Making it the default moves the default flag
       tags:
         - Business and settings
       x-permission: settings.manage
@@ -27112,7 +27429,11 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
-      summary: Edit a tax rate
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      summary: Edit a tax rate. Every field is optional. The default rate cannot be unset or deactivated; make another rate the default instead
       tags:
         - Business and settings
       x-permission: settings.manage
@@ -27611,9 +27932,6 @@ paths:
                   type: string
                 short_name:
                   type: string
-              required:
-                - name
-                - short_name
               type: object
         required: true
       responses:
@@ -27684,7 +28002,7 @@ paths:
                     $ref: '#/components/schemas/Error'
                 type: object
           description: Field validation failed (validation_failed with fields)
-      summary: Edit a unit
+      summary: Edit a unit. Every field is optional
       tags:
         - Products
       x-permission: categories.manage

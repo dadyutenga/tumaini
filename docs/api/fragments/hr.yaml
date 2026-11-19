@@ -2510,3 +2510,128 @@ paths:
                 error:
                   code: permission_denied
                   message: You do not have permission to do that
+  /employees/{id}/documents:
+    get:
+      summary: List an employee's documents (contract, ID copy, certificate). Only people who manage employees see them
+      operationId: get_employees__id__documents
+      tags:
+      - Employees
+      x-permission: employees.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      summary: Upload a document (multipart field file, up to 10 MB; kind and name as form fields or query parameters). The
+        type is checked from the file content
+      operationId: post_employees__id__documents
+      tags:
+      - Employees
+      x-permission: employees.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                kind:
+                  type: string
+                  enum:
+                  - contract
+                  - id_copy
+                  - certificate
+                  - other
+                name:
+                  type: string
+              required:
+              - file
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '415':
+          description: File type not allowed (images, PDF, text and zip files only)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /employees/{id}/documents/{doc_id}:
+    delete:
+      summary: Remove a document and its stored file
+      operationId: delete_employees__id__documents__doc_id
+      tags:
+      - Employees
+      x-permission: employees.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: doc_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '204':
+          description: No Content
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'

@@ -2,6 +2,7 @@ package org
 
 import (
 	"io"
+	"mime"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -148,7 +149,7 @@ func (h *Handler) Tax(c fiber.Ctx) error {
 }
 
 func (h *Handler) CreateTax(c fiber.Ctx) error {
-	var body TaxRate
+	var body TaxIn
 	if err := c.Bind().Body(&body); err != nil {
 		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
 	}
@@ -164,7 +165,7 @@ func (h *Handler) UpdateTax(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	var body TaxRate
+	var body TaxIn
 	if err := c.Bind().Body(&body); err != nil {
 		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
 	}
@@ -216,13 +217,15 @@ func (h *Handler) Download(c fiber.Ctx) error {
 	if err != nil {
 		return httpx.BadRequest("invalid_id", "id must be a UUID")
 	}
-	name, mime, rc, err := h.Svc.OpenFile(c.Context(), middleware.Principal(c), id)
+	name, ctype, rc, err := h.Svc.OpenFile(c.Context(), middleware.Principal(c), id)
 	if err != nil {
 		return err
 	}
 	defer rc.Close()
-	c.Set("Content-Type", mime)
-	c.Set("Content-Disposition", "attachment; filename=\""+name+"\"")
+	c.Set("Content-Type", ctype)
+	c.Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": name}))
+	c.Set("X-Content-Type-Options", "nosniff")
+	c.Set("Content-Security-Policy", "default-src 'none'; sandbox")
 	_, err = io.Copy(c, rc)
 	return err
 }

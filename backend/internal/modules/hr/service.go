@@ -15,6 +15,7 @@ import (
 	"bms/internal/kernel/notify"
 	"bms/internal/kernel/sequence"
 	"bms/internal/modules/hr/hrkit"
+	"bms/internal/modules/identity"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
@@ -23,6 +24,7 @@ import (
 	"bms/internal/platform/money"
 	"bms/internal/platform/setting"
 	"bms/internal/platform/sqlq"
+	"bms/internal/platform/storage"
 )
 
 type Service struct {
@@ -33,10 +35,11 @@ type Service struct {
 	Notify   *notify.Service
 	Clock    clock.Clock
 	Hash     auth.Params
+	Store    storage.Store
 }
 
-func New(database *db.DB, led *ledger.Service, aud *audit.Service, ap *approval.Service, n *notify.Service, clk clock.Clock, hash auth.Params) *Service {
-	return &Service{DB: database, Ledger: led, Audit: aud, Approval: ap, Notify: n, Clock: clk, Hash: hash}
+func New(database *db.DB, led *ledger.Service, aud *audit.Service, ap *approval.Service, n *notify.Service, clk clock.Clock, hash auth.Params, store storage.Store) *Service {
+	return &Service{DB: database, Ledger: led, Audit: aud, Approval: ap, Notify: n, Clock: clk, Hash: hash, Store: store}
 }
 
 // today is the business-local date.
@@ -427,6 +430,10 @@ func (s *Service) CreateLogin(ctx context.Context, p *auth.Principal, id uuid.UU
 		var n int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM roles WHERE id=$1`, in.RoleID).Scan(&n); err != nil || n == 0 {
 			return httpx.BadRequest("invalid_body", "Role not found")
+		}
+		// The same rule as POST /users: only an Owner assigns the Owner role, and nobody a stronger role than their own.
+		if err := identity.GuardAssignRole(ctx, tx, p, in.RoleID); err != nil {
+			return err
 		}
 		branches := in.BranchIDs
 		if len(branches) == 0 {

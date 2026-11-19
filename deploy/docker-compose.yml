@@ -36,6 +36,12 @@ services:
       CORS_ORIGINS: http://localhost:5173
       COOKIE_SECURE: "false"
       STORAGE_PATH: /app/data/files
+      # Uncomment behind a reverse proxy, with the proxy's address:
+      # TRUSTED_PROXIES: "172.16.0.0/12"
+      # Optional email and SMS; see backend/.env.example.
+      # SMTP_HOST: smtp.example.com
+      # SMTP_FROM: no-reply@example.com
+      # SMS_WEBHOOK_URL: https://sms.example.com/send
     ports:
       - "127.0.0.1:8080:8080"
     depends_on:

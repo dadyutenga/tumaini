@@ -56,6 +56,21 @@ func decidable(p *auth.Principal, q *sqlq.Q) string {
 	if b := p.ScopeBranches("approvals.decide"); b != nil {
 		cond += " AND (ar.branch_id IS NULL OR ar.branch_id = ANY(" + q.Arg(b) + "))"
 	}
+	// The same rules Decide applies: the amount is within approvals.decide's limit, and for kinds that
+	// have their own permission (payroll, loans, expenses, ...) the caller holds it with a limit that covers it.
+	if g, ok := p.Can("approvals.decide"); ok && g.Limit != nil {
+		cond += " AND (ar.amount IS NULL OR ar.amount <= " + q.Arg(*g.Limit) + ")"
+	}
+	kinds := make([]string, 0, len(approval.KindPermission))
+	perms := make([]string, 0, len(approval.KindPermission))
+	for k, perm := range approval.KindPermission {
+		kinds, perms = append(kinds, k), append(perms, perm)
+	}
+	ks, ps, role := q.Arg(kinds), q.Arg(perms), q.Arg(p.RoleID)
+	cond += ` AND (NOT EXISTS (SELECT 1 FROM unnest(` + ks + `::text[], ` + ps + `::text[]) m(k, pm) WHERE m.k = ar.kind)
+		OR EXISTS (SELECT 1 FROM unnest(` + ks + `::text[], ` + ps + `::text[]) m(k, pm)
+		           JOIN role_permissions rp ON rp.permission_key = m.pm AND rp.role_id = ` + role + `
+		           WHERE m.k = ar.kind AND (rp.approval_limit IS NULL OR ar.amount IS NULL OR rp.approval_limit >= ar.amount)))`
 	return cond
 }
 
@@ -353,7 +368,7 @@ func (s *Service) Notifications(ctx context.Context, p *auth.Principal, unread b
 	out := []map[string]any{}
 	total := 0
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New().Add("user_id = ?", p.UserID).If(unread, "read_at IS NULL")
+		q := sqlq.New().Add("user_id = ? AND in_app", p.UserID).If(unread, "read_at IS NULL")
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM notifications`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
@@ -384,7 +399,7 @@ func (s *Service) Notifications(ctx context.Context, p *auth.Principal, unread b
 func (s *Service) UnreadCount(ctx context.Context, p *auth.Principal) (int, error) {
 	n := 0
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id=$1 AND read_at IS NULL`, p.UserID).Scan(&n)
+		return tx.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id=$1 AND read_at IS NULL AND in_app`, p.UserID).Scan(&n)
 	})
 	return n, err
 }

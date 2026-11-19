@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,8 +27,32 @@ type env struct {
 // defaultNow is a Monday morning in Dar es Salaam (05:20 UTC is 08:20 local).
 var defaultNow = time.Date(2026, 11, 16, 5, 20, 0, 0, time.UTC)
 
+// stepClock is a clock tests can move forward.
+type stepClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *stepClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *stepClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.t = c.t.Add(d)
+}
+
 // newEnv starts the app with a fixed clock and registers a business with its Owner.
 func newEnv(t *testing.T, now time.Time) *env {
+	t.Helper()
+	return newEnvWithClock(t, clock.Fixed{T: now})
+}
+
+// newEnvWithClock is newEnv with any clock, for tests that move time.
+func newEnvWithClock(t *testing.T, clk clock.Clock) *env {
 	t.Helper()
 	if os.Getenv("DATABASE_URL") == "" {
 		t.Setenv("DATABASE_URL", "postgres://bms_app:bms_app_dev@127.0.0.1:5433/bms?sslmode=disable")
@@ -40,7 +65,7 @@ func newEnv(t *testing.T, now time.Time) *env {
 	t.Setenv("STORAGE_PATH", t.TempDir())
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	a, err := app.New(context.Background(), cfg, clock.Fixed{T: now})
+	a, err := app.New(context.Background(), cfg, clk)
 	require.NoError(t, err)
 	t.Cleanup(a.Close)
 	c := &client{app: a.Fiber}

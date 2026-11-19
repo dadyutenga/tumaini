@@ -1763,7 +1763,8 @@ paths:
       tags:
       - Purchasing
       x-permission: grn.create
-      description: Give po_id, or supplier_id for a direct receipt that creates a received order. extra_costs are spread across lines by value. Posts 1200 Dr / 2050 Cr.
+      description: Give po_id, or supplier_id for a direct receipt that creates a received order. extra_costs are spread across
+        lines by value. Posts 1200 Dr / 2050 Cr.
       parameters:
       - $ref: '#/components/parameters/BranchId'
       - $ref: '#/components/parameters/IdempotencyKey'
@@ -1802,6 +1803,12 @@ paths:
                         type: string
                         pattern: ^-?[0-9]+(\.[0-9]+)?$
                         example: '2500.00'
+                      batch_no:
+                        type: string
+                        maxLength: 60
+                      expiry_date:
+                        type: string
+                        format: date
                     required:
                     - product_id
                     - qty
@@ -2451,7 +2458,8 @@ paths:
       tags:
       - Purchasing
       x-permission: purchase_returns.create
-      description: 'Stock leaves at the receipt cost. Invoiced receipt: 2000 Dr (reduce_debt) or money account Dr (refund), 1200 and 1500 Cr. Uninvoiced receipt: 2050 Dr; refund is refused.'
+      description: 'Stock leaves at the receipt cost. Invoiced receipt: 2000 Dr (reduce_debt) or money account Dr (refund),
+        1200 and 1500 Cr. Uninvoiced receipt: 2050 Dr; refund is refused.'
       parameters:
       - $ref: '#/components/parameters/BranchId'
       - $ref: '#/components/parameters/IdempotencyKey'

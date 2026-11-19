@@ -3,6 +3,7 @@ package sales
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -103,7 +104,7 @@ func (s *Service) Preview(ctx context.Context, p *auth.Principal, in CreateIn) (
 		if err != nil {
 			return err
 		}
-		out = view(uuid.Nil, "", "preview", lines, tot, money.Zero, tot.Total, money.Zero)
+		out = view(uuid.Nil, "", "preview", lines, tot, money.Zero, tot.Total, money.Zero, canSeeCost(p))
 		return nil
 	})
 	return out, err
@@ -276,6 +277,20 @@ func insertItems(ctx context.Context, tx pgx.Tx, businessID, saleID uuid.UUID, l
 
 // checkPayments rejects unknown methods and inactive or missing money accounts.
 func (s *Service) checkPayments(ctx context.Context, tx pgx.Tx, pays []PayIn) error {
+	disabled := map[string]bool{}
+	var raw []byte
+	if err := tx.QueryRow(ctx, `SELECT value FROM settings WHERE key='payment.methods'`).Scan(&raw); err == nil {
+		var cfg map[string]struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if json.Unmarshal(raw, &cfg) == nil {
+			for m, c := range cfg {
+				if c.Enabled != nil && !*c.Enabled {
+					disabled[m] = true
+				}
+			}
+		}
+	}
 	for _, pay := range pays {
 		if !pay.Amount.IsPositive() {
 			continue
@@ -285,11 +300,31 @@ func (s *Service) checkPayments(ctx context.Context, tx pgx.Tx, pays []PayIn) er
 		default:
 			return httpx.BadRequest("invalid_body", "Payment method must be cash, mobile_money or bank")
 		}
+		if disabled[pay.Method] {
+			return httpx.Conflict("method_disabled", "This payment method is switched off in the settings")
+		}
+		if pay.Method != "cash" && strings.TrimSpace(pay.Reference) == "" {
+			return &httpx.Error{Status: 422, Code: "validation_failed", Message: "A reference is required for mobile money and bank payments", Fields: map[string]string{"reference": "required"}}
+		}
 		if err := checkAccount(ctx, tx, pay.MoneyAccountID); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// creditEnabled reports whether credit sales are switched on (FR-SET-04).
+func creditEnabled(ctx context.Context, tx pgx.Tx) bool {
+	var raw []byte
+	if err := tx.QueryRow(ctx, `SELECT value FROM settings WHERE key='payment.methods'`).Scan(&raw); err != nil {
+		return true
+	}
+	var cfg struct {
+		Credit struct {
+			Enabled *bool `json:"enabled"`
+		} `json:"credit"`
+	}
+	return json.Unmarshal(raw, &cfg) != nil || cfg.Credit.Enabled == nil || *cfg.Credit.Enabled
 }
 
 func checkAccount(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
@@ -403,7 +438,7 @@ func (s *Service) finish(ctx context.Context, tx pgx.Tx, p *auth.Principal, sale
 	if err := s.Audit.Record(ctx, tx, p, "sale.completed", "sale", saleID, nil, map[string]any{"number": number, "total": tot.Total}); err != nil {
 		return nil, err
 	}
-	out := view(saleID, number, "completed", lines, tot, paid, balance, change)
+	out := view(saleID, number, "completed", lines, tot, paid, balance, change, canSeeCost(p))
 	out["receipt_url"] = "/api/v1/sales/" + saleID.String() + "/receipt"
 	return out, nil
 }
@@ -575,6 +610,9 @@ func openTill(ctx context.Context, tx pgx.Tx, user uuid.UUID) (uuid.UUID, uuid.U
 }
 
 func (s *Service) resolveCustomer(ctx context.Context, tx pgx.Tx, id *uuid.UUID, balance decimal.Decimal) (uuid.UUID, error) {
+	if balance.IsPositive() && !creditEnabled(ctx, tx) {
+		return uuid.Nil, httpx.Conflict("method_disabled", "Credit sales are switched off in the settings")
+	}
 	if id == nil || *id == uuid.Nil {
 		var walk uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT id FROM customers WHERE is_walk_in LIMIT 1`).Scan(&walk); err != nil {
@@ -603,10 +641,21 @@ func (s *Service) bizDate(ctx context.Context, tx pgx.Tx) (string, error) {
 	return d.Format("2006-01-02"), nil
 }
 
-func view(id uuid.UUID, number, status string, lines []line, tot totals, paid, balance, change decimal.Decimal) map[string]any {
+// canSeeCost reports whether the caller may see cost and margin (FR-INV-08).
+func canSeeCost(p *auth.Principal) bool {
+	_, ok := p.Can("products.view_cost")
+	return ok || p.IsOwner
+}
+
+// view builds the sale response. Unit cost is included only when showCost is set, so cashiers
+// do not learn what the shop paid for what they sell.
+func view(id uuid.UUID, number, status string, lines []line, tot totals, paid, balance, change decimal.Decimal, showCost bool) map[string]any {
 	items := make([]map[string]any, len(lines))
 	for i, ln := range lines {
-		items[i] = map[string]any{"product_id": ln.ProductID, "product_name": ln.Name, "qty": ln.Qty, "unit_price": ln.UnitPrice, "discount": ln.Discount, "tax_amount": ln.Tax, "line_total": ln.LineTotal, "unit_cost": ln.UnitCost}
+		items[i] = map[string]any{"product_id": ln.ProductID, "product_name": ln.Name, "qty": ln.Qty, "unit_price": ln.UnitPrice, "discount": ln.Discount, "tax_amount": ln.Tax, "line_total": ln.LineTotal}
+		if showCost {
+			items[i]["unit_cost"] = ln.UnitCost
+		}
 	}
 	out := map[string]any{
 		"status": status, "subtotal": tot.Subtotal, "discount_total": tot.Discount, "tax_total": tot.Tax,

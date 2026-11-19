@@ -60,7 +60,7 @@ func ErrorHandler(c fiber.Ctx, err error) error {
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": Error{Code: "internal_error", Message: "Something went wrong. Quote the request id if you contact support."}})
 }
 
-func Data(v any) fiber.Map { return fiber.Map{"data": v} }
+func Data(v any) fiber.Map { return fiber.Map{"data": normalize(v)} }
 
 type Meta struct {
 	Page    int `json:"page"`
@@ -69,7 +69,7 @@ type Meta struct {
 }
 
 func List(v any, meta Meta) fiber.Map {
-	return fiber.Map{"data": v, "meta": meta}
+	return fiber.Map{"data": normalize(v), "meta": meta}
 }
 
 type Page struct {

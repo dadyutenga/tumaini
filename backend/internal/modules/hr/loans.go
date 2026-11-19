@@ -88,7 +88,7 @@ func (s *Service) GetLoan(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 			return err
 		}
 		reps, err := hrkit.All(ctx, tx, `
-			SELECT lr.id, lr.amount, lr.source, lr.payslip_id, ps.number AS payslip_number, lr.payment_id, lr.created_at
+			SELECT lr.id, lr.amount, lr.source, lr.payslip_id, ps.number AS payslip_number, lr.payment_id, lr.created_at, lr.voided_at
 			FROM loan_repayments lr LEFT JOIN payslips ps ON ps.id = lr.payslip_id
 			WHERE lr.loan_id = $1 ORDER BY lr.created_at
 		`, id)
@@ -248,7 +248,7 @@ func (s *Service) Disburse(ctx context.Context, p *auth.Principal, loanID, accou
 		if !p.IsOwner && !auth.WithinLimit(g, ok, amount) {
 			return httpx.Forbidden("over_limit", "This loan is above your limit")
 		}
-		method, err := hrkit.MethodFor(ctx, tx, account)
+		method, err := hrkit.MethodFor(ctx, tx, p, "loans.approve", account)
 		if err != nil {
 			return err
 		}
@@ -332,7 +332,7 @@ func (s *Service) Repay(ctx context.Context, p *auth.Principal, loanID uuid.UUID
 		if amount.Add(reserved).GreaterThan(bal) {
 			return httpx.Conflict("invalid_amount", "An approved payroll already deducts part of this balance")
 		}
-		method, err := hrkit.MethodFor(ctx, tx, in.MoneyAccountID)
+		method, err := hrkit.MethodFor(ctx, tx, p, "payments.receive", in.MoneyAccountID)
 		if err != nil {
 			return err
 		}
@@ -365,7 +365,7 @@ func (s *Service) Repay(ctx context.Context, p *auth.Principal, loanID uuid.UUID
 			return err
 		}
 		newBal := bal.Sub(amount)
-		if _, err := tx.Exec(ctx, `UPDATE employee_loans SET balance=$2, status=CASE WHEN $2 <= 0 THEN 'settled' ELSE status END WHERE id=$1`, loanID, newBal); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE employee_loans SET balance=$2::numeric, status=CASE WHEN $2::numeric <= 0 THEN 'settled' ELSE status END WHERE id=$1`, loanID, newBal); err != nil {
 			return err
 		}
 		if err := s.Audit.Record(ctx, tx, p, "loan.repaid", "loan", loanID, map[string]any{"balance": bal}, map[string]any{"balance": newBal, "payment_id": res.ID}); err != nil {

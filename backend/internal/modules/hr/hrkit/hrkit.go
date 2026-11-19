@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/shopspring/decimal"
 
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
@@ -165,12 +166,14 @@ func OptionalIdempotent() fiber.Handler {
 }
 
 // MethodFor returns the payment method that matches a money account type,
-// and fails when the account does not exist or is inactive.
-func MethodFor(ctx context.Context, tx pgx.Tx, accountID uuid.UUID) (string, error) {
+// and fails when the account does not exist, is inactive, or belongs to a branch
+// the caller has no access to under permission perm (a business-wide account is open to all).
+func MethodFor(ctx context.Context, tx pgx.Tx, p *auth.Principal, perm string, accountID uuid.UUID) (string, error) {
 	var typ string
 	var active bool
-	err := tx.QueryRow(ctx, `SELECT type, is_active FROM money_accounts WHERE id=$1`, accountID).Scan(&typ, &active)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !active) {
+	var branch *uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT type, is_active, branch_id FROM money_accounts WHERE id=$1`, accountID).Scan(&typ, &active, &branch)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !active) || (err == nil && branch != nil && !p.SeesBranch(perm, *branch)) {
 		return "", httpx.NotFound("not_found", "Money account not found")
 	}
 	if err != nil {
@@ -236,7 +239,7 @@ func Maps(rows pgx.Rows) ([]map[string]any, error) {
 		}
 		m := make(map[string]any, len(vals))
 		for i, f := range fields {
-			m[f.Name] = convert(f.DataTypeOID, vals[i])
+			m[f.Name] = convert(f.DataTypeOID, f.TypeModifier, vals[i])
 		}
 		out = append(out, m)
 	}
@@ -273,7 +276,7 @@ const (
 	oidNumeric = 1700
 )
 
-func convert(oid uint32, v any) any {
+func convert(oid uint32, typmod int32, v any) any {
 	switch x := v.(type) {
 	case nil:
 		return nil
@@ -283,11 +286,25 @@ func convert(oid uint32, v any) any {
 		if !x.Valid {
 			return nil
 		}
-		d, err := x.Value()
-		if err != nil {
+		if x.NaN || x.InfinityModifier != pgtype.Finite || x.Int == nil {
 			return nil
 		}
-		return d
+		// Keep the column's scale: pgtype decodes a zero with no scale, so it would print "0".
+		// numeric(p,s) carries s in the type modifier; computed values fall back to the
+		// value's own exponent, and money-like zero gets two decimals.
+		scale := int32(-1)
+		if typmod >= 4 {
+			scale = (typmod - 4) & 0xffff
+		} else if x.Exp < 0 {
+			scale = -x.Exp
+		} else if x.Int.Sign() == 0 {
+			scale = 2
+		}
+		d := decimal.NewFromBigInt(x.Int, x.Exp)
+		if scale >= 0 {
+			return d.StringFixed(scale)
+		}
+		return d.String()
 	case time.Time:
 		if oid == oidDate {
 			return x.Format(DateFmt)
@@ -304,4 +321,22 @@ func convert(oid uint32, v any) any {
 	}
 	_ = oidNumeric
 	return v
+}
+
+// PayrollLocked refuses a change to a day that falls inside the period of an approved, paid or
+// locked payroll run that includes the employee (FR-ATT-11). It covers days with no attendance
+// row yet, which the per-row is_locked flag cannot.
+func PayrollLocked(ctx context.Context, tx pgx.Tx, employee uuid.UUID, day string) error {
+	var locked bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM payslips ps JOIN payroll_runs r ON r.id = ps.run_id
+			WHERE ps.employee_id = $1 AND r.status IN ('approved','paid','locked') AND $2::date BETWEEN r.period_start AND r.period_end
+		)`, employee, day).Scan(&locked); err != nil {
+		return err
+	}
+	if locked {
+		return httpx.Conflict("period_locked", "Attendance for "+day+" is locked by an approved payroll")
+	}
+	return nil
 }

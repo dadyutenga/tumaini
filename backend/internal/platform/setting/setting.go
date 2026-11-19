@@ -63,3 +63,16 @@ func Float(ctx context.Context, q db.Querier, key string, def float64) float64 {
 	}
 	return v
 }
+
+// Strings reads a JSON array of strings; a missing or malformed value is empty.
+func Strings(ctx context.Context, q db.Querier, key string) []string {
+	raw, err := Raw(ctx, q, key)
+	if err != nil {
+		return nil
+	}
+	var v []string
+	if json.Unmarshal(raw, &v) != nil {
+		return nil
+	}
+	return v
+}

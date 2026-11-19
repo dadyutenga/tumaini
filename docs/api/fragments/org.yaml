@@ -27,7 +27,8 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
     put:
-      summary: Update the business profile
+      summary: Update the business profile. Fields not sent are kept. A timezone or currency is validated and mirrored into
+        the settings
       operationId: put_business
       tags:
       - Business and settings
@@ -54,6 +55,10 @@ paths:
                 email:
                   type: string
                 address:
+                  type: string
+                timezone:
+                  type: string
+                currency:
                   type: string
       responses:
         '200':
@@ -138,7 +143,8 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
-      summary: Create a branch with document sequences and a default cash account
+      summary: Create a branch with document sequences and a default cash account. The code is 1 to 8 letters or digits and
+        appears in document numbers
       operationId: post_branches
       tags:
       - Business and settings
@@ -220,7 +226,8 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
     put:
-      summary: Edit a branch
+      summary: Edit a branch. invoice_prefix (1 to 10 capital letters or digits) sets the prefix of this branch's invoice
+        numbers
       operationId: put_branches__id
       tags:
       - Business and settings
@@ -249,6 +256,8 @@ paths:
                 manager_id:
                   type: string
                   format: uuid
+                invoice_prefix:
+                  type: string
       responses:
         '200':
           description: OK
@@ -265,11 +274,14 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /branches/{id}/deactivate:
     post:
-      summary: Deactivate a branch with no stock, open tills or unposted documents
+      summary: Deactivate a branch with no stock, open tills or open documents (drafts, transfers in transit, pending approvals,
+        unpaid expenses). The main branch cannot be deactivated
       operationId: post_branches__id__deactivate
       tags:
       - Business and settings
@@ -362,7 +374,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /settings/{group}:
     put:
-      summary: 'Update one group: tax, currency, invoice, receipt, payroll, notifications, system'
+      summary: 'Update one group: tax, currency, invoice, receipt, payroll, notifications, system, attendance. `invoice.prefix`
+        (capitals and digits) is applied to every branch''s invoice numbers from the next invoice. In attendance, `restrict_clock_in`
+        with `allowed_networks` (IPs or CIDRs) limits staff clock-in to those addresses (403 network_not_allowed). Every key
+        is type- and range-checked (unknown keys, bad timezones and wrong types are 422 field errors and change nothing);
+        each change is audited with old and new value. In the notifications group, `rules` maps an event type (low_stock,
+        approval_request, salary_due, ...) to {in_app, email, sms, days_before}'
       operationId: put_settings__group
       tags:
       - Business and settings
@@ -382,6 +399,9 @@ paths:
             schema:
               type: object
               additionalProperties: true
+              example:
+                timezone: Africa/Dar_es_Salaam
+                business_day_start: 04:00
       responses:
         '200':
           description: OK
@@ -428,7 +448,7 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
     post:
-      summary: Create a tax rate
+      summary: Create a tax rate (0 to 100). Making it the default moves the default flag
       operationId: post_tax_rates
       tags:
       - Business and settings
@@ -467,11 +487,14 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '409':
           $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /tax-rates/{id}:
     put:
-      summary: Edit a tax rate
+      summary: Edit a tax rate. Every field is optional. The default rate cannot be unset or deactivated; make another rate
+        the default instead
       operationId: put_tax_rates__id
       tags:
       - Business and settings
@@ -515,6 +538,10 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /payment-methods:
@@ -545,7 +572,8 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
     put:
-      summary: Enable methods and map them to money accounts
+      summary: Enable or disable cash, bank, mobile_money and credit and map each to an active money account of a matching
+        type. Only the methods sent change
       operationId: put_payment_methods
       tags:
       - Business and settings
@@ -558,7 +586,20 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              additionalProperties:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                  money_account_id:
+                    type:
+                    - string
+                    - 'null'
+                    format: uuid
+              example:
+                bank:
+                  enabled: true
+                  money_account_id: 0192f0c4-...
       responses:
         '200':
           description: OK
@@ -573,6 +614,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '403':
           $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/Unprocessable'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /files:

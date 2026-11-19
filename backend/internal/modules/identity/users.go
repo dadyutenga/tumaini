@@ -13,6 +13,7 @@ import (
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/ids"
+	"bms/internal/platform/setting"
 )
 
 type User struct {
@@ -117,13 +118,17 @@ func (s *Service) CreateUser(ctx context.Context, p *auth.Principal, in UserInpu
 		if err := s.ensureRole(ctx, tx, in.RoleID); err != nil {
 			return err
 		}
+		if err := s.guardAssignRole(ctx, tx, p, in.RoleID); err != nil {
+			return err
+		}
 		var emp any
 		if in.EmployeeID != nil {
 			emp = *in.EmployeeID
 		}
+		// The business's language setting is the default for people it creates (FR-SET-09).
 		lang := in.Language
 		if lang == "" {
-			lang = "en"
+			lang = setting.String(ctx, tx, "system.language", "en")
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO users (id, business_id, role_id, employee_id, name, phone, email, password_hash, language, must_change_password, created_by)
@@ -163,9 +168,20 @@ func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUI
 		if err := tx.QueryRow(ctx, `SELECT u.role_id, r.slug FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, id).Scan(&roleID, &slug); err != nil {
 			return httpx.NotFound("not_found", "User not found")
 		}
+		if err := s.guardTarget(ctx, tx, p, id); err != nil {
+			return err
+		}
 		newRole := in.RoleID
 		if newRole == uuid.Nil {
 			newRole = roleID
+		}
+		if newRole != roleID {
+			if err := s.ensureRole(ctx, tx, newRole); err != nil {
+				return err
+			}
+			if err := s.guardAssignRole(ctx, tx, p, newRole); err != nil {
+				return err
+			}
 		}
 		if slug == "owner" && newRole != roleID {
 			if err := s.ensureAnotherOwner(ctx, tx, id); err != nil {
@@ -203,6 +219,9 @@ func (s *Service) SetActive(ctx context.Context, p *auth.Principal, id uuid.UUID
 		var slug string
 		if err := tx.QueryRow(ctx, `SELECT r.slug FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, id).Scan(&slug); err != nil {
 			return httpx.NotFound("not_found", "User not found")
+		}
+		if err := s.guardTarget(ctx, tx, p, id); err != nil {
+			return err
 		}
 		if !active && slug == "owner" {
 			if err := s.ensureAnotherOwner(ctx, tx, id); err != nil {
@@ -259,6 +278,9 @@ func (s *Service) ResetPassword(ctx context.Context, p *auth.Principal, id uuid.
 		return err
 	}
 	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		if err := s.guardTarget(ctx, tx, p, id); err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2, must_change_password = true WHERE id = $1`, id, hash)
 		if err != nil {
 			return err
@@ -273,8 +295,13 @@ func (s *Service) ResetPassword(ctx context.Context, p *auth.Principal, id uuid.
 
 func (s *Service) EndSessions(ctx context.Context, p *auth.Principal, userID uuid.UUID) error {
 	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID)
-		return err
+		if err := s.guardTarget(ctx, tx, p, userID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1`, userID); err != nil {
+			return err
+		}
+		return s.Audit.Record(ctx, tx, p, "user.sessions_ended", "user", userID, nil, nil)
 	})
 }
 
@@ -402,6 +429,9 @@ func (s *Service) CreateRole(ctx context.Context, p *auth.Principal, in RoleInpu
 	if strings.TrimSpace(in.Name) == "" {
 		return Role{}, httpx.BadRequest("invalid_body", "Role name is required")
 	}
+	if err := s.guardGrant(p, in.Perms); err != nil {
+		return Role{}, err
+	}
 	id := ids.New()
 	slug := "custom-" + strings.ReplaceAll(strings.ToLower(strings.TrimSpace(in.Name)), " ", "-")
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
@@ -420,6 +450,13 @@ func (s *Service) CreateRole(ctx context.Context, p *auth.Principal, in RoleInpu
 }
 
 func (s *Service) UpdateRole(ctx context.Context, p *auth.Principal, id uuid.UUID, in RoleInput) (Role, error) {
+	// FR-USR-10: nobody changes their own role or its permissions.
+	if p.RoleID == id && !p.IsOwner {
+		return Role{}, forbidden("You cannot change the permissions of your own role")
+	}
+	if err := s.guardGrant(p, in.Perms); err != nil {
+		return Role{}, err
+	}
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		var system bool
 		var slug string

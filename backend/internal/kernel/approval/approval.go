@@ -31,6 +31,14 @@ type Request struct {
 	Note string
 }
 
+// KindPermission is the permission a person needs, besides approvals.decide, to decide a request of that kind.
+// Kinds that are decided by the amount alone (discount, credit_override) have no entry.
+var KindPermission = map[string]string{
+	"expense": "expenses.approve", "refund": "sales.refund_approve", "sale_void": "sales.void",
+	"stock_adjustment": "stock.adjust_approve", "purchase_order": "po.approve", "loan": "loans.approve",
+	"leave": "leave.approve", "overtime": "overtime.approve", "payroll_run": "payroll.approve", "payment_void": "payments.void",
+}
+
 type Hooks struct {
 	OnApproved func(ctx context.Context, tx pgx.Tx, p *auth.Principal, req Request) error
 	OnRejected func(ctx context.Context, tx pgx.Tx, p *auth.Principal, req Request) error
@@ -81,7 +89,11 @@ func (s *Service) Request(ctx context.Context, tx pgx.Tx, p *auth.Principal, in 
 	`, id, p.BusinessID, branch, in.Kind, in.SubjectType, in.SubjectID, amount, in.Summary, payload, p.UserID); err != nil {
 		return uuid.Nil, err
 	}
-	_ = s.notify.ToPermission(ctx, tx, p.BusinessID, in.BranchID, "approvals.decide", notify.Message{
+	var amt *decimal.Decimal
+	if in.Amount.Valid {
+		amt = &in.Amount.Decimal
+	}
+	_ = s.notify.ToApprovers(ctx, tx, p.BusinessID, in.BranchID, KindPermission[in.Kind], amt, p.UserID, notify.Message{
 		Type: "approval_request", Title: "Approval needed", Body: in.Summary,
 		Link: "/approvals/" + id.String(), EntityType: in.SubjectType, EntityID: &in.SubjectID,
 	})
@@ -108,6 +120,20 @@ func (s *Service) Decide(ctx context.Context, tx pgx.Tx, p *auth.Principal, id u
 	}
 	if approve && !p.IsOwner && req.Amount.Valid && !auth.WithinLimit(g, ok, req.Amount.Decimal) {
 		return httpx.Forbidden("over_limit", "This amount is above your approval limit")
+	}
+	// Approving through the inbox must need the same permission as approving on the record's own screen
+	// (FR-PAY-11: payroll is the Owner's by default), and that permission's own limit applies.
+	if perm := KindPermission[req.Kind]; perm != "" && !p.IsOwner {
+		kg, held := p.Can(perm)
+		if !held {
+			return httpx.Forbidden("permission_denied", "You are not allowed to decide this kind of request")
+		}
+		if req.BranchID != nil && !p.SeesBranch(perm, *req.BranchID) {
+			return httpx.NotFound("not_found", "Approval request not found")
+		}
+		if approve && req.Amount.Valid && !auth.WithinLimit(kg, held, req.Amount.Decimal) {
+			return httpx.Forbidden("over_limit", "This amount is above your approval limit")
+		}
 	}
 	hooks, ok := s.hooks[req.Kind]
 	if !ok {
