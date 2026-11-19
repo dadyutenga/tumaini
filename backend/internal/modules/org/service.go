@@ -95,7 +95,11 @@ func (s *Service) scanBusiness(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Bu
 }
 
 func (s *Service) SaveLogo(ctx context.Context, p *auth.Principal, name string, r io.Reader) (string, error) {
-	file, err := s.Store.Save(ctx, p.BusinessID.String(), name, r, 2<<20)
+	buf, mime, err := readUpload(r, 2<<20, true)
+	if err != nil {
+		return "", err
+	}
+	file, err := s.Store.Save(ctx, p.BusinessID.String(), name, reader(buf), 2<<20)
 	if err != nil {
 		return "", httpx.BadRequest("invalid_body", err.Error())
 	}
@@ -103,8 +107,8 @@ func (s *Service) SaveLogo(ctx context.Context, p *auth.Principal, name string, 
 	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO files (id, business_id, path, original_name, mime_type, size_bytes, uploaded_by)
-			VALUES ($1,$2,$3,$4,'image', $5,$6)
-		`, id, p.BusinessID, file.Path, name, file.Size, p.UserID); err != nil {
+			VALUES ($1,$2,$3,$4,$5,$6,$7)
+		`, id, p.BusinessID, file.Path, name, mime, file.Size, p.UserID); err != nil {
 			return err
 		}
 		_, err := tx.Exec(ctx, `UPDATE businesses SET logo_file=$2 WHERE id=$1`, p.BusinessID, id.String())
@@ -481,8 +485,13 @@ func (s *Service) UpdatePaymentMethods(ctx context.Context, p *auth.Principal, b
 	})
 }
 
-func (s *Service) Upload(ctx context.Context, p *auth.Principal, name, mime string, r io.Reader) (uuid.UUID, error) {
-	file, err := s.Store.Save(ctx, p.BusinessID.String(), name, r, 10<<20)
+// Upload stores a file after checking its content. The client's Content-Type is ignored.
+func (s *Service) Upload(ctx context.Context, p *auth.Principal, name, _ string, r io.Reader) (uuid.UUID, error) {
+	buf, mime, err := readUpload(r, 10<<20, false)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	file, err := s.Store.Save(ctx, p.BusinessID.String(), name, reader(buf), 10<<20)
 	if err != nil {
 		return uuid.Nil, httpx.BadRequest("invalid_body", err.Error())
 	}

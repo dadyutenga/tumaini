@@ -59,16 +59,20 @@ func SecurityHeaders() fiber.Handler {
 	}
 }
 
+// limiterMaxKeys is when the limiter starts evicting expired buckets.
+const limiterMaxKeys = 10000
+
 type bucket struct {
 	start time.Time
 	n     int
 }
 
 type Limiter struct {
-	mu  sync.Mutex
-	m   map[string]bucket
-	max int
-	win time.Duration
+	mu    sync.Mutex
+	m     map[string]bucket
+	max   int
+	win   time.Duration
+	swept time.Time
 }
 
 func NewLimiter(max int, win time.Duration) *Limiter {
@@ -80,6 +84,19 @@ func (l *Limiter) Handler() fiber.Handler {
 		key := c.IP() + "|" + c.Path()
 		now := time.Now()
 		l.mu.Lock()
+		// Evict expired buckets so a flood of distinct addresses cannot grow the map without bound.
+		if len(l.m) >= limiterMaxKeys && now.Sub(l.swept) >= time.Second {
+			l.swept = now
+			for k, v := range l.m {
+				if now.Sub(v.start) > l.win {
+					delete(l.m, k)
+				}
+			}
+			// Still over the hard cap inside one window: memory matters more than remembering.
+			if len(l.m) >= 4*limiterMaxKeys {
+				l.m = map[string]bucket{}
+			}
+		}
 		b := l.m[key]
 		if now.Sub(b.start) > l.win {
 			b = bucket{start: now}

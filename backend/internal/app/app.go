@@ -75,13 +75,22 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 		Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads},
 	}
 
-	fiberApp := fiber.New(fiber.Config{
+	fcfg := fiber.Config{
 		AppName:      "bms-api",
 		ErrorHandler: httpx.ErrorHandler,
 		BodyLimit:    10 * 1024 * 1024,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 30 * time.Second,
-	})
+		IdleTimeout:  60 * time.Second,
+	}
+	if len(cfg.TrustedProxies) > 0 {
+		// Only these proxies may say who the client is; anyone else is seen at the socket.
+		fcfg.ProxyHeader = fiber.HeaderXForwardedFor
+		fcfg.TrustProxy = true
+		fcfg.TrustProxyConfig = fiber.TrustProxyConfig{Proxies: cfg.TrustedProxies}
+		fcfg.EnableIPValidation = true
+	}
+	fiberApp := fiber.New(fcfg)
 	fiberApp.Use(recover.New())
 	fiberApp.Use(requestid.New())
 	fiberApp.Use(middleware.RequestLogger())

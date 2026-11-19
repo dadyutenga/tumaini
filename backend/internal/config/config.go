@@ -29,14 +29,17 @@ type Config struct {
 	ArgonTime          uint32
 	ArgonThreads       uint8
 	AutoMigrate        bool
-	SMTPHost           string
-	SMTPPort           int
-	SMTPUser           string
-	SMTPPassword       string
-	SMTPFrom           string
-	SMSWebhookURL      string
-	SMSAPIKey          string
-	SMSSender          string
+	// TrustedProxies are the reverse proxies (IPs or CIDRs) whose X-Forwarded-For is believed.
+	// Empty means the socket address is used, so rate limits and audit IPs cannot be spoofed.
+	TrustedProxies []string
+	SMTPHost       string
+	SMTPPort       int
+	SMTPUser       string
+	SMTPPassword   string
+	SMTPFrom       string
+	SMSWebhookURL  string
+	SMSAPIKey      string
+	SMSSender      string
 }
 
 func Load() (Config, error) {
@@ -61,6 +64,7 @@ func Load() (Config, error) {
 		ArgonTime:          uint32(intenv("ARGON_TIME", 2)),
 		ArgonThreads:       uint8(intenv("ARGON_THREADS", 1)),
 		AutoMigrate:        boolenv("AUTO_MIGRATE", false),
+		TrustedProxies:     splitCSV(os.Getenv("TRUSTED_PROXIES")),
 		SMTPHost:           os.Getenv("SMTP_HOST"),
 		SMTPPort:           intenv("SMTP_PORT", 587),
 		SMTPUser:           os.Getenv("SMTP_USER"),
