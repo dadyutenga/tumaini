@@ -86,14 +86,16 @@ func (s *Service) MePayslips(ctx context.Context, p *auth.Principal, page httpx.
 	}
 	return s.selfList(ctx, p, page,
 		`FROM app.payroll_lines pl
-		 JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id
-		 LEFT JOIN app.payslips ps ON ps.tenant_id = pl.tenant_id AND ps.payroll_line_id = pl.id
-		 WHERE pl.tenant_id = $1 AND pl.employee_id = $2 AND r.status IN ('approved','paid') AND $3 = $4`,
-		`SELECT COALESCE(ps.id, pl.id) AS id, COALESCE(ps.payslip_no, '') AS number, r.id AS run_id,
-		        r.period_year, r.period_month, r.status::text AS run_status,
+		 JOIN app.payslips ps ON ps.tenant_id = pl.tenant_id AND ps.payroll_line_id = pl.id
+		 LEFT JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id
+		 WHERE pl.tenant_id = $1 AND pl.employee_id = $2 AND $3 = $4`,
+		`SELECT ps.id, pl.id AS payroll_line_id, ps.payslip_no AS number, pl.payroll_run_id AS run_id,
+		        COALESCE(r.period_year, EXTRACT(YEAR FROM ps.issued_at)::smallint) AS period_year,
+		        COALESCE(r.period_month, EXTRACT(MONTH FROM ps.issued_at)::smallint) AS period_month,
+		        COALESCE(r.status::text, CASE WHEN pl.paid_at IS NOT NULL THEN 'paid' ELSE 'approved' END) AS run_status,
 		        pl.gross_pay AS gross, (pl.deductions + pl.advance_repayment + pl.statutory_deductions) AS total_deductions,
 		        pl.net_pay AS net, CASE WHEN pl.paid_at IS NOT NULL THEN pl.net_pay ELSE 0 END AS paid_total, pl.paid_at`,
-		` ORDER BY r.period_year DESC, r.period_month DESC`, "", "")
+		` ORDER BY ps.issued_at DESC`, "", "")
 }
 
 func (s *Service) MePayments(ctx context.Context, p *auth.Principal, from, to string, page httpx.Page) ([]map[string]any, int, error) {

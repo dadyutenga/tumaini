@@ -114,9 +114,9 @@ func (h *Handler) Reverse(c fiber.Ctx) error {
 		return err
 	}
 	var in struct {
-		Reason string `json:"reason" validate:"required"`
+		Reason string `json:"reason"`
 	}
-	if err := httpx.Bind(c, &in); err != nil {
+	if err := httpx.BindOptional(c, &in); err != nil {
 		return err
 	}
 	status, raw, err := h.Svc.Reverse(c.Context(), pr(c), id, in.Reason)
@@ -135,8 +135,15 @@ func (h *Handler) PaymentList(c fiber.Ctx) error {
 	t := export.Table{
 		Title:    "Payment list " + asStr(run["number"]),
 		Subtitle: asStr(run["period_start"]) + " to " + asStr(run["period_end"]),
-		Columns: []export.Col{{Key: "employee_no", Label: "Employee no"}, {Key: "name", Label: "Name"}, {Key: "pay_method", Label: "Method"},
-			{Key: "pay_account", Label: "Account"}, {Key: "payslip_number", Label: "Payslip"}, {Key: "amount_due", Label: "Amount due"}, {Key: "net", Label: "Net"}},
+		Columns: []export.Col{
+			{Key: "employee_no", Label: "Employee no"},
+			{Key: "name", Label: "Name"},
+			{Key: "pay_method", Label: "Method"},
+			{Key: "pay_account", Label: "Account"},
+			{Key: "payslip_number", Label: "Payslip"},
+			{Key: "amount_due", Label: "Amount due"},
+			{Key: "net", Label: "Net"},
+		},
 		Rows: rows,
 	}
 	return export.Respond(c, t, map[string]any{"run_id": id}, nil)
@@ -163,8 +170,6 @@ func payslipPDF(s map[string]any) []byte {
 	d.KV("Employee", asStr(s["employee_name"])+" ("+asStr(s["employee_no"])+")")
 	d.KV("Period", asStr(s["period_start"])+" to "+asStr(s["period_end"]))
 	d.KV("Run", asStr(s["run_number"]))
-	d.KV("Days worked", asStr(s["days_worked"]))
-	d.KV("Days absent", asStr(s["days_absent"]))
 	d.Space(6)
 	var rows [][]string
 	if lines, ok := s["lines"].([]map[string]any); ok {
@@ -233,19 +238,24 @@ func (h *Handler) SaveComponent(c fiber.Ctx) error {
 
 func Register(r fiber.Router, h *Handler) {
 	req := middleware.Require
-	r.Get("/salary-components", req("components.manage"), h.Components)
-	r.Post("/salary-components", req("components.manage"), h.SaveComponent)
-	r.Put("/salary-components/:id", req("components.manage"), h.SaveComponent)
-	r.Get("/payroll-runs", req("payroll.view"), h.List)
-	r.Post("/payroll-runs", req("payroll.prepare"), h.Create)
-	r.Get("/payroll-runs/:id", req("payroll.view"), h.Get)
-	r.Post("/payroll-runs/:id/calculate", req("payroll.prepare"), h.Calculate)
-	r.Put("/payroll-runs/:id/payslips/:pid/lines", req("payroll.prepare"), h.PutLines)
-	r.Post("/payroll-runs/:id/submit", req("payroll.prepare"), h.Submit)
-	r.Post("/payroll-runs/:id/approve", req("payroll.approve"), hrkit.OptionalIdempotent(), h.Approve)
-	r.Post("/payroll-runs/:id/pay", req("payroll.pay"), hrkit.OptionalIdempotent(), h.Pay)
-	r.Post("/payroll-runs/:id/reverse", req("payroll.reverse"), middleware.Idempotent(), h.Reverse)
-	r.Get("/payroll-runs/:id/payment-list", req("payroll.pay"), h.PaymentList)
-	r.Get("/payslips/:id", req("payslips.view"), h.Payslip)
-	r.Get("/salary-payments", req("payroll.view"), h.SalaryPayments)
+	any := middleware.RequireAny
+
+	r.Get("/salary-components", any("hr.compensation.view", "hr.compensation.manage", "hr.payroll.view", "hr.payroll.manage"), h.Components)
+	r.Post("/salary-components", req("hr.compensation.manage"), h.SaveComponent)
+	r.Put("/salary-components/:id", req("hr.compensation.manage"), h.SaveComponent)
+
+	r.Get("/payroll-runs", any("hr.payroll.view", "hr.payroll.manage", "hr.payroll.approve"), h.List)
+	r.Post("/payroll-runs", req("hr.payroll.manage"), h.Create)
+	r.Get("/payroll-runs/:id", any("hr.payroll.view", "hr.payroll.manage", "hr.payroll.approve"), h.Get)
+	r.Post("/payroll-runs/:id/calculate", req("hr.payroll.manage"), h.Calculate)
+	r.Put("/payroll-runs/:id/payslips/:pid/lines", req("hr.payroll.manage"), h.PutLines)
+	r.Post("/payroll-runs/:id/submit", req("hr.payroll.manage"), h.Submit)
+	r.Post("/payroll-runs/:id/approve", req("hr.payroll.approve"), hrkit.OptionalIdempotent(), h.Approve)
+	r.Post("/payroll-runs/:id/pay", req("hr.payroll.approve"), hrkit.OptionalIdempotent(), h.Pay)
+	r.Post("/payroll-runs/:id/reverse", any("hr.payroll.approve", "hr.payroll.manage"), hrkit.OptionalIdempotent(), h.Reverse)
+	r.Get("/payroll-runs/:id/payment-list", any("hr.payroll.approve", "hr.payroll.view"), h.PaymentList)
+
+	// Payslip view allows hr.payroll.view OR self-service employee (enforced in service + RLS).
+	r.Get("/payslips/:id", h.Payslip)
+	r.Get("/salary-payments", any("hr.payroll.view", "hr.payroll.approve", "finance.transaction.view"), h.SalaryPayments)
 }

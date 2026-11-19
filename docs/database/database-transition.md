@@ -49,7 +49,7 @@ Legend: [x] done (compiles; not yet integration-tested), [~] partly done, [ ] no
 - [x] Sales and POS (sales, lines, units, held carts, returns, void; tills and shop quotations are not in the approved model)
 - [x] Purchasing (purchases, goods receipts, serial units, suppliers, supplier payments; separate purchase invoices and purchase returns are not in the approved model)
 - [x] Expenses (categories, expenses, recurring templates, petty cash top-up and reconciliations; reversing a paid expense uses transaction corrections)
-- [ ] HR, attendance, payroll
+- [x] HR, attendance, payroll (employees, compensation, allowances, attendance records/corrections, leave, advances, commissions, pay adjustments, payroll runs/lines/statutory items/payslips; salary components master, work schedules, and holidays are not in the approved model)
 - [ ] Services and design (clients, projects, quotations, invoices, design jobs, contractors, renewals, tasks)
 - [ ] Reports and dashboard
 - [ ] Inbox (approvals list, notifications), system (exports, backups)
