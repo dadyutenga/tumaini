@@ -11,101 +11,104 @@ import (
 	"bms/internal/platform/httpx"
 )
 
-// These guards stop a delegated administrator (a user holding users.manage or
-// roles.manage who is not the Owner) from promoting themselves or taking over
-// the Owner's account. Route permissions alone cannot express that.
-
-var scopeRank = map[string]int{"own": 1, "branch": 2, "all": 3}
+// These guards stop a delegated administrator (someone holding security.user.manage who is not an
+// Admin) from promoting themselves or taking over a more senior account. Route permissions alone
+// cannot express that; role rank (app.roles.rank, Admin = 100) can.
 
 func forbidden(msg string) error { return httpx.Forbidden("permission_denied", msg) }
 
-// guardTarget refuses any change to an Owner's account by a non-Owner, and
-// returns 404 when the user does not exist in this business.
+// limitCodeFor names the authority limit that goes with a permission, if it has one.
+var limitCodeFor = map[string]string{
+	"shop.discount.apply":     "sale_discount_pct",
+	"shop.discount.approve":   "discount_approve_pct",
+	"shop.return.approve":     "refund_approve_amount",
+	"finance.expense.approve": "expense_approve_amount",
+	"services.price.approve":  "price_change_approve_pct",
+}
+
+// guardTarget refuses a change to an account that outranks the caller, and returns 404 when the
+// person is not a member of this tenant.
 func (s *Service) guardTarget(ctx context.Context, tx pgx.Tx, p *auth.Principal, userID uuid.UUID) error {
-	var slug string
-	if err := tx.QueryRow(ctx, `SELECT r.slug FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, userID).Scan(&slug); err != nil {
+	var rank int
+	if err := tx.QueryRow(ctx, `
+		SELECT coalesce(r.rank, 0) FROM app.memberships m
+		LEFT JOIN app.membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.membership_id = m.id
+		LEFT JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id
+		WHERE m.tenant_id = $1 AND m.user_id = $2`, p.TenantID, userID).Scan(&rank); err != nil {
 		return httpx.NotFound("not_found", "User not found")
 	}
-	if slug == "owner" && !p.IsOwner {
-		return forbidden("Only an owner can change an owner's account")
+	if !p.IsOwner && rank > p.RoleRank {
+		return forbidden("You cannot change the account of someone senior to you")
 	}
 	return nil
 }
 
-// canGrant reports whether p may hand out perm: it must hold the permission,
-// with at least that scope and at least that approval limit.
-func canGrant(p *auth.Principal, perm RolePermView) bool {
+// canGrant reports whether p may hand out a permission: they must hold it themselves.
+func canGrant(p *auth.Principal, code string) bool {
+	return p.IsOwner || p.Has(code)
+}
+
+// canGrantLimit reports whether p may set a limit: a capped approver cannot give out a higher or
+// unlimited cap.
+func canGrantLimit(p *auth.Principal, code string, v *decimal.Decimal) bool {
 	if p.IsOwner {
 		return true
 	}
-	held, ok := p.Can(perm.Key)
-	if !ok {
-		return false
+	held, capped := p.Limits[code]
+	if !capped {
+		return true
 	}
-	scope := perm.Scope
-	if scope == "" {
-		scope = "branch"
-	}
-	if scopeRank[scope] > scopeRank[held.Scope] {
-		return false
-	}
-	if held.Limit != nil {
-		// A capped approver cannot give out a higher or unlimited cap.
-		if perm.Limit == nil || perm.Limit.GreaterThan(*held.Limit) {
-			return false
-		}
-	}
-	return true
+	return v != nil && v.LessThanOrEqual(held)
 }
 
-// guardGrant checks every permission of a role being written. Unknown scopes
-// are left for the validation that follows, so the caller sees a 400 for them.
-func (s *Service) guardGrant(p *auth.Principal, perms []RolePermView) error {
+// guardGrant checks every permission and limit of a role being written.
+func (s *Service) guardGrant(p *auth.Principal, perms []RolePermView, limits map[string]decimal.Decimal) error {
 	for _, perm := range perms {
-		if perm.Scope != "" && scopeRank[perm.Scope] == 0 {
-			continue
+		if !canGrant(p, perm.Key) {
+			return forbidden("You cannot grant " + perm.Key + " because you do not hold it")
 		}
-		if !canGrant(p, perm) {
-			return forbidden("You cannot grant " + perm.Key + " because you do not hold it with that scope and limit")
+	}
+	for code, v := range limits {
+		v := v
+		if !canGrantLimit(p, code, &v) {
+			return forbidden("You cannot set " + code + " higher than your own limit")
 		}
 	}
 	return nil
 }
 
-// guardAssignRole checks that p may put a user into a role: only an Owner
-// assigns the Owner role, and nobody assigns a role stronger than their own.
+// guardAssignRole checks that p may put a person into a role: nobody assigns a role that outranks
+// their own, nor one that carries a permission they do not hold.
 func (s *Service) guardAssignRole(ctx context.Context, tx pgx.Tx, p *auth.Principal, roleID uuid.UUID) error {
 	if p.IsOwner {
 		return nil
 	}
-	var slug string
-	if err := tx.QueryRow(ctx, `SELECT slug FROM roles WHERE id = $1`, roleID).Scan(&slug); err != nil {
+	var rank int
+	if err := tx.QueryRow(ctx, `SELECT rank FROM app.roles WHERE id = $1 AND tenant_id = $2 AND status = 'active'`, roleID, p.TenantID).Scan(&rank); err != nil {
 		return httpx.BadRequest("invalid_body", "Role not found")
 	}
-	if slug == "owner" {
-		return forbidden("Only an owner can assign the owner role")
+	if rank > p.RoleRank {
+		return forbidden("You cannot assign a role that outranks your own")
 	}
-	rows, err := tx.Query(ctx, `SELECT permission_key, scope, approval_limit FROM role_permissions WHERE role_id = $1`, roleID)
+	rows, err := tx.Query(ctx, `SELECT permission_code FROM app.role_permissions WHERE role_id = $1`, roleID)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var perm RolePermView
-		var limit *decimal.Decimal
-		if err := rows.Scan(&perm.Key, &perm.Scope, &limit); err != nil {
+		var code string
+		if err := rows.Scan(&code); err != nil {
 			return err
 		}
-		perm.Limit = limit
-		if !canGrant(p, perm) {
+		if !canGrant(p, code) {
 			return forbidden("You cannot assign a role that has more access than your own")
 		}
 	}
 	return rows.Err()
 }
 
-// GuardAssignRole lets other modules that create logins (for example an employee's
-// login) apply the same rule as POST /users.
+// GuardAssignRole lets other modules that create logins (for example an employee's login) apply the
+// same rule as POST /users.
 func GuardAssignRole(ctx context.Context, tx pgx.Tx, p *auth.Principal, roleID uuid.UUID) error {
 	return (&Service{}).guardAssignRole(ctx, tx, p, roleID)
 }

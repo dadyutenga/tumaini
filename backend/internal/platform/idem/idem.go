@@ -15,13 +15,19 @@ import (
 type keyType struct{}
 
 type Info struct {
-	Key  string
-	Hash []byte
+	Key    string
+	Hash   []byte
+	Method string
+	Path   string
 }
 
-func New(key string, body []byte) Info {
-	sum := sha256.Sum256(body)
-	return Info{Key: key, Hash: sum[:]}
+// New describes one request. The hash covers method, path and body, so a key reused for a different
+// operation is refused instead of replaying the wrong response.
+func New(key string, body []byte, method, path string) Info {
+	h := sha256.New()
+	h.Write([]byte(method + " " + path + "\n"))
+	h.Write(body)
+	return Info{Key: key, Hash: h.Sum(nil), Method: method, Path: path}
 }
 
 func With(ctx context.Context, info Info) context.Context {
@@ -38,22 +44,24 @@ type Replay struct {
 	Body   []byte
 }
 
-// Claim locks the idempotency row inside the caller's transaction.
-// A replay is returned when the same key and body already completed.
-func Claim(ctx context.Context, tx pgx.Tx, businessID, userID uuid.UUID) (*Replay, error) {
+// Claim records the key in app.idempotency_keys inside the caller's transaction, or finds it.
+// A replay is returned when the same key and request already completed. The tenant and member come
+// from the transaction's request context (app.current_membership_id()), so the arguments exist only
+// to keep call sites stable.
+func Claim(ctx context.Context, tx pgx.Tx, tenantID, _ uuid.UUID) (*Replay, error) {
 	info, ok := From(ctx)
 	if !ok {
 		return nil, nil
 	}
 	var hash []byte
-	var status *int
+	var status *int16
 	var response []byte
 	err := tx.QueryRow(ctx, `
-		INSERT INTO idempotency_keys (business_id, user_id, key, request_hash)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (user_id, key) DO UPDATE SET key = idempotency_keys.key
-		RETURNING request_hash, status_code, response
-	`, businessID, userID, info.Key, info.Hash).Scan(&hash, &status, &response)
+		INSERT INTO app.idempotency_keys (tenant_id, idempotency_key, membership_id, request_method, request_path, request_hash)
+		VALUES ($1, $2, app.current_membership_id(), $3, $4, $5)
+		ON CONFLICT (tenant_id, idempotency_key) DO UPDATE SET idempotency_key = app.idempotency_keys.idempotency_key
+		RETURNING request_hash, response_status, response_body
+	`, tenantID, info.Key, info.Method, info.Path, info.Hash).Scan(&hash, &status, &response)
 	if err != nil {
 		return nil, err
 	}
@@ -61,24 +69,23 @@ func Claim(ctx context.Context, tx pgx.Tx, businessID, userID uuid.UUID) (*Repla
 		return nil, httpx.Conflict("idempotency_mismatch", "This idempotency key was already used with a different request")
 	}
 	if status != nil && len(response) > 0 {
-		return &Replay{Status: *status, Body: response}, nil
+		return &Replay{Status: int(*status), Body: response}, nil
 	}
 	return nil, nil
 }
 
-func Complete(ctx context.Context, tx pgx.Tx, userID uuid.UUID, status int, body any) ([]byte, error) {
-	info, ok := From(ctx)
-	if !ok {
-		raw, err := json.Marshal(body)
-		return raw, err
-	}
+// Complete stores the response against the key so a retry gets the same answer.
+func Complete(ctx context.Context, tx pgx.Tx, _ uuid.UUID, status int, body any) ([]byte, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
 	}
+	info, ok := From(ctx)
+	if !ok {
+		return raw, nil
+	}
 	_, err = tx.Exec(ctx, `
-		UPDATE idempotency_keys SET status_code = $3, response = $4
-		WHERE user_id = $1 AND key = $2
-	`, userID, info.Key, status, raw)
+		UPDATE app.idempotency_keys SET response_status = $2, response_body = $3
+		WHERE tenant_id = app.current_tenant_id() AND idempotency_key = $1`, info.Key, status, raw)
 	return raw, err
 }

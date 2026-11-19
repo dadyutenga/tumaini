@@ -31,10 +31,10 @@ func RequestLogger() fiber.Handler {
 		start := time.Now()
 		err := c.Next()
 		p, _ := c.Locals(principalKey).(*auth.Principal)
-		uid, bid := "", ""
+		uid, tid := "", ""
 		if p != nil {
 			uid = p.UserID.String()
-			bid = p.BusinessID.String()
+			tid = p.TenantID.String()
 		}
 		slog.Info("request",
 			"request_id", requestid.FromContext(c),
@@ -43,7 +43,7 @@ func RequestLogger() fiber.Handler {
 			"status", c.Response().StatusCode(),
 			"duration_ms", time.Since(start).Milliseconds(),
 			"user_id", uid,
-			"business_id", bid,
+			"tenant_id", tid,
 		)
 		return err
 	}
@@ -141,6 +141,10 @@ func Principal(c fiber.Ctx) *auth.Principal {
 	return p
 }
 
+// Branch resolves the location a request is about. X-Branch-Id names a location (kept under its
+// old header name so clients do not change); "all" means no location filter; no header means the
+// member's default location. The approved model has no per-person location assignment, so any
+// active location of the tenant is allowed; row-level security already limits ids to the tenant.
 func Branch(database *db.DB) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		p := Principal(c)
@@ -149,37 +153,26 @@ func Branch(database *db.DB) fiber.Handler {
 		}
 		raw := c.Get("X-Branch-Id")
 		if raw == "all" {
-			if p.IsOwner || hasAllScope(p) {
-				return c.Next()
-			}
-			return httpx.Forbidden("branch_forbidden", "You can only view your own branches")
+			return c.Next()
 		}
 		if raw == "" {
-			var id uuid.UUID
-			err := database.InTx(c.Context(), p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-				err := tx.QueryRow(ctx, `SELECT branch_id FROM user_branches WHERE user_id = $1 AND is_default LIMIT 1`, p.UserID).Scan(&id)
-				if err != nil {
-					err = tx.QueryRow(ctx, `SELECT branch_id FROM user_branches WHERE user_id = $1 LIMIT 1`, p.UserID).Scan(&id)
-				}
-				return err
+			var id *uuid.UUID
+			err := database.InActorTx(c.Context(), p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+				return tx.QueryRow(ctx, `SELECT default_location_id FROM app.memberships WHERE id = $1`, p.MembershipID).Scan(&id)
 			})
-			if err != nil {
-				return c.Next()
+			if err == nil && id != nil {
+				p.BranchID = id
+				c.Locals(principalKey, p)
 			}
-			p.BranchID = &id
-			c.Locals(principalKey, p)
 			return c.Next()
 		}
 		id, err := uuid.Parse(raw)
 		if err != nil {
-			return httpx.BadRequest("invalid_branch", "X-Branch-Id must be a branch id")
-		}
-		if !p.AllowsBranch(id) {
-			return httpx.Forbidden("branch_forbidden", "You are not assigned to that branch")
+			return httpx.BadRequest("invalid_branch", "X-Branch-Id must be a location id")
 		}
 		var active bool
-		err = database.InTx(c.Context(), p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-			return tx.QueryRow(ctx, `SELECT is_active FROM branches WHERE id = $1`, id).Scan(&active)
+		err = database.InActorTx(c.Context(), p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+			return tx.QueryRow(ctx, `SELECT status = 'active' FROM app.locations WHERE id = $1`, id).Scan(&active)
 		})
 		if err != nil || !active {
 			return httpx.NotFound("not_found", "Branch not found")
@@ -240,7 +233,7 @@ func Idempotent() fiber.Handler {
 		if _, err := uuid.Parse(key); err != nil {
 			return httpx.BadRequest("idempotency_key_required", "Idempotency-Key must be a UUID")
 		}
-		c.SetContext(idem.With(c.Context(), idem.New(key, append([]byte(nil), c.Body()...))))
+		c.SetContext(idem.With(c.Context(), idem.New(key, append([]byte(nil), c.Body()...), c.Method(), c.Path())))
 		return c.Next()
 	}
 }

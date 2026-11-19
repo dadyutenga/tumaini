@@ -2,7 +2,6 @@ package finance
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"time"
 
@@ -10,9 +9,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"bms/internal/kernel/payments"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
-	"bms/internal/platform/ids"
 	"bms/internal/platform/money"
 )
 
@@ -22,51 +21,45 @@ type CloseDayIn struct {
 	Note        string          `json:"note"`
 }
 
-func (s *Service) dayFigures(ctx context.Context, tx pgx.Tx, branch uuid.UUID, date string) (map[string]decimal.Decimal, decimal.Decimal, decimal.Decimal, decimal.Decimal, error) {
+// dayFigures returns the day's takings by payment method, money received, expenses and the cash the
+// system expects to be in the location's cash accounts (app.expected_account_balances).
+func (s *Service) dayFigures(ctx context.Context, tx pgx.Tx, p *auth.Principal, location uuid.UUID, date string) (map[string]decimal.Decimal, decimal.Decimal, decimal.Decimal, decimal.Decimal, error) {
+	zero := money.Zero
 	byMethod := map[string]decimal.Decimal{}
 	rows, err := tx.Query(ctx, `
-		SELECT method, COALESCE(SUM(CASE WHEN direction='in' THEN amount ELSE -amount END), 0)
-		FROM payments
-		WHERE branch_id=$1 AND payment_date=$2::date AND status='posted' AND kind IN ('sale','sale_refund')
-		GROUP BY method`, branch, date)
+		SELECT method::text, coalesce(sum(amount), 0) FROM app.payments_received
+		WHERE tenant_id = $1 AND location_id = $2 AND business_date = $3::date AND status = 'posted' AND purpose = 'sale'
+		GROUP BY method`, p.TenantID, location, date)
 	if err != nil {
-		return nil, money.Zero, money.Zero, money.Zero, err
+		return nil, zero, zero, zero, err
 	}
 	for rows.Next() {
 		var m string
 		var amt decimal.Decimal
 		if err := rows.Scan(&m, &amt); err != nil {
 			rows.Close()
-			return nil, money.Zero, money.Zero, money.Zero, err
+			return nil, zero, zero, zero, err
 		}
-		byMethod[m] = amt
+		byMethod[payments.MethodOut(m)] = amt
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return nil, money.Zero, money.Zero, money.Zero, err
+		return nil, zero, zero, zero, err
 	}
-
-	var paysIn, cashIn, cashOut, expensesTotal decimal.Decimal
-	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(SUM(CASE WHEN direction='in' THEN amount ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN direction='in' AND method='cash' THEN amount ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN direction='out' AND method='cash' THEN amount ELSE 0 END), 0)
-		FROM payments
-		WHERE branch_id=$1 AND payment_date=$2::date AND status='posted'`, branch, date).Scan(&paysIn, &cashIn, &cashOut); err != nil {
-		return nil, money.Zero, money.Zero, money.Zero, err
+	var paysIn, expenses, expected decimal.Decimal
+	if err := tx.QueryRow(ctx, `SELECT coalesce(sum(amount), 0) FROM app.payments_received WHERE tenant_id = $1 AND location_id = $2 AND business_date = $3::date AND status = 'posted'`,
+		p.TenantID, location, date).Scan(&paysIn); err != nil {
+		return nil, zero, zero, zero, err
 	}
 	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0) FROM expenses
-		WHERE branch_id=$1 AND expense_date=$2::date AND status IN ('approved','paid')`, branch, date).Scan(&expensesTotal); err != nil {
-		return nil, money.Zero, money.Zero, money.Zero, err
+		SELECT coalesce(sum(amount), 0) FROM app.expenses
+		WHERE tenant_id = $1 AND location_id = $2 AND expense_date = $3::date AND status IN ('approved', 'paid')`, p.TenantID, location, date).Scan(&expenses); err != nil {
+		return nil, zero, zero, zero, err
 	}
-	var tillFloat decimal.Decimal
-	_ = tx.QueryRow(ctx, `
-		SELECT COALESCE(SUM(opening_float), 0) FROM till_sessions
-		WHERE branch_id=$1 AND opened_at::date=$2::date`, branch, date).Scan(&tillFloat)
-
-	expectedCash := money.Money(tillFloat.Add(cashIn).Sub(cashOut))
-	return byMethod, paysIn, expensesTotal, expectedCash, nil
+	if err := tx.QueryRow(ctx, `SELECT coalesce(sum(expected), 0) FROM app.expected_account_balances($1, $2::date) WHERE kind IN ('cash', 'petty_cash')`, location, date).Scan(&expected); err != nil {
+		return nil, zero, zero, zero, err
+	}
+	return byMethod, paysIn, expenses, money.Money(expected), nil
 }
 
 // DaySummary returns end-of-day figures and any existing closing record for the date.
@@ -75,7 +68,7 @@ func (s *Service) DaySummary(ctx context.Context, p *auth.Principal, date string
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		d := strings.TrimSpace(date)
 		if d == "" {
 			var err error
@@ -85,24 +78,23 @@ func (s *Service) DaySummary(ctx context.Context, p *auth.Principal, date string
 		} else if _, err := time.Parse("2006-01-02", d); err != nil {
 			return httpx.BadRequest("invalid_query", "date must be YYYY-MM-DD")
 		}
-		byMethod, paysIn, expTotal, expectedCash, err := s.dayFigures(ctx, tx, *p.BranchID, d)
+		byMethod, paysIn, expTotal, expectedCash, err := s.dayFigures(ctx, tx, p, *p.BranchID, d)
 		if err != nil {
 			return err
 		}
 		var closing map[string]any
 		var cid uuid.UUID
-		var exp, cnt, diff decimal.Decimal
+		var exp, cnt, diff *decimal.Decimal
 		var status string
 		var note, reopenReason, closedByName, reopenedByName *string
-		var closedAt time.Time
-		var reopenedAt *time.Time
+		var closedAt, reopenedAt *time.Time
 		err = tx.QueryRow(ctx, `
-			SELECT dc.id, dc.expected_cash, dc.counted_cash, dc.difference, dc.status, dc.note, dc.closed_at,
-			       u1.name, dc.reopened_at, u2.name, dc.reopen_reason
-			FROM day_closings dc
-			LEFT JOIN users u1 ON u1.id = dc.closed_by
-			LEFT JOIN users u2 ON u2.id = dc.reopened_by
-			WHERE dc.branch_id=$1 AND dc.business_date=$2::date`, *p.BranchID, d).
+			SELECT dc.id, dc.expected_cash, dc.counted_cash, dc.difference, dc.status::text, dc.note, dc.closed_at,
+			       u1.full_name::text, dc.reopened_at, u2.full_name::text, dc.reopen_reason
+			FROM app.day_closings dc
+			LEFT JOIN app.memberships m1 ON m1.tenant_id = dc.tenant_id AND m1.id = dc.closed_by LEFT JOIN iam.users u1 ON u1.id = m1.user_id
+			LEFT JOIN app.memberships m2 ON m2.tenant_id = dc.tenant_id AND m2.id = dc.reopened_by LEFT JOIN iam.users u2 ON u2.id = m2.user_id
+			WHERE dc.tenant_id = $1 AND dc.location_id = $2 AND dc.business_date = $3::date`, p.TenantID, *p.BranchID, d).
 			Scan(&cid, &exp, &cnt, &diff, &status, &note, &closedAt, &closedByName, &reopenedAt, &reopenedByName, &reopenReason)
 		if err == nil {
 			closing = map[string]any{
@@ -114,12 +106,8 @@ func (s *Service) DaySummary(ctx context.Context, p *auth.Principal, date string
 			return err
 		}
 		out = map[string]any{
-			"date":              d,
-			"sales_by_method":   byMethod,
-			"payments_received": paysIn,
-			"expenses_total":    expTotal,
-			"expected_cash":     expectedCash,
-			"closing":           closing,
+			"date": d, "sales_by_method": byMethod, "payments_received": paysIn, "expenses_total": expTotal,
+			"expected_cash": expectedCash, "closing": closing,
 		}
 		return nil
 	})
@@ -129,18 +117,17 @@ func (s *Service) DaySummary(ctx context.Context, p *auth.Principal, date string
 func (s *Service) ListDayClosings(ctx context.Context, p *auth.Principal, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM day_closings WHERE ($1::uuid IS NULL OR branch_id=$1)`, p.BranchID).Scan(&total); err != nil {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.day_closings WHERE tenant_id = $1 AND ($2::uuid IS NULL OR location_id = $2) AND status <> 'open'`, p.TenantID, p.BranchID).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT dc.id, dc.business_date::text, b.name, dc.expected_cash, dc.counted_cash, dc.difference,
-			       dc.payments_received, dc.expenses_total, dc.status, dc.note, dc.closed_at, u.name
-			FROM day_closings dc
-			JOIN branches b ON b.id = dc.branch_id
-			LEFT JOIN users u ON u.id = dc.closed_by
-			WHERE ($1::uuid IS NULL OR dc.branch_id=$1)
-			ORDER BY dc.business_date DESC LIMIT $2 OFFSET $3`, p.BranchID, page.PerPage, page.Offset)
+			SELECT dc.id, dc.business_date::text, l.name::text, dc.expected_cash, dc.counted_cash, dc.difference, dc.status::text, dc.note, dc.closed_at, u.full_name::text
+			FROM app.day_closings dc
+			JOIN app.locations l ON l.tenant_id = dc.tenant_id AND l.id = dc.location_id
+			LEFT JOIN app.memberships m ON m.tenant_id = dc.tenant_id AND m.id = dc.closed_by LEFT JOIN iam.users u ON u.id = m.user_id
+			WHERE dc.tenant_id = $1 AND ($2::uuid IS NULL OR dc.location_id = $2) AND dc.status <> 'open'
+			ORDER BY dc.business_date DESC LIMIT $3 OFFSET $4`, p.TenantID, p.BranchID, page.PerPage, page.Offset)
 		if err != nil {
 			return err
 		}
@@ -148,16 +135,15 @@ func (s *Service) ListDayClosings(ctx context.Context, p *auth.Principal, page h
 		for rows.Next() {
 			var id uuid.UUID
 			var date, branch, status string
-			var exp, cnt, diff, pays, exps decimal.Decimal
+			var exp, cnt, diff *decimal.Decimal
 			var note, by *string
-			var closedAt time.Time
-			if err := rows.Scan(&id, &date, &branch, &exp, &cnt, &diff, &pays, &exps, &status, &note, &closedAt, &by); err != nil {
+			var closedAt *time.Time
+			if err := rows.Scan(&id, &date, &branch, &exp, &cnt, &diff, &status, &note, &closedAt, &by); err != nil {
 				return err
 			}
 			out = append(out, map[string]any{
-				"id": id, "date": date, "branch_name": branch, "expected_cash": exp, "counted_cash": cnt,
-				"difference": diff, "payments_received": pays, "expenses_total": exps,
-				"status": status, "note": note, "closed_at": closedAt, "closed_by_name": by,
+				"id": id, "date": date, "branch_name": branch, "expected_cash": exp, "counted_cash": cnt, "difference": diff,
+				"payments_received": nil, "expenses_total": nil, "status": status, "note": note, "closed_at": closedAt, "closed_by_name": by,
 			})
 		}
 		return rows.Err()
@@ -165,6 +151,8 @@ func (s *Service) ListDayClosings(ctx context.Context, p *auth.Principal, page h
 	return out, total, err
 }
 
+// CloseDay records the cash count for a location and day and locks the day. The database refuses
+// later postings to a closed day (BM002) and requires a note when the count differs from the system.
 func (s *Service) CloseDay(ctx context.Context, p *auth.Principal, in CloseDayIn) (map[string]any, error) {
 	if p.BranchID == nil {
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
@@ -173,7 +161,7 @@ func (s *Service) CloseDay(ctx context.Context, p *auth.Principal, in CloseDayIn
 		return nil, httpx.BadRequest("invalid_body", "Counted cash cannot be negative")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		d := strings.TrimSpace(in.Date)
 		if d == "" {
 			var err error
@@ -185,39 +173,50 @@ func (s *Service) CloseDay(ctx context.Context, p *auth.Principal, in CloseDayIn
 		}
 		var existingStatus string
 		var existingID uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT id, status FROM day_closings WHERE branch_id=$1 AND business_date=$2::date FOR UPDATE`, *p.BranchID, d).Scan(&existingID, &existingStatus)
+		err := tx.QueryRow(ctx, `SELECT id, status::text FROM app.day_closings WHERE tenant_id = $1 AND location_id = $2 AND business_date = $3::date FOR UPDATE`, p.TenantID, *p.BranchID, d).Scan(&existingID, &existingStatus)
 		if err == nil && existingStatus == "closed" {
 			return httpx.Conflict("already_closed", "This day is already closed")
 		}
 		if err != nil && err != pgx.ErrNoRows {
 			return err
 		}
-		byMethod, paysIn, expTotal, expectedCash, err := s.dayFigures(ctx, tx, *p.BranchID, d)
+		_, paysIn, expTotal, expectedCash, err := s.dayFigures(ctx, tx, p, *p.BranchID, d)
 		if err != nil {
 			return err
 		}
 		counted := money.Money(in.CountedCash)
 		diff := counted.Sub(expectedCash)
-		rawMethods, _ := json.Marshal(byMethod)
+		note := strings.TrimSpace(in.Note)
+		if !diff.IsZero() && note == "" {
+			return httpx.BadRequest("note_required", "The counted cash differs from the system. Say why")
+		}
 		id := existingID
 		if id == uuid.Nil {
-			id = ids.New()
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO day_closings (id, business_id, branch_id, business_date, expected_cash, counted_cash, difference, sales_by_method, payments_received, expenses_total, note, status, closed_by, closed_at)
-				VALUES ($1,$2,$3,$4::date,$5,$6,$7,$8,$9,$10,NULLIF($11,''),'closed',$12,now())`,
-				id, p.BusinessID, *p.BranchID, d, expectedCash, counted, diff, rawMethods, paysIn, expTotal, strings.TrimSpace(in.Note), p.UserID); err != nil {
-				return err
-			}
-		} else {
-			if _, err := tx.Exec(ctx, `
-				UPDATE day_closings SET expected_cash=$2, counted_cash=$3, difference=$4, sales_by_method=$5, payments_received=$6, expenses_total=$7,
-				       note=NULLIF($8,''), status='closed', closed_by=$9, closed_at=now(), reopened_by=NULL, reopened_at=NULL, reopen_reason=NULL
-				WHERE id=$1`,
-				id, expectedCash, counted, diff, rawMethods, paysIn, expTotal, strings.TrimSpace(in.Note), p.UserID); err != nil {
+			id = uuid.New()
+			if _, err := tx.Exec(ctx, `INSERT INTO app.day_closings (id, tenant_id, location_id, business_date) VALUES ($1,$2,$3,$4::date)`, id, p.TenantID, *p.BranchID, d); err != nil {
 				return err
 			}
 		}
-		if err := s.Audit.Record(ctx, tx, p, "day_closing.closed", "day_closing", id, nil, map[string]any{"date": d, "expected_cash": expectedCash, "counted_cash": counted, "difference": diff}); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM app.day_closing_lines WHERE tenant_id = $1 AND day_closing_id = $2`, p.TenantID, id); err != nil {
+			return err
+		}
+		// One line per account: cash accounts share the counted figure in proportion to what each should hold;
+		// other accounts are not counted at day end, so they are recorded as matching.
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.day_closing_lines (tenant_id, day_closing_id, account_id, expected_amount, counted_amount)
+			SELECT $1, $2, e.account_id, e.expected,
+			       CASE WHEN e.kind IN ('cash', 'petty_cash') AND $5::numeric <> 0 THEN round($4::numeric * e.expected / $5::numeric, 2)
+			            WHEN e.kind IN ('cash', 'petty_cash') AND (SELECT count(*) FROM app.expected_account_balances($3, $6::date) WHERE kind IN ('cash','petty_cash')) = 1 THEN $4::numeric
+			            ELSE e.expected END
+			FROM app.expected_account_balances($3, $6::date) e`, p.TenantID, id, *p.BranchID, counted, expectedCash, d); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE app.day_closings SET status = 'closed', expected_cash = $2, counted_cash = $3, note = NULLIF($4,''),
+			       reopened_by = NULL, reopened_at = NULL, reopen_reason = NULL WHERE id = $1`, id, expectedCash, counted, note); err != nil {
+			return err
+		}
+		if err := s.Audit.Record(ctx, tx, p, "day_closing.closed", "day_closings", id, nil, map[string]any{"date": d, "expected_cash": expectedCash, "counted_cash": counted, "difference": diff}); err != nil {
 			return err
 		}
 		out = map[string]any{
@@ -229,28 +228,26 @@ func (s *Service) CloseDay(ctx context.Context, p *auth.Principal, in CloseDayIn
 	return out, err
 }
 
-// ReopenDay unlocks a closed day. SRS Section 8: only the Owner can reopen a closed day.
+// ReopenDay unlocks a closed day. The database allows it only for someone who holds
+// finance.day.reopen (Admin by default) or with an approved day_reopen request.
 func (s *Service) ReopenDay(ctx context.Context, p *auth.Principal, id uuid.UUID, reason string) (map[string]any, error) {
-	if !p.IsOwner {
-		return nil, httpx.Forbidden("owner_only", "Only the Owner can reopen a closed day")
-	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
 		return nil, httpx.BadRequest("invalid_body", "A reason is required to reopen a closed day")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var status, date string
-		if err := tx.QueryRow(ctx, `SELECT status, business_date::text FROM day_closings WHERE id=$1 FOR UPDATE`, id).Scan(&status, &date); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT status::text, business_date::text FROM app.day_closings WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&status, &date); err != nil {
 			return httpx.NotFound("not_found", "Day closing not found")
 		}
 		if status != "closed" {
 			return httpx.Conflict("invalid_status", "This day is already open")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE day_closings SET status='reopened', reopened_by=$2, reopened_at=now(), reopen_reason=$3 WHERE id=$1`, id, p.UserID, reason); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.day_closings SET status = 'reopened', reopen_reason = $2 WHERE id = $1`, id, reason); err != nil {
 			return err
 		}
-		if err := s.Audit.Record(ctx, tx, p, "day_closing.reopened", "day_closing", id, map[string]any{"status": "closed"}, map[string]any{"status": "reopened", "date": date, "reason": reason}); err != nil {
+		if err := s.Audit.Record(ctx, tx, p, "day_closing.reopened", "day_closings", id, map[string]any{"status": "closed"}, map[string]any{"status": "reopened", "date": date, "reason": reason}); err != nil {
 			return err
 		}
 		out = map[string]any{"id": id, "date": date, "status": "reopened", "reopen_reason": reason}

@@ -83,7 +83,7 @@ type ApprovalFilter struct {
 func (s *Service) List(ctx context.Context, p *auth.Principal, f ApprovalFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		can := decidable(p, q)
 		mine := "ar.requested_by = " + q.Arg(p.UserID)
@@ -160,7 +160,7 @@ func scanApproval(rows pgx.Row) (map[string]any, error) {
 // Count returns pending requests the caller may decide, for the badge.
 func (s *Service) Count(ctx context.Context, p *auth.Principal) (int, error) {
 	n := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		return tx.QueryRow(ctx, `SELECT count(*) FROM approval_requests ar WHERE `+decidable(p, q), q.Args...).Scan(&n)
 	})
@@ -169,7 +169,7 @@ func (s *Service) Count(ctx context.Context, p *auth.Principal) (int, error) {
 
 func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New(id)
 		can := decidable(p, q)
 		row, err := scanApproval(tx.QueryRow(ctx, `
@@ -219,7 +219,7 @@ func (s *Service) visible(p *auth.Principal, row map[string]any) bool {
 func (s *Service) Decide(ctx context.Context, p *auth.Principal, id uuid.UUID, approve bool, note string) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -244,7 +244,7 @@ func (s *Service) Decide(ctx context.Context, p *auth.Principal, id uuid.UUID, a
 }
 
 func (s *Service) Cancel(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := s.Approval.Cancel(ctx, tx, p, id); err != nil {
 			return err
 		}
@@ -264,7 +264,7 @@ func (s *Service) ApproveWithPIN(ctx context.Context, p *auth.Principal, id uuid
 	}
 	var approverID uuid.UUID
 	var hash *string
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT id, pin_hash FROM users
 			WHERE is_active AND (phone = $1 OR email = $1::citext) AND (locked_until IS NULL OR locked_until < $2)
@@ -289,7 +289,7 @@ func (s *Service) ApproveWithPIN(ctx context.Context, p *auth.Principal, id uuid
 	}
 	ok := hash != nil && auth.VerifyPassword(*hash, pin)
 	// Record the attempt in its own transaction so a failure is counted even though the request fails.
-	if err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	if err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var ip any
 		if p.IP != "" {
 			ip = p.IP
@@ -367,7 +367,7 @@ func (s *Service) principal(ctx context.Context, caller *auth.Principal, userID 
 func (s *Service) Notifications(ctx context.Context, p *auth.Principal, unread bool, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New().Add("user_id = ? AND in_app", p.UserID).If(unread, "read_at IS NULL")
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM notifications`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
@@ -398,14 +398,14 @@ func (s *Service) Notifications(ctx context.Context, p *auth.Principal, unread b
 
 func (s *Service) UnreadCount(ctx context.Context, p *auth.Principal) (int, error) {
 	n := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT count(*) FROM notifications WHERE user_id=$1 AND read_at IS NULL AND in_app`, p.UserID).Scan(&n)
 	})
 	return n, err
 }
 
 func (s *Service) MarkRead(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `UPDATE notifications SET read_at = COALESCE(read_at, $3) WHERE id=$1 AND user_id=$2`, id, p.UserID, s.Clock.Now())
 		if err != nil {
 			return err
@@ -419,7 +419,7 @@ func (s *Service) MarkRead(ctx context.Context, p *auth.Principal, id uuid.UUID)
 
 func (s *Service) ReadAll(ctx context.Context, p *auth.Principal) (int64, error) {
 	var n int64
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `UPDATE notifications SET read_at=$2 WHERE user_id=$1 AND read_at IS NULL`, p.UserID, s.Clock.Now())
 		n = tag.RowsAffected()
 		return err
@@ -442,7 +442,7 @@ func (s *Service) SendTestNotification(ctx context.Context, p *auth.Principal, c
 		msg = "This is a test notification from your business settings."
 	}
 	id := ids.New()
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO notifications (id, business_id, user_id, type, title, body, link, in_app, created_at)
 			VALUES ($1,$2,$3,'system_test',$4,$5,'/settings',true,$6)
@@ -473,7 +473,7 @@ type AuditFilter struct {
 func (s *Service) AuditLogs(ctx context.Context, p *auth.Principal, f AuditFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		q.If(f.UserID != nil, "a.user_id = ?", f.UserID)
 		q.If(f.Action != "", "a.action LIKE ?", strings.ReplaceAll(strings.ReplaceAll(f.Action, "%", ""), "_", "\\_")+"%")
@@ -524,7 +524,7 @@ func (s *Service) AuditLogs(ctx context.Context, p *auth.Principal, f AuditFilte
 
 func (s *Service) StartExport(ctx context.Context, p *auth.Principal) (map[string]any, error) {
 	id := ids.New()
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var running int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM export_jobs WHERE kind='business_export' AND status IN ('queued','running')`).Scan(&running); err != nil {
 			return err
@@ -550,7 +550,7 @@ func (s *Service) Backups(ctx context.Context, p *auth.Principal, page httpx.Pag
 	list := []map[string]any{}
 	total := 0
 	var last *time.Time
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM export_jobs WHERE kind='business_export'`).Scan(&total); err != nil {
 			return err
 		}
@@ -611,7 +611,7 @@ func scanExport(rows pgx.Row, withUser bool) (map[string]any, error) {
 // Export returns an export job's status. Only the requester or the Owner may see it.
 func (s *Service) Export(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		row, err := scanExport(tx.QueryRow(ctx, `
 			SELECT e.id, e.status, e.user_id, u.name, e.file_id, e.error, e.created_at, e.finished_at
 			FROM export_jobs e JOIN users u ON u.id=e.user_id WHERE e.id=$1 AND (e.user_id=$2 OR $3)

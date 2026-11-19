@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"bms/internal/kernel/payments"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/sqlq"
@@ -24,38 +25,46 @@ type ListFilter struct {
 	Sort       string
 }
 
-var sortable = map[string]string{"created_at": "s.created_at", "business_date": "s.business_date", "total": "s.total", "number": "s.number", "balance": "s.balance"}
+var sortable = map[string]string{
+	"created_at": "s.created_at", "business_date": "s.business_date", "total": "s.total",
+	"number": "s.receipt_no", "balance": "s.balance_due",
+}
 
-// List returns posted sales in the caller's scope. Held carts and quotations are excluded.
+// List returns non-held sales in the caller's scope. Without shop.sale.view_all a person sees only their own sales.
 func (s *Service) List(ctx context.Context, p *auth.Principal, f ListFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		q.Add("s.kind = 'sale'").Add("s.status <> 'held'")
-		if b := p.ScopeBranches("sales.view"); b != nil {
-			q.Add("s.branch_id = ANY(?)", b)
-		}
-		if own := p.OwnOnly("sales.view"); own != nil {
-			q.Add("s.cashier_id = ?", *own)
-		}
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		q := sqlq.New(p.TenantID)
+		q.Add("s.tenant_id = $1").Add("s.status <> 'held'")
+		q.If(p.BranchID != nil, "s.location_id = ?", p.BranchID)
+		q.If(!p.Has("shop.sale.view_all"), "s.sold_by = ?", p.MembershipID)
 		q.If(f.From != "", "s.business_date >= ?::date", f.From)
 		q.If(f.To != "", "s.business_date <= ?::date", f.To)
-		q.If(f.Status != "", "s.status = ?", f.Status)
+		q.If(f.Status != "", "s.status = ?::app.sale_status", f.Status)
 		q.If(f.CustomerID != nil, "s.customer_id = ?", f.CustomerID)
-		q.If(f.CashierID != nil, "s.cashier_id = ?", f.CashierID)
-		q.If(f.Method != "", "EXISTS (SELECT 1 FROM payment_allocations pa JOIN payments py ON py.id=pa.payment_id WHERE pa.document_type='sale' AND pa.document_id=s.id AND py.method=? AND py.direction='in')", f.Method)
-		if qq := strings.TrimSpace(f.Q); qq != "" {
-			q.Add("(s.number ILIKE '%' || ? || '%' OR c.name ILIKE '%' || ? || '%' OR c.phone ILIKE '%' || ? || '%')", qq, qq, qq)
+		q.If(f.CashierID != nil, "(m.user_id = ? OR s.sold_by = ?)", f.CashierID, f.CashierID)
+		if m := payments.Method(f.Method); f.Method != "" {
+			if m == "" {
+				return nil
+			}
+			q.Add("EXISTS (SELECT 1 FROM app.payment_allocations pa JOIN app.payments_received pr ON pr.tenant_id = pa.tenant_id AND pr.id = pa.payment_received_id WHERE pa.tenant_id = s.tenant_id AND pa.sale_id = s.id AND pr.method = ?::app.payment_method AND pr.status = 'posted')", m)
 		}
-		from := ` FROM sales s LEFT JOIN customers c ON c.id=s.customer_id LEFT JOIN users u ON u.id=s.cashier_id`
+		if qq := strings.TrimSpace(f.Q); qq != "" {
+			q.Add("(s.receipt_no ILIKE '%' || ? || '%' OR c.full_name ILIKE '%' || ? || '%' OR c.phone ILIKE '%' || ? || '%')", qq, qq, qq)
+		}
+		from := ` FROM app.sales s
+			LEFT JOIN app.customers c ON c.tenant_id = s.tenant_id AND c.id = s.customer_id
+			LEFT JOIN app.memberships m ON m.tenant_id = s.tenant_id AND m.id = s.sold_by
+			LEFT JOIN iam.users u ON u.id = m.user_id`
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		order := httpx.Sort(f.Sort, sortable, "s.created_at DESC")
 		rows, err := tx.Query(ctx, `
-			SELECT s.id, s.number, s.status, s.total, s.paid_total, s.balance, s.business_date::text, s.cashier_id,
-			       s.customer_id, c.name, u.name, s.branch_id, s.discount_total, s.tax_total, s.created_at`+from+q.Where()+
+			SELECT s.id, COALESCE(s.receipt_no, ''), s.status::text, s.total, s.amount_paid, s.balance_due,
+			       s.business_date::text, COALESCE(m.user_id, s.sold_by), s.customer_id, c.full_name::text,
+			       u.full_name::text, s.location_id, s.discount_amount, s.tax_amount, s.created_at`+from+q.Where()+
 			` ORDER BY `+order+`, s.id`+q.Page(page.PerPage, page.Offset), q.Args...)
 		if err != nil {
 			return err
@@ -80,109 +89,122 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, f ListFilter, pag
 	return out, total, err
 }
 
-// loadSale reads a sale header and enforces the caller's scope for key; outside scope is 404.
-func (s *Service) loadSale(ctx context.Context, tx pgx.Tx, p *auth.Principal, key string, id uuid.UUID, kind string) (map[string]any, error) {
-	var number, status, footer, date, k string
-	var branch, cashier uuid.UUID
-	var customer, employee, till, quotation, converted *uuid.UUID
-	var sub, disc, tax, total, cost, paid, bal, change, written decimal.Decimal
-	var note, dueDate, validUntil, voidReason *string
-	var includeTax bool
-	var prints int
+// loadSale reads a sale header and enforces own-sales scoping when shop.sale.view_all is absent.
+func (s *Service) loadSale(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
+	var number, status, date string
+	var branch, soldBy uuid.UUID
+	var customer, voidedBy *uuid.UUID
+	var sub, disc, tax, total, paid, bal decimal.Decimal
+	var note, dueDate, voidReason *string
 	var created, completed, voidedAt any
-	var voidedBy *uuid.UUID
 	err := tx.QueryRow(ctx, `
-		SELECT number, kind, status, branch_id, customer_id, cashier_id, employee_id, till_session_id, business_date::text, subtotal, discount_total,
-		       tax_total, total, cost_total, paid_total, balance, change_due, written_off, receipt_footer, prices_include_tax, note,
-		       due_date::text, valid_until::text, receipt_prints, created_at, completed_at, voided_by, voided_at, void_reason, quotation_id, converted_sale_id
-		FROM sales WHERE id=$1`, id).Scan(&number, &k, &status, &branch, &customer, &cashier, &employee, &till, &date, &sub, &disc,
-		&tax, &total, &cost, &paid, &bal, &change, &written, &footer, &includeTax, &note, &dueDate, &validUntil, &prints, &created, &completed,
-		&voidedBy, &voidedAt, &voidReason, &quotation, &converted)
-	notFound := httpx.NotFound("not_found", "Sale not found")
-	if kind == "quotation" {
-		notFound = httpx.NotFound("not_found", "Quotation not found")
-	}
+		SELECT COALESCE(receipt_no, ''), status::text, location_id, customer_id, sold_by, business_date::text,
+		       subtotal, discount_amount, tax_amount, total, amount_paid, balance_due, notes, due_date::text,
+		       created_at, completed_at, voided_by, voided_at, void_reason
+		FROM app.sales WHERE tenant_id = $1 AND id = $2`, p.TenantID, id).
+		Scan(&number, &status, &branch, &customer, &soldBy, &date, &sub, &disc, &tax, &total, &paid, &bal,
+			&note, &dueDate, &created, &completed, &voidedBy, &voidedAt, &voidReason)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, notFound
+		return nil, httpx.NotFound("not_found", "Sale not found")
 	}
 	if err != nil {
 		return nil, err
 	}
-	if k != kind || !p.SeesBranch(key, branch) {
-		return nil, notFound
+	if !p.Has("shop.sale.view_all") && soldBy != p.MembershipID {
+		return nil, httpx.NotFound("not_found", "Sale not found")
 	}
-	if own := p.OwnOnly(key); own != nil && cashier != *own {
-		return nil, notFound
-	}
-	out := map[string]any{"id": id, "number": number, "kind": k, "status": status, "branch_id": branch, "customer_id": customer, "cashier_id": cashier,
-		"employee_id": employee, "till_session_id": till, "business_date": date, "subtotal": sub, "discount_total": disc, "tax_total": tax,
-		"total": total, "paid_total": paid, "balance": bal, "change_due": change, "written_off": written, "receipt_footer": footer,
-		"prices_include_tax": includeTax, "note": note, "due_date": dueDate, "valid_until": validUntil, "receipt_prints": prints,
-		"created_at": created, "completed_at": completed, "voided_by": voidedBy, "voided_at": voidedAt, "void_reason": voidReason,
-		"quotation_id": quotation, "converted_sale_id": converted}
-	if _, ok := p.Can("products.view_cost"); ok {
-		out["cost_total"] = cost
-		out["profit"] = total.Sub(tax).Sub(cost)
-	}
-	var custName, custPhone, cashierName, branchName *string
+	var cashierUser uuid.UUID
+	var custName, custPhone, cashierName, branchName, footer *string
 	if err := tx.QueryRow(ctx, `
-		SELECT (SELECT name FROM customers WHERE id=$1), (SELECT phone FROM customers WHERE id=$1),
-		       (SELECT name FROM users WHERE id=$2), (SELECT name FROM branches WHERE id=$3)`, customer, cashier, branch).Scan(&custName, &custPhone, &cashierName, &branchName); err != nil {
+		SELECT COALESCE((SELECT user_id FROM app.memberships WHERE tenant_id = $1 AND id = $3), $3),
+		       (SELECT full_name::text FROM app.customers WHERE tenant_id = $1 AND id = $2),
+		       (SELECT phone::text FROM app.customers WHERE tenant_id = $1 AND id = $2),
+		       (SELECT u.full_name::text FROM app.memberships m JOIN iam.users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.id = $3),
+		       (SELECT name::text FROM app.locations WHERE tenant_id = $1 AND id = $4),
+		       (SELECT receipt_footer FROM app.tenant_settings WHERE tenant_id = $1)`,
+		p.TenantID, customer, soldBy, branch).Scan(&cashierUser, &custName, &custPhone, &cashierName, &branchName, &footer); err != nil {
 		return nil, err
 	}
-	out["customer_name"], out["customer_phone"], out["cashier_name"], out["branch_name"] = custName, custPhone, cashierName, branchName
-	items, err := s.items(ctx, tx, p, id)
+	items, costTotal, err := s.items(ctx, tx, p, id)
 	if err != nil {
 		return nil, err
 	}
-	out["items"] = items
+	out := map[string]any{
+		"id": id, "number": number, "kind": "sale", "status": status, "branch_id": branch, "customer_id": customer,
+		"cashier_id": cashierUser, "sold_by": soldBy, "business_date": date, "subtotal": sub, "discount_total": disc,
+		"tax_total": tax, "total": total, "paid_total": paid, "balance": bal, "change_due": decimal.Zero,
+		"receipt_footer": footer, "prices_include_tax": true, "note": note, "due_date": dueDate,
+		"created_at": created, "completed_at": completed, "voided_by": voidedBy, "voided_at": voidedAt, "void_reason": voidReason,
+		"customer_name": custName, "customer_phone": custPhone, "cashier_name": cashierName, "branch_name": branchName,
+		"items": items,
+	}
+	if canSeeCost(p) {
+		out["cost_total"] = costTotal
+		out["profit"] = total.Sub(tax).Sub(costTotal)
+	}
 	return out, nil
 }
 
-func (s *Service) items(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) ([]map[string]any, error) {
+func (s *Service) items(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) ([]map[string]any, decimal.Decimal, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT si.id, si.product_id, si.product_name, si.qty, si.unit_price, si.unit_cost, si.discount, si.tax_rate, si.tax_amount, si.line_total, si.qty_returned, si.serial_number, COALESCE(pr.warranty_months, 0)
-		FROM sale_items si LEFT JOIN products pr ON pr.id = si.product_id
-		WHERE si.sale_id=$1 ORDER BY si.product_name, si.id`, id)
+		SELECT sl.id, sl.product_id, sl.product_name::text, sl.quantity, sl.unit_price, COALESCE(sl.unit_cost, 0),
+		       sl.line_discount, sl.tax_rate_pct, sl.tax_amount, sl.line_total, sl.returned_quantity, sl.warranty_months,
+		       COALESCE((SELECT string_agg(pu.serial_no, ', ' ORDER BY pu.serial_no)
+		                 FROM app.sale_line_units slu
+		                 JOIN app.product_units pu ON pu.tenant_id = slu.tenant_id AND pu.id = slu.product_unit_id
+		                 WHERE slu.tenant_id = sl.tenant_id AND slu.sale_line_id = sl.id), '')
+		FROM app.sale_lines sl
+		WHERE sl.tenant_id = $1 AND sl.sale_id = $2
+		ORDER BY sl.line_no`, p.TenantID, id)
 	if err != nil {
-		return nil, err
+		return nil, decimal.Zero, err
 	}
 	defer rows.Close()
-	_, cost := p.Can("products.view_cost")
+	showCost := canSeeCost(p)
 	items := []map[string]any{}
+	costTotal := decimal.Zero
 	for rows.Next() {
 		var itemID, pid uuid.UUID
-		var name string
-		var serial *string
+		var name, serial string
 		var warranty int
-		var qty, price, ucost, d, rate, taxA, line, ret decimal.Decimal
-		if err := rows.Scan(&itemID, &pid, &name, &qty, &price, &ucost, &d, &rate, &taxA, &line, &ret, &serial, &warranty); err != nil {
-			return nil, err
+		var qty, price, ucost, d, rate, taxA, lineT, ret decimal.Decimal
+		if err := rows.Scan(&itemID, &pid, &name, &qty, &price, &ucost, &d, &rate, &taxA, &lineT, &ret, &warranty, &serial); err != nil {
+			return nil, decimal.Zero, err
 		}
-		item := map[string]any{"id": itemID, "product_id": pid, "product_name": name, "qty": qty, "unit_price": price, "discount": d, "tax_rate": rate, "tax_amount": taxA, "line_total": line, "qty_returned": ret, "serial_number": serial, "warranty_months": warranty}
-		if cost {
+		var serialOut *string
+		if serial != "" {
+			sCopy := serial
+			serialOut = &sCopy
+		}
+		item := map[string]any{"id": itemID, "product_id": pid, "product_name": name, "qty": qty, "unit_price": price,
+			"discount": d, "tax_rate": rate, "tax_amount": taxA, "line_total": lineT, "qty_returned": ret,
+			"serial_number": serialOut, "warranty_months": warranty}
+		if showCost {
 			item["unit_cost"] = ucost
+			costTotal = costTotal.Add(qty.Mul(ucost).Round(2))
 		}
 		items = append(items, item)
 	}
-	return items, rows.Err()
+	return items, costTotal, rows.Err()
 }
 
-// Get returns a sale with items, payments, returns, approvals and its audit trail (FR-SAL-20).
+// Get returns a sale with items, payments, returns, approvals and its audit trail.
 func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		m, err := s.loadSale(ctx, tx, p, "sales.view", id, "sale")
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		m, err := s.loadSale(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
-		if m["payments"], err = salePayments(ctx, tx, id); err != nil {
+		if m["payments"], err = salePayments(ctx, tx, p.TenantID, id); err != nil {
 			return err
 		}
 		returns := []map[string]any{}
 		rows, err := tx.Query(ctx, `
-			SELECT r.id, r.number, r.sale_id, s.number, r.status, r.reason, r.refund_method, r.refund_total, r.requested_by, r.approved_by, r.created_at, r.completed_at, r.branch_id
-			FROM sale_returns r JOIN sales s ON s.id=r.sale_id WHERE r.sale_id=$1 ORDER BY r.created_at`, id)
+			SELECT r.id, r.return_no, r.sale_id, COALESCE(s.receipt_no, ''), r.status::text, r.resolution::text,
+			       r.reason, r.refund_amount, r.requested_by, r.decided_by, r.created_at, r.completed_at, r.location_id
+			FROM app.sale_returns r JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id
+			WHERE r.tenant_id = $1 AND r.sale_id = $2 ORDER BY r.created_at`, p.TenantID, id)
 		if err != nil {
 			return err
 		}
@@ -196,11 +218,14 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 		}
 		rows.Close()
 		m["returns"] = returns
+
 		approvals := []map[string]any{}
 		rows, err = tx.Query(ctx, `
-			SELECT a.id, a.kind, a.status, a.requested_by, a.decided_by, du.name, a.decided_at, a.decision_note, a.created_at
-			FROM approval_requests a LEFT JOIN users du ON du.id=a.decided_by
-			WHERE a.subject_type='sale' AND a.subject_id=$1 ORDER BY a.created_at`, id)
+			SELECT a.id, a.approval_type::text, a.status::text, a.requested_by, a.decided_by, u.full_name::text, a.decided_at, a.decision_note, a.created_at
+			FROM app.approval_requests a
+			LEFT JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.decided_by
+			LEFT JOIN iam.users u ON u.id = m.user_id
+			WHERE a.tenant_id = $1 AND a.sale_id = $2 ORDER BY a.created_at`, p.TenantID, id)
 		if err != nil {
 			return err
 		}
@@ -214,17 +239,21 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 				rows.Close()
 				return err
 			}
-			approvals = append(approvals, map[string]any{"id": aid, "kind": kind, "status": status, "requested_by": by, "decided_by": decided, "decided_by_name": decider, "decided_at": decidedAt, "note": note, "created_at": created})
+			approvals = append(approvals, map[string]any{"id": aid, "kind": kind, "status": status, "requested_by": by, "decided_by": decided,
+				"decided_by_name": decider, "decided_at": decidedAt, "note": note, "created_at": created})
 		}
 		rows.Close()
 		m["approvals"] = approvals
+
 		trail := []map[string]any{}
 		rows, err = tx.Query(ctx, `
-			SELECT a.action, a.user_id, u.name, a.created_at
-			FROM audit_logs a LEFT JOIN users u ON u.id=a.user_id
-			WHERE (a.entity_type='sale' AND a.entity_id=$1)
-			   OR (a.entity_type='sale_return' AND a.entity_id IN (SELECT id FROM sale_returns WHERE sale_id=$1))
-			ORDER BY a.created_at, a.id`, id)
+			SELECT a.action, a.actor_user_id, u.full_name::text, a.occurred_at
+			FROM audit.audit_log a LEFT JOIN iam.users u ON u.id = a.actor_user_id
+			WHERE a.tenant_id = $1 AND (
+			      (a.entity_table IN ('sale', 'app.sales') AND a.entity_id = $2)
+			   OR (a.entity_table IN ('sale_return', 'app.sale_returns') AND a.entity_id IN (SELECT id FROM app.sale_returns WHERE tenant_id = $1 AND sale_id = $2))
+			)
+			ORDER BY a.occurred_at, a.seq`, p.TenantID, id)
 		if err != nil {
 			return err
 		}
@@ -246,11 +275,15 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 	return out, err
 }
 
-func salePayments(ctx context.Context, tx pgx.Tx, saleID uuid.UUID) ([]map[string]any, error) {
+func salePayments(ctx context.Context, tx pgx.Tx, tenantID, saleID uuid.UUID) ([]map[string]any, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT py.id, py.number, py.direction, py.kind, py.method, pa.amount, py.reference, py.payment_date::text, py.status, py.money_account_id, ma.name
-		FROM payment_allocations pa JOIN payments py ON py.id=pa.payment_id JOIN money_accounts ma ON ma.id=py.money_account_id
-		WHERE pa.document_type='sale' AND pa.document_id=$1 ORDER BY py.created_at, py.id`, saleID)
+		SELECT pr.id, pr.receipt_no, pr.purpose::text, pr.method::text, pa.amount, pr.reference,
+		       pr.business_date::text, pr.status::text, pr.account_id, fa.name::text
+		FROM app.payment_allocations pa
+		JOIN app.payments_received pr ON pr.tenant_id = pa.tenant_id AND pr.id = pa.payment_received_id
+		JOIN app.financial_accounts fa ON fa.tenant_id = pr.tenant_id AND fa.id = pr.account_id
+		WHERE pa.tenant_id = $1 AND pa.sale_id = $2
+		ORDER BY pr.created_at, pr.id`, tenantID, saleID)
 	if err != nil {
 		return nil, err
 	}
@@ -258,14 +291,14 @@ func salePayments(ctx context.Context, tx pgx.Tx, saleID uuid.UUID) ([]map[strin
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, account uuid.UUID
-		var number, dir, kind, method, date, status, accName string
+		var number, purpose, method, date, status, accName string
 		var amt decimal.Decimal
 		var ref *string
-		if err := rows.Scan(&id, &number, &dir, &kind, &method, &amt, &ref, &date, &status, &account, &accName); err != nil {
+		if err := rows.Scan(&id, &number, &purpose, &method, &amt, &ref, &date, &status, &account, &accName); err != nil {
 			return nil, err
 		}
-		out = append(out, map[string]any{"id": id, "number": number, "direction": dir, "kind": kind, "method": method, "amount": amt,
-			"reference": ref, "date": date, "status": status, "money_account_id": account, "money_account_name": accName})
+		out = append(out, map[string]any{"id": id, "number": number, "direction": "in", "kind": purpose, "method": payments.MethodOut(method),
+			"amount": amt, "reference": ref, "date": date, "status": status, "money_account_id": account, "money_account_name": accName})
 	}
 	return out, rows.Err()
 }

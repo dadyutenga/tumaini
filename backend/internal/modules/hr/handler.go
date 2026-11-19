@@ -13,7 +13,7 @@ import (
 
 type Handler struct{ Svc *Service }
 
-var P = middleware.Principal // P returns the caller; short because every handler uses it.
+var P = middleware.Principal
 
 func (h *Handler) ListEmployees(c fiber.Ctx) error {
 	page := httpx.PageFrom(c)
@@ -22,13 +22,7 @@ func (h *Handler) ListEmployees(c fiber.Ctx) error {
 	if f.BranchID, err = httpx.QueryUUID(c, "branch_id"); err != nil {
 		return err
 	}
-	if f.DepartmentID, err = httpx.QueryUUID(c, "department_id"); err != nil {
-		return err
-	}
-	if f.PositionID, err = httpx.QueryUUID(c, "position_id"); err != nil {
-		return err
-	}
-	f.Sort = httpx.SortFrom(c, map[string]string{"name": "e.name", "employee_no": "e.employee_no", "hire_date": "e.hire_date", "created_at": "e.created_at"}, "e.name ASC")
+	f.Sort = httpx.SortFrom(c, map[string]string{"name": "e.full_name", "employee_no": "e.employee_no", "hire_date": "e.start_date", "created_at": "e.created_at"}, "e.full_name ASC")
 	rows, total, err := h.Svc.ListEmployees(c.Context(), P(c), f, page)
 	return httpx.Paged(c, rows, page, total, err)
 }
@@ -137,7 +131,6 @@ func (h *Handler) LeaveBalance(c fiber.Ctx) error {
 	return httpx.OK(c, out, err)
 }
 
-// optID reads :id when present.
 func optID(c fiber.Ctx) (*uuid.UUID, error) {
 	if c.Params("id") == "" {
 		return nil, nil
@@ -433,50 +426,52 @@ func (h *Handler) MePayments(c fiber.Ctx) error {
 
 func Register(r fiber.Router, h *Handler) {
 	req := middleware.Require
-	r.Get("/employees", req("employees.view"), h.ListEmployees)
-	r.Post("/employees", req("employees.manage"), h.CreateEmployee)
-	r.Get("/employees/:id", req("employees.view"), h.GetEmployee)
-	r.Put("/employees/:id", req("employees.manage"), h.UpdateEmployee)
-	r.Post("/employees/:id/terminate", req("employees.manage"), h.Terminate)
-	r.Post("/employees/:id/user", req("users.manage"), h.CreateLogin)
-	r.Get("/employees/:id/statement", req("employees.view_salary"), h.Statement)
-	r.Get("/employees/:id/components", req("components.manage"), h.Components)
-	r.Put("/employees/:id/components", req("components.manage"), h.PutComponents)
-	r.Get("/employees/:id/documents", req("employees.manage"), h.ListDocuments)
-	r.Post("/employees/:id/documents", req("employees.manage"), h.AddDocument)
-	r.Delete("/employees/:id/documents/:doc_id", req("employees.manage"), h.DeleteDocument)
-	r.Get("/employees/:id/leave-balance", req("employees.view"), h.LeaveBalance)
+	any := middleware.RequireAny
 
-	r.Get("/departments", req("departments.manage"), h.Departments)
-	r.Post("/departments", req("departments.manage"), h.SaveDepartment)
-	r.Put("/departments/:id", req("departments.manage"), h.SaveDepartment)
-	r.Delete("/departments/:id", req("departments.manage"), h.DeleteDepartment)
-	r.Get("/positions", req("departments.manage"), h.Positions)
-	r.Post("/positions", req("departments.manage"), h.SavePosition)
-	r.Put("/positions/:id", req("departments.manage"), h.SavePosition)
-	r.Delete("/positions/:id", req("departments.manage"), h.DeletePosition)
-	r.Get("/leave-types", middleware.RequireAny("leave.request", "leave.approve", "departments.manage", "employees.view"), h.LeaveTypes)
-	r.Post("/leave-types", req("departments.manage"), h.SaveLeaveType)
-	r.Put("/leave-types/:id", req("departments.manage"), h.SaveLeaveType)
+	r.Get("/employees", any("hr.employee.view", "hr.employee.manage"), h.ListEmployees)
+	r.Post("/employees", req("hr.employee.manage"), h.CreateEmployee)
+	r.Get("/employees/:id", any("hr.employee.view", "hr.employee.manage"), h.GetEmployee)
+	r.Put("/employees/:id", req("hr.employee.manage"), h.UpdateEmployee)
+	r.Post("/employees/:id/terminate", req("hr.employee.manage"), h.Terminate)
+	r.Post("/employees/:id/user", req("security.user.manage"), h.CreateLogin)
+	r.Get("/employees/:id/statement", any("hr.compensation.view", "hr.payroll.view"), h.Statement)
+	r.Get("/employees/:id/components", any("hr.compensation.view", "hr.compensation.manage"), h.Components)
+	r.Put("/employees/:id/components", req("hr.compensation.manage"), h.PutComponents)
+	r.Get("/employees/:id/documents", req("hr.employee.manage"), h.ListDocuments)
+	r.Post("/employees/:id/documents", req("hr.employee.manage"), h.AddDocument)
+	r.Delete("/employees/:id/documents/:doc_id", req("hr.employee.manage"), h.DeleteDocument)
+	r.Get("/employees/:id/leave-balance", any("hr.employee.view", "hr.employee.manage", "hr.leave.approve"), h.LeaveBalance)
 
-	r.Get("/leave-requests", req("leave.approve"), h.LeaveRequests)
-	r.Post("/leave-requests", req("leave.request"), h.RequestLeave)
-	r.Post("/leave-requests/:id/approve", req("leave.approve"), h.decideLeave(true))
-	r.Post("/leave-requests/:id/reject", req("leave.approve"), h.decideLeave(false))
-	r.Post("/leave-requests/:id/cancel", middleware.RequireAny("leave.request", "leave.approve"), h.CancelLeave)
+	r.Get("/departments", any("hr.employee.view", "hr.employee.manage"), h.Departments)
+	r.Post("/departments", req("hr.employee.manage"), h.SaveDepartment)
+	r.Put("/departments/:id", req("hr.employee.manage"), h.SaveDepartment)
+	r.Delete("/departments/:id", req("hr.employee.manage"), h.DeleteDepartment)
+	r.Get("/positions", any("hr.employee.view", "hr.employee.manage"), h.Positions)
+	r.Post("/positions", req("hr.employee.manage"), h.SavePosition)
+	r.Put("/positions/:id", req("hr.employee.manage"), h.SavePosition)
+	r.Delete("/positions/:id", req("hr.employee.manage"), h.DeletePosition)
+	r.Get("/leave-types", h.LeaveTypes)
+	r.Post("/leave-types", req("hr.employee.manage"), h.SaveLeaveType)
+	r.Put("/leave-types/:id", req("hr.employee.manage"), h.SaveLeaveType)
 
-	r.Get("/loans", req("loans.view"), h.Loans)
-	r.Post("/loans", req("loans.create"), hrkit.OptionalIdempotent(), h.CreateLoan)
-	r.Get("/loans/:id", req("loans.view"), h.GetLoan)
-	r.Post("/loans/:id/disburse", req("loans.approve"), hrkit.OptionalIdempotent(), h.Disburse)
-	r.Post("/loans/:id/repay", req("payments.receive"), middleware.Idempotent(), h.Repay)
+	r.Get("/leave-requests", any("hr.leave.approve", "hr.employee.view"), h.LeaveRequests)
+	r.Post("/leave-requests", h.RequestLeave)
+	r.Post("/leave-requests/:id/approve", req("hr.leave.approve"), h.decideLeave(true))
+	r.Post("/leave-requests/:id/reject", req("hr.leave.approve"), h.decideLeave(false))
+	r.Post("/leave-requests/:id/cancel", h.CancelLeave)
 
-	r.Get("/commission-rules", req("components.manage"), h.CommissionRules)
-	r.Post("/commission-rules", req("components.manage"), h.SaveCommissionRule)
-	r.Put("/commission-rules/:id", req("components.manage"), h.SaveCommissionRule)
-	r.Get("/pay-adjustments", req("adjustments.manage"), h.Adjustments)
-	r.Post("/pay-adjustments", req("adjustments.manage"), h.CreateAdjustment)
-	r.Delete("/pay-adjustments/:id", req("adjustments.manage"), h.DeleteAdjustment)
+	r.Get("/loans", any("hr.compensation.view", "hr.compensation.manage", "hr.payroll.view"), h.Loans)
+	r.Post("/loans", req("hr.compensation.manage"), hrkit.OptionalIdempotent(), h.CreateLoan)
+	r.Get("/loans/:id", any("hr.compensation.view", "hr.compensation.manage", "hr.payroll.view"), h.GetLoan)
+	r.Post("/loans/:id/disburse", any("hr.compensation.manage", "finance.payment.make"), hrkit.OptionalIdempotent(), h.Disburse)
+	r.Post("/loans/:id/repay", any("hr.compensation.manage", "finance.payment.receive"), middleware.Idempotent(), h.Repay)
+
+	r.Get("/commission-rules", any("hr.compensation.view", "hr.compensation.manage", "hr.payroll.view"), h.CommissionRules)
+	r.Post("/commission-rules", req("hr.compensation.manage"), h.SaveCommissionRule)
+	r.Put("/commission-rules/:id", req("hr.compensation.manage"), h.SaveCommissionRule)
+	r.Get("/pay-adjustments", any("hr.compensation.view", "hr.compensation.manage", "hr.payroll.view", "hr.payroll.manage"), h.Adjustments)
+	r.Post("/pay-adjustments", any("hr.compensation.manage", "hr.payroll.manage"), h.CreateAdjustment)
+	r.Delete("/pay-adjustments/:id", any("hr.compensation.manage", "hr.payroll.manage"), h.DeleteAdjustment)
 
 	r.Get("/me/employee", h.MeEmployee)
 	r.Get("/me/attendance", h.MeAttendance)

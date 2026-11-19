@@ -32,6 +32,19 @@ func (h *Handler) Create(c fiber.Ctx) error {
 	return httpx.Send(c, status, raw, err)
 }
 
+func (h *Handler) Complete(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	var body CompleteIn
+	if err := httpx.BindOptional(c, &body); err != nil {
+		return err
+	}
+	status, raw, err := h.Svc.Complete(c.Context(), middleware.Principal(c), id, body)
+	return httpx.Send(c, status, raw, err)
+}
+
 func (h *Handler) List(c fiber.Ctx) error {
 	page := httpx.PageFrom(c)
 	from, to, err := httpx.Range(c)
@@ -136,6 +149,46 @@ func (h *Handler) Return(c fiber.Ctx) error {
 		return err
 	}
 	status, raw, err := h.Svc.CreateReturn(c.Context(), middleware.Principal(c), id, body)
+	return httpx.Send(c, status, raw, err)
+}
+
+func (h *Handler) ApproveReturn(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	out, err := h.Svc.DecideReturn(c.Context(), middleware.Principal(c), id, true)
+	return httpx.OK(c, out, err)
+}
+
+func (h *Handler) RejectReturn(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	out, err := h.Svc.DecideReturn(c.Context(), middleware.Principal(c), id, false)
+	return httpx.OK(c, out, err)
+}
+
+func (h *Handler) CancelReturn(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	out, err := h.Svc.CancelReturn(c.Context(), middleware.Principal(c), id)
+	return httpx.OK(c, out, err)
+}
+
+func (h *Handler) CompleteReturn(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	var body CompleteReturnIn
+	if err := httpx.BindOptional(c, &body); err != nil {
+		return err
+	}
+	status, raw, err := h.Svc.CompleteReturn(c.Context(), middleware.Principal(c), id, body)
 	return httpx.Send(c, status, raw, err)
 }
 
@@ -341,33 +394,38 @@ func (h *Handler) PayOut(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
-	r.Get("/tills/current", middleware.Require("tills.open_close"), h.CurrentTill)
-	r.Post("/tills/open", middleware.Require("tills.open_close"), h.OpenTill)
-	r.Get("/tills", middleware.Require("tills.view"), h.Tills)
-	r.Get("/tills/:id", middleware.Require("tills.view"), h.Till)
-	r.Post("/tills/:id/close", middleware.Require("tills.open_close"), h.CloseTill)
-	r.Post("/tills/:id/pay-out", middleware.Require("tills.open_close"), middleware.Idempotent(), h.PayOut)
+	r.Get("/tills/current", middleware.Require("finance.day.close"), h.CurrentTill)
+	r.Post("/tills/open", middleware.Require("finance.day.close"), h.OpenTill)
+	r.Get("/tills", middleware.Require("finance.day.close"), h.Tills)
+	r.Get("/tills/:id", middleware.Require("finance.day.close"), h.Till)
+	r.Post("/tills/:id/close", middleware.Require("finance.day.close"), h.CloseTill)
+	r.Post("/tills/:id/pay-out", middleware.Require("finance.day.close"), h.PayOut)
 
-	r.Post("/sales/preview", middleware.Require("sales.create"), h.Preview)
-	r.Post("/sales/hold", middleware.Require("sales.create"), h.Hold)
-	r.Get("/sales/held", middleware.Require("sales.create"), h.Held)
-	r.Delete("/sales/held/:id", middleware.Require("sales.create"), h.DiscardHeld)
-	r.Post("/sales", middleware.Require("sales.create"), middleware.Idempotent(), h.Create)
-	r.Get("/sales", middleware.Require("sales.view"), h.List)
-	r.Get("/sales/:id", middleware.Require("sales.view"), h.Get)
-	r.Get("/sales/:id/receipt", middleware.Require("sales.view"), h.Receipt)
-	r.Get("/sales/:id/invoice", middleware.Require("sales.view"), h.Invoice)
-	r.Post("/sales/:id/void", middleware.Require("sales.void"), middleware.Idempotent(), h.Void)
-	r.Post("/sales/:id/payments", middleware.Require("payments.receive"), middleware.Idempotent(), h.Pay)
-	r.Get("/sales/:id/returns", middleware.Require("sales.view"), h.SaleReturns)
-	r.Post("/sales/:id/returns", middleware.Require("sales.refund_request"), middleware.Idempotent(), h.Return)
-	r.Get("/sale-returns", middleware.Require("sales.view"), h.Returns)
-	r.Get("/sale-returns/:id", middleware.Require("sales.view"), h.GetReturn)
+	r.Post("/sales/preview", middleware.Require("shop.sale.create"), h.Preview)
+	r.Post("/sales/hold", middleware.Require("shop.sale.create"), h.Hold)
+	r.Get("/sales/held", middleware.Require("shop.sale.create"), h.Held)
+	r.Delete("/sales/held/:id", middleware.Require("shop.sale.create"), h.DiscardHeld)
+	r.Post("/sales", middleware.Require("shop.sale.create"), middleware.Idempotent(), h.Create)
+	r.Post("/sales/:id/complete", middleware.Require("shop.sale.create"), middleware.Idempotent(), h.Complete)
+	r.Get("/sales", middleware.RequireAny("shop.sale.view_all", "shop.sale.create"), h.List)
+	r.Get("/sales/:id", middleware.RequireAny("shop.sale.view_all", "shop.sale.create"), h.Get)
+	r.Get("/sales/:id/receipt", middleware.RequireAny("shop.sale.view_all", "shop.sale.create"), h.Receipt)
+	r.Get("/sales/:id/invoice", middleware.RequireAny("shop.sale.view_all", "shop.sale.create"), h.Invoice)
+	r.Post("/sales/:id/void", middleware.RequireAny("shop.sale.void", "shop.sale.request_void"), middleware.Idempotent(), h.Void)
+	r.Post("/sales/:id/payments", middleware.Require("finance.payment.receive"), middleware.Idempotent(), h.Pay)
+	r.Get("/sales/:id/returns", middleware.RequireAny("shop.sale.view_all", "shop.sale.create", "shop.return.create", "shop.return.approve"), h.SaleReturns)
+	r.Post("/sales/:id/returns", middleware.Require("shop.return.create"), middleware.Idempotent(), h.Return)
+	r.Get("/sale-returns", middleware.RequireAny("shop.sale.view_all", "shop.return.create", "shop.return.approve"), h.Returns)
+	r.Get("/sale-returns/:id", middleware.RequireAny("shop.sale.view_all", "shop.return.create", "shop.return.approve"), h.GetReturn)
+	r.Post("/sale-returns/:id/approve", middleware.Require("shop.return.approve"), h.ApproveReturn)
+	r.Post("/sale-returns/:id/reject", middleware.Require("shop.return.approve"), h.RejectReturn)
+	r.Post("/sale-returns/:id/cancel", middleware.RequireAny("shop.return.create", "shop.return.approve"), h.CancelReturn)
+	r.Post("/sale-returns/:id/complete", middleware.RequireAny("shop.return.approve", "finance.payment.make"), middleware.Idempotent(), h.CompleteReturn)
 
-	r.Get("/quotations", middleware.Require("quotations.manage"), h.Quotations)
-	r.Post("/quotations", middleware.Require("quotations.manage"), h.CreateQuotation)
-	r.Get("/quotations/:id", middleware.Require("quotations.manage"), h.GetQuotation)
-	r.Get("/quotations/:id/pdf", middleware.Require("quotations.manage"), h.QuotationPDF)
-	r.Put("/quotations/:id", middleware.Require("quotations.manage"), h.UpdateQuotation)
-	r.Post("/quotations/:id/convert", middleware.Require("sales.create"), middleware.Idempotent(), h.ConvertQuotation)
+	r.Get("/quotations", middleware.RequireAny("services.quotation.manage", "services.quotation.draft", "shop.sale.create"), h.Quotations)
+	r.Post("/quotations", middleware.Require("services.quotation.manage"), h.CreateQuotation)
+	r.Get("/quotations/:id", middleware.RequireAny("services.quotation.manage", "services.quotation.draft"), h.GetQuotation)
+	r.Get("/quotations/:id/pdf", middleware.RequireAny("services.quotation.manage", "services.quotation.draft"), h.QuotationPDF)
+	r.Put("/quotations/:id", middleware.Require("services.quotation.manage"), h.UpdateQuotation)
+	r.Post("/quotations/:id/convert", middleware.Require("shop.sale.create"), h.ConvertQuotation)
 }

@@ -1,3 +1,8 @@
+// Package sequence issues gap-free document numbers from app.document_sequences.
+//
+// Numbering is per tenant and document type (R-0001, INV-0001, ...): the database function
+// app.next_document_number locks the sequence row, so a rolled-back transaction releases its number.
+// Branches no longer have their own counters.
 package sequence
 
 import (
@@ -8,41 +13,35 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-var Prefixes = map[string]string{
-	"sale": "SAL", "invoice": "INV", "receipt": "RCT", "return": "RET", "quotation": "QUO",
-	"po": "PO", "grn": "GRN", "pinv": "PINV", "preturn": "PRET", "transfer": "TRF",
-	"adjustment": "ADJ", "expense": "EXP", "payment_in": "PIN", "payment_out": "POUT",
-	"money_transfer": "MTX", "payroll": "PAY", "payslip": "PSL", "loan": "LON",
-	"stock_entry": "STK", "employee": "EMP", "income": "INC", "drawing": "DRW",
-	"svc_project": "PRJ", "svc_quotation": "SQT", "svc_invoice": "SIN", "design_job": "DSJ", "svc_cost": "SCT",
+// DocTypes are the values of app.doc_type.
+var DocTypes = map[string]bool{
+	"sale_receipt": true, "payment_receipt": true, "sale_return": true, "invoice": true, "quotation": true,
+	"project": true, "design_job": true, "purchase": true, "goods_receipt": true, "stock_adjustment": true,
+	"stock_transfer": true, "expense": true, "payment_made": true, "account_transfer": true, "payslip": true,
+	"contractor_bill": true, "employee": true,
 }
 
-func Ensure(ctx context.Context, tx pgx.Tx, businessID, branchID uuid.UUID) error {
-	for doc, prefix := range Prefixes {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO document_sequences (business_id, branch_id, doc_type, prefix, next_number)
-			VALUES ($1, $2, $3, $4, 1)
-			ON CONFLICT (branch_id, doc_type) DO NOTHING
-		`, businessID, branchID, doc, prefix); err != nil {
-			return err
-		}
+// legacy maps the document names modules used before the schema replacement. A module that is ported
+// should ask for its app.doc_type directly; this keeps the rest working meanwhile.
+var legacy = map[string]string{
+	"sale": "sale_receipt", "receipt": "payment_receipt", "return": "sale_return", "po": "purchase", "grn": "goods_receipt",
+	"transfer": "stock_transfer", "adjustment": "stock_adjustment", "stock_entry": "stock_adjustment",
+	"payment_in": "payment_receipt", "payment_out": "payment_made", "money_transfer": "account_transfer",
+	"svc_project": "project", "svc_quotation": "quotation", "svc_invoice": "invoice",
+}
+
+// Next returns the next number for a document type and advances the counter in the caller's
+// transaction. branchID is ignored: numbering is per tenant.
+func Next(ctx context.Context, tx pgx.Tx, _ uuid.UUID, docType string) (string, error) {
+	if m, ok := legacy[docType]; ok {
+		docType = m
 	}
-	return nil
-}
-
-// Next returns BRANCH-PREFIX-000001 and advances the counter in the caller's transaction.
-func Next(ctx context.Context, tx pgx.Tx, branchID uuid.UUID, docType string) (string, error) {
-	var code, prefix string
-	var n int64
-	err := tx.QueryRow(ctx, `
-		UPDATE document_sequences s
-		SET next_number = s.next_number + 1
-		FROM branches b
-		WHERE s.branch_id = $1 AND s.doc_type = $2 AND b.id = s.branch_id
-		RETURNING b.code, s.prefix, s.next_number - 1
-	`, branchID, docType).Scan(&code, &prefix, &n)
-	if err != nil {
+	if !DocTypes[docType] {
+		return "", fmt.Errorf("sequence: %q is not a document type of the approved schema", docType)
+	}
+	var n string
+	if err := tx.QueryRow(ctx, `SELECT app.next_document_number($1::app.doc_type)`, docType).Scan(&n); err != nil {
 		return "", fmt.Errorf("sequence %s: %w", docType, err)
 	}
-	return fmt.Sprintf("%s-%s-%06d", code, prefix, n), nil
+	return n, nil
 }

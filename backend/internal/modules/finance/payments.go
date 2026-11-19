@@ -11,7 +11,6 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/kernel/approval"
-	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/payments"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
@@ -26,33 +25,58 @@ type PaymentFilter struct {
 	From, To, Q                        string
 }
 
-const paymentCols = `p.id, p.number, p.branch_id, p.direction, p.kind, COALESCE(p.party_type,''), p.party_id,
-	COALESCE(CASE p.party_type
-		WHEN 'customer' THEN (SELECT name FROM customers WHERE id=p.party_id)
-		WHEN 'supplier' THEN (SELECT name FROM suppliers WHERE id=p.party_id)
-		WHEN 'employee' THEN (SELECT name FROM employees WHERE id=p.party_id)
-		WHEN 'client' THEN (SELECT name FROM svc_clients WHERE id=p.party_id)
-		WHEN 'contractor' THEN (SELECT name FROM contractors WHERE id=p.party_id) END, ''),
-	p.money_account_id, ma.name, ma.type, p.method, p.amount, COALESCE(p.reference,''), p.payment_date::text, p.status,
-	COALESCE(p.note,''), p.till_session_id, p.created_by, COALESCE(u.name,''), p.created_at, p.voided_at, COALESCE(p.void_reason,'')`
+// The API shows money in and money out as one list of payments. In the approved schema they are two
+// tables, payments_received (customers) and payments_made (suppliers, contractors, staff, refunds,
+// others), so the list is their union. An "in" payment's kind is its purpose; an "out" payment's kind
+// is who it was paid to.
+const paymentUnion = `(
+	SELECT pr.id, pr.receipt_no AS number, pr.location_id, 'in' AS direction, pr.purpose::text AS kind,
+	       CASE WHEN pr.customer_id IS NULL THEN '' ELSE 'customer' END AS party_type, pr.customer_id AS party_id,
+	       coalesce(c.full_name::text, 'Walk-in') AS party_name, pr.account_id, pr.method::text AS method, pr.amount,
+	       coalesce(pr.reference, '') AS reference, pr.business_date, pr.status::text AS status, coalesce(pr.notes, '') AS note,
+	       pr.created_by, pr.created_at, pr.voided_at, coalesce(pr.void_reason, '') AS void_reason
+	FROM app.payments_received pr LEFT JOIN app.customers c ON c.tenant_id = pr.tenant_id AND c.id = pr.customer_id
+	WHERE pr.tenant_id = $1
+	UNION ALL
+	SELECT pm.id, pm.payment_no, pm.location_id, 'out',
+	       CASE WHEN pm.supplier_id IS NOT NULL THEN 'supplier' WHEN pm.contractor_id IS NOT NULL THEN 'contractor'
+	            WHEN pm.employee_id IS NOT NULL THEN 'employee' WHEN pm.customer_id IS NOT NULL THEN 'refund' ELSE 'other' END,
+	       CASE WHEN pm.supplier_id IS NOT NULL THEN 'supplier' WHEN pm.contractor_id IS NOT NULL THEN 'contractor'
+	            WHEN pm.employee_id IS NOT NULL THEN 'employee' WHEN pm.customer_id IS NOT NULL THEN 'customer' ELSE '' END,
+	       coalesce(pm.supplier_id, pm.contractor_id, pm.employee_id, pm.customer_id),
+	       coalesce(s.name::text, ct.name::text, e.full_name::text, cu.full_name::text, pm.other_payee_name, ''),
+	       pm.account_id, pm.method::text, pm.amount, coalesce(pm.reference, ''), pm.business_date, pm.status::text, coalesce(pm.notes, ''),
+	       pm.created_by, pm.created_at, pm.voided_at, coalesce(pm.void_reason, '')
+	FROM app.payments_made pm
+	LEFT JOIN app.suppliers s ON s.tenant_id = pm.tenant_id AND s.id = pm.supplier_id
+	LEFT JOIN app.contractors ct ON ct.tenant_id = pm.tenant_id AND ct.id = pm.contractor_id
+	LEFT JOIN app.employees e ON e.tenant_id = pm.tenant_id AND e.id = pm.employee_id
+	LEFT JOIN app.customers cu ON cu.tenant_id = pm.tenant_id AND cu.id = pm.customer_id
+	WHERE pm.tenant_id = $1) p`
 
-const paymentFrom = ` FROM payments p JOIN money_accounts ma ON ma.id=p.money_account_id LEFT JOIN users u ON u.id=p.created_by`
+const paymentCols = `p.id, p.number, p.location_id, p.direction, p.kind, p.party_type, p.party_id, p.party_name,
+	p.account_id, fa.name::text, fa.kind::text, p.method, p.amount, p.reference, p.business_date::text, p.status, p.note,
+	m.user_id, coalesce(u.full_name::text, ''), p.created_at, p.voided_at, p.void_reason`
+
+const paymentFrom = ` FROM ` + paymentUnion + `
+	JOIN app.financial_accounts fa ON fa.tenant_id = $1 AND fa.id = p.account_id
+	LEFT JOIN app.memberships m ON m.tenant_id = $1 AND m.id = p.created_by LEFT JOIN iam.users u ON u.id = m.user_id`
 
 func scanPayment(row pgx.Row) (map[string]any, error) {
-	var id, branch, account, by uuid.UUID
-	var party, till *uuid.UUID
+	var id, branch, account uuid.UUID
+	var party, by *uuid.UUID
 	var number, direction, kind, partyType, partyName, accName, accType, method, ref, date, status, note, byName, voidReason string
 	var amount decimal.Decimal
 	var created time.Time
 	var voided *time.Time
 	if err := row.Scan(&id, &number, &branch, &direction, &kind, &partyType, &party, &partyName, &account, &accName, &accType, &method, &amount, &ref, &date, &status,
-		&note, &till, &by, &byName, &created, &voided, &voidReason); err != nil {
+		&note, &by, &byName, &created, &voided, &voidReason); err != nil {
 		return nil, err
 	}
 	return map[string]any{"id": id, "number": number, "branch_id": branch, "direction": direction, "kind": kind,
 		"party_type": nullable(partyType), "party_id": party, "party_name": partyName, "money_account_id": account,
-		"account_name": accName, "account_type": accType, "method": method, "amount": amount, "reference": ref, "payment_date": date,
-		"status": status, "note": note, "till_session_id": till, "created_by": by, "created_by_name": byName, "created_at": created,
+		"account_name": accName, "account_type": accType, "method": payments.MethodOut(method), "amount": amount, "reference": ref, "payment_date": date,
+		"status": status, "note": note, "till_session_id": nil, "created_by": by, "created_by_name": byName, "created_at": created,
 		"voided_at": voided, "void_reason": voidReason}, nil
 }
 
@@ -66,26 +90,25 @@ func nullable(s string) any {
 func (s *Service) Payments(ctx context.Context, p *auth.Principal, f PaymentFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		if b := p.ScopeBranches("payments.view"); b != nil {
-			q.Add("p.branch_id = ANY(?)", b)
-		}
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		q := sqlq.New(p.TenantID)
+		q.If(!p.Has("finance.payment.view_all"), "p.created_by = ?", p.MembershipID)
+		q.If(p.BranchID != nil, "p.location_id = ?", p.BranchID)
 		q.If(f.Direction != "", "p.direction = ?", f.Direction)
 		if f.Kind != "" {
 			q.Add("p.kind = ANY(?)", strings.Split(f.Kind, ","))
 		}
 		q.If(f.PartyType != "", "p.party_type = ?", f.PartyType)
 		q.If(f.PartyID != nil, "p.party_id = ?", f.PartyID)
-		q.If(f.AccountID != nil, "p.money_account_id = ?", f.AccountID)
+		q.If(f.AccountID != nil, "p.account_id = ?", f.AccountID)
 		q.If(f.Status != "", "p.status = ?", f.Status)
-		q.If(f.From != "", "p.payment_date >= ?::date", f.From)
-		q.If(f.To != "", "p.payment_date <= ?::date", f.To)
+		q.If(f.From != "", "p.business_date >= ?::date", f.From)
+		q.If(f.To != "", "p.business_date <= ?::date", f.To)
 		q.If(f.Q != "", "(p.number ILIKE ? OR p.reference ILIKE ?)", "%"+f.Q+"%", "%"+f.Q+"%")
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+paymentFrom+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT `+paymentCols+paymentFrom+q.Where()+` ORDER BY p.payment_date DESC, p.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
+		rows, err := tx.Query(ctx, `SELECT `+paymentCols+paymentFrom+q.Where()+` ORDER BY p.business_date DESC, p.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
 		if err != nil {
 			return err
 		}
@@ -102,21 +125,35 @@ func (s *Service) Payments(ctx context.Context, p *auth.Principal, f PaymentFilt
 	return out, total, err
 }
 
-func (s *Service) payment(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID, perm string) (map[string]any, error) {
-	m, err := scanPayment(tx.QueryRow(ctx, `SELECT `+paymentCols+paymentFrom+` WHERE p.id=$1`, id))
-	if err != nil || !p.SeesBranch(perm, m["branch_id"].(uuid.UUID)) {
+func (s *Service) payment(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
+	m, err := scanPayment(tx.QueryRow(ctx, `SELECT `+paymentCols+paymentFrom+` WHERE p.id = $2`, p.TenantID, id))
+	if err != nil {
 		return nil, httpx.NotFound("not_found", "Payment not found")
 	}
+	if !p.Has("finance.payment.view_all") {
+		var mine bool
+		_ = tx.QueryRow(ctx, `SELECT m.user_id = $2 FROM app.memberships m WHERE m.tenant_id = $1 AND m.id = (
+			SELECT created_by FROM app.payments_received WHERE tenant_id = $1 AND id = $3
+			UNION ALL SELECT created_by FROM app.payments_made WHERE tenant_id = $1 AND id = $3 LIMIT 1)`, p.TenantID, p.UserID, id).Scan(&mine)
+		if !mine {
+			return nil, httpx.NotFound("not_found", "Payment not found")
+		}
+	}
 	rows, err := tx.Query(ctx, `
-		SELECT a.document_type, a.document_id, a.amount,
-		       COALESCE(CASE a.document_type
-		         WHEN 'sale' THEN (SELECT number FROM sales WHERE id=a.document_id)
-		         WHEN 'purchase_invoice' THEN (SELECT number FROM purchase_invoices WHERE id=a.document_id)
-		         WHEN 'payslip' THEN (SELECT number FROM payslips WHERE id=a.document_id)
-		         WHEN 'expense' THEN (SELECT number FROM expenses WHERE id=a.document_id)
-		         WHEN 'loan' THEN (SELECT number FROM employee_loans WHERE id=a.document_id) END, '')
-		FROM payment_allocations a WHERE a.payment_id=$1 ORDER BY a.created_at
-	`, id)
+		SELECT 'sale', a.sale_id, a.amount, coalesce(sa.receipt_no, '') FROM app.payment_allocations a
+		  LEFT JOIN app.sales sa ON sa.tenant_id = a.tenant_id AND sa.id = a.sale_id WHERE a.tenant_id = $1 AND a.payment_received_id = $2 AND a.sale_id IS NOT NULL
+		UNION ALL
+		SELECT 'invoice', a.invoice_id, a.amount, coalesce(i.invoice_no, '') FROM app.payment_allocations a
+		  LEFT JOIN app.invoices i ON i.tenant_id = a.tenant_id AND i.id = a.invoice_id WHERE a.tenant_id = $1 AND a.payment_received_id = $2 AND a.invoice_id IS NOT NULL
+		UNION ALL
+		SELECT 'purchase', a.purchase_id, a.amount, coalesce(pu.purchase_no, '') FROM app.payment_made_allocations a
+		  LEFT JOIN app.purchases pu ON pu.tenant_id = a.tenant_id AND pu.id = a.purchase_id WHERE a.tenant_id = $1 AND a.payment_made_id = $2 AND a.purchase_id IS NOT NULL
+		UNION ALL
+		SELECT 'contractor_bill', a.contractor_bill_id, a.amount, coalesce(b.bill_no, '') FROM app.payment_made_allocations a
+		  LEFT JOIN app.contractor_bills b ON b.tenant_id = a.tenant_id AND b.id = a.contractor_bill_id WHERE a.tenant_id = $1 AND a.payment_made_id = $2 AND a.contractor_bill_id IS NOT NULL
+		UNION ALL
+		SELECT 'sale_return', a.sale_return_id, a.amount, coalesce(r.return_no, '') FROM app.payment_made_allocations a
+		  LEFT JOIN app.sale_returns r ON r.tenant_id = a.tenant_id AND r.id = a.sale_return_id WHERE a.tenant_id = $1 AND a.payment_made_id = $2 AND a.sale_return_id IS NOT NULL`, p.TenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -140,9 +177,9 @@ func (s *Service) payment(ctx context.Context, tx pgx.Tx, p *auth.Principal, id 
 
 func (s *Service) Payment(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		out, err = s.payment(ctx, tx, p, id, "payments.view")
+		out, err = s.payment(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
@@ -152,22 +189,22 @@ func (s *Service) Payment(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 	return out, err
 }
 
-// Voucher returns the payment with the business header for printing (FR-FIN-20).
+// Voucher returns the payment with the business header for printing.
 func (s *Service) Voucher(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		out, err = s.payment(ctx, tx, p, id, "payments.view")
+		out, err = s.payment(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
 		var name string
 		var phone, address, tin *string
-		if err := tx.QueryRow(ctx, `SELECT name, phone, address, tax_number FROM businesses`).Scan(&name, &phone, &address, &tin); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT business_name::text, phone::text, address, tin FROM app.tenant_settings WHERE tenant_id = $1`, p.TenantID).Scan(&name, &phone, &address, &tin); err != nil {
 			return err
 		}
 		var branchName string
-		_ = tx.QueryRow(ctx, `SELECT name FROM branches WHERE id=$1`, out["branch_id"]).Scan(&branchName)
+		_ = tx.QueryRow(ctx, `SELECT name::text FROM app.locations WHERE tenant_id = $1 AND id = $2`, p.TenantID, out["branch_id"]).Scan(&branchName)
 		title := "Payment receipt"
 		if out["direction"] == "out" {
 			title = "Payment voucher"
@@ -245,49 +282,59 @@ func str(v any) string {
 	}
 }
 
-// Void voids a payment with a reason (FR-FIN-15). Above the caller's
-// payments.void limit it waits for approval and returns 202.
+// Void voids a payment with a reason. The database allows it only for someone who holds
+// finance.payment.void or while an approved payment_void request exists; anyone else files a request
+// and gets 202.
 func (s *Service) Void(ctx context.Context, p *auth.Principal, id uuid.UUID, reason string) (int, []byte, error) {
 	reason = strings.TrimSpace(reason)
+	if len(reason) < 3 {
+		return 0, nil, httpx.BadRequest("reason_required", "Give a reason for voiding the payment")
+	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
 			return err
 		}
-		pay, err := s.lockPayment(ctx, tx, p, id)
+		pay, err := s.payment(ctx, tx, p, id)
 		if err != nil {
 			return err
+		}
+		if pay["status"] != "posted" {
+			return httpx.Conflict("invalid_status", "This payment is already voided")
 		}
 		if pending, err := s.Approval.PendingFor(ctx, tx, "payment", id); err != nil {
 			return err
 		} else if pending != nil {
 			return httpx.Conflict("approval_pending", "A void request for this payment is already waiting for approval")
 		}
-		g, ok := p.Can("payments.void")
-		if !p.IsOwner && !auth.WithinLimit(g, ok, pay.amount) {
+		if !p.Has("finance.payment.void") {
+			subject := "payment_received"
+			if pay["direction"] == "out" {
+				subject = "payment_made"
+			}
+			amount, _ := pay["amount"].(decimal.Decimal)
 			reqID, err := s.Approval.Request(ctx, tx, p, approval.Input{
-				BranchID: &pay.branch, Kind: "payment_void", SubjectType: "payment", SubjectID: id,
-				Amount: decimal.NullDecimal{Decimal: pay.amount, Valid: true}, Summary: "Void payment " + pay.number + ": " + reason,
-				Payload: map[string]any{"reason": reason},
+				Kind: "payment_void", SubjectType: subject, SubjectID: id,
+				Amount: decimal.NullDecimal{Decimal: amount, Valid: true}, Summary: "Void payment " + pay["number"].(string) + ": " + reason,
 			})
 			if err != nil {
 				return err
 			}
-			if err := s.Audit.Record(ctx, tx, p, "payment.void_requested", "payment", id, nil, map[string]any{"reason": reason, "approval_request_id": reqID}); err != nil {
+			if err := s.Audit.Record(ctx, tx, p, "payment.void_requested", "payments", id, nil, map[string]any{"reason": reason, "approval_request_id": reqID}); err != nil {
 				return err
 			}
 			raw, err := idem.Complete(ctx, tx, p.UserID, 202, httpx.Data(map[string]any{"id": id, "approval_request_id": reqID, "status": "pending_approval"}))
 			status, body = 202, raw
 			return err
 		}
-		if err := s.voidPayment(ctx, tx, p, pay, reason); err != nil {
+		if err := s.voidPayment(ctx, tx, p, id, pay["direction"].(string), reason); err != nil {
 			return err
 		}
-		out, err := s.payment(ctx, tx, p, id, "payments.void")
+		out, err := s.payment(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
@@ -298,219 +345,34 @@ func (s *Service) Void(ctx context.Context, p *auth.Principal, id uuid.UUID, rea
 	return status, body, err
 }
 
+// voidPayment marks the payment voided; the database reverses the money and undoes the allocations.
+func (s *Service) voidPayment(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID, direction, reason string) error {
+	table := "app.payments_received"
+	if direction == "out" {
+		table = "app.payments_made"
+	}
+	// table is one of two fixed names chosen above.
+	if _, err := tx.Exec(ctx, `UPDATE `+table+` SET status = 'voided', voided_at = now(), voided_by = $2, void_reason = $3 WHERE tenant_id = $1 AND id = $4`,
+		p.TenantID, p.MembershipID, reason, id); err != nil {
+		return err
+	}
+	return s.Audit.Record(ctx, tx, p, "payment.voided", "payments", id, nil, map[string]any{"reason": reason})
+}
+
+// OnVoidApproved voids the payment in the approver's transaction; the approved request is what lets
+// the database accept it.
 func (s *Service) OnVoidApproved(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
-	var payload struct {
-		Reason string `json:"reason"`
+	direction := "in"
+	if req.SubjectType == "payment_made" {
+		direction = "out"
 	}
-	_ = json.Unmarshal(req.Payload, &payload)
-	var pay paymentRow
-	if err := tx.QueryRow(ctx, `SELECT id, number, branch_id, direction, kind, party_type, party_id, money_account_id, amount, payment_date::text, status FROM payments WHERE id=$1 FOR UPDATE`, req.SubjectID).
-		Scan(&pay.id, &pay.number, &pay.branch, &pay.direction, &pay.kind, &pay.partyType, &pay.partyID, &pay.account, &pay.amount, &pay.date, &pay.status); err != nil {
-		return httpx.NotFound("not_found", "Payment not found")
+	reason := strings.TrimPrefix(req.Summary, "Void payment ")
+	if i := strings.Index(reason, ": "); i >= 0 {
+		reason = reason[i+2:]
 	}
-	if pay.status != "posted" {
-		return httpx.Conflict("invalid_status", "This payment is already voided")
-	}
-	return s.voidPayment(ctx, tx, p, pay, payload.Reason)
+	return s.voidPayment(ctx, tx, p, req.SubjectID, direction, reason)
 }
 
 func (s *Service) OnVoidRejected(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
-	return s.Audit.Record(ctx, tx, p, "payment.void_"+req.Status, "payment", req.SubjectID, nil, map[string]any{"note": req.Note})
-}
-
-type paymentRow struct {
-	id, branch, account uuid.UUID
-	partyID             *uuid.UUID
-	partyType           *string
-	number, direction   string
-	kind, date, status  string
-	amount              decimal.Decimal
-}
-
-func (s *Service) lockPayment(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (paymentRow, error) {
-	var r paymentRow
-	err := tx.QueryRow(ctx, `SELECT id, number, branch_id, direction, kind, party_type, party_id, money_account_id, amount, payment_date::text, status FROM payments WHERE id=$1 FOR UPDATE`, id).
-		Scan(&r.id, &r.number, &r.branch, &r.direction, &r.kind, &r.partyType, &r.partyID, &r.account, &r.amount, &r.date, &r.status)
-	if err != nil || !p.SeesBranch("payments.void", r.branch) {
-		return r, httpx.NotFound("not_found", "Payment not found")
-	}
-	if r.status != "posted" {
-		return r, httpx.Conflict("invalid_status", "This payment is already voided")
-	}
-	switch r.kind {
-	case "sale_refund":
-		return r, httpx.Conflict("invalid_status", "A refund is undone through its sale return, not by voiding the payment")
-	case "service_payment", "contractor_payment":
-		return r, httpx.Conflict("invalid_status", "Void this payment from Services, where its invoices and balances are kept")
-	}
-	var service bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM svc_costs WHERE payment_id=$1)`, id).Scan(&service); err != nil {
-		return r, err
-	}
-	if service {
-		return r, httpx.Conflict("invalid_status", "Void this cost from Services")
-	}
-	return r, nil
-}
-
-// counterCode is the account a payment's money line was matched against, for
-// payments booked inside a larger document entry (a sale, a payroll run).
-func counterCode(ctx context.Context, tx pgx.Tx, r paymentRow) (string, string, error) {
-	switch r.kind {
-	case "sale", "customer_payment":
-		return "1100", "customer", nil
-	case "supplier_payment", "supplier_refund":
-		return "2000", "supplier", nil
-	case "salary":
-		return "2200", "", nil
-	case "loan_disbursement", "loan_repayment":
-		return "1300", "employee", nil
-	case "statutory":
-		return "2210", "", nil
-	case "drawing":
-		return "3200", "", nil
-	case "capital":
-		return "3000", "", nil
-	case "income":
-		return "4100", "", nil
-	case "expense":
-		var code string
-		err := tx.QueryRow(ctx, `
-			SELECT la.code FROM payment_allocations a JOIN expenses e ON e.id=a.document_id
-			JOIN expense_categories ec ON ec.id=e.category_id JOIN ledger_accounts la ON la.id=ec.ledger_account_id
-			WHERE a.payment_id=$1 AND a.document_type='expense' LIMIT 1`, r.id).Scan(&code)
-		return code, "", err
-	}
-	return "", "", httpx.Conflict("invalid_status", "This kind of payment cannot be voided here")
-}
-
-// voidPayment posts the reversal, reopens what the payment paid and marks it voided.
-func (s *Service) voidPayment(ctx context.Context, tx pgx.Tx, p *auth.Principal, r paymentRow, reason string) error {
-	if reason == "" {
-		reason = "Voided"
-	}
-	if err := s.Ledger.EnsureOpen(ctx, tx, r.date); err != nil {
-		return err
-	}
-	date, err := s.bizDate(ctx, tx)
-	if err != nil {
-		return err
-	}
-	user := p.UserID
-	desc := "Void of payment " + r.number + ": " + reason
-	n, err := s.Ledger.ReverseSource(ctx, tx, p.BusinessID, r.id, date, desc, &user)
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		// The payment was booked inside its document's entry; post the mirror of its money line.
-		acc, err := payments.LoadAccount(ctx, tx, r.account)
-		if err != nil {
-			return err
-		}
-		code, party, err := counterCode(ctx, tx, r)
-		if err != nil {
-			return err
-		}
-		counter := ledger.Line{Code: code, BranchID: &r.branch}
-		if party != "" && r.partyID != nil {
-			counter.PartyType, counter.PartyID = party, r.partyID
-		}
-		moneyLine := ledger.Line{Code: acc.Code, BranchID: &r.branch, MoneyAccountID: &r.account}
-		if r.direction == "in" {
-			if err := s.Ledger.EnsureFunds(ctx, tx, r.account, r.amount); err != nil {
-				return err
-			}
-			counter.Debit, moneyLine.Credit = r.amount, r.amount
-		} else {
-			moneyLine.Debit, counter.Credit = r.amount, r.amount
-		}
-		if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "payment_void", r.id, desc, &user, []ledger.Line{counter, moneyLine}); err != nil {
-			return err
-		}
-	}
-	if err := s.reopen(ctx, tx, r); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE payments SET status='voided', voided_by=$2, voided_at=now(), void_reason=$3 WHERE id=$1`, r.id, p.UserID, reason); err != nil {
-		return err
-	}
-	return s.Audit.Record(ctx, tx, p, "payment.voided", "payment", r.id, map[string]any{"status": "posted"}, map[string]any{"status": "voided", "reason": reason, "amount": r.amount})
-}
-
-// reopen restores the balances of documents the payment was allocated to.
-func (s *Service) reopen(ctx context.Context, tx pgx.Tx, r paymentRow) error {
-	rows, err := tx.Query(ctx, `SELECT document_type, document_id, amount FROM payment_allocations WHERE payment_id=$1`, r.id)
-	if err != nil {
-		return err
-	}
-	type alloc struct {
-		typ string
-		doc uuid.UUID
-		amt decimal.Decimal
-	}
-	var list []alloc
-	for rows.Next() {
-		var a alloc
-		if err := rows.Scan(&a.typ, &a.doc, &a.amt); err != nil {
-			rows.Close()
-			return err
-		}
-		list = append(list, a)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, a := range list {
-		var q string
-		switch {
-		case a.typ == "sale" && r.direction == "in":
-			q = `UPDATE sales SET paid_total=paid_total-$2, balance=balance+$2 WHERE id=$1`
-		case a.typ == "purchase_invoice" && r.direction == "out":
-			q = `UPDATE purchase_invoices SET paid_total=paid_total-$2, balance=balance+$2 WHERE id=$1`
-		case a.typ == "payslip":
-			if _, err := tx.Exec(ctx, `
-				UPDATE payroll_runs SET status='approved' WHERE id=(SELECT run_id FROM payslips WHERE id=$1) AND status IN ('paid','locked')
-			`, a.doc); err != nil {
-				return err
-			}
-			// Loan deductions on this payslip were applied when the run was fully paid; put them back.
-			if _, err := tx.Exec(ctx, `
-				UPDATE employee_loans l SET balance = l.balance + x.amt,
-				  status = CASE WHEN l.status = 'settled' THEN 'disbursed' ELSE l.status END
-				FROM (SELECT loan_id, SUM(amount) AS amt FROM loan_repayments
-				      WHERE payslip_id = $1 AND voided_at IS NULL GROUP BY loan_id) x
-				WHERE l.id = x.loan_id
-			`, a.doc); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `UPDATE loan_repayments SET voided_at = now() WHERE payslip_id = $1 AND voided_at IS NULL`, a.doc); err != nil {
-				return err
-			}
-			q = `UPDATE payslips SET paid_total=GREATEST(paid_total-$2,0), status=CASE WHEN paid_total-$2 <= 0 THEN 'approved' ELSE 'partially_paid' END WHERE id=$1`
-		case a.typ == "expense":
-			q = `UPDATE expenses SET status='approved', payment_id=NULL, money_account_id=NULL, paid_at=NULL WHERE id=$1 AND status='paid' AND $2::numeric > 0`
-		case a.typ == "loan" && r.kind == "loan_disbursement":
-			var bal, principal decimal.Decimal
-			if err := tx.QueryRow(ctx, `SELECT balance, principal FROM employee_loans WHERE id=$1 FOR UPDATE`, a.doc).Scan(&bal, &principal); err != nil {
-				return err
-			}
-			if !bal.Equal(principal) {
-				return httpx.Conflict("invalid_status", "This loan already has repayments, so its disbursement cannot be voided")
-			}
-			q = `UPDATE employee_loans SET status='approved', payment_id=NULL WHERE id=$1 AND $2::numeric > 0`
-		case a.typ == "loan" && r.kind == "loan_repayment":
-			if _, err := tx.Exec(ctx, `UPDATE loan_repayments SET voided_at = now() WHERE payment_id = $1 AND voided_at IS NULL`, r.id); err != nil {
-				return err
-			}
-			q = `UPDATE employee_loans SET balance=balance+$2, status=CASE WHEN status='settled' THEN 'disbursed' ELSE status END WHERE id=$1`
-		default:
-			continue
-		}
-		if _, err := tx.Exec(ctx, q, a.doc, a.amt); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.Audit.Record(ctx, tx, p, "payment.void_"+req.Status, "payments", req.SubjectID, nil, map[string]any{"note": req.Note})
 }

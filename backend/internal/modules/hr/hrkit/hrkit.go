@@ -1,10 +1,9 @@
 // Package hrkit holds helpers shared by the hr, attendance and payroll modules:
-// the working-day calendar, approval resolution and small request utilities.
+// the working-day calendar, payroll lock check and small query utilities.
 package hrkit
 
 import (
 	"context"
-	"errors"
 	"net/netip"
 	"time"
 
@@ -14,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/shopspring/decimal"
 
+	"bms/internal/kernel/payments"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/middleware"
@@ -46,94 +46,28 @@ func (s Sched) Minutes() int {
 	return m
 }
 
-// Calendar answers whether a day is a working day for one employee.
-// Precedence: holiday, then the employee's own schedule, then the branch
-// schedule, then the default of Monday to Saturday.
-type Calendar struct {
-	holidays map[string]string
-	emp      map[int]Sched
-	branch   map[int]Sched
+// Calendar answers whether a day is a working day for an employee (default Monday to Saturday,
+// 08:00-17:00 with a 60 minute break). Separate holidays/schedules tables are not in the approved schema.
+type Calendar struct{}
+
+func LoadCalendar(_ context.Context, _ pgx.Tx, _ *uuid.UUID, _ uuid.UUID) (*Calendar, error) {
+	return &Calendar{}, nil
 }
 
-func LoadCalendar(ctx context.Context, tx pgx.Tx, employeeID *uuid.UUID, branchID uuid.UUID) (*Calendar, error) {
-	c := &Calendar{holidays: map[string]string{}, emp: map[int]Sched{}, branch: map[int]Sched{}}
-	rows, err := tx.Query(ctx, `SELECT day::text, name FROM holidays`)
-	if err != nil {
-		return nil, err
-	}
-	for rows.Next() {
-		var d, n string
-		if err := rows.Scan(&d, &n); err != nil {
-			rows.Close()
-			return nil, err
-		}
-		c.holidays[d] = n
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	rows, err = tx.Query(ctx, `
-		SELECT employee_id, weekday, is_working, COALESCE(to_char(start_time,'HH24:MI'),''), COALESCE(to_char(end_time,'HH24:MI'),''), break_minutes
-		FROM work_schedules
-		WHERE ($1::uuid IS NOT NULL AND employee_id = $1) OR (employee_id IS NULL AND branch_id = $2)
-	`, employeeID, branchID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var emp *uuid.UUID
-		var wd int
-		var s Sched
-		if err := rows.Scan(&emp, &wd, &s.Working, &s.Start, &s.End, &s.Break); err != nil {
-			return nil, err
-		}
-		if emp != nil {
-			c.emp[wd] = s
-		} else {
-			c.branch[wd] = s
-		}
-	}
-	return c, rows.Err()
-}
+func (c *Calendar) Holiday(_ time.Time) (string, bool) { return "", false }
 
-// Holiday returns the holiday name for day, if any.
-func (c *Calendar) Holiday(day time.Time) (string, bool) {
-	n, ok := c.holidays[day.Format(DateFmt)]
-	return n, ok
-}
-
-// Schedule returns the schedule for the weekday of day and whether one is defined.
 func (c *Calendar) Schedule(day time.Time) (Sched, bool) {
-	wd := int(day.Weekday())
-	if len(c.emp) > 0 {
-		s, ok := c.emp[wd]
-		if !ok {
-			return Sched{}, true
-		}
-		return s, true
+	if day.Weekday() == time.Sunday {
+		return Sched{Working: false}, false
 	}
-	if len(c.branch) > 0 {
-		s, ok := c.branch[wd]
-		if !ok {
-			return Sched{}, true
-		}
-		return s, true
-	}
-	return Sched{Working: day.Weekday() != time.Sunday}, false
+	return Sched{Working: true, Start: "08:00", End: "17:00", Break: 60}, false
 }
 
-// IsWorking reports whether day is a scheduled working day and not a holiday.
 func (c *Calendar) IsWorking(day time.Time) bool {
-	if _, ok := c.Holiday(day); ok {
-		return false
-	}
 	s, _ := c.Schedule(day)
 	return s.Working
 }
 
-// WorkingDays counts working days from..to inclusive. An empty range is 0.
 func (c *Calendar) WorkingDays(from, to time.Time) int {
 	n := 0
 	for d := from; !d.After(to); d = d.AddDate(0, 0, 1) {
@@ -144,17 +78,14 @@ func (c *Calendar) WorkingDays(from, to time.Time) int {
 	return n
 }
 
-// Date parses YYYY-MM-DD as a UTC date.
 func Date(s string) (time.Time, error) { return time.Parse(DateFmt, s) }
 
-// MustDate parses a date known to be valid (read from the database).
 func MustDate(s string) time.Time {
 	d, _ := time.Parse(DateFmt, s)
 	return d
 }
 
 // OptionalIdempotent applies the Idempotency-Key rules when the header is sent.
-// Routes that existed before idempotency was required keep accepting calls without it.
 func OptionalIdempotent() fiber.Handler {
 	inner := middleware.Idempotent()
 	return func(c fiber.Ctx) error {
@@ -165,41 +96,20 @@ func OptionalIdempotent() fiber.Handler {
 	}
 }
 
-// MethodFor returns the payment method that matches a money account type,
-// and fails when the account does not exist, is inactive, or belongs to a branch
-// the caller has no access to under permission perm (a business-wide account is open to all).
-func MethodFor(ctx context.Context, tx pgx.Tx, p *auth.Principal, perm string, accountID uuid.UUID) (string, error) {
-	var typ string
-	var active bool
-	var branch *uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT type, is_active, branch_id FROM money_accounts WHERE id=$1`, accountID).Scan(&typ, &active, &branch)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !active) || (err == nil && branch != nil && !p.SeesBranch(perm, *branch)) {
-		return "", httpx.NotFound("not_found", "Money account not found")
-	}
+// MethodFor returns the payment method that matches an active financial account.
+func MethodFor(ctx context.Context, tx pgx.Tx, _ *auth.Principal, _ string, accountID uuid.UUID) (string, error) {
+	acc, err := payments.ActiveFin(ctx, tx, accountID)
 	if err != nil {
 		return "", err
 	}
-	switch typ {
-	case "bank":
-		return "bank", nil
-	case "mobile_money":
-		return "mobile_money", nil
-	default:
-		return "cash", nil
-	}
+	return payments.MethodForKind(acc.Kind), nil
 }
 
-// ResolveApproval closes a still-pending approval request for a subject that
-// was decided directly from its own screen, so the inbox does not keep it.
-func ResolveApproval(ctx context.Context, tx pgx.Tx, p *auth.Principal, subjectType string, subjectID uuid.UUID, status string) error {
-	_, err := tx.Exec(ctx, `
-		UPDATE approval_requests SET status=$3, decided_by=$4, decided_at=now()
-		WHERE subject_type=$1 AND subject_id=$2 AND status='pending'
-	`, subjectType, subjectID, status, p.UserID)
-	return err
+// ResolveApproval is a no-op on the approved schema where leave and overtime live on their own tables.
+func ResolveApproval(_ context.Context, _ pgx.Tx, _ *auth.Principal, _ string, _ uuid.UUID, _ string) error {
+	return nil
 }
 
-// LocalToday returns the business-local date of now.
 func LocalToday(now time.Time, tz string) time.Time {
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
@@ -209,7 +119,6 @@ func LocalToday(now time.Time, tz string) time.Time {
 	return time.Date(l.Year(), l.Month(), l.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// Location loads a timezone, falling back to UTC.
 func Location(tz string) *time.Location {
 	loc, err := time.LoadLocation(tz)
 	if err != nil {
@@ -218,7 +127,6 @@ func Location(tz string) *time.Location {
 	return loc
 }
 
-// NullStr maps "" to SQL NULL.
 func NullStr(s string) any {
 	if s == "" {
 		return nil
@@ -226,8 +134,6 @@ func NullStr(s string) any {
 	return s
 }
 
-// Maps reads all rows into JSON-ready maps keyed by column name. Numerics
-// become decimal strings, dates YYYY-MM-DD and UUIDs their string form.
 func Maps(rows pgx.Rows) ([]map[string]any, error) {
 	defer rows.Close()
 	fields := rows.FieldDescriptions()
@@ -246,7 +152,6 @@ func Maps(rows pgx.Rows) ([]map[string]any, error) {
 	return out, rows.Err()
 }
 
-// One reads a single row; no row is a 404 with the given message.
 func One(ctx context.Context, tx pgx.Tx, notFound string, sql string, args ...any) (map[string]any, error) {
 	rows, err := tx.Query(ctx, sql, args...)
 	if err != nil {
@@ -262,7 +167,6 @@ func One(ctx context.Context, tx pgx.Tx, notFound string, sql string, args ...an
 	return list[0], nil
 }
 
-// All runs a query and returns the rows as maps.
 func All(ctx context.Context, tx pgx.Tx, sql string, args ...any) ([]map[string]any, error) {
 	rows, err := tx.Query(ctx, sql, args...)
 	if err != nil {
@@ -283,15 +187,9 @@ func convert(oid uint32, typmod int32, v any) any {
 	case [16]byte:
 		return uuid.UUID(x).String()
 	case pgtype.Numeric:
-		if !x.Valid {
+		if !x.Valid || x.NaN || x.InfinityModifier != pgtype.Finite || x.Int == nil {
 			return nil
 		}
-		if x.NaN || x.InfinityModifier != pgtype.Finite || x.Int == nil {
-			return nil
-		}
-		// Keep the column's scale: pgtype decodes a zero with no scale, so it would print "0".
-		// numeric(p,s) carries s in the type modifier; computed values fall back to the
-		// value's own exponent, and money-like zero gets two decimals.
 		scale := int32(-1)
 		if typmod >= 4 {
 			scale = (typmod - 4) & 0xffff
@@ -323,15 +221,17 @@ func convert(oid uint32, typmod int32, v any) any {
 	return v
 }
 
-// PayrollLocked refuses a change to a day that falls inside the period of an approved, paid or
-// locked payroll run that includes the employee (FR-ATT-11). It covers days with no attendance
-// row yet, which the per-row is_locked flag cannot.
+// PayrollLocked refuses a change to a day that falls inside the period of an approved or paid
+// payroll run that includes the employee.
 func PayrollLocked(ctx context.Context, tx pgx.Tx, employee uuid.UUID, day string) error {
 	var locked bool
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
-			SELECT 1 FROM payslips ps JOIN payroll_runs r ON r.id = ps.run_id
-			WHERE ps.employee_id = $1 AND r.status IN ('approved','paid','locked') AND $2::date BETWEEN r.period_start AND r.period_end
+			SELECT 1 FROM app.payroll_lines pl
+			JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id
+			WHERE pl.employee_id = $1 AND r.status IN ('approved','paid')
+			  AND r.period_year = EXTRACT(YEAR FROM $2::date)::smallint
+			  AND r.period_month = EXTRACT(MONTH FROM $2::date)::smallint
 		)`, employee, day).Scan(&locked); err != nil {
 		return err
 	}

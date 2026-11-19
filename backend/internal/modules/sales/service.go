@@ -3,6 +3,7 @@ package sales
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"time"
 
@@ -22,7 +23,6 @@ import (
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/idem"
-	"bms/internal/platform/ids"
 	"bms/internal/platform/jobs"
 	"bms/internal/platform/money"
 	"bms/internal/platform/setting"
@@ -48,10 +48,12 @@ type Discount struct {
 }
 
 type ItemIn struct {
-	ProductID    uuid.UUID       `json:"product_id"`
-	Qty          decimal.Decimal `json:"qty"`
-	Discount     *Discount       `json:"discount"`
-	SerialNumber string          `json:"serial_number"`
+	ProductID     uuid.UUID       `json:"product_id"`
+	Qty           decimal.Decimal `json:"qty"`
+	Discount      *Discount       `json:"discount"`
+	SerialNumber  string          `json:"serial_number"`
+	SerialNumbers []string        `json:"serial_numbers,omitempty"`
+	UnitIDs       []uuid.UUID     `json:"unit_ids,omitempty"`
 }
 
 type PayIn struct {
@@ -63,6 +65,8 @@ type PayIn struct {
 
 type CreateIn struct {
 	CustomerID *uuid.UUID `json:"customer_id"`
+	DeviceID   *uuid.UUID `json:"device_id,omitempty"`
+	ClientRef  *uuid.UUID `json:"client_ref,omitempty"`
 	Items      []ItemIn   `json:"items"`
 	Discount   *Discount  `json:"discount"`
 	Payments   []PayIn    `json:"payments"`
@@ -70,31 +74,37 @@ type CreateIn struct {
 	DueDate    string     `json:"due_date"`
 	// HeldID removes the held cart this sale was resumed from.
 	HeldID *uuid.UUID `json:"held_id,omitempty"`
+}
 
-	// quoted fixes unit prices when a quotation is converted.
-	quoted      map[uuid.UUID]decimal.Decimal
-	quotationID *uuid.UUID
+type CompleteIn struct {
+	Payments []PayIn `json:"payments"`
+	DueDate  string  `json:"due_date"`
 }
 
 type line struct {
-	ProductID    uuid.UUID
-	Name         string
-	Kind         string
-	Qty          decimal.Decimal
-	UnitPrice    decimal.Decimal
-	Discount     decimal.Decimal
-	TaxRate      decimal.Decimal
-	Tax          decimal.Decimal
-	LineTotal    decimal.Decimal
-	UnitCost     decimal.Decimal
-	SerialNumber string
+	ProductID      uuid.UUID
+	Name           string
+	Qty            decimal.Decimal
+	UnitPrice      decimal.Decimal
+	Discount       decimal.Decimal
+	TaxRate        decimal.Decimal
+	Tax            decimal.Decimal
+	LineTotal      decimal.Decimal
+	UnitCost       decimal.Decimal
+	WarrantyMonths int
+	TracksSerial   bool
+	UnitIDs        []uuid.UUID
+	Serials        []string
 }
 
 type totals struct {
-	Subtotal decimal.Decimal
-	Discount decimal.Decimal
-	Tax      decimal.Decimal
-	Total    decimal.Decimal
+	Subtotal      decimal.Decimal // sum of sale_lines.line_total (matches app.sales.subtotal)
+	DiscountType  *string
+	DiscountValue decimal.Decimal
+	Discount      decimal.Decimal // sale-level discount_amount
+	LineDiscount  decimal.Decimal // sum of line discounts
+	Tax           decimal.Decimal
+	Total         decimal.Decimal // subtotal - discount_amount
 }
 
 func (s *Service) Preview(ctx context.Context, p *auth.Principal, in CreateIn) (map[string]any, error) {
@@ -102,8 +112,8 @@ func (s *Service) Preview(ctx context.Context, p *auth.Principal, in CreateIn) (
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		lines, tot, _, err := s.price(ctx, tx, p, in)
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		lines, tot, err := s.price(ctx, tx, p, in, false)
 		if err != nil {
 			return err
 		}
@@ -122,8 +132,8 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in CreateIn) (i
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -140,22 +150,33 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in CreateIn) (i
 	return status, body, err
 }
 
-// createTx creates and, when no approval is needed, completes a sale inside tx.
-// It returns 201 with the sale view, or 202 with the approval request.
+// createTx creates and, when no discount approval is needed, completes a sale inside tx.
+// The database triggers (tg_sales_guard, tg_sales_post, tg_sales_check_totals) deduct stock,
+// snapshot COGS, mark serialised units sold and accrue commissions when status becomes 'completed'.
 func (s *Service) createTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, in CreateIn) (int, map[string]any, error) {
 	if len(in.Items) == 0 {
 		return 0, nil, httpx.BadRequest("invalid_body", "Add at least one product")
 	}
-	lines, tot, includeTax, err := s.price(ctx, tx, p, in)
+	lines, tot, err := s.price(ctx, tx, p, in, true)
 	if err != nil {
 		return 0, nil, err
 	}
 	if !tot.Total.IsPositive() {
 		return 0, nil, httpx.BadRequest("invalid_total", "The sale total must be greater than zero. Check the product prices")
 	}
+	totalDisc := tot.Discount.Add(tot.LineDiscount)
+	if totalDisc.IsPositive() && !p.Has("shop.discount.apply") {
+		return 0, nil, httpx.Forbidden("permission_denied", "You cannot give a discount")
+	}
 	pct := money.Zero
-	if tot.Subtotal.IsPositive() {
-		pct = tot.Discount.Div(tot.Subtotal).Mul(decimal.NewFromInt(100))
+	if tot.Subtotal.IsPositive() && tot.Discount.IsPositive() {
+		pct = tot.Discount.Mul(decimal.NewFromInt(100)).Div(tot.Subtotal).Round(2)
+	}
+	needsDiscount := false
+	if tot.Discount.IsPositive() {
+		if lim, capped := p.Limits["sale_discount_pct"]; capped && pct.GreaterThan(lim) {
+			needsDiscount = true
+		}
 	}
 	if err := s.checkPayments(ctx, tx, in.Payments); err != nil {
 		return 0, nil, err
@@ -164,132 +185,421 @@ func (s *Service) createTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, in
 	if err != nil {
 		return 0, nil, err
 	}
-	if hasCash(applied) {
-		if _, _, err := openTill(ctx, tx, p.UserID); err != nil {
-			return 0, nil, httpx.Conflict("till_not_open", "Open a till before taking cash")
-		}
-	}
-	dg, dok := p.Can("sales.discount")
-	if tot.Discount.IsPositive() && !dok {
-		return 0, nil, httpx.Forbidden("permission_denied", "You cannot give a discount")
-	}
-	needsDiscount := tot.Discount.IsPositive() && !auth.WithinLimit(dg, dok, pct)
-	cust, err := s.resolveCustomer(ctx, tx, in.CustomerID, balance)
+	cust, err := s.resolveCustomer(ctx, tx, p.TenantID, in.CustomerID, balance)
 	if err != nil {
 		return 0, nil, err
 	}
-	needsCredit := false
-	if balance.IsPositive() {
-		var owed, limit decimal.Decimal
-		if err := tx.QueryRow(ctx, `
-			SELECT COALESCE(SUM(s.balance),0), c.credit_limit FROM customers c
-			LEFT JOIN sales s ON s.customer_id=c.id AND s.status IN ('completed','partially_refunded')
-			WHERE c.id=$1 GROUP BY c.credit_limit
-		`, cust).Scan(&owed, &limit); err != nil {
+	if balance.IsPositive() && cust != nil {
+		if err := checkCreditLimit(ctx, tx, p.TenantID, *cust, balance); err != nil {
 			return 0, nil, err
-		}
-		if owed.Add(balance).GreaterThan(limit) {
-			needsCredit = true
 		}
 	}
 	date, err := s.bizDate(ctx, tx)
 	if err != nil {
 		return 0, nil, err
 	}
-	footer := setting.String(ctx, tx, "receipt.footer", "")
-	saleID := ids.New()
-	state := "completed"
-	if needsDiscount || needsCredit {
-		state = "pending_approval"
-	}
-	number, err := sequence.Next(ctx, tx, *p.BranchID, "sale")
+	dueDate, err := resolveDueDate(ctx, tx, date, in.DueDate, balance.IsPositive())
 	if err != nil {
 		return 0, nil, err
 	}
-	cart, err := json.Marshal(in)
-	if err != nil {
+	// State machine requires new sales to start in 'draft'.
+	var saleID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO app.sales (tenant_id, business_unit_id, location_id, status, customer_id, sold_by, device_id, client_ref,
+		                       business_date, subtotal, discount_type, discount_value, discount_amount, tax_amount, total, due_date, notes)
+		VALUES ($1, (SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $2), $2, 'draft', $3, $4, $5, $6,
+		        $7::date, $8, $9::app.discount_type, $10, $11, $12, $13, $14::date, NULLIF($15,''))
+		RETURNING id`,
+		p.TenantID, *p.BranchID, cust, p.MembershipID, in.DeviceID, in.ClientRef,
+		date, tot.Subtotal, tot.DiscountType, tot.DiscountValue, tot.Discount, tot.Tax, tot.Total, dueDate, strings.TrimSpace(in.Note)).Scan(&saleID); err != nil {
 		return 0, nil, err
 	}
-	var dueDate any
-	if balance.IsPositive() {
-		if strings.TrimSpace(in.DueDate) != "" {
-			if _, err := time.Parse("2006-01-02", strings.TrimSpace(in.DueDate)); err != nil {
-				return 0, nil, httpx.BadRequest("invalid_body", "due_date must be YYYY-MM-DD")
-			}
-			dueDate = strings.TrimSpace(in.DueDate)
-		} else {
-			var days int
-			if err := tx.QueryRow(ctx, `SELECT payment_terms_days FROM customers WHERE id=$1`, cust).Scan(&days); err != nil {
-				return 0, nil, err
-			}
-			if days == 0 {
-				days = setting.Int(ctx, tx, "invoice.due_days", 0)
-			}
-			dueDate = mustDate(date).AddDate(0, 0, days).Format("2006-01-02")
-		}
-	}
-	paid := tot.Total.Sub(balance)
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO sales (id, business_id, branch_id, number, kind, status, customer_id, cashier_id, employee_id, business_date,
-			subtotal, discount_total, tax_total, total, paid_total, balance, change_due, note, receipt_footer, prices_include_tax, completed_at, cart, due_date, quotation_id)
-		VALUES ($1,$2,$3,$4,'sale',$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19, CASE WHEN $5='completed' THEN now() ELSE NULL END, $20, $21, $22)
-	`, saleID, p.BusinessID, *p.BranchID, number, state, cust, p.UserID, p.EmployeeID, date, tot.Subtotal, tot.Discount, tot.Tax, tot.Total, paid, balance, change, in.Note, footer, includeTax, cart, dueDate, in.quotationID); err != nil {
-		return 0, nil, err
-	}
-	if err := insertItems(ctx, tx, p.BusinessID, saleID, lines); err != nil {
+	if err := insertLines(ctx, tx, p.TenantID, saleID, lines); err != nil {
 		return 0, nil, err
 	}
 	if in.HeldID != nil {
-		if _, err := tx.Exec(ctx, `DELETE FROM sales WHERE id=$1 AND status='held' AND cashier_id=$2`, *in.HeldID, p.UserID); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM app.sales WHERE tenant_id = $1 AND id = $2 AND status = 'held' AND sold_by = $3`, p.TenantID, *in.HeldID, p.MembershipID); err != nil {
 			return 0, nil, err
 		}
 	}
-	if state == "pending_approval" {
-		kind := "discount"
-		if needsCredit {
-			kind = "credit_override"
+	if needsDiscount {
+		if _, err := tx.Exec(ctx, `UPDATE app.sales SET status = 'pending_approval' WHERE tenant_id = $1 AND id = $2`, p.TenantID, saleID); err != nil {
+			return 0, nil, err
 		}
-		payload := map[string]any{"payments": applied, "change_due": change}
-		summary := "Sale " + number + " needs approval for a discount of " + pct.Round(2).String() + "%"
-		if needsCredit {
-			summary = "Sale " + number + " goes over the customer's credit limit"
-		}
+		summary := "Sale needs approval for a discount of " + pct.StringFixed(2) + "%"
 		reqID, err := s.Approval.Request(ctx, tx, p, approval.Input{
-			BranchID: p.BranchID, Kind: kind, SubjectType: "sale", SubjectID: saleID,
-			Amount: decimal.NullDecimal{Decimal: tot.Total, Valid: true}, Summary: summary, Payload: payload,
+			BranchID: p.BranchID, Kind: "sale_discount", SubjectType: "sale", SubjectID: saleID,
+			Amount:  decimal.NullDecimal{Decimal: tot.Discount, Valid: true},
+			Percent: decimal.NullDecimal{Decimal: pct, Valid: true},
+			Summary: summary,
 		})
 		if err != nil {
 			return 0, nil, err
 		}
-		if err := s.Audit.Record(ctx, tx, p, "sale.pending_approval", "sale", saleID, nil, map[string]any{"number": number, "total": tot.Total, "kind": kind}); err != nil {
+		if err := s.Audit.Record(ctx, tx, p, "sale.pending_approval", "sale", saleID, nil, map[string]any{"total": tot.Total, "discount_pct": pct}); err != nil {
 			return 0, nil, err
 		}
-		return 202, map[string]any{"approval_request_id": reqID, "status": "pending_approval", "id": saleID, "number": number}, nil
+		return 202, map[string]any{"approval_request_id": reqID, "status": "pending_approval", "id": saleID}, nil
 	}
-	v, err := s.finish(ctx, tx, p, saleID, *p.BranchID, number, date, lines, applied, tot, paid, balance, change, cust)
+	v, err := s.completeSale(ctx, tx, p, saleID, *p.BranchID, date, cust, lines, applied, tot, change)
 	if err != nil {
 		return 0, nil, err
 	}
 	return 201, v, nil
 }
 
-func insertItems(ctx context.Context, tx pgx.Tx, businessID, saleID uuid.UUID, lines []line) error {
-	for _, ln := range lines {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO sale_items (id, business_id, sale_id, product_id, product_name, qty, unit_price, discount, tax_rate, tax_amount, line_total, serial_number)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NULLIF($12,''))
-		`, ids.New(), businessID, saleID, ln.ProductID, ln.Name, ln.Qty, ln.UnitPrice, ln.Discount, ln.TaxRate, ln.Tax, ln.LineTotal, strings.TrimSpace(ln.SerialNumber)); err != nil {
+// Complete finishes a draft or approved sale by taking payments (if any) and marking it completed.
+func (s *Service) Complete(ctx context.Context, p *auth.Principal, saleID uuid.UUID, in CompleteIn) (int, []byte, error) {
+	var status int
+	var body []byte
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+			if rep != nil {
+				status, body = rep.Status, rep.Body
+			}
 			return err
+		}
+		var locID uuid.UUID
+		var cust *uuid.UUID
+		var st, date string
+		var discType *string
+		var sub, discVal, discAmt, taxAmt, total, paidSoFar decimal.Decimal
+		var dueDate *string
+		err := tx.QueryRow(ctx, `
+			SELECT location_id, customer_id, status::text, business_date::text, subtotal, discount_type::text, discount_value,
+			       discount_amount, tax_amount, total, amount_paid, due_date::text
+			FROM app.sales WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, saleID).
+			Scan(&locID, &cust, &st, &date, &sub, &discType, &discVal, &discAmt, &taxAmt, &total, &paidSoFar, &dueDate)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return httpx.NotFound("not_found", "Sale not found")
+		}
+		if err != nil {
+			return err
+		}
+		if st != "draft" && st != "held" && st != "pending_approval" {
+			return httpx.Conflict("invalid_status", "This sale is already "+st)
+		}
+		if err := s.checkPayments(ctx, tx, in.Payments); err != nil {
+			return err
+		}
+		remaining := total.Sub(paidSoFar)
+		applied, change, balance, err := splitPayments(in.Payments, remaining)
+		if err != nil {
+			return err
+		}
+		if balance.IsPositive() {
+			if !creditEnabled(ctx, tx) {
+				return httpx.Conflict("method_disabled", "Credit sales are switched off in the settings")
+			}
+			if cust == nil {
+				return httpx.Conflict("customer_required", "A named customer is required for a credit sale")
+			}
+			if err := checkCreditLimit(ctx, tx, p.TenantID, *cust, balance); err != nil {
+				return err
+			}
+			if dueDate == nil || strings.TrimSpace(in.DueDate) != "" {
+				d, err := resolveDueDate(ctx, tx, date, in.DueDate, true)
+				if err != nil {
+					return err
+				}
+				if _, err := tx.Exec(ctx, `UPDATE app.sales SET due_date = $3::date WHERE tenant_id = $1 AND id = $2`, p.TenantID, saleID, d); err != nil {
+					return err
+				}
+			}
+		}
+		lines, err := s.loadLinesStruct(ctx, tx, p.TenantID, saleID)
+		if err != nil {
+			return err
+		}
+		tot := totals{Subtotal: sub, DiscountType: discType, DiscountValue: discVal, Discount: discAmt, Tax: taxAmt, Total: total}
+		v, err := s.completeSale(ctx, tx, p, saleID, locID, date, cust, lines, applied, tot, change)
+		if err != nil {
+			return err
+		}
+		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(v))
+		status, body = 200, raw
+		return err
+	})
+	return status, body, err
+}
+
+func (s *Service) completeSale(ctx context.Context, tx pgx.Tx, p *auth.Principal, saleID, locID uuid.UUID, date string, cust *uuid.UUID, lines []line, applied []PayIn, tot totals, change decimal.Decimal) (map[string]any, error) {
+	// Allocate payments first while sale is draft/held/pending_approval so sales.amount_paid is up to date
+	// when status transitions to 'completed' (tg_sales_guard checks amount_paid vs total).
+	for _, pay := range applied {
+		if !pay.Amount.IsPositive() {
+			continue
+		}
+		if _, err := payments.Receive(ctx, tx, payments.ReceiveInput{
+			TenantID: p.TenantID, LocationID: locID, AccountID: pay.MoneyAccountID, CustomerID: cust,
+			Purpose: "sale", Method: payments.Method(pay.Method), Amount: pay.Amount, Reference: strings.TrimSpace(pay.Reference),
+			BusinessDate: date, Allocations: []payments.Alloc{{SaleID: &saleID, Amount: pay.Amount}},
+		}); err != nil {
+			return nil, err
+		}
+	}
+	number, err := sequence.Next(ctx, tx, uuid.Nil, "sale_receipt")
+	if err != nil {
+		return nil, err
+	}
+	var paid, balance decimal.Decimal
+	if err := tx.QueryRow(ctx, `
+		UPDATE app.sales SET status = 'completed', receipt_no = $3, completed_at = now()
+		WHERE tenant_id = $1 AND id = $2
+		RETURNING amount_paid, balance_due`, p.TenantID, saleID, number).Scan(&paid, &balance); err != nil {
+		return nil, err
+	}
+	// Reload unit_cost written by tg_sales_post for callers allowed to see cost.
+	if canSeeCost(p) {
+		rows, err := tx.Query(ctx, `SELECT product_id, COALESCE(unit_cost, 0) FROM app.sale_lines WHERE tenant_id = $1 AND sale_id = $2 ORDER BY line_no`, p.TenantID, saleID)
+		if err == nil {
+			costs := map[uuid.UUID]decimal.Decimal{}
+			for rows.Next() {
+				var pid uuid.UUID
+				var c decimal.Decimal
+				if rows.Scan(&pid, &c) == nil {
+					costs[pid] = c
+				}
+			}
+			rows.Close()
+			for i := range lines {
+				lines[i].UnitCost = costs[lines[i].ProductID]
+			}
+		}
+	}
+	pids := make([]uuid.UUID, len(lines))
+	for i, ln := range lines {
+		pids[i] = ln.ProductID
+	}
+	if err := jobs.EnqueueTx(ctx, tx, p.TenantID, jobs.CheckLowStock, map[string]any{"branch_id": locID, "product_ids": pids}); err != nil {
+		return nil, err
+	}
+	if err := s.Audit.Record(ctx, tx, p, "sale.completed", "sale", saleID, nil, map[string]any{"number": number, "total": tot.Total}); err != nil {
+		return nil, err
+	}
+	out := view(saleID, number, "completed", lines, tot, paid, balance, change, canSeeCost(p))
+	out["receipt_url"] = "/api/v1/sales/" + saleID.String() + "/receipt"
+	return out, nil
+}
+
+// OnApproved runs when a sale_discount approval request is approved. If the sale is a credit sale
+// (customer and due date set) or already fully paid, it completes immediately; otherwise it returns
+// to draft so the seller can take payment and complete it with the approved discount.
+func (s *Service) OnApproved(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
+	var locID uuid.UUID
+	var cust *uuid.UUID
+	var st, date string
+	var discType *string
+	var sub, discVal, discAmt, taxAmt, total, paid decimal.Decimal
+	var dueDate *string
+	err := tx.QueryRow(ctx, `
+		SELECT location_id, customer_id, status::text, business_date::text, subtotal, discount_type::text, discount_value,
+		       discount_amount, tax_amount, total, amount_paid, due_date::text
+		FROM app.sales WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, req.SubjectID).
+		Scan(&locID, &cust, &st, &date, &sub, &discType, &discVal, &discAmt, &taxAmt, &total, &paid, &dueDate)
+	if err != nil {
+		return err
+	}
+	if st != "pending_approval" {
+		return nil
+	}
+	if paid.Equal(total) || (cust != nil && dueDate != nil) {
+		lines, err := s.loadLinesStruct(ctx, tx, p.TenantID, req.SubjectID)
+		if err != nil {
+			return err
+		}
+		tot := totals{Subtotal: sub, DiscountType: discType, DiscountValue: discVal, Discount: discAmt, Tax: taxAmt, Total: total}
+		_, err = s.completeSale(ctx, tx, p, req.SubjectID, locID, date, cust, lines, nil, tot, money.Zero)
+		return err
+	}
+	_, err = tx.Exec(ctx, `UPDATE app.sales SET status = 'draft' WHERE tenant_id = $1 AND id = $2 AND status = 'pending_approval'`, p.TenantID, req.SubjectID)
+	return err
+}
+
+func (s *Service) OnRejected(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
+	// app.sale_status has no 'cancelled'; return to draft so the seller can adjust or discard it.
+	if _, err := tx.Exec(ctx, `UPDATE app.sales SET status = 'draft' WHERE tenant_id = $1 AND id = $2 AND status = 'pending_approval'`, p.TenantID, req.SubjectID); err != nil {
+		return err
+	}
+	return s.Audit.Record(ctx, tx, p, "sale."+req.Status, "sale", req.SubjectID, nil, map[string]any{"approval_request_id": req.ID, "note": req.Note})
+}
+
+func insertLines(ctx context.Context, tx pgx.Tx, tenantID, saleID uuid.UUID, lines []line) error {
+	for i, ln := range lines {
+		var lineID uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO app.sale_lines (tenant_id, sale_id, line_no, product_id, product_name, quantity, unit_price,
+			                            line_discount, tax_rate_pct, tax_amount, line_total, warranty_months)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+			RETURNING id`,
+			tenantID, saleID, i+1, ln.ProductID, ln.Name, ln.Qty, ln.UnitPrice,
+			ln.Discount, ln.TaxRate, ln.Tax, ln.LineTotal, ln.WarrantyMonths).Scan(&lineID); err != nil {
+			return err
+		}
+		for _, uid := range ln.UnitIDs {
+			if _, err := tx.Exec(ctx, `INSERT INTO app.sale_line_units (tenant_id, sale_line_id, product_unit_id) VALUES ($1,$2,$3)`, tenantID, lineID, uid); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-// checkPayments rejects unknown methods and inactive or missing money accounts.
+func (s *Service) loadLinesStruct(ctx context.Context, tx pgx.Tx, tenantID, saleID uuid.UUID) ([]line, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT product_id, product_name::text, quantity, unit_price, line_discount, tax_rate_pct, tax_amount, line_total, COALESCE(unit_cost,0), warranty_months
+		FROM app.sale_lines WHERE tenant_id = $1 AND sale_id = $2 ORDER BY line_no`, tenantID, saleID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var lines []line
+	for rows.Next() {
+		var ln line
+		if err := rows.Scan(&ln.ProductID, &ln.Name, &ln.Qty, &ln.UnitPrice, &ln.Discount, &ln.TaxRate, &ln.Tax, &ln.LineTotal, &ln.UnitCost, &ln.WarrantyMonths); err != nil {
+			return nil, err
+		}
+		lines = append(lines, ln)
+	}
+	return lines, rows.Err()
+}
+
+// price resolves products, serial units (when resolveUnits is true) and computes totals matching the
+// app.sales and app.sale_lines CHECK constraints:
+//
+//	sale_lines.line_total = round(quantity * unit_price, 2) - line_discount
+//	sales.subtotal        = sum(sale_lines.line_total)
+//	sales.total           = sales.subtotal - sales.discount_amount
+func (s *Service) price(ctx context.Context, tx pgx.Tx, p *auth.Principal, in CreateIn, resolveUnits bool) ([]line, totals, error) {
+	var lines []line
+	var tot totals
+	for _, it := range in.Items {
+		if it.Qty.LessThanOrEqual(money.Zero) {
+			return nil, totals{}, httpx.BadRequest("invalid_body", "Quantity must be greater than zero")
+		}
+		var name string
+		var sellPrice, avgCost, rate decimal.Decimal
+		var warranty int
+		var tracksSerial bool
+		err := tx.QueryRow(ctx, `
+			SELECT p.name::text, p.selling_price, p.average_cost, p.warranty_months, p.tracks_serial,
+			       COALESCE(tr.rate_pct, def.rate_pct, 0)
+			FROM app.products p
+			LEFT JOIN app.tax_rates tr  ON tr.tenant_id = p.tenant_id AND tr.id = p.tax_rate_id AND tr.status = 'active'
+			LEFT JOIN app.tax_rates def ON def.tenant_id = p.tenant_id AND def.is_default AND def.status = 'active'
+			WHERE p.tenant_id = $1 AND p.id = $2 AND p.status = 'active'`,
+			p.TenantID, it.ProductID).Scan(&name, &sellPrice, &avgCost, &warranty, &tracksSerial, &rate)
+		if err != nil {
+			return nil, totals{}, httpx.NotFound("not_found", "Product not found or inactive")
+		}
+		gross := money.Money(it.Qty.Mul(sellPrice))
+		lineDisc := money.Zero
+		if it.Discount != nil {
+			if err := checkDiscount(it.Discount); err != nil {
+				return nil, totals{}, err
+			}
+			lineDisc = money.DiscountAmount(gross, it.Discount.Type, it.Discount.Value)
+			if lineDisc.GreaterThan(gross) {
+				lineDisc = gross
+			}
+		}
+		lineTotal := gross.Sub(lineDisc)
+		// Prices include tax in the approved model; tax_amount is the informational VAT portion of line_total.
+		taxAmt := money.PriceLine(money.LineInput{Qty: it.Qty, UnitPrice: sellPrice, Discount: lineDisc, TaxRate: rate}, true).Tax
+
+		var unitIDs []uuid.UUID
+		var serials []string
+		if resolveUnits {
+			unitIDs, serials, err = resolveSerialUnits(ctx, tx, p.TenantID, *p.BranchID, it.ProductID, tracksSerial, it)
+			if err != nil {
+				return nil, totals{}, err
+			}
+		}
+		lines = append(lines, line{
+			ProductID: it.ProductID, Name: name, Qty: it.Qty, UnitPrice: sellPrice, Discount: lineDisc,
+			TaxRate: rate, Tax: taxAmt, LineTotal: lineTotal, UnitCost: avgCost,
+			WarrantyMonths: warranty, TracksSerial: tracksSerial, UnitIDs: unitIDs, Serials: serials,
+		})
+		tot.Subtotal = tot.Subtotal.Add(lineTotal)
+		tot.LineDiscount = tot.LineDiscount.Add(lineDisc)
+		tot.Tax = tot.Tax.Add(taxAmt)
+	}
+	tot.Total = tot.Subtotal
+	if in.Discount != nil && in.Discount.Value.IsPositive() {
+		if err := checkDiscount(in.Discount); err != nil {
+			return nil, totals{}, err
+		}
+		dt := in.Discount.Type
+		tot.DiscountType = &dt
+		tot.DiscountValue = money.Money(in.Discount.Value)
+		tot.Discount = money.DiscountAmount(tot.Subtotal, dt, in.Discount.Value)
+		if tot.Discount.GreaterThan(tot.Subtotal) {
+			tot.Discount = tot.Subtotal
+		}
+		tot.Total = tot.Subtotal.Sub(tot.Discount)
+		if tot.Subtotal.IsPositive() && tot.Tax.IsPositive() {
+			tot.Tax = money.Money(tot.Tax.Mul(tot.Total).Div(tot.Subtotal))
+		}
+	}
+	return lines, tot, nil
+}
+
+func resolveSerialUnits(ctx context.Context, tx pgx.Tx, tenantID, locID, productID uuid.UUID, required bool, it ItemIn) ([]uuid.UUID, []string, error) {
+	var rawSerials []string
+	if sn := strings.TrimSpace(it.SerialNumber); sn != "" {
+		rawSerials = append(rawSerials, sn)
+	}
+	for _, sn := range it.SerialNumbers {
+		if s := strings.TrimSpace(sn); s != "" {
+			rawSerials = append(rawSerials, s)
+		}
+	}
+	if !required && len(rawSerials) == 0 && len(it.UnitIDs) == 0 {
+		return nil, nil, nil
+	}
+	seen := map[uuid.UUID]bool{}
+	var unitIDs []uuid.UUID
+	var serials []string
+	for _, uid := range it.UnitIDs {
+		var sn string
+		err := tx.QueryRow(ctx, `
+			SELECT serial_no FROM app.product_units
+			WHERE tenant_id = $1 AND id = $2 AND product_id = $3 AND location_id = $4 AND status = 'in_stock'`,
+			tenantID, uid, productID, locID).Scan(&sn)
+		if err != nil {
+			return nil, nil, httpx.Conflict("serial_unavailable", "Serial unit is not in stock at this location")
+		}
+		if !seen[uid] {
+			seen[uid] = true
+			unitIDs = append(unitIDs, uid)
+			serials = append(serials, sn)
+		}
+	}
+	for _, sn := range rawSerials {
+		var uid uuid.UUID
+		var foundSN string
+		err := tx.QueryRow(ctx, `
+			SELECT id, serial_no FROM app.product_units
+			WHERE tenant_id = $1 AND product_id = $2 AND location_id = $3 AND status = 'in_stock' AND (serial_no = $4 OR imei = $4)`,
+			tenantID, productID, locID, sn).Scan(&uid, &foundSN)
+		if err != nil {
+			return nil, nil, httpx.Conflict("serial_unavailable", "Serial number "+sn+" is not in stock at this location")
+		}
+		if !seen[uid] {
+			seen[uid] = true
+			unitIDs = append(unitIDs, uid)
+			serials = append(serials, foundSN)
+		}
+	}
+	if required && !decimal.NewFromInt(int64(len(unitIDs))).Equal(it.Qty) {
+		return nil, nil, httpx.BadRequest("serial_required", "Provide one in-stock serial number or IMEI per unit of this product")
+	}
+	return unitIDs, serials, nil
+}
+
 func (s *Service) checkPayments(ctx context.Context, tx pgx.Tx, pays []PayIn) error {
 	disabled := map[string]bool{}
-	var raw []byte
-	if err := tx.QueryRow(ctx, `SELECT value FROM settings WHERE key='payment.methods'`).Scan(&raw); err == nil {
+	if raw, err := setting.Raw(ctx, tx, "payment.methods"); err == nil {
 		var cfg map[string]struct {
 			Enabled *bool `json:"enabled"`
 		}
@@ -305,28 +615,26 @@ func (s *Service) checkPayments(ctx context.Context, tx pgx.Tx, pays []PayIn) er
 		if !pay.Amount.IsPositive() {
 			continue
 		}
-		switch pay.Method {
-		case "cash", "mobile_money", "bank":
-		default:
-			return httpx.BadRequest("invalid_body", "Payment method must be cash, mobile_money or bank")
+		m := payments.Method(pay.Method)
+		if m == "" {
+			return httpx.BadRequest("invalid_body", "Payment method must be cash, mobile_money, bank, card or cheque")
 		}
-		if disabled[pay.Method] {
+		if disabled[pay.Method] || disabled[payments.MethodOut(m)] {
 			return httpx.Conflict("method_disabled", "This payment method is switched off in the settings")
 		}
-		if pay.Method != "cash" && strings.TrimSpace(pay.Reference) == "" {
-			return &httpx.Error{Status: 422, Code: "validation_failed", Message: "A reference is required for mobile money and bank payments", Fields: map[string]string{"reference": "required"}}
+		if m != "cash" && strings.TrimSpace(pay.Reference) == "" {
+			return &httpx.Error{Status: 422, Code: "validation_failed", Message: "A reference is required for non-cash payments", Fields: map[string]string{"reference": "required"}}
 		}
-		if err := checkAccount(ctx, tx, pay.MoneyAccountID); err != nil {
+		if _, err := payments.ActiveFin(ctx, tx, pay.MoneyAccountID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// creditEnabled reports whether credit sales are switched on (FR-SET-04).
 func creditEnabled(ctx context.Context, tx pgx.Tx) bool {
-	var raw []byte
-	if err := tx.QueryRow(ctx, `SELECT value FROM settings WHERE key='payment.methods'`).Scan(&raw); err != nil {
+	raw, err := setting.Raw(ctx, tx, "payment.methods")
+	if err != nil {
 		return true
 	}
 	var cfg struct {
@@ -335,238 +643,6 @@ func creditEnabled(ctx context.Context, tx pgx.Tx) bool {
 		} `json:"credit"`
 	}
 	return json.Unmarshal(raw, &cfg) != nil || cfg.Credit.Enabled == nil || *cfg.Credit.Enabled
-}
-
-func checkAccount(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
-	var active bool
-	if err := tx.QueryRow(ctx, `SELECT is_active FROM money_accounts WHERE id=$1`, id).Scan(&active); err != nil || !active {
-		return httpx.NotFound("not_found", "Money account not found or inactive")
-	}
-	return nil
-}
-
-func mustDate(s string) time.Time {
-	t, _ := time.Parse("2006-01-02", s)
-	return t
-}
-
-func (s *Service) finish(ctx context.Context, tx pgx.Tx, p *auth.Principal, saleID, branch uuid.UUID, number, date string, lines []line, applied []PayIn, tot totals, paid, balance, change decimal.Decimal, cust uuid.UUID) (map[string]any, error) {
-	user := p.UserID
-	var stockLines []stock.Line
-	for _, ln := range lines {
-		if ln.Kind == "stock" {
-			stockLines = append(stockLines, stock.Line{ProductID: ln.ProductID, Qty: ln.Qty})
-		}
-	}
-	costs := map[uuid.UUID]decimal.Decimal{}
-	var err error
-	if len(stockLines) > 0 {
-		costs, err = s.Stock.Deduct(ctx, tx, p.BusinessID, branch, &user, "sale", "sale", saleID, stockLines)
-		if err != nil {
-			return nil, err
-		}
-	}
-	costTotal := money.Zero
-	for i := range lines {
-		if lines[i].Kind != "stock" {
-			continue
-		}
-		lines[i].UnitCost = costs[lines[i].ProductID]
-		costTotal = costTotal.Add(money.Money(lines[i].Qty.Mul(lines[i].UnitCost)))
-		if _, err := tx.Exec(ctx, `UPDATE sale_items SET unit_cost=$3 WHERE sale_id=$1 AND product_id=$2`, saleID, lines[i].ProductID, lines[i].UnitCost); err != nil {
-			return nil, err
-		}
-	}
-	if _, err := tx.Exec(ctx, `UPDATE sales SET cost_total=$2, status='completed', completed_at=now() WHERE id=$1`, saleID, costTotal); err != nil {
-		return nil, err
-	}
-	var tillID *uuid.UUID
-	if hasCash(applied) {
-		// The cash sits in the cashier's till, also when an approver completes the sale.
-		var cashier uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT cashier_id FROM sales WHERE id=$1`, saleID).Scan(&cashier); err != nil {
-			return nil, err
-		}
-		id, account, err := openTill(ctx, tx, cashier)
-		if err != nil {
-			return nil, httpx.Conflict("till_not_open", "Open a till before taking cash")
-		}
-		tillID = &id
-		_ = account
-		if _, err := tx.Exec(ctx, `UPDATE sales SET till_session_id=$2 WHERE id=$1`, saleID, id); err != nil {
-			return nil, err
-		}
-	}
-	var jlines []ledger.Line
-	for _, pay := range applied {
-		if !pay.Amount.IsPositive() {
-			continue
-		}
-		code, _, err := s.Ledger.AccountCodeForMoney(ctx, tx, pay.MoneyAccountID)
-		if err != nil {
-			return nil, err
-		}
-		res, err := payments.Insert(ctx, tx, payments.Input{
-			BusinessID: p.BusinessID, BranchID: branch, MoneyAccountID: pay.MoneyAccountID, UserID: p.UserID,
-			TillSessionID: tillID, Direction: "in", Kind: "sale", Method: pay.Method, PartyType: "customer", PartyID: &cust,
-			Amount: pay.Amount, Reference: pay.Reference, Date: date, AllocType: "sale", AllocID: saleID, AllocAmount: pay.Amount,
-		})
-		if err != nil {
-			return nil, err
-		}
-		_ = res
-		jlines = append(jlines, ledger.Line{Code: code, BranchID: &branch, MoneyAccountID: &pay.MoneyAccountID, PartyType: "customer", PartyID: &cust, Debit: pay.Amount})
-	}
-	if balance.IsPositive() {
-		jlines = append(jlines, ledger.Line{Code: "1100", BranchID: &branch, PartyType: "customer", PartyID: &cust, Debit: balance})
-	}
-	net := tot.Total.Sub(tot.Tax)
-	if net.IsPositive() {
-		jlines = append(jlines, ledger.Line{Code: "4000", BranchID: &branch, Credit: net})
-	}
-	if tot.Tax.IsPositive() {
-		jlines = append(jlines, ledger.Line{Code: "2100", BranchID: &branch, Credit: tot.Tax})
-	}
-	if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "sale", saleID, "Sale "+number, &user, jlines); err != nil {
-		return nil, err
-	}
-	if costTotal.IsPositive() {
-		if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "sale_cost", saleID, "Cost of sale "+number, &user, []ledger.Line{
-			{Code: "5000", BranchID: &branch, Debit: costTotal},
-			{Code: "1200", BranchID: &branch, Credit: costTotal},
-		}); err != nil {
-			return nil, err
-		}
-	}
-	pids := make([]uuid.UUID, len(lines))
-	for i, ln := range lines {
-		pids[i] = ln.ProductID
-	}
-	if err := jobs.EnqueueTx(ctx, tx, p.BusinessID, jobs.CheckLowStock, map[string]any{"branch_id": branch, "product_ids": pids}); err != nil {
-		return nil, err
-	}
-	if err := s.Audit.Record(ctx, tx, p, "sale.completed", "sale", saleID, nil, map[string]any{"number": number, "total": tot.Total}); err != nil {
-		return nil, err
-	}
-	out := view(saleID, number, "completed", lines, tot, paid, balance, change, canSeeCost(p))
-	out["receipt_url"] = "/api/v1/sales/" + saleID.String() + "/receipt"
-	return out, nil
-}
-
-func (s *Service) OnApproved(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
-	var payload struct {
-		Payments []PayIn         `json:"payments"`
-		Change   decimal.Decimal `json:"change_due"`
-	}
-	if len(req.Payload) > 0 {
-		if err := json.Unmarshal(req.Payload, &payload); err != nil {
-			return err
-		}
-	}
-	var branch uuid.UUID
-	var number, date string
-	var sub, disc, tax, total, paid, balance decimal.Decimal
-	var cust uuid.UUID
-	if err := tx.QueryRow(ctx, `
-		SELECT branch_id, number, business_date::text, subtotal, discount_total, tax_total, total, paid_total, balance, customer_id
-		FROM sales WHERE id=$1
-	`, req.SubjectID).Scan(&branch, &number, &date, &sub, &disc, &tax, &total, &paid, &balance, &cust); err != nil {
-		return err
-	}
-	rows, err := tx.Query(ctx, `SELECT si.product_id, si.product_name, si.qty, si.unit_price, si.discount, si.tax_rate, si.tax_amount, si.line_total, p.kind FROM sale_items si JOIN products p ON p.id=si.product_id WHERE si.sale_id=$1`, req.SubjectID)
-	if err != nil {
-		return err
-	}
-	var lines []line
-	for rows.Next() {
-		var ln line
-		if err := rows.Scan(&ln.ProductID, &ln.Name, &ln.Qty, &ln.UnitPrice, &ln.Discount, &ln.TaxRate, &ln.Tax, &ln.LineTotal, &ln.Kind); err != nil {
-			rows.Close()
-			return err
-		}
-		lines = append(lines, ln)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	_, err = s.finish(ctx, tx, p, req.SubjectID, branch, number, date, lines, payload.Payments, totals{sub, disc, tax, total}, paid, balance, payload.Change, cust)
-	return err
-}
-
-func (s *Service) OnRejected(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
-	if _, err := tx.Exec(ctx, `UPDATE sales SET status='cancelled' WHERE id=$1 AND status='pending_approval'`, req.SubjectID); err != nil {
-		return err
-	}
-	return s.Audit.Record(ctx, tx, p, "sale."+req.Status, "sale", req.SubjectID, nil, map[string]any{"approval_request_id": req.ID, "note": req.Note})
-}
-
-func (s *Service) price(ctx context.Context, tx pgx.Tx, p *auth.Principal, in CreateIn) ([]line, totals, bool, error) {
-	include := setting.Bool(ctx, tx, "tax.prices_include_tax", false)
-	var lines []line
-	var tot totals
-	for _, it := range in.Items {
-		if it.Qty.LessThanOrEqual(money.Zero) {
-			return nil, totals{}, false, httpx.BadRequest("invalid_body", "Quantity must be greater than zero")
-		}
-		var name, kind string
-		var price, rate decimal.Decimal
-		var active bool
-		err := tx.QueryRow(ctx, `
-			SELECT p.name, p.kind, COALESCE(bp.sell_price, p.sell_price), COALESCE(tr.rate, def.rate, 0), p.is_active
-			FROM products p
-			LEFT JOIN product_branch_prices bp ON bp.product_id=p.id AND bp.branch_id=$2
-			LEFT JOIN tax_rates tr ON tr.id=p.tax_rate_id
-			LEFT JOIN tax_rates def ON def.is_default
-			WHERE p.id=$1
-		`, it.ProductID, *p.BranchID).Scan(&name, &kind, &price, &rate, &active)
-		if err != nil || !active {
-			return nil, totals{}, false, httpx.NotFound("not_found", "Product not found or inactive")
-		}
-		if q, ok := in.quoted[it.ProductID]; ok {
-			price = q
-		}
-		gross := money.Money(it.Qty.Mul(price))
-		disc := money.Zero
-		if it.Discount != nil {
-			if err := checkDiscount(it.Discount); err != nil {
-				return nil, totals{}, false, err
-			}
-			disc = money.DiscountAmount(gross, it.Discount.Type, it.Discount.Value)
-		}
-		pr := money.PriceLine(money.LineInput{Qty: it.Qty, UnitPrice: price, Discount: disc, TaxRate: rate}, include)
-		lines = append(lines, line{ProductID: it.ProductID, Name: name, Kind: kind, Qty: it.Qty, UnitPrice: price, Discount: pr.Discount, TaxRate: rate, Tax: pr.Tax, LineTotal: pr.Total, SerialNumber: strings.TrimSpace(it.SerialNumber)})
-		tot.Subtotal = tot.Subtotal.Add(pr.Gross)
-		tot.Discount = tot.Discount.Add(pr.Discount)
-		tot.Tax = tot.Tax.Add(pr.Tax)
-		tot.Total = tot.Total.Add(pr.Total)
-	}
-	if in.Discount != nil {
-		if err := checkDiscount(in.Discount); err != nil {
-			return nil, totals{}, false, err
-		}
-	}
-	if in.Discount != nil && in.Discount.Value.IsPositive() && tot.Total.IsPositive() {
-		extra := money.DiscountAmount(tot.Total, in.Discount.Type, in.Discount.Value)
-		if extra.GreaterThan(tot.Total) {
-			extra = tot.Total
-		}
-		share := extra.Div(tot.Total)
-		tot = totals{}
-		for i := range lines {
-			cut := money.Money(lines[i].LineTotal.Mul(share))
-			base := lines[i].LineTotal.Sub(cut)
-			repriced := money.PriceLine(money.LineInput{Qty: decimal.NewFromInt(1), UnitPrice: base, TaxRate: lines[i].TaxRate}, include)
-			lines[i].Discount = lines[i].Discount.Add(cut)
-			lines[i].Tax = repriced.Tax
-			lines[i].LineTotal = repriced.Total
-			tot.Subtotal = tot.Subtotal.Add(money.Money(lines[i].Qty.Mul(lines[i].UnitPrice)))
-			tot.Discount = tot.Discount.Add(lines[i].Discount)
-			tot.Tax = tot.Tax.Add(lines[i].Tax)
-			tot.Total = tot.Total.Add(lines[i].LineTotal)
-		}
-	}
-	return lines, tot, include, nil
 }
 
 func checkDiscount(d *Discount) error {
@@ -589,7 +665,7 @@ func splitPayments(pays []PayIn, total decimal.Decimal) ([]PayIn, decimal.Decima
 			continue
 		}
 		if amt.GreaterThan(remaining) {
-			if pay.Method != "cash" {
+			if payments.Method(pay.Method) != "cash" {
 				return nil, money.Zero, money.Zero, httpx.BadRequest("invalid_body", "Only cash can be more than the amount due")
 			}
 			change = change.Add(amt.Sub(remaining))
@@ -604,43 +680,58 @@ func splitPayments(pays []PayIn, total decimal.Decimal) ([]PayIn, decimal.Decima
 	return applied, change, remaining, nil
 }
 
-func hasCash(pays []PayIn) bool {
-	for _, p := range pays {
-		if p.Method == "cash" && p.Amount.IsPositive() {
-			return true
-		}
-	}
-	return false
-}
-
-func openTill(ctx context.Context, tx pgx.Tx, user uuid.UUID) (uuid.UUID, uuid.UUID, error) {
-	var id, account uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT id, money_account_id FROM till_sessions WHERE cashier_id=$1 AND status='open'`, user).Scan(&id, &account)
-	return id, account, err
-}
-
-func (s *Service) resolveCustomer(ctx context.Context, tx pgx.Tx, id *uuid.UUID, balance decimal.Decimal) (uuid.UUID, error) {
+// resolveCustomer returns nil for walk-in sales (no customer row in the approved schema).
+func (s *Service) resolveCustomer(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, id *uuid.UUID, balance decimal.Decimal) (*uuid.UUID, error) {
 	if balance.IsPositive() && !creditEnabled(ctx, tx) {
-		return uuid.Nil, httpx.Conflict("method_disabled", "Credit sales are switched off in the settings")
+		return nil, httpx.Conflict("method_disabled", "Credit sales are switched off in the settings")
 	}
 	if id == nil || *id == uuid.Nil {
-		var walk uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT id FROM customers WHERE is_walk_in LIMIT 1`).Scan(&walk); err != nil {
-			return uuid.Nil, err
-		}
 		if balance.IsPositive() {
-			return uuid.Nil, httpx.Conflict("customer_required", "A named customer is required for a credit sale")
+			return nil, httpx.Conflict("customer_required", "A named customer is required for a credit sale")
 		}
-		return walk, nil
+		return nil, nil
 	}
-	var walk bool
-	if err := tx.QueryRow(ctx, `SELECT is_walk_in FROM customers WHERE id=$1 AND is_active`, *id).Scan(&walk); err != nil {
-		return uuid.Nil, httpx.NotFound("not_found", "Customer not found")
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT true FROM app.customers WHERE tenant_id = $1 AND id = $2 AND archived_at IS NULL`, tenantID, *id).Scan(&exists); err != nil {
+		return nil, httpx.NotFound("not_found", "Customer not found")
 	}
-	if walk && balance.IsPositive() {
-		return uuid.Nil, httpx.Conflict("customer_required", "The walk-in customer cannot take credit")
+	cid := *id
+	return &cid, nil
+}
+
+func checkCreditLimit(ctx context.Context, tx pgx.Tx, tenantID, customerID uuid.UUID, added decimal.Decimal) error {
+	var owed decimal.Decimal
+	var limit *decimal.Decimal
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE((SELECT SUM(s.balance_due) FROM app.sales s WHERE s.tenant_id = c.tenant_id AND s.customer_id = c.id AND s.status = 'completed'), 0),
+		       c.credit_limit
+		FROM app.customers c WHERE c.tenant_id = $1 AND c.id = $2`, tenantID, customerID).Scan(&owed, &limit); err != nil {
+		return err
 	}
-	return *id, nil
+	if limit != nil && owed.Add(added).GreaterThan(*limit) {
+		return httpx.Conflict("credit_limit_exceeded", "This sale goes over the customer's credit limit")
+	}
+	return nil
+}
+
+func resolveDueDate(ctx context.Context, tx pgx.Tx, bizDate, raw string, required bool) (*string, error) {
+	if s := strings.TrimSpace(raw); s != "" {
+		if _, err := time.Parse("2006-01-02", s); err != nil {
+			return nil, httpx.BadRequest("invalid_body", "due_date must be YYYY-MM-DD")
+		}
+		return &s, nil
+	}
+	if !required {
+		return nil, nil
+	}
+	days := setting.Int(ctx, tx, "invoice.due_days", 0)
+	d := mustDate(bizDate).AddDate(0, 0, days).Format("2006-01-02")
+	return &d, nil
+}
+
+func mustDate(s string) time.Time {
+	t, _ := time.Parse("2006-01-02", s)
+	return t
 }
 
 func (s *Service) bizDate(ctx context.Context, tx pgx.Tx) (string, error) {
@@ -651,25 +742,27 @@ func (s *Service) bizDate(ctx context.Context, tx pgx.Tx) (string, error) {
 	return d.Format("2006-01-02"), nil
 }
 
-// canSeeCost reports whether the caller may see cost and margin (FR-INV-08).
 func canSeeCost(p *auth.Principal) bool {
-	_, ok := p.Can("products.view_cost")
-	return ok || p.IsOwner
+	return p.Has("shop.product.view_cost")
 }
 
-// view builds the sale response. Unit cost is included only when showCost is set, so cashiers
-// do not learn what the shop paid for what they sell.
 func view(id uuid.UUID, number, status string, lines []line, tot totals, paid, balance, change decimal.Decimal, showCost bool) map[string]any {
 	items := make([]map[string]any, len(lines))
 	for i, ln := range lines {
-		items[i] = map[string]any{"product_id": ln.ProductID, "product_name": ln.Name, "qty": ln.Qty, "unit_price": ln.UnitPrice, "discount": ln.Discount, "tax_amount": ln.Tax, "line_total": ln.LineTotal}
+		items[i] = map[string]any{"product_id": ln.ProductID, "product_name": ln.Name, "qty": ln.Qty, "unit_price": ln.UnitPrice,
+			"discount": ln.Discount, "tax_amount": ln.Tax, "line_total": ln.LineTotal, "warranty_months": ln.WarrantyMonths}
+		if len(ln.Serials) == 1 {
+			items[i]["serial_number"] = ln.Serials[0]
+		} else if len(ln.Serials) > 1 {
+			items[i]["serial_numbers"] = ln.Serials
+		}
 		if showCost {
 			items[i]["unit_cost"] = ln.UnitCost
 		}
 	}
 	out := map[string]any{
-		"status": status, "subtotal": tot.Subtotal, "discount_total": tot.Discount, "tax_total": tot.Tax,
-		"total": tot.Total, "paid_total": paid, "balance": balance, "change_due": change, "items": items,
+		"status": status, "subtotal": tot.Subtotal, "discount_total": tot.Discount.Add(tot.LineDiscount), "sale_discount": tot.Discount,
+		"tax_total": tot.Tax, "total": tot.Total, "paid_total": paid, "balance": balance, "change_due": change, "items": items,
 	}
 	if id != uuid.Nil {
 		out["id"] = id

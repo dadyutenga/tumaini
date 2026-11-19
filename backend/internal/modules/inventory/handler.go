@@ -15,13 +15,7 @@ func (h *Handler) PostEntry(c fiber.Ctx) error {
 		return err
 	}
 	p := middleware.Principal(c)
-	// stock.in and stock.out are separate keys; the route accepts either and
-	// the direction decides which one is required.
-	key := "stock.in"
-	if body.Direction == "out" {
-		key = "stock.out"
-	}
-	if _, ok := p.Can(key); !ok {
+	if !p.Has("shop.stock.manage") {
 		return httpx.Forbidden("permission_denied", "You do not have permission to do that")
 	}
 	status, raw, err := h.Svc.PostEntry(c.Context(), p, body)
@@ -49,7 +43,7 @@ func (h *Handler) GetEntry(c fiber.Ctx) error {
 
 func (h *Handler) Levels(c fiber.Ctx) error {
 	p := middleware.Principal(c)
-	_, cost := p.Can("products.view_cost")
+	_, cost := p.Can("shop.product.view_cost")
 	list, err := h.Svc.Levels(c.Context(), p, cost)
 	return httpx.OK(c, list, err)
 }
@@ -251,30 +245,30 @@ func (h *Handler) ReturnTransfer(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
-	r.Get("/stock/levels", middleware.Require("stock.view"), h.Levels)
-	r.Get("/stock/low", middleware.Require("stock.view"), h.Low)
-	r.Get("/stock/movements", middleware.Require("stock.view"), h.Movements)
-	r.Get("/stock/valuation", middleware.Require("valuation.view"), h.Valuation)
-	r.Get("/products/:id/stock-card", middleware.Require("stock.view"), h.Card)
+	r.Get("/stock/levels", middleware.Require("shop.stock.view"), h.Levels)
+	r.Get("/stock/low", middleware.Require("shop.stock.view"), h.Low)
+	r.Get("/stock/movements", middleware.Require("shop.stock.view"), h.Movements)
+	r.Get("/stock/valuation", middleware.Require("shop.product.view_cost"), h.Valuation)
+	r.Get("/products/:id/stock-card", middleware.Require("shop.stock.view"), h.Card)
 
-	r.Get("/stock-entries", middleware.Require("stock.view"), h.Entries)
-	r.Post("/stock-entries", middleware.RequireAny("stock.in", "stock.out"), middleware.Idempotent(), h.PostEntry)
-	r.Get("/stock-entries/:id", middleware.Require("stock.view"), h.GetEntry)
+	r.Get("/stock-entries", middleware.Require("shop.stock.view"), h.Entries)
+	r.Post("/stock-entries", middleware.Require("shop.stock.manage"), middleware.Idempotent(), h.PostEntry)
+	r.Get("/stock-entries/:id", middleware.Require("shop.stock.view"), h.GetEntry)
 
-	r.Get("/stock-adjustments", middleware.Require("stock.view"), h.Adjustments)
-	r.Post("/stock-adjustments", middleware.Require("stock.adjust"), h.CreateAdj)
-	r.Post("/stock-adjustments/count-sheet", middleware.Require("stock.adjust"), h.CountSheet)
-	r.Get("/stock-adjustments/:id", middleware.Require("stock.view"), h.GetAdj)
-	r.Put("/stock-adjustments/:id", middleware.Require("stock.adjust"), h.UpdateAdj)
-	r.Post("/stock-adjustments/:id/post", middleware.Require("stock.adjust"), middleware.Idempotent(), h.PostAdj)
-	r.Post("/stock-adjustments/:id/cancel", middleware.Require("stock.adjust"), h.CancelAdj)
+	r.Get("/stock-adjustments", middleware.Require("shop.stock.view"), h.Adjustments)
+	r.Post("/stock-adjustments", middleware.Require("shop.stock.manage"), h.CreateAdj)
+	r.Post("/stock-adjustments/count-sheet", middleware.Require("shop.stock.manage"), h.CountSheet)
+	r.Get("/stock-adjustments/:id", middleware.Require("shop.stock.view"), h.GetAdj)
+	r.Put("/stock-adjustments/:id", middleware.Require("shop.stock.manage"), h.UpdateAdj)
+	r.Post("/stock-adjustments/:id/post", middleware.Require("shop.stock.manage"), middleware.Idempotent(), h.PostAdj)
+	r.Post("/stock-adjustments/:id/cancel", middleware.Require("shop.stock.manage"), h.CancelAdj)
 
-	r.Get("/stock-transfers", middleware.Require("transfers.view"), h.Transfers)
-	r.Post("/stock-transfers", middleware.Require("transfers.create"), h.CreateTransfer)
-	r.Get("/stock-transfers/:id", middleware.Require("transfers.view"), h.GetTransfer)
-	r.Put("/stock-transfers/:id", middleware.Require("transfers.create"), h.UpdateTransfer)
-	r.Post("/stock-transfers/:id/dispatch", middleware.Require("transfers.dispatch"), middleware.Idempotent(), h.Dispatch)
-	r.Post("/stock-transfers/:id/receive", middleware.Require("transfers.receive"), middleware.Idempotent(), h.Receive)
-	r.Post("/stock-transfers/:id/return", middleware.Require("transfers.dispatch"), middleware.Idempotent(), h.ReturnTransfer)
-	r.Post("/stock-transfers/:id/cancel", middleware.Require("transfers.create"), h.CancelTransfer)
+	r.Get("/stock-transfers", middleware.Require("shop.stock.view"), h.Transfers)
+	r.Post("/stock-transfers", middleware.Require("shop.stock.manage"), h.CreateTransfer)
+	r.Get("/stock-transfers/:id", middleware.Require("shop.stock.view"), h.GetTransfer)
+	r.Put("/stock-transfers/:id", middleware.Require("shop.stock.manage"), h.UpdateTransfer)
+	r.Post("/stock-transfers/:id/dispatch", middleware.Require("shop.stock.manage"), middleware.Idempotent(), h.Dispatch)
+	r.Post("/stock-transfers/:id/receive", middleware.Require("shop.stock.manage"), middleware.Idempotent(), h.Receive)
+	r.Post("/stock-transfers/:id/return", middleware.Require("shop.stock.manage"), middleware.Idempotent(), h.ReturnTransfer)
+	r.Post("/stock-transfers/:id/cancel", middleware.Require("shop.stock.manage"), h.CancelTransfer)
 }

@@ -9,38 +9,38 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"bms/internal/platform/auth"
-	"bms/internal/platform/ids"
 )
 
 type Service struct{}
 
 func New() *Service { return &Service{} }
 
+// Record writes an explicit business event through audit.log_event. Row-level changes are captured
+// by the database itself (audit.tg_capture triggers); Record is for events that are not a row change
+// or that need a name, such as "user.password_reset". The transaction must have been opened with
+// db.InActorTx so tenant, user, membership, request id and client address are attributed.
 func (s *Service) Record(ctx context.Context, tx pgx.Tx, p *auth.Principal, action, entityType string, entityID uuid.UUID, before, after any) error {
-	var b, a []byte
-	var err error
+	details := map[string]any{}
 	if before != nil {
-		if b, err = json.Marshal(redact(before)); err != nil {
-			return err
-		}
+		details["before"] = redact(before)
 	}
 	if after != nil {
-		if a, err = json.Marshal(redact(after)); err != nil {
-			return err
-		}
+		details["after"] = redact(after)
 	}
-	var branch any
-	if p.BranchID != nil {
-		branch = *p.BranchID
+	raw, err := json.Marshal(details)
+	if err != nil {
+		return err
 	}
-	var ip any
-	if p.IP != "" {
-		ip = p.IP
+	var entity any
+	if entityID != uuid.Nil {
+		entity = entityID
 	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO audit_logs (id, business_id, branch_id, user_id, action, entity_type, entity_id, before, after, ip, request_id)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::inet,$11)
-	`, ids.New(), p.BusinessID, branch, p.UserID, action, entityType, entityID, nullJSON(b), nullJSON(a), ip, p.RequestID)
+	ua := p.UserAgent
+	if len(ua) > 512 {
+		ua = ua[:512]
+	}
+	_, err = tx.Exec(ctx, `SELECT audit.log_event($1, NULLIF($2,''), $3::uuid, 'success', NULL, $4::jsonb, 'user', NULLIF($5,''))`,
+		action, entityType, entity, raw, ua)
 	return err
 }
 

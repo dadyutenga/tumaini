@@ -2,7 +2,6 @@ package sales
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
 	"github.com/google/uuid"
@@ -10,27 +9,26 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/kernel/approval"
-	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/payments"
-	"bms/internal/kernel/stock"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/idem"
 	"bms/internal/platform/money"
 )
 
-// Void cancels a same-day sale: stock comes back, its payments are voided and
-// its journal entries are reversed (FR-SAL-18). Above the caller's sales.void
-// limit it waits for approval and returns 202.
+// Void cancels a completed sale: its sale payments are voided (reversing the money ledger and
+// reducing sales.amount_paid to zero), then status becomes 'voided' so tg_sales_post returns stock,
+// restores serialised units and reverses accrued commissions. Callers without shop.sale.void file
+// a sale_void approval request (202).
 func (s *Service) Void(ctx context.Context, p *auth.Principal, id uuid.UUID, reason string) (int, []byte, error) {
 	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		return 0, nil, httpx.BadRequest("invalid_body", "Give a reason for the void")
+	if len(reason) < 3 {
+		return 0, nil, httpx.BadRequest("invalid_body", "Give a reason of at least 3 characters for the void")
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -45,12 +43,11 @@ func (s *Service) Void(ctx context.Context, p *auth.Principal, id uuid.UUID, rea
 		} else if pending != nil {
 			return httpx.Conflict("invalid_status", "This sale already has a request waiting for approval")
 		}
-		g, ok := p.Can("sales.void")
-		if !p.IsOwner && !auth.WithinLimit(g, ok, v.total) {
+		if !p.Has("shop.sale.void") {
 			reqID, err := s.Approval.Request(ctx, tx, p, approval.Input{
 				BranchID: &v.branch, Kind: "sale_void", SubjectType: "sale", SubjectID: id,
-				Amount: decimal.NullDecimal{Decimal: v.total, Valid: true}, Summary: "Void sale " + v.number + ": " + reason,
-				Payload: map[string]any{"reason": reason},
+				Amount:  decimal.NullDecimal{Decimal: v.total, Valid: true},
+				Summary: reason,
 			})
 			if err != nil {
 				return err
@@ -80,95 +77,64 @@ type voidable struct {
 
 func (s *Service) lockForVoid(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (voidable, error) {
 	var v voidable
-	var kind, st, date string
-	if err := tx.QueryRow(ctx, `SELECT branch_id, number, total, kind, status, business_date::text FROM sales WHERE id=$1 FOR UPDATE`, id).Scan(&v.branch, &v.number, &v.total, &kind, &st, &date); err != nil {
-		return v, httpx.NotFound("not_found", "Sale not found")
-	}
-	if kind != "sale" || !p.SeesBranch("sales.void", v.branch) {
+	var st string
+	if err := tx.QueryRow(ctx, `
+		SELECT location_id, COALESCE(receipt_no, ''), total, status::text
+		FROM app.sales WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&v.branch, &v.number, &v.total, &st); err != nil {
 		return v, httpx.NotFound("not_found", "Sale not found")
 	}
 	if st != "completed" {
-		return v, httpx.Conflict("invalid_status", "Only a completed sale with no returns can be voided. Use a return instead")
+		return v, httpx.Conflict("invalid_status", "Only a completed sale can be voided")
 	}
-	today, err := s.bizDate(ctx, tx)
-	if err != nil {
+	var returns int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.sale_returns WHERE tenant_id = $1 AND sale_id = $2 AND status = 'completed'`, p.TenantID, id).Scan(&returns); err != nil {
 		return v, err
 	}
-	if date != today {
-		return v, httpx.Conflict("void_not_same_day", "A sale can only be voided on the business day it was made. Use a return instead")
+	if returns > 0 {
+		return v, httpx.Conflict("invalid_status", "This sale has completed returns and cannot be voided")
 	}
 	var later int
 	if err := tx.QueryRow(ctx, `
-		SELECT count(*) FROM payment_allocations pa JOIN payments py ON py.id=pa.payment_id
-		WHERE pa.document_type='sale' AND pa.document_id=$1 AND py.kind <> 'sale' AND py.status='posted'
-	`, id).Scan(&later); err != nil {
+		SELECT count(*) FROM app.payment_allocations pa
+		JOIN app.payments_received pr ON pr.tenant_id = pa.tenant_id AND pr.id = pa.payment_received_id
+		WHERE pa.tenant_id = $1 AND pa.sale_id = $2 AND pr.purpose <> 'sale' AND pr.status = 'posted'`, p.TenantID, id).Scan(&later); err != nil {
 		return v, err
 	}
 	if later > 0 {
-		return v, httpx.Conflict("invalid_status", "This sale has later payments. Void those payments first")
+		return v, httpx.Conflict("invalid_status", "This sale has later debt payments. Void those payments first")
 	}
 	return v, nil
 }
 
 func (s *Service) applyVoid(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID, v voidable, reason string) error {
-	user := p.UserID
-	rows, err := tx.Query(ctx, `
-		SELECT si.product_id, si.qty - si.qty_returned, si.unit_cost FROM sale_items si JOIN products pr ON pr.id=si.product_id
-		WHERE si.sale_id=$1 AND pr.kind='stock' AND si.qty > si.qty_returned`, id)
-	if err != nil {
-		return err
-	}
-	var lines []stock.Line
-	for rows.Next() {
-		var ln stock.Line
-		if err := rows.Scan(&ln.ProductID, &ln.Qty, &ln.UnitCost); err != nil {
-			rows.Close()
-			return err
-		}
-		lines = append(lines, ln)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	if len(lines) > 0 {
-		if err := s.Stock.ReturnAtCost(ctx, tx, p.BusinessID, v.branch, &user, "sale_return", "sale_void", id, lines); err != nil {
-			return err
-		}
-	}
-	date, err := s.bizDate(ctx, tx)
-	if err != nil {
-		return err
-	}
-	if _, err := s.Ledger.ReverseSource(ctx, tx, p.BusinessID, id, date, "Void sale "+v.number, &user); err != nil {
+	// Void the POS sale payments first so tg_payment_received_post reverses the money ledger and
+	// brings sales.amount_paid to 0 (required by tg_sales_guard before voiding the sale).
+	if _, err := tx.Exec(ctx, `
+		UPDATE app.payments_received
+		SET status = 'voided', voided_at = now(), voided_by = $3, void_reason = $4
+		WHERE tenant_id = $1 AND status = 'posted' AND purpose = 'sale'
+		  AND id IN (SELECT payment_received_id FROM app.payment_allocations WHERE tenant_id = $1 AND sale_id = $2)`,
+		p.TenantID, id, p.MembershipID, reason); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		UPDATE payments SET status='voided', voided_by=$2, voided_at=now(), void_reason=$3
-		WHERE status='posted' AND kind='sale' AND id IN (SELECT payment_id FROM payment_allocations WHERE document_type='sale' AND document_id=$1)
-	`, id, p.UserID, reason); err != nil {
-		return err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE sales SET status='voided', voided_by=$2, voided_at=now(), void_reason=$3 WHERE id=$1`, id, p.UserID, reason); err != nil {
+		UPDATE app.sales SET status = 'voided', voided_at = now(), voided_by = $3, void_reason = $4
+		WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, p.MembershipID, reason); err != nil {
 		return err
 	}
 	return s.Audit.Record(ctx, tx, p, "sale.voided", "sale", id, map[string]any{"status": "completed"}, map[string]any{"status": "voided", "reason": reason})
 }
 
 func (s *Service) OnVoidApproved(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
-	var payload struct {
-		Reason string `json:"reason"`
-	}
-	if len(req.Payload) > 0 {
-		if err := json.Unmarshal(req.Payload, &payload); err != nil {
-			return err
-		}
-	}
 	v, err := s.lockForVoid(ctx, tx, p, req.SubjectID)
 	if err != nil {
 		return err
 	}
-	return s.applyVoid(ctx, tx, p, req.SubjectID, v, payload.Reason)
+	reason := strings.TrimSpace(req.Summary)
+	if reason == "" {
+		reason = "Approved void"
+	}
+	return s.applyVoid(ctx, tx, p, req.SubjectID, v, reason)
 }
 
 func (s *Service) OnVoidRejected(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
@@ -182,15 +148,15 @@ type SalePayIn struct {
 	Reference      string          `json:"reference"`
 }
 
-// ReceivePayment records a customer payment against one sale's balance.
+// ReceivePayment records a customer payment against one completed sale's balance.
 func (s *Service) ReceivePayment(ctx context.Context, p *auth.Principal, saleID uuid.UUID, in SalePayIn) (int, []byte, error) {
 	if !in.Amount.IsPositive() {
 		return 0, nil, httpx.BadRequest("invalid_body", "Amount must be greater than zero")
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -199,57 +165,41 @@ func (s *Service) ReceivePayment(ctx context.Context, p *auth.Principal, saleID 
 		var branch uuid.UUID
 		var cust *uuid.UUID
 		var bal decimal.Decimal
-		var kind, st, number string
-		if err := tx.QueryRow(ctx, `SELECT branch_id, customer_id, balance, kind, status, number FROM sales WHERE id=$1 FOR UPDATE`, saleID).Scan(&branch, &cust, &bal, &kind, &st, &number); err != nil {
+		var st, number string
+		if err := tx.QueryRow(ctx, `
+			SELECT location_id, customer_id, balance_due, status::text, COALESCE(receipt_no, '')
+			FROM app.sales WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, saleID).Scan(&branch, &cust, &bal, &st, &number); err != nil {
 			return httpx.NotFound("not_found", "Sale not found")
 		}
-		if kind != "sale" || !p.SeesBranch("payments.receive", branch) {
-			return httpx.NotFound("not_found", "Sale not found")
-		}
-		if st != "completed" && st != "partially_refunded" {
+		if st != "completed" {
 			return httpx.Conflict("invalid_status", "This sale cannot take payments")
 		}
 		amount := money.Money(in.Amount)
 		if amount.GreaterThan(bal) {
 			return httpx.Conflict("overpayment", "The payment is more than the sale balance of "+bal.StringFixed(2)+". Record extra money as a customer payment")
 		}
-		if err := s.checkPayments(ctx, tx, []PayIn{{Method: in.Method, MoneyAccountID: in.MoneyAccountID, Amount: amount}}); err != nil {
+		if err := s.checkPayments(ctx, tx, []PayIn{{Method: in.Method, MoneyAccountID: in.MoneyAccountID, Amount: amount, Reference: in.Reference}}); err != nil {
 			return err
 		}
 		date, err := s.bizDate(ctx, tx)
 		if err != nil {
 			return err
 		}
-		var till *uuid.UUID
-		if in.Method == "cash" {
-			if id, _, err := openTill(ctx, tx, p.UserID); err == nil {
-				till = &id
-			}
+		purpose := "debt_payment"
+		if cust == nil {
+			purpose = "sale"
 		}
-		res, err := payments.Insert(ctx, tx, payments.Input{
-			BusinessID: p.BusinessID, BranchID: branch, MoneyAccountID: in.MoneyAccountID, UserID: p.UserID, TillSessionID: till,
-			Direction: "in", Kind: "customer_payment", Method: in.Method, PartyType: "customer", PartyID: cust,
-			Amount: amount, Reference: in.Reference, Date: date, AllocType: "sale", AllocID: saleID, AllocAmount: amount,
+		res, err := payments.Receive(ctx, tx, payments.ReceiveInput{
+			TenantID: p.TenantID, LocationID: branch, AccountID: in.MoneyAccountID, CustomerID: cust,
+			Purpose: purpose, Method: payments.Method(in.Method), Amount: amount, Reference: strings.TrimSpace(in.Reference),
+			BusinessDate: date, Notes: "Payment for sale " + number,
+			Allocations: []payments.Alloc{{SaleID: &saleID, Amount: amount}},
 		})
 		if err != nil {
 			return err
 		}
-		code, _, err := s.Ledger.AccountCodeForMoney(ctx, tx, in.MoneyAccountID)
-		if err != nil {
-			return err
-		}
-		user := p.UserID
-		acc := in.MoneyAccountID
-		if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "customer_payment", res.ID, "Payment "+res.Number+" for sale "+number, &user, []ledger.Line{
-			{Code: code, BranchID: &branch, MoneyAccountID: &acc, PartyType: "customer", PartyID: cust, Debit: amount},
-			{Code: "1100", BranchID: &branch, PartyType: "customer", PartyID: cust, Credit: amount},
-		}); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE sales SET paid_total=paid_total+$2, balance=balance-$2 WHERE id=$1`, saleID, amount); err != nil {
-			return err
-		}
-		out := map[string]any{"id": res.ID, "number": res.Number, "sale_id": saleID, "amount": amount, "method": in.Method, "balance": bal.Sub(amount), "date": date}
+		out := map[string]any{"id": res.ID, "number": res.Number, "sale_id": saleID, "amount": amount,
+			"method": payments.MethodOut(payments.Method(in.Method)), "balance": bal.Sub(amount), "date": date}
 		if err := s.Audit.Record(ctx, tx, p, "sale.payment", "sale", saleID, nil, out); err != nil {
 			return err
 		}

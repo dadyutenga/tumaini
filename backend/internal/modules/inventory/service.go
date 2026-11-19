@@ -21,7 +21,6 @@ import (
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/idem"
-	"bms/internal/platform/ids"
 	"bms/internal/platform/jobs"
 	"bms/internal/platform/money"
 	"bms/internal/platform/setting"
@@ -66,35 +65,26 @@ type EntryInput struct {
 	Items     []Item `json:"items" validate:"min=1,max=500,dive"`
 }
 
+// outAccount maps a stock-out reason to the expense account it is posted to (FR-INV-15).
 var inReasons = map[string]bool{"opening": true, "found": true, "gift": true, "other": true}
 var outReasons = map[string]bool{"damaged": true, "expired": true, "internal_use": true, "theft": true, "other": true}
 
-// outAccount maps a stock-out reason to the expense account it is posted to (FR-INV-15).
-func outAccount(reason string) string {
-	if reason == "internal_use" {
-		return "6090"
+// adjustmentReason maps a stock-entry reason onto app.adjustment_reason. Reasons the enum does not
+// have become "other", which the schema requires a note for; the original reason is kept as the note.
+func adjustmentReason(reason string) string {
+	switch reason {
+	case "opening", "found", "damaged", "expired", "theft":
+		return reason
 	}
-	return "5100"
+	return "other"
 }
 
-// inAccount maps a stock-in reason to the credit side: opening equity or stock gain.
-func inAccount(reason string) string {
-	if reason == "opening" {
-		return "3100"
-	}
-	return "4200"
-}
-
-// stockProducts checks every product exists, is active and is a stock item.
+// stockProducts checks every product exists and is active.
 func stockProducts(ctx context.Context, tx pgx.Tx, pids []uuid.UUID) error {
 	for _, id := range pids {
-		var kind string
 		var active bool
-		if err := tx.QueryRow(ctx, `SELECT kind, is_active FROM products WHERE id=$1`, id).Scan(&kind, &active); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT status = 'active' FROM app.products WHERE id = $1`, id).Scan(&active); err != nil {
 			return httpx.NotFound("not_found", "Product not found")
-		}
-		if kind != "stock" {
-			return httpx.BadRequest("invalid_body", "Services do not carry stock")
 		}
 		if !active {
 			return httpx.Conflict("invalid_status", "That product is inactive")
@@ -103,6 +93,9 @@ func stockProducts(ctx context.Context, tx pgx.Tx, pids []uuid.UUID) error {
 	return nil
 }
 
+// PostEntry records stock coming in or going out for a stated reason. In the approved schema this is a
+// stock adjustment that is created and posted in one step: the database writes the stock movements
+// and keeps the balances. Batch numbers and expiry dates are not part of the approved model.
 func (s *Service) PostEntry(ctx context.Context, p *auth.Principal, in EntryInput) (int, []byte, error) {
 	if p.BranchID == nil {
 		return 0, nil, httpx.BadRequest("branch_required", "Choose a branch first")
@@ -116,17 +109,18 @@ func (s *Service) PostEntry(ctx context.Context, p *auth.Principal, in EntryInpu
 	if in.Direction == "out" && !outReasons[in.Reason] {
 		return 0, nil, httpx.BadRequest("invalid_body", "That reason is not valid for stock out")
 	}
-	if in.Direction == "out" {
-		for _, it := range in.Items {
-			if it.BatchNo != "" || it.ExpiryDate != "" {
-				return 0, nil, httpx.BadRequest("invalid_body", "Batch number and expiry date apply to stock in only")
-			}
+	for _, it := range in.Items {
+		if it.BatchNo != "" || it.ExpiryDate != "" {
+			return 0, nil, httpx.BadRequest("batch_not_supported", "Batch numbers and expiry dates are not supported")
 		}
+	}
+	if err := uniqueItems(in.Items); err != nil {
+		return 0, nil, err
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -135,81 +129,53 @@ func (s *Service) PostEntry(ctx context.Context, p *auth.Principal, in EntryInpu
 		if err := stockProducts(ctx, tx, productIDs(in.Items)); err != nil {
 			return err
 		}
-		number, err := sequence.Next(ctx, tx, *p.BranchID, "stock_entry")
+		number, err := sequence.Next(ctx, tx, *p.BranchID, "stock_adjustment")
 		if err != nil {
 			return err
 		}
-		id := ids.New()
-		total := money.Zero
-		lines := make([]stock.Line, 0, len(in.Items))
-		for _, it := range in.Items {
-			cost := money.Cost(it.UnitCost)
-			total = total.Add(money.Money(it.Qty.Mul(cost)))
-			lines = append(lines, stock.Line{ProductID: it.ProductID, Qty: it.Qty, UnitCost: cost})
+		note := strings.TrimSpace(in.Note)
+		if note == "" {
+			note = strings.ReplaceAll(in.Reason, "_", " ")
 		}
+		id := uuid.New()
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO stock_entries (id, business_id, branch_id, number, direction, reason, note, total_value, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9)
-		`, id, p.BusinessID, *p.BranchID, number, in.Direction, in.Reason, in.Note, total, p.UserID); err != nil {
+			INSERT INTO app.stock_adjustments (id, tenant_id, adjustment_no, location_id, reason, note, business_date)
+			VALUES ($1,$2,$3,$4,$5::app.adjustment_reason,$6,$7::date)`,
+			id, p.TenantID, number, *p.BranchID, adjustmentReason(in.Reason), note, s.bizDate(ctx, tx)); err != nil {
 			return err
 		}
-		user := p.UserID
-		date := s.bizDate(ctx, tx)
-		if in.Direction == "in" {
-			move := "stock_in"
-			if in.Reason == "opening" {
-				move = "opening"
-			}
-			for _, it := range in.Items {
-				if _, err := tx.Exec(ctx, `
-					INSERT INTO stock_entry_items (id, business_id, entry_id, product_id, qty, unit_cost, batch_no, expiry_date)
-					VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),NULLIF($8,'')::date)
-				`, ids.New(), p.BusinessID, id, it.ProductID, it.Qty, money.Cost(it.UnitCost), strings.TrimSpace(it.BatchNo), it.ExpiryDate); err != nil {
-					return err
-				}
-			}
-			if err := s.Stock.Receive(ctx, tx, p.BusinessID, *p.BranchID, &user, move, "stock_entry", id, lines); err != nil {
-				return err
-			}
-			if total.IsPositive() {
-				if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "stock_entry", id, "Stock in "+number, &user, []ledger.Line{
-					{Code: "1200", BranchID: p.BranchID, Debit: total},
-					{Code: inAccount(in.Reason), BranchID: p.BranchID, Credit: total},
-				}); err != nil {
-					return err
-				}
-			}
-		} else {
-			costs, err := s.Stock.Deduct(ctx, tx, p.BusinessID, *p.BranchID, &user, "stock_out", "stock_entry", id, lines)
-			if err != nil {
-				return err
-			}
-			value := money.Zero
-			for _, it := range in.Items {
-				value = value.Add(money.Money(it.Qty.Mul(costs[it.ProductID])))
-				if _, err := tx.Exec(ctx, `
-					INSERT INTO stock_entry_items (id, business_id, entry_id, product_id, qty, unit_cost) VALUES ($1,$2,$3,$4,$5,$6)
-				`, ids.New(), p.BusinessID, id, it.ProductID, it.Qty, costs[it.ProductID]); err != nil {
-					return err
-				}
-			}
-			if _, err := tx.Exec(ctx, `UPDATE stock_entries SET total_value=$2 WHERE id=$1`, id, value); err != nil {
-				return err
-			}
-			if value.IsPositive() {
-				if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "stock_entry", id, "Stock out "+number, &user, []ledger.Line{
-					{Code: outAccount(in.Reason), BranchID: p.BranchID, Debit: value},
-					{Code: "1200", BranchID: p.BranchID, Credit: value},
-				}); err != nil {
-					return err
-				}
-			}
-			total = value
+		sign := decimal.NewFromInt(1)
+		if in.Direction == "out" {
+			sign = decimal.NewFromInt(-1)
 		}
-		if err := jobs.EnqueueTx(ctx, tx, p.BusinessID, jobs.CheckLowStock, map[string]any{"branch_id": p.BranchID, "product_ids": productIDs(in.Items)}); err != nil {
+		total := money.Zero
+		for _, it := range in.Items {
+			qty := money.Qty(it.Qty).Mul(sign)
+			var cost any
+			if in.Direction == "in" {
+				cost = it.UnitCost
+			}
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO app.stock_adjustment_lines (tenant_id, stock_adjustment_id, product_id, quantity_delta, unit_cost) VALUES ($1,$2,$3,$4,$5)`,
+				p.TenantID, id, it.ProductID, qty, cost); err != nil {
+				return err
+			}
+		}
+		// Posting fires the database trigger that writes the movements and updates the balances.
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_adjustments SET status = 'posted', posted_at = now() WHERE id = $1`, id); err != nil {
 			return err
 		}
-		if err := s.Audit.Record(ctx, tx, p, "stock_entry.posted", "stock_entry", id, nil, map[string]any{"number": number, "direction": in.Direction, "reason": in.Reason, "total": total}); err != nil {
+		if err := tx.QueryRow(ctx, `
+			SELECT coalesce(sum(abs(l.quantity_delta) * coalesce(l.unit_cost, pr.average_cost)), 0)
+			FROM app.stock_adjustment_lines l JOIN app.products pr ON pr.tenant_id = l.tenant_id AND pr.id = l.product_id
+			WHERE l.stock_adjustment_id = $1`, id).Scan(&total); err != nil {
+			return err
+		}
+		total = money.Money(total)
+		if err := jobs.EnqueueTx(ctx, tx, p.TenantID, jobs.CheckLowStock, map[string]any{"branch_id": p.BranchID, "product_ids": productIDs(in.Items)}); err != nil {
+			return err
+		}
+		if err := s.Audit.Record(ctx, tx, p, "stock_entry.posted", "stock_adjustments", id, nil, map[string]any{"number": number, "direction": in.Direction, "reason": in.Reason, "total": total}); err != nil {
 			return err
 		}
 		raw, err := idem.Complete(ctx, tx, p.UserID, 201, httpx.Data(map[string]any{"id": id, "number": number, "total_value": total, "direction": in.Direction, "reason": in.Reason}))
@@ -219,6 +185,17 @@ func (s *Service) PostEntry(ctx context.Context, p *auth.Principal, in EntryInpu
 	return status, body, err
 }
 
+func uniqueItems(items []Item) error {
+	seen := map[uuid.UUID]bool{}
+	for _, it := range items {
+		if seen[it.ProductID] {
+			return httpx.BadRequest("invalid_body", "Each product may appear only once")
+		}
+		seen[it.ProductID] = true
+	}
+	return nil
+}
+
 func productIDs(items []Item) []uuid.UUID {
 	out := make([]uuid.UUID, len(items))
 	for i, it := range items {
@@ -226,8 +203,6 @@ func productIDs(items []Item) []uuid.UUID {
 	}
 	return out
 }
-
-// ---- Adjustments ----
 
 type CountLine struct {
 	ProductID  uuid.UUID       `json:"product_id" validate:"required"`
@@ -250,6 +225,15 @@ func uniqueCounts(lines []CountLine) error {
 	return nil
 }
 
+// stockTakeMark prefixes the note of an adjustment that came from a count sheet, so the list can tell
+// a stock take from a manual count (the schema has no flag for it).
+const stockTakeMark = "[stock take] "
+
+// A counted adjustment is two linked records: a stock count (what was counted against what the
+// system held) and a draft adjustment. Posting recomputes each difference against the stock at that
+// moment, writes the adjustment lines, and the database posts the movements.
+
+// CreateAdjustment records counted quantities as a draft. Only one count may be open per branch.
 func (s *Service) CreateAdjustment(ctx context.Context, p *auth.Principal, in AdjustmentIn, stockTake bool) (map[string]any, error) {
 	if p.BranchID == nil {
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
@@ -261,7 +245,7 @@ func (s *Service) CreateAdjustment(ctx context.Context, p *auth.Principal, in Ad
 		return nil, err
 	}
 	var result map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		pids := make([]uuid.UUID, len(in.Items))
 		for i, ln := range in.Items {
 			pids[i] = ln.ProductID
@@ -269,46 +253,58 @@ func (s *Service) CreateAdjustment(ctx context.Context, p *auth.Principal, in Ad
 		if err := stockProducts(ctx, tx, pids); err != nil {
 			return err
 		}
-		number, err := sequence.Next(ctx, tx, *p.BranchID, "adjustment")
+		var open int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.stock_counts WHERE tenant_id = $1 AND location_id = $2 AND status = 'in_progress'`, p.TenantID, *p.BranchID).Scan(&open); err != nil {
+			return err
+		}
+		if open > 0 {
+			return httpx.Conflict("invalid_status", "This branch already has an open stock count. Post or cancel it first.")
+		}
+		number, err := sequence.Next(ctx, tx, *p.BranchID, "stock_adjustment")
 		if err != nil {
 			return err
 		}
-		id := ids.New()
+		note := strings.TrimSpace(in.Reason)
+		if stockTake {
+			note = stockTakeMark + note
+		}
+		id, countID := uuid.New(), uuid.New()
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO stock_adjustments (id, business_id, branch_id, number, reason, is_stock_take, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)
-		`, id, p.BusinessID, *p.BranchID, number, in.Reason, stockTake, p.UserID); err != nil {
+			INSERT INTO app.stock_adjustments (id, tenant_id, adjustment_no, location_id, reason, note, business_date)
+			VALUES ($1,$2,$3,$4,'count_correction',$5,$6::date)`, id, p.TenantID, number, *p.BranchID, note, s.bizDate(ctx, tx)); err != nil {
 			return err
 		}
-		value, err := s.writeCounts(ctx, tx, p.BusinessID, id, *p.BranchID, in.Items)
+		if _, err := tx.Exec(ctx, `INSERT INTO app.stock_counts (id, tenant_id, location_id, stock_adjustment_id) VALUES ($1,$2,$3,$4)`, countID, p.TenantID, *p.BranchID, id); err != nil {
+			return err
+		}
+		value, err := s.writeCounts(ctx, tx, p, countID, in.Items)
 		if err != nil {
 			return err
 		}
 		result = map[string]any{"id": id, "number": number, "status": "draft", "total_value": value, "items": len(in.Items)}
-		return s.Audit.Record(ctx, tx, p, "stock_adjustment.created", "stock_adjustment", id, nil, result)
+		return s.Audit.Record(ctx, tx, p, "stock_adjustment.created", "stock_adjustments", id, nil, result)
 	})
 	return result, err
 }
 
-// writeCounts stores counted lines with the current system quantity and cost
-// and returns the signed value of the difference.
-func (s *Service) writeCounts(ctx context.Context, tx pgx.Tx, businessID, id, branch uuid.UUID, lines []CountLine) (decimal.Decimal, error) {
+// writeCounts stores the counted lines with the system quantity at this moment and returns the signed
+// value of the differences.
+func (s *Service) writeCounts(ctx context.Context, tx pgx.Tx, p *auth.Principal, countID uuid.UUID, lines []CountLine) (decimal.Decimal, error) {
 	value := money.Zero
 	for _, ln := range lines {
-		qty, cost, err := s.Stock.Level(ctx, tx, branch, ln.ProductID)
-		if err != nil {
+		var sys, cost decimal.Decimal
+		if err := tx.QueryRow(ctx, `
+			SELECT coalesce((SELECT quantity_on_hand FROM app.stock_balances WHERE tenant_id = $1 AND location_id = $2 AND product_id = $3), 0),
+			       (SELECT average_cost FROM app.products WHERE tenant_id = $1 AND id = $3)`, p.TenantID, *p.BranchID, ln.ProductID).Scan(&sys, &cost); err != nil {
 			return value, err
 		}
+		counted := money.Qty(ln.QtyCounted)
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO stock_adjustment_items (id, business_id, adjustment_id, product_id, qty_system, qty_counted, unit_cost)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)
-		`, ids.New(), businessID, id, ln.ProductID, qty, money.Qty(ln.QtyCounted), cost); err != nil {
+			INSERT INTO app.stock_count_lines (tenant_id, stock_count_id, product_id, system_qty, counted_qty, counted_by, counted_at)
+			VALUES ($1,$2,$3,$4,$5,$6,now())`, p.TenantID, countID, ln.ProductID, sys, counted, p.MembershipID); err != nil {
 			return value, err
 		}
-		value = value.Add(money.Money(money.Qty(ln.QtyCounted).Sub(qty).Mul(cost)))
-	}
-	if _, err := tx.Exec(ctx, `UPDATE stock_adjustments SET total_value=$2 WHERE id=$1`, id, value); err != nil {
-		return value, err
+		value = value.Add(money.Money(counted.Sub(sys).Mul(cost)))
 	}
 	return value, nil
 }
@@ -318,7 +314,7 @@ type CountSheetIn struct {
 	Reason     string     `json:"reason" validate:"max=500"`
 }
 
-// CountSheet creates a stock-take draft prefilled with system quantities (FR-INV-19).
+// CountSheet creates a stock-take draft prefilled with the system quantities.
 func (s *Service) CountSheet(ctx context.Context, p *auth.Principal, in CountSheetIn) (map[string]any, error) {
 	if p.BranchID == nil {
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
@@ -327,13 +323,12 @@ func (s *Service) CountSheet(ctx context.Context, p *auth.Principal, in CountShe
 		in.Reason = "Stock take"
 	}
 	var lines []CountLine
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT p.id, COALESCE(sl.qty_on_hand, 0)
-			FROM products p LEFT JOIN stock_levels sl ON sl.product_id=p.id AND sl.branch_id=$1
-			WHERE p.kind='stock' AND p.is_active AND ($2::uuid IS NULL OR p.category_id=$2)
-			ORDER BY p.name
-		`, *p.BranchID, in.CategoryID)
+			SELECT p.id, coalesce(b.quantity_on_hand, 0)
+			FROM app.products p LEFT JOIN app.stock_balances b ON b.tenant_id = p.tenant_id AND b.product_id = p.id AND b.location_id = $1
+			WHERE p.tenant_id = $3 AND p.status = 'active' AND ($2::uuid IS NULL OR p.category_id = $2)
+			ORDER BY p.name`, *p.BranchID, in.CategoryID, p.TenantID)
 		if err != nil {
 			return err
 		}
@@ -360,15 +355,22 @@ func (s *Service) CountSheet(ctx context.Context, p *auth.Principal, in CountShe
 	return s.GetAdjustment(ctx, p, out["id"].(uuid.UUID))
 }
 
-// loadAdjustment locks the adjustment and checks it is inside the caller's branch scope.
-func (s *Service) loadAdjustment(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (string, uuid.UUID, string, error) {
+// loadAdjustment locks the adjustment and returns its status, location, number and open count.
+func (s *Service) loadAdjustment(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (string, uuid.UUID, string, uuid.UUID, error) {
 	var st, number string
 	var branch uuid.UUID
-	err := tx.QueryRow(ctx, `SELECT status, branch_id, number FROM stock_adjustments WHERE id=$1 FOR UPDATE`, id).Scan(&st, &branch, &number)
-	if err != nil || !p.SeesBranch("stock.adjust", branch) {
-		return "", uuid.Nil, "", httpx.NotFound("not_found", "Adjustment not found")
+	var count *uuid.UUID
+	err := tx.QueryRow(ctx, `
+		SELECT a.status::text, a.location_id, a.adjustment_no, (SELECT c.id FROM app.stock_counts c WHERE c.tenant_id = a.tenant_id AND c.stock_adjustment_id = a.id)
+		FROM app.stock_adjustments a WHERE a.tenant_id = $1 AND a.id = $2 AND a.reason = 'count_correction' FOR UPDATE OF a`, p.TenantID, id).Scan(&st, &branch, &number, &count)
+	if err != nil {
+		return "", uuid.Nil, "", uuid.Nil, httpx.NotFound("not_found", "Adjustment not found")
 	}
-	return st, branch, number, nil
+	cid := uuid.Nil
+	if count != nil {
+		cid = *count
+	}
+	return st, branch, number, cid, nil
 }
 
 func (s *Service) UpdateAdjustment(ctx context.Context, p *auth.Principal, id uuid.UUID, in AdjustmentIn) (map[string]any, error) {
@@ -378,8 +380,8 @@ func (s *Service) UpdateAdjustment(ctx context.Context, p *auth.Principal, id uu
 	if err := uniqueCounts(in.Items); err != nil {
 		return nil, err
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		st, branch, _, err := s.loadAdjustment(ctx, tx, p, id)
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		st, branch, _, count, err := s.loadAdjustment(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
@@ -393,17 +395,21 @@ func (s *Service) UpdateAdjustment(ctx context.Context, p *auth.Principal, id uu
 		if err := stockProducts(ctx, tx, pids); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM stock_adjustment_items WHERE adjustment_id=$1`, id); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM app.stock_count_lines WHERE tenant_id = $1 AND stock_count_id = $2`, p.TenantID, count); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE stock_adjustments SET reason=$2 WHERE id=$1`, id, in.Reason); err != nil {
+		var mark string
+		_ = tx.QueryRow(ctx, `SELECT CASE WHEN note LIKE $2 THEN $3 ELSE '' END FROM app.stock_adjustments WHERE id = $1`, id, stockTakeMark+"%", stockTakeMark).Scan(&mark)
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_adjustments SET note = $2 WHERE id = $1`, id, mark+strings.TrimSpace(in.Reason)); err != nil {
 			return err
 		}
-		value, err := s.writeCounts(ctx, tx, p.BusinessID, id, branch, in.Items)
+		bp := *p
+		bp.BranchID = &branch
+		value, err := s.writeCounts(ctx, tx, &bp, count, in.Items)
 		if err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "stock_adjustment.updated", "stock_adjustment", id, nil, map[string]any{"reason": in.Reason, "total_value": value})
+		return s.Audit.Record(ctx, tx, p, "stock_adjustment.updated", "stock_adjustments", id, nil, map[string]any{"reason": in.Reason, "total_value": value})
 	})
 	if err != nil {
 		return nil, err
@@ -412,18 +418,21 @@ func (s *Service) UpdateAdjustment(ctx context.Context, p *auth.Principal, id uu
 }
 
 func (s *Service) CancelAdjustment(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		st, _, _, err := s.loadAdjustment(ctx, tx, p, id)
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		st, _, _, count, err := s.loadAdjustment(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
 		if st != "draft" {
 			return httpx.Conflict("invalid_status", "Only a draft adjustment can be cancelled")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE stock_adjustments SET status='cancelled' WHERE id=$1`, id); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_adjustments SET status = 'cancelled' WHERE id = $1`, id); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "stock_adjustment.cancelled", "stock_adjustment", id, map[string]any{"status": st}, map[string]any{"status": "cancelled"})
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_counts SET status = 'cancelled' WHERE id = $1`, count); err != nil {
+			return err
+		}
+		return s.Audit.Record(ctx, tx, p, "stock_adjustment.cancelled", "stock_adjustments", id, map[string]any{"status": st}, map[string]any{"status": "cancelled"})
 	})
 	if err != nil {
 		return nil, err
@@ -431,175 +440,77 @@ func (s *Service) CancelAdjustment(ctx context.Context, p *auth.Principal, id uu
 	return map[string]any{"id": id, "status": "cancelled"}, nil
 }
 
-// refreshCounts re-reads the system quantity and cost of every line under lock,
-// because stock may have moved since the draft was written.
-func (s *Service) refreshCounts(ctx context.Context, tx pgx.Tx, id, branch uuid.UUID) (decimal.Decimal, error) {
-	if _, err := tx.Exec(ctx, `
-		UPDATE stock_adjustment_items ai
-		SET qty_system = COALESCE(sl.qty_on_hand, 0), unit_cost = COALESCE(sl.avg_cost, ai.unit_cost)
-		FROM stock_adjustment_items x LEFT JOIN stock_levels sl ON sl.product_id = x.product_id AND sl.branch_id = $2
-		WHERE ai.id = x.id AND ai.adjustment_id = $1
-	`, id, branch); err != nil {
-		return money.Zero, err
-	}
-	var value decimal.Decimal
-	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(SUM(round((qty_counted - qty_system) * unit_cost, 2)), 0) FROM stock_adjustment_items WHERE adjustment_id=$1
-	`, id).Scan(&value); err != nil {
-		return money.Zero, err
-	}
-	_, err := tx.Exec(ctx, `UPDATE stock_adjustments SET total_value=$2 WHERE id=$1`, id, value)
-	return value, err
-}
-
+// PostAdjustment re-reads the stock under lock (it may have moved since the count), writes the
+// adjustment lines for every difference, and posts. The database writes the movements and balances.
 func (s *Service) PostAdjustment(ctx context.Context, p *auth.Principal, id uuid.UUID) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
 			return err
 		}
-		st, branch, number, err := s.loadAdjustment(ctx, tx, p, id)
+		st, branch, number, count, err := s.loadAdjustment(ctx, tx, p, id)
 		if err != nil {
 			return err
-		}
-		if st == "pending_approval" {
-			return httpx.Conflict("invalid_status", "This adjustment is already waiting for approval")
 		}
 		if st != "draft" {
 			return httpx.Conflict("invalid_status", "Only a draft adjustment can be posted")
 		}
-		value, err := s.refreshCounts(ctx, tx, id, branch)
+		if _, err := tx.Exec(ctx, `DELETE FROM app.stock_adjustment_lines WHERE tenant_id = $1 AND stock_adjustment_id = $2`, p.TenantID, id); err != nil {
+			return err
+		}
+		tag, err := tx.Exec(ctx, `
+			INSERT INTO app.stock_adjustment_lines (tenant_id, stock_adjustment_id, product_id, quantity_delta, unit_cost)
+			SELECT cl.tenant_id, $2, cl.product_id, cl.counted_qty - coalesce(b.quantity_on_hand, 0), pr.average_cost
+			FROM app.stock_count_lines cl
+			JOIN app.products pr ON pr.tenant_id = cl.tenant_id AND pr.id = cl.product_id
+			LEFT JOIN app.stock_balances b ON b.tenant_id = cl.tenant_id AND b.product_id = cl.product_id AND b.location_id = $3
+			WHERE cl.tenant_id = $1 AND cl.stock_count_id = $4 AND cl.counted_qty IS NOT NULL AND cl.counted_qty <> coalesce(b.quantity_on_hand, 0)`,
+			p.TenantID, id, branch, count)
 		if err != nil {
 			return err
 		}
-		abs := value.Abs()
-		g, ok := p.Can("stock.adjust")
-		if !p.IsOwner && !auth.WithinLimit(g, ok, abs) {
-			if _, err := tx.Exec(ctx, `UPDATE stock_adjustments SET status='pending_approval' WHERE id=$1`, id); err != nil {
-				return err
-			}
-			reqID, err := s.Approval.Request(ctx, tx, p, approval.Input{
-				BranchID: &branch, Kind: "stock_adjustment", SubjectType: "stock_adjustment", SubjectID: id,
-				Amount: decimal.NullDecimal{Decimal: abs, Valid: true}, Summary: "Stock adjustment " + number,
-			})
-			if err != nil {
-				return err
-			}
-			if err := s.Audit.Record(ctx, tx, p, "stock_adjustment.submitted", "stock_adjustment", id, nil, map[string]any{"value": value, "approval_request_id": reqID}); err != nil {
-				return err
-			}
-			raw, err := idem.Complete(ctx, tx, p.UserID, 202, httpx.Data(map[string]any{"id": id, "approval_request_id": reqID, "status": "pending_approval"}))
-			status, body = 202, raw
+		if tag.RowsAffected() == 0 {
+			return httpx.Conflict("nothing_to_adjust", "Every counted quantity already matches the system, so there is nothing to post")
+		}
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_adjustments SET status = 'posted', posted_at = now() WHERE id = $1`, id); err != nil {
 			return err
 		}
-		if err := s.applyAdjustment(ctx, tx, p, id, branch); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_counts SET status = 'completed', completed_at = now() WHERE id = $1`, count); err != nil {
 			return err
 		}
-		if err := s.Audit.Record(ctx, tx, p, "stock_adjustment.posted", "stock_adjustment", id, nil, map[string]any{"number": number, "value": value}); err != nil {
+		var value decimal.Decimal
+		if err := tx.QueryRow(ctx, `SELECT coalesce(sum(round(quantity_delta * unit_cost, 2)), 0) FROM app.stock_adjustment_lines WHERE stock_adjustment_id = $1`, id).Scan(&value); err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "number": number, "status": "posted", "total_value": value}))
+		pids := []uuid.UUID{}
+		rows, err := tx.Query(ctx, `SELECT product_id FROM app.stock_adjustment_lines WHERE stock_adjustment_id = $1`, id)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var pid uuid.UUID
+			if err := rows.Scan(&pid); err != nil {
+				rows.Close()
+				return err
+			}
+			pids = append(pids, pid)
+		}
+		rows.Close()
+		if err := jobs.EnqueueTx(ctx, tx, p.TenantID, jobs.CheckLowStock, map[string]any{"branch_id": branch, "product_ids": pids}); err != nil {
+			return err
+		}
+		if err := s.Audit.Record(ctx, tx, p, "stock_adjustment.posted", "stock_adjustments", id, nil, map[string]any{"number": number, "value": value}); err != nil {
+			return err
+		}
+		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "number": number, "status": "posted", "total_value": money.Money(value)}))
 		status, body = 200, raw
 		return err
 	})
 	return status, body, err
-}
-
-func (s *Service) applyAdjustment(ctx context.Context, tx pgx.Tx, p *auth.Principal, id, branch uuid.UUID) error {
-	if _, err := s.refreshCounts(ctx, tx, id, branch); err != nil {
-		return err
-	}
-	rows, err := tx.Query(ctx, `SELECT product_id, qty_system, qty_counted, unit_cost FROM stock_adjustment_items WHERE adjustment_id=$1`, id)
-	if err != nil {
-		return err
-	}
-	type row struct {
-		id                    uuid.UUID
-		system, counted, cost decimal.Decimal
-	}
-	var items []row
-	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.id, &r.system, &r.counted, &r.cost); err != nil {
-			rows.Close()
-			return err
-		}
-		items = append(items, r)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	user := p.UserID
-	gain, loss := money.Zero, money.Zero
-	var pids []uuid.UUID
-	for _, it := range items {
-		diff := it.counted.Sub(it.system)
-		if diff.IsZero() {
-			continue
-		}
-		pids = append(pids, it.id)
-		if diff.IsPositive() {
-			if err := s.Stock.Receive(ctx, tx, p.BusinessID, branch, &user, "adjustment", "stock_adjustment", id, []stock.Line{{ProductID: it.id, Qty: diff, UnitCost: it.cost}}); err != nil {
-				return err
-			}
-			gain = gain.Add(money.Money(diff.Mul(it.cost)))
-		} else {
-			costs, err := s.Stock.Deduct(ctx, tx, p.BusinessID, branch, &user, "adjustment", "stock_adjustment", id, []stock.Line{{ProductID: it.id, Qty: diff.Abs()}})
-			if err != nil {
-				return err
-			}
-			loss = loss.Add(money.Money(diff.Abs().Mul(costs[it.id])))
-		}
-	}
-	date := s.bizDate(ctx, tx)
-	var lines []ledger.Line
-	if gain.IsPositive() {
-		lines = append(lines, ledger.Line{Code: "1200", BranchID: &branch, Debit: gain}, ledger.Line{Code: "4200", BranchID: &branch, Credit: gain})
-	}
-	if loss.IsPositive() {
-		lines = append(lines, ledger.Line{Code: "5100", BranchID: &branch, Debit: loss}, ledger.Line{Code: "1200", BranchID: &branch, Credit: loss})
-	}
-	if len(lines) > 0 {
-		if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "stock_adjustment", id, "Stock adjustment", &user, lines); err != nil {
-			return err
-		}
-	}
-	if len(pids) > 0 {
-		if err := jobs.EnqueueTx(ctx, tx, p.BusinessID, jobs.CheckLowStock, map[string]any{"branch_id": branch, "product_ids": pids}); err != nil {
-			return err
-		}
-	}
-	_, err = tx.Exec(ctx, `UPDATE stock_adjustments SET status='posted', posted_by=$2, posted_at=now() WHERE id=$1`, id, p.UserID)
-	return err
-}
-
-func (s *Service) OnAdjustmentApproved(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
-	var branch uuid.UUID
-	var st string
-	if err := tx.QueryRow(ctx, `SELECT branch_id, status FROM stock_adjustments WHERE id=$1 FOR UPDATE`, req.SubjectID).Scan(&branch, &st); err != nil {
-		return err
-	}
-	if st != "pending_approval" {
-		return httpx.Conflict("invalid_status", "This adjustment is no longer waiting for approval")
-	}
-	if err := s.applyAdjustment(ctx, tx, p, req.SubjectID, branch); err != nil {
-		return err
-	}
-	return s.Audit.Record(ctx, tx, p, "stock_adjustment.approved", "stock_adjustment", req.SubjectID, nil, map[string]any{"approval_request_id": req.ID})
-}
-
-// OnAdjustmentRejected returns the adjustment to draft so it can be corrected
-// or cancelled (rejecting returns the record to its previous state).
-func (s *Service) OnAdjustmentRejected(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
-	if _, err := tx.Exec(ctx, `UPDATE stock_adjustments SET status='draft' WHERE id=$1 AND status='pending_approval'`, req.SubjectID); err != nil {
-		return err
-	}
-	return s.Audit.Record(ctx, tx, p, "stock_adjustment."+req.Status, "stock_adjustment", req.SubjectID, nil, map[string]any{"status": "draft", "note": req.Note})
 }
 
 // ---- Transfers ----
@@ -615,15 +526,11 @@ func (s *Service) checkTransferInput(ctx context.Context, tx pgx.Tx, from uuid.U
 		return httpx.BadRequest("invalid_body", "Choose a different receiving branch")
 	}
 	var active bool
-	if err := tx.QueryRow(ctx, `SELECT is_active FROM branches WHERE id=$1`, in.ToBranchID).Scan(&active); err != nil || !active {
+	if err := tx.QueryRow(ctx, `SELECT status = 'active' FROM app.locations WHERE id = $1`, in.ToBranchID).Scan(&active); err != nil || !active {
 		return httpx.NotFound("not_found", "Receiving branch not found")
 	}
-	seen := map[uuid.UUID]bool{}
-	for _, it := range in.Items {
-		if seen[it.ProductID] {
-			return httpx.BadRequest("invalid_body", "Each product may appear only once")
-		}
-		seen[it.ProductID] = true
+	if err := uniqueItems(in.Items); err != nil {
+		return err
 	}
 	return stockProducts(ctx, tx, productIDs(in.Items))
 }
@@ -636,35 +543,34 @@ func (s *Service) CreateTransfer(ctx context.Context, p *auth.Principal, in Tran
 		return nil, err
 	}
 	var result map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := s.checkTransferInput(ctx, tx, *p.BranchID, in); err != nil {
 			return err
 		}
-		number, err := sequence.Next(ctx, tx, *p.BranchID, "transfer")
+		number, err := sequence.Next(ctx, tx, *p.BranchID, "stock_transfer")
 		if err != nil {
 			return err
 		}
-		id := ids.New()
+		id := uuid.New()
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO stock_transfers (id, business_id, number, from_branch_id, to_branch_id, note, created_by)
-			VALUES ($1,$2,$3,$4,$5,NULLIF($6,''),$7)
-		`, id, p.BusinessID, number, *p.BranchID, in.ToBranchID, in.Note, p.UserID); err != nil {
+			INSERT INTO app.stock_transfers (id, tenant_id, transfer_no, from_location_id, to_location_id, note) VALUES ($1,$2,$3,$4,$5,NULLIF($6,''))`,
+			id, p.TenantID, number, *p.BranchID, in.ToBranchID, in.Note); err != nil {
 			return err
 		}
-		if err := insertTransferItems(ctx, tx, p.BusinessID, id, in.Items); err != nil {
+		if err := insertTransferItems(ctx, tx, p.TenantID, id, in.Items); err != nil {
 			return err
 		}
 		result = map[string]any{"id": id, "number": number, "status": "draft", "from_branch_id": *p.BranchID, "to_branch_id": in.ToBranchID}
-		return s.Audit.Record(ctx, tx, p, "transfer.created", "stock_transfer", id, nil, result)
+		return s.Audit.Record(ctx, tx, p, "transfer.created", "stock_transfers", id, nil, result)
 	})
 	return result, err
 }
 
-func insertTransferItems(ctx context.Context, tx pgx.Tx, businessID, id uuid.UUID, items []Item) error {
+func insertTransferItems(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, items []Item) error {
 	for _, it := range items {
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO stock_transfer_items (id, business_id, transfer_id, product_id, qty_sent) VALUES ($1,$2,$3,$4,$5)
-		`, ids.New(), businessID, id, it.ProductID, money.Qty(it.Qty)); err != nil {
+			INSERT INTO app.stock_transfer_lines (tenant_id, stock_transfer_id, product_id, quantity) VALUES ($1,$2,$3,$4)`,
+			tenantID, id, it.ProductID, money.Qty(it.Qty)); err != nil {
 			return err
 		}
 	}
@@ -677,19 +583,12 @@ type transferRow struct {
 	number   string
 }
 
-// lockTransfer loads a transfer under lock. side is "from" or "to": the branch
-// the caller must be able to act in for the permission key.
-func lockTransfer(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID, key, side string) (transferRow, error) {
+// lockTransfer loads a transfer under lock.
+func lockTransfer(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (transferRow, error) {
 	var t transferRow
-	err := tx.QueryRow(ctx, `SELECT from_branch_id, to_branch_id, status, number FROM stock_transfers WHERE id=$1 FOR UPDATE`, id).Scan(&t.from, &t.to, &t.status, &t.number)
+	err := tx.QueryRow(ctx, `SELECT from_location_id, to_location_id, status::text, transfer_no FROM app.stock_transfers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+		p.TenantID, id).Scan(&t.from, &t.to, &t.status, &t.number)
 	if err != nil {
-		return t, httpx.NotFound("not_found", "Transfer not found")
-	}
-	branch := t.from
-	if side == "to" {
-		branch = t.to
-	}
-	if !p.SeesBranch(key, branch) {
 		return t, httpx.NotFound("not_found", "Transfer not found")
 	}
 	return t, nil
@@ -699,8 +598,8 @@ func (s *Service) UpdateTransfer(ctx context.Context, p *auth.Principal, id uuid
 	if err := httpx.Check(in); err != nil {
 		return nil, err
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		t, err := lockTransfer(ctx, tx, p, id, "transfers.create", "from")
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		t, err := lockTransfer(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
@@ -710,16 +609,16 @@ func (s *Service) UpdateTransfer(ctx context.Context, p *auth.Principal, id uuid
 		if err := s.checkTransferInput(ctx, tx, t.from, in); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM stock_transfer_items WHERE transfer_id=$1`, id); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM app.stock_transfer_lines WHERE tenant_id = $1 AND stock_transfer_id = $2`, p.TenantID, id); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE stock_transfers SET to_branch_id=$2, note=NULLIF($3,'') WHERE id=$1`, id, in.ToBranchID, in.Note); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_transfers SET to_location_id = $2, note = NULLIF($3,'') WHERE id = $1`, id, in.ToBranchID, in.Note); err != nil {
 			return err
 		}
-		if err := insertTransferItems(ctx, tx, p.BusinessID, id, in.Items); err != nil {
+		if err := insertTransferItems(ctx, tx, p.TenantID, id, in.Items); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "transfer.updated", "stock_transfer", id, nil, in)
+		return s.Audit.Record(ctx, tx, p, "transfer.updated", "stock_transfers", id, nil, in)
 	})
 	if err != nil {
 		return nil, err
@@ -728,18 +627,18 @@ func (s *Service) UpdateTransfer(ctx context.Context, p *auth.Principal, id uuid
 }
 
 func (s *Service) CancelTransfer(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		t, err := lockTransfer(ctx, tx, p, id, "transfers.create", "from")
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		t, err := lockTransfer(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
 		if t.status != "draft" {
 			return httpx.Conflict("invalid_status", "Only a draft transfer can be cancelled. A dispatched transfer must be received")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE stock_transfers SET status='cancelled' WHERE id=$1`, id); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_transfers SET status = 'cancelled' WHERE id = $1`, id); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "transfer.cancelled", "stock_transfer", id, map[string]any{"status": "draft"}, map[string]any{"status": "cancelled"})
+		return s.Audit.Record(ctx, tx, p, "transfer.cancelled", "stock_transfers", id, map[string]any{"status": "draft"}, map[string]any{"status": "cancelled"})
 	})
 	if err != nil {
 		return nil, err
@@ -747,77 +646,60 @@ func (s *Service) CancelTransfer(ctx context.Context, p *auth.Principal, id uuid
 	return map[string]any{"id": id, "status": "cancelled"}, nil
 }
 
+// transferValue is the cost of what a transfer moves, at each product's current average cost.
+func transferValue(ctx context.Context, tx pgx.Tx, id uuid.UUID) (decimal.Decimal, []uuid.UUID, error) {
+	var value decimal.Decimal
+	var pids []uuid.UUID
+	rows, err := tx.Query(ctx, `
+		SELECT l.product_id, round(l.quantity * pr.average_cost, 2)
+		FROM app.stock_transfer_lines l JOIN app.products pr ON pr.tenant_id = l.tenant_id AND pr.id = l.product_id
+		WHERE l.stock_transfer_id = $1`, id)
+	if err != nil {
+		return value, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pid uuid.UUID
+		var v decimal.Decimal
+		if err := rows.Scan(&pid, &v); err != nil {
+			return value, nil, err
+		}
+		pids = append(pids, pid)
+		value = value.Add(v)
+	}
+	return value, pids, rows.Err()
+}
+
+// Dispatch sends a draft transfer. The database writes the transfer-out movements and refuses with
+// "insufficient stock" if the sending branch does not hold the quantities.
 func (s *Service) Dispatch(ctx context.Context, p *auth.Principal, id uuid.UUID) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
 			return err
 		}
-		t, err := lockTransfer(ctx, tx, p, id, "transfers.dispatch", "from")
+		t, err := lockTransfer(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
 		if t.status != "draft" {
 			return httpx.Conflict("invalid_status", "Only a draft transfer can be dispatched")
 		}
-		rows, err := tx.Query(ctx, `SELECT product_id, qty_sent FROM stock_transfer_items WHERE transfer_id=$1`, id)
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_transfers SET status = 'dispatched', dispatched_at = now(), dispatched_by = $2 WHERE id = $1`, id, p.MembershipID); err != nil {
+			return err
+		}
+		value, pids, err := transferValue(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		var lines []stock.Line
-		var pids []uuid.UUID
-		for rows.Next() {
-			var pid uuid.UUID
-			var qty decimal.Decimal
-			if err := rows.Scan(&pid, &qty); err != nil {
-				rows.Close()
-				return err
-			}
-			lines = append(lines, stock.Line{ProductID: pid, Qty: qty})
-			pids = append(pids, pid)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		if err := jobs.EnqueueTx(ctx, tx, p.TenantID, jobs.CheckLowStock, map[string]any{"branch_id": t.from, "product_ids": pids}); err != nil {
 			return err
 		}
-		if len(lines) == 0 {
-			return httpx.Conflict("invalid_status", "The transfer has no items")
-		}
-		user := p.UserID
-		costs, err := s.Stock.Deduct(ctx, tx, p.BusinessID, t.from, &user, "transfer_out", "stock_transfer", id, lines)
-		if err != nil {
-			return err
-		}
-		value := money.Zero
-		for _, ln := range lines {
-			value = value.Add(money.Money(ln.Qty.Mul(costs[ln.ProductID])))
-			if _, err := tx.Exec(ctx, `UPDATE stock_transfer_items SET unit_cost=$3 WHERE transfer_id=$1 AND product_id=$2`, id, ln.ProductID, costs[ln.ProductID]); err != nil {
-				return err
-			}
-		}
-		if value.IsPositive() {
-			if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, s.bizDate(ctx, tx), "stock_transfer", id, "Transfer dispatch "+t.number, &user, []ledger.Line{
-				{Code: "1210", BranchID: &t.from, Debit: value},
-				{Code: "1200", BranchID: &t.from, Credit: value},
-			}); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.Exec(ctx, `UPDATE stock_transfers SET status='dispatched', dispatched_by=$2, dispatched_at=now() WHERE id=$1`, id, p.UserID); err != nil {
-			return err
-		}
-		if err := jobs.EnqueueTx(ctx, tx, p.BusinessID, jobs.CheckLowStock, map[string]any{"branch_id": t.from, "product_ids": pids}); err != nil {
-			return err
-		}
-		_ = s.Notify.ToPermission(ctx, tx, p.BusinessID, &t.to, "transfers.receive", notify.Message{
-			Type: "transfer_dispatched", Title: "Stock on the way", Body: t.number + " was dispatched to your branch",
-			Link: "/stock-transfers/" + id.String(), EntityType: "stock_transfer", EntityID: &id,
-		})
-		if err := s.Audit.Record(ctx, tx, p, "transfer.dispatched", "stock_transfer", id, nil, map[string]any{"number": t.number, "value": value}); err != nil {
+		if err := s.Audit.Record(ctx, tx, p, "transfer.dispatched", "stock_transfers", id, nil, map[string]any{"number": t.number, "value": value}); err != nil {
 			return err
 		}
 		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "number": t.number, "status": "dispatched", "value": value}))
@@ -827,68 +709,10 @@ func (s *Service) Dispatch(ctx context.Context, p *auth.Principal, id uuid.UUID)
 	return status, body, err
 }
 
-// ReturnTransfer sends a dispatched transfer back to the sender in full
-// (FR-INV-25). Every item re-enters the sending branch at the cost it left,
-// and the dispatch journal entry is mirrored (1200 Dr / 1210 Cr).
+// ReturnTransfer is not supported: the approved model has no return leg for a dispatched transfer.
+// Receive it, then send the goods back with a new transfer.
 func (s *Service) ReturnTransfer(ctx context.Context, p *auth.Principal, id uuid.UUID, reason string) (int, []byte, error) {
-	var status int
-	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
-			if rep != nil {
-				status, body = rep.Status, rep.Body
-			}
-			return err
-		}
-		t, err := lockTransfer(ctx, tx, p, id, "transfers.dispatch", "from")
-		if err != nil {
-			return err
-		}
-		if t.status != "dispatched" {
-			return httpx.Conflict("invalid_status", "Only a dispatched transfer can be returned")
-		}
-		rows, err := tx.Query(ctx, `SELECT product_id, qty_sent, unit_cost FROM stock_transfer_items WHERE transfer_id=$1`, id)
-		if err != nil {
-			return err
-		}
-		var lines []stock.Line
-		var pids []uuid.UUID
-		value := money.Zero
-		for rows.Next() {
-			var ln stock.Line
-			if err := rows.Scan(&ln.ProductID, &ln.Qty, &ln.UnitCost); err != nil {
-				rows.Close()
-				return err
-			}
-			lines = append(lines, ln)
-			pids = append(pids, ln.ProductID)
-			value = value.Add(money.Money(ln.Qty.Mul(ln.UnitCost)))
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		user := p.UserID
-		if err := s.Stock.Receive(ctx, tx, p.BusinessID, t.from, &user, "transfer_in", "stock_transfer_return", id, lines); err != nil {
-			return err
-		}
-		if err := s.Ledger.Reverse(ctx, tx, p.BusinessID, "stock_transfer", id, s.bizDate(ctx, tx), "Transfer returned "+t.number, &user); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE stock_transfers SET status='returned', note=COALESCE(NULLIF($2,''), note) WHERE id=$1`, id, reason); err != nil {
-			return err
-		}
-		if err := jobs.EnqueueTx(ctx, tx, p.BusinessID, jobs.CheckLowStock, map[string]any{"branch_id": t.from, "product_ids": pids}); err != nil {
-			return err
-		}
-		if err := s.Audit.Record(ctx, tx, p, "transfer.returned", "stock_transfer", id, map[string]any{"status": "dispatched"}, map[string]any{"status": "returned", "value": value, "reason": reason}); err != nil {
-			return err
-		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "number": t.number, "status": "returned", "value": value}))
-		status, body = 200, raw
-		return err
-	})
-	return status, body, err
+	return 0, nil, httpx.New(410, "transfer_return_removed", "A dispatched transfer cannot be returned. Receive it, then create a transfer back")
 }
 
 type ReceiveLine struct {
@@ -901,170 +725,78 @@ type ReceiveIn struct {
 	Note  string        `json:"note" validate:"max=500"`
 }
 
+// ReceiveTransfer receives a dispatched transfer in full; the database writes the transfer-in
+// movements. A partial receipt (a different quantity per line) is not part of the approved model:
+// receive in full and correct the difference with a stock adjustment.
 func (s *Service) ReceiveTransfer(ctx context.Context, p *auth.Principal, id uuid.UUID, in ReceiveIn) (int, []byte, error) {
 	if err := httpx.Check(in); err != nil {
 		return 0, nil, err
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
 			return err
 		}
-		t, err := lockTransfer(ctx, tx, p, id, "transfers.receive", "to")
+		t, err := lockTransfer(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
 		if t.status != "dispatched" {
-			return httpx.Conflict("invalid_status", "This transfer is not in transit")
+			return httpx.Conflict("invalid_status", "Only a dispatched transfer can be received")
 		}
-		rows, err := tx.Query(ctx, `
-			SELECT ti.product_id, ti.qty_sent, ti.unit_cost, p.name
-			FROM stock_transfer_items ti JOIN products p ON p.id=ti.product_id WHERE ti.transfer_id=$1
-		`, id)
+		if len(in.Items) > 0 {
+			sent := map[uuid.UUID]decimal.Decimal{}
+			rows, err := tx.Query(ctx, `SELECT product_id, quantity FROM app.stock_transfer_lines WHERE stock_transfer_id = $1`, id)
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var pid uuid.UUID
+				var q decimal.Decimal
+				if err := rows.Scan(&pid, &q); err != nil {
+					rows.Close()
+					return err
+				}
+				sent[pid] = q
+			}
+			rows.Close()
+			for _, ln := range in.Items {
+				if q, ok := sent[ln.ProductID]; !ok || !q.Equal(money.Qty(ln.QtyReceived)) {
+					return httpx.BadRequest("partial_receipt_not_supported", "A transfer is received in full. Receive it, then correct any difference with a stock adjustment")
+				}
+			}
+		}
+		if _, err := tx.Exec(ctx, `UPDATE app.stock_transfers SET status = 'received', received_at = now(), received_by = $2 WHERE id = $1`, id, p.MembershipID); err != nil {
+			return err
+		}
+		value, pids, err := transferValue(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		type item struct {
-			id         uuid.UUID
-			sent, cost decimal.Decimal
-			name       string
-		}
-		var items []item
-		onTransfer := map[uuid.UUID]bool{}
-		for rows.Next() {
-			var it item
-			if err := rows.Scan(&it.id, &it.sent, &it.cost, &it.name); err != nil {
-				rows.Close()
-				return err
-			}
-			items = append(items, it)
-			onTransfer[it.id] = true
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
+		if err := jobs.EnqueueTx(ctx, tx, p.TenantID, jobs.CheckLowStock, map[string]any{"branch_id": t.to, "product_ids": pids}); err != nil {
 			return err
 		}
-		got := map[uuid.UUID]decimal.Decimal{}
-		for _, ln := range in.Items {
-			if !onTransfer[ln.ProductID] {
-				return httpx.BadRequest("invalid_body", "A received product is not on this transfer")
-			}
-			got[ln.ProductID] = money.Qty(ln.QtyReceived)
-		}
-		user := p.UserID
-		receivedValue, lossValue := money.Zero, money.Zero
-		var recvLines []stock.Line
-		var shortages []string
-		var pids []uuid.UUID
-		for _, it := range items {
-			qty, ok := got[it.id]
-			if !ok {
-				qty = it.sent
-			}
-			if qty.GreaterThan(it.sent) {
-				return httpx.BadRequest("invalid_body", "Received quantity cannot exceed the quantity sent")
-			}
-			if _, err := tx.Exec(ctx, `UPDATE stock_transfer_items SET qty_received=$3 WHERE transfer_id=$1 AND product_id=$2`, id, it.id, qty); err != nil {
-				return err
-			}
-			if qty.IsPositive() {
-				recvLines = append(recvLines, stock.Line{ProductID: it.id, Qty: qty, UnitCost: it.cost})
-				receivedValue = receivedValue.Add(money.Money(qty.Mul(it.cost)))
-				pids = append(pids, it.id)
-			}
-			if short := it.sent.Sub(qty); short.IsPositive() {
-				lossValue = lossValue.Add(money.Money(short.Mul(it.cost)))
-				shortages = append(shortages, it.name+" short by "+short.String())
-			}
-		}
-		if len(recvLines) > 0 {
-			if err := s.Stock.Receive(ctx, tx, p.BusinessID, t.to, &user, "transfer_in", "stock_transfer", id, recvLines); err != nil {
-				return err
-			}
-		}
-		// The dispatch moved exactly sent x cost into transit; clear it fully.
-		var transit decimal.Decimal
-		if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(round(qty_sent*unit_cost, 2)),0) FROM stock_transfer_items WHERE transfer_id=$1`, id).Scan(&transit); err != nil {
+		if err := s.Audit.Record(ctx, tx, p, "transfer.received", "stock_transfers", id, nil, map[string]any{"number": t.number, "value": value}); err != nil {
 			return err
 		}
-		lossValue = transit.Sub(receivedValue)
-		if lossValue.IsNegative() {
-			receivedValue, lossValue = transit, money.Zero
-		}
-		var jlines []ledger.Line
-		if receivedValue.IsPositive() {
-			jlines = append(jlines, ledger.Line{Code: "1200", BranchID: &t.to, Debit: receivedValue})
-		}
-		if lossValue.IsPositive() {
-			jlines = append(jlines, ledger.Line{Code: "5110", BranchID: &t.from, Debit: lossValue})
-		}
-		if transit.IsPositive() {
-			jlines = append(jlines, ledger.Line{Code: "1210", BranchID: &t.from, Credit: transit})
-			if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, s.bizDate(ctx, tx), "stock_transfer_receive", id, "Transfer receive "+t.number, &user, jlines); err != nil {
-				return err
-			}
-		}
-		final := "received"
-		if len(shortages) > 0 {
-			final = "received_with_difference"
-			// FR-INV-24: the Owner is told about every transfer difference.
-			if err := s.notifyOwners(ctx, tx, p.BusinessID, notify.Message{
-				Type: "transfer_difference", Title: "Transfer difference", Body: t.number + ": " + strings.Join(shortages, ", "),
-				Link: "/stock-transfers/" + id.String(), EntityType: "stock_transfer", EntityID: &id,
-			}); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.Exec(ctx, `UPDATE stock_transfers SET status=$2, received_by=$3, received_at=now(), note=COALESCE(NULLIF($4,''), note) WHERE id=$1`, id, final, p.UserID, in.Note); err != nil {
-			return err
-		}
-		if len(pids) > 0 {
-			if err := jobs.EnqueueTx(ctx, tx, p.BusinessID, jobs.CheckLowStock, map[string]any{"branch_id": t.to, "product_ids": pids}); err != nil {
-				return err
-			}
-		}
-		if err := s.Audit.Record(ctx, tx, p, "transfer.received", "stock_transfer", id, nil, map[string]any{"status": final, "received_value": receivedValue, "loss_value": lossValue}); err != nil {
-			return err
-		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "number": t.number, "status": final, "received_value": receivedValue, "loss_value": lossValue}))
+		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "number": t.number, "status": "received", "received_value": value, "loss_value": money.Zero}))
 		status, body = 200, raw
 		return err
 	})
 	return status, body, err
 }
 
+// notifyOwners tells the business owners (everyone who sees the business dashboard).
 func (s *Service) notifyOwners(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, m notify.Message) error {
-	rows, err := tx.Query(ctx, `SELECT u.id FROM users u JOIN roles r ON r.id=u.role_id WHERE r.slug='owner' AND u.is_active`)
-	if err != nil {
-		return err
-	}
-	var owners []uuid.UUID
-	for rows.Next() {
-		var id uuid.UUID
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		owners = append(owners, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, id := range owners {
-		if err := s.Notify.ToUser(ctx, tx, businessID, id, m); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.Notify.ToPermission(ctx, tx, businessID, nil, "dashboard.business.view", m)
 }
 
-// CheckLowStock raises one notification per product when it reaches its
-// reorder level, and re-arms once it is restocked above it (FR-INV-27).
+// CheckLowStock raises a notification for each product at or below its minimum. The notification
+// service keeps it to one per person, product and day, which replaces the old "notified" flag.
 func (s *Service) CheckLowStock(ctx context.Context, businessID uuid.UUID, payload json.RawMessage) error {
 	var body struct {
 		BranchID   uuid.UUID   `json:"branch_id"`
@@ -1076,41 +808,25 @@ func (s *Service) CheckLowStock(ctx context.Context, businessID uuid.UUID, paylo
 	return s.DB.InTx(ctx, businessID, func(ctx context.Context, tx pgx.Tx) error {
 		for _, pid := range body.ProductIDs {
 			var name string
-			var qty, reorder decimal.Decimal
-			var notified, kindStock bool
+			var qty, minimum decimal.Decimal
 			err := tx.QueryRow(ctx, `
-				SELECT p.name, COALESCE(sl.qty_on_hand,0), p.reorder_level, COALESCE(sl.low_notified,false), p.kind='stock'
-				FROM products p LEFT JOIN stock_levels sl ON sl.product_id=p.id AND sl.branch_id=$2
-				WHERE p.id=$1
-			`, pid, body.BranchID).Scan(&name, &qty, &reorder, &notified, &kindStock)
+				SELECT p.name::text, coalesce((SELECT quantity_on_hand FROM app.stock_balances b WHERE b.tenant_id = p.tenant_id AND b.product_id = p.id AND b.location_id = $2), 0),
+				       coalesce(p.min_stock_level, ts.low_stock_default)
+				FROM app.products p JOIN app.tenant_settings ts ON ts.tenant_id = p.tenant_id WHERE p.id = $1 AND p.status = 'active'`, pid, body.BranchID).Scan(&name, &qty, &minimum)
 			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
 			if err != nil {
 				return err
 			}
-			if !kindStock {
+			// A minimum of zero means the product is not tracked for low stock.
+			if !minimum.IsPositive() || qty.GreaterThan(minimum) {
 				continue
 			}
-			if qty.GreaterThan(reorder) {
-				if notified {
-					if _, err := tx.Exec(ctx, `UPDATE stock_levels SET low_notified=false WHERE branch_id=$1 AND product_id=$2`, body.BranchID, pid); err != nil {
-						return err
-					}
-				}
-				continue
-			}
-			// A reorder level of zero means the product is not tracked for low stock.
-			if notified || !reorder.IsPositive() {
-				continue
-			}
-			if err := s.Notify.ToPermission(ctx, tx, businessID, &body.BranchID, "stock.view", notify.Message{
-				Type: "low_stock", Title: "Low stock", Body: name + " is at or below its reorder level",
+			if err := s.Notify.ToPermission(ctx, tx, businessID, &body.BranchID, "shop.stock.view", notify.Message{
+				Type: "low_stock", Title: "Low stock: " + name, Body: name + " is at or below its minimum level",
 				EntityType: "product", EntityID: &pid, Link: "/inventory/low-stock",
 			}); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `UPDATE stock_levels SET low_notified=true WHERE branch_id=$1 AND product_id=$2`, body.BranchID, pid); err != nil {
 				return err
 			}
 		}

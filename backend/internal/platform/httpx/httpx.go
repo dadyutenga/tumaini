@@ -52,6 +52,9 @@ func ErrorHandler(c fiber.Ctx, err error) error {
 	if errors.As(err, &e) {
 		return c.Status(e.Status).JSON(fiber.Map{"error": e})
 	}
+	if e := FromDB(err); e != nil {
+		return c.Status(e.Status).JSON(fiber.Map{"error": e})
+	}
 	var fe *fiber.Error
 	if errors.As(err, &fe) {
 		return c.Status(fe.Code).JSON(fiber.Map{"error": Error{Code: "http_error", Message: fe.Message}})

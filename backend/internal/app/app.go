@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"log/slog"
 	"os"
 	"strings"
@@ -55,7 +56,7 @@ type App struct {
 
 func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) {
 	setupLogging(cfg.LogLevel)
-	database, err := db.Connect(ctx, cfg.DatabaseURL)
+	database, err := db.Connect(ctx, cfg.DatabaseURL, cfg.JobsDatabaseURL)
 	if err != nil {
 		return nil, err
 	}
@@ -69,8 +70,13 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	led := ledger.New()
 	st := stock.New()
 	ap := approval.New(n)
-	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, Ledger: led, TTL: cfg.RefreshTokenTTL, DefaultTimezone: cfg.DefaultTimezone, DefaultCurrency: cfg.DefaultCurrency}
-	worker := jobs.New(database.Pool)
+	pepper := sha256.Sum256([]byte("auth-events:" + cfg.JWTSecret))
+	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, TTL: cfg.RefreshTokenTTL, IdleTimeout: cfg.SessionIdleTimeout, Pepper: pepper[:]}
+	jobPool := database.Jobs
+	if jobPool == nil {
+		jobPool = database.Pool
+	}
+	worker := jobs.New(jobPool)
 	worker.SetClock(clk.Now)
 	d := deps.Deps{
 		Config: cfg, DB: database, Ledger: led, Stock: st, Audit: aud, Notify: n, Approval: ap,

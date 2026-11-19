@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"fmt"
+	"net"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,10 +13,30 @@ import (
 )
 
 type DB struct {
+	// Pool connects as the API role (bms_api, member of bms_app): row-level security always applies.
 	Pool *pgxpool.Pool
+	// Jobs connects as the worker role (bms_jobs, member of bms_worker). It is used only for the few
+	// operations the schema reserves for workers, such as app.provision_tenant. Nil means "use Pool".
+	Jobs *pgxpool.Pool
 }
 
-func Connect(ctx context.Context, url string) (*DB, error) {
+// Connect opens the API pool, and the worker pool when jobsURL is not empty.
+func Connect(ctx context.Context, url string, jobsURL ...string) (*DB, error) {
+	pool, err := open(ctx, url)
+	if err != nil {
+		return nil, err
+	}
+	d := &DB{Pool: pool}
+	if len(jobsURL) > 0 && jobsURL[0] != "" {
+		if d.Jobs, err = open(ctx, jobsURL[0]); err != nil {
+			pool.Close()
+			return nil, err
+		}
+	}
+	return d, nil
+}
+
+func open(ctx context.Context, url string) (*pgxpool.Pool, error) {
 	cfg, err := pgxpool.ParseConfig(url)
 	if err != nil {
 		return nil, err
@@ -34,10 +55,15 @@ func Connect(ctx context.Context, url string) (*DB, error) {
 		pool.Close()
 		return nil, err
 	}
-	return &DB{Pool: pool}, nil
+	return pool, nil
 }
 
-func (d *DB) Close() { d.Pool.Close() }
+func (d *DB) Close() {
+	d.Pool.Close()
+	if d.Jobs != nil {
+		d.Jobs.Close()
+	}
+}
 
 // Querier is the subset of pgx used by repositories. A transaction and the pool both satisfy it.
 type Querier interface {
@@ -46,23 +72,81 @@ type Querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 }
 
-// InTx starts a transaction and sets the tenant for row-level security.
-// businessID may be uuid.Nil only for queries that do not touch tenant tables.
-func (d *DB) InTx(ctx context.Context, businessID uuid.UUID, fn func(ctx context.Context, tx pgx.Tx) error) error {
-	tx, err := d.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+// Actor is the request context the schema's row-level security and triggers read.
+// Every field is optional; a zero value is simply not set.
+type Actor struct {
+	TenantID     uuid.UUID
+	UserID       uuid.UUID
+	MembershipID uuid.UUID
+	RequestID    string
+	ClientIP     string
+}
+
+func nilIfZero(id uuid.UUID) string {
+	if id == uuid.Nil {
+		return ""
+	}
+	return id.String()
+}
+
+// setContext writes the five app.* settings for this transaction only (set_config with is_local),
+// which is what keeps them from leaking between requests on a pooled connection.
+func setContext(ctx context.Context, tx pgx.Tx, a Actor) error {
+	ip := a.ClientIP
+	if net.ParseIP(ip) == nil {
+		ip = ""
+	}
+	_, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true), set_config('app.user_id', $2, true),
+		set_config('app.membership_id', $3, true), set_config('app.request_id', $4, true), set_config('app.client_ip', $5, true)`,
+		nilIfZero(a.TenantID), nilIfZero(a.UserID), nilIfZero(a.MembershipID), a.RequestID, ip)
+	return err
+}
+
+func inTx(ctx context.Context, pool *pgxpool.Pool, a Actor, fn func(ctx context.Context, tx pgx.Tx) error) error {
+	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if businessID != uuid.Nil {
-		if _, err := tx.Exec(ctx, "select set_config('app.business_id', $1, true)", businessID.String()); err != nil {
-			return err
-		}
+	if err := setContext(ctx, tx, a); err != nil {
+		return err
 	}
 	if err := fn(ctx, tx); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// InActorTx runs fn in a transaction with the full request context set. Use it for everything done on
+// behalf of a signed-in member so created_by, updated_by and the audit trail are attributed.
+func (d *DB) InActorTx(ctx context.Context, a Actor, fn func(ctx context.Context, tx pgx.Tx) error) error {
+	return inTx(ctx, d.Pool, a, fn)
+}
+
+// InTx runs fn in a transaction limited to one tenant. Prefer InActorTx where an actor is known.
+func (d *DB) InTx(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context, tx pgx.Tx) error) error {
+	return inTx(ctx, d.Pool, Actor{TenantID: tenantID}, fn)
+}
+
+// InUserTx runs fn with only the user set, before a tenant is chosen: it can see the user's own
+// memberships and the tenants they belong to (the tenant picker), and nothing else.
+func (d *DB) InUserTx(ctx context.Context, userID uuid.UUID, fn func(ctx context.Context, tx pgx.Tx) error) error {
+	return inTx(ctx, d.Pool, Actor{UserID: userID}, fn)
+}
+
+// InGlobalTx runs fn with no tenant: for the iam schema (users, credentials, sessions, auth events),
+// which is not tenant-scoped.
+func (d *DB) InGlobalTx(ctx context.Context, fn func(ctx context.Context, tx pgx.Tx) error) error {
+	return inTx(ctx, d.Pool, Actor{}, fn)
+}
+
+// InJobsTx runs fn on the worker pool. Only code that the schema reserves for workers belongs here.
+func (d *DB) InJobsTx(ctx context.Context, a Actor, fn func(ctx context.Context, tx pgx.Tx) error) error {
+	pool := d.Jobs
+	if pool == nil {
+		pool = d.Pool
+	}
+	return inTx(ctx, pool, a, fn)
 }
 
 func IsUnique(err error) bool {
