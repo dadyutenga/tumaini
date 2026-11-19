@@ -29,7 +29,7 @@ func businessHeader(ctx context.Context, tx pgx.Tx) (map[string]any, error) {
 // Receipt returns print data. The first print is the original; later prints are marked COPY (FR-SAL-11).
 func (s *Service) Receipt(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		m, err := s.loadSale(ctx, tx, p, "sales.view", id, "sale")
 		if err != nil {
 			return err
@@ -62,7 +62,7 @@ func (s *Service) Receipt(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 // Invoice returns A4 invoice data for a sale, with customer details, due date and balance (FR-SAL-12).
 func (s *Service) Invoice(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		m, err := s.loadSale(ctx, tx, p, "sales.view", id, "sale")
 		if err != nil {
 			return err
@@ -242,7 +242,7 @@ func QuotationPDF(m map[string]any) []byte {
 // QuotationDoc returns quotation data enriched with business header for PDF export.
 func (s *Service) QuotationDoc(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		m, err := s.loadSale(ctx, tx, p, "quotations.manage", id, "quotation")
 		if err != nil {
 			return err

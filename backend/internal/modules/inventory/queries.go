@@ -26,7 +26,7 @@ func (s *Service) Levels(ctx context.Context, p *auth.Principal, showCost bool) 
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
 	}
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT p.id, p.name, p.sku, COALESCE(sl.qty_on_hand,0), COALESCE(sl.avg_cost,0), p.reorder_level
 			FROM products p LEFT JOIN stock_levels sl ON sl.product_id=p.id AND sl.branch_id=$1
@@ -60,7 +60,7 @@ func (s *Service) Low(ctx context.Context, p *auth.Principal) ([]map[string]any,
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
 	}
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT p.id, p.name, p.sku, COALESCE(sl.qty_on_hand,0), p.reorder_level
 			FROM products p LEFT JOIN stock_levels sl ON sl.product_id=p.id AND sl.branch_id=$1
@@ -99,7 +99,7 @@ func (s *Service) StockCard(ctx context.Context, p *auth.Principal, productID uu
 	var out []map[string]any
 	var name string
 	opening := money.Zero
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT name FROM products WHERE id=$1`, productID).Scan(&name); err != nil {
 			return httpx.NotFound("not_found", "Product not found")
 		}
@@ -152,7 +152,7 @@ func (s *Service) Valuation(ctx context.Context, p *auth.Principal, asOf string)
 	total := money.Zero
 	byCat := map[string]decimal.Decimal{}
 	byBranch := map[string]decimal.Decimal{}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var sql string
 		q := sqlq.New()
 		if asOf == "" {
@@ -217,7 +217,7 @@ type MovementFilter struct {
 func (s *Service) Movements(ctx context.Context, p *auth.Principal, f MovementFilter, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if b := p.ScopeBranches("stock.view"); b != nil {
 			q.Add("m.branch_id = ANY(?)", b)
@@ -260,7 +260,7 @@ type DocFilter struct {
 func (s *Service) Entries(ctx context.Context, p *auth.Principal, f DocFilter, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if b := p.ScopeBranches("stock.view"); b != nil {
 			q.Add("e.branch_id = ANY(?)", b)
@@ -299,7 +299,7 @@ func (s *Service) Entries(ctx context.Context, p *auth.Principal, f DocFilter, p
 
 func (s *Service) GetEntry(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var branch, by uuid.UUID
 		var number, dir, reason string
 		var note *string
@@ -382,7 +382,7 @@ func itemRows(ctx context.Context, tx pgx.Tx, sql string, id uuid.UUID, cols []s
 func (s *Service) Adjustments(ctx context.Context, p *auth.Principal, f DocFilter, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if b := p.ScopeBranches("stock.view"); b != nil {
 			q.Add("a.branch_id = ANY(?)", b)
@@ -419,7 +419,7 @@ func (s *Service) Adjustments(ctx context.Context, p *auth.Principal, f DocFilte
 
 func (s *Service) GetAdjustment(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var branch, by uuid.UUID
 		var number, reason, st string
 		var take bool
@@ -446,7 +446,7 @@ func (s *Service) GetAdjustment(ctx context.Context, p *auth.Principal, id uuid.
 func (s *Service) Transfers(ctx context.Context, p *auth.Principal, direction string, f DocFilter, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		branches := p.ScopeBranches("transfers.view")
 		switch direction {
@@ -501,7 +501,7 @@ func (s *Service) Transfers(ctx context.Context, p *auth.Principal, direction st
 
 func (s *Service) GetTransfer(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var from, to, by uuid.UUID
 		var number, fname, tname, st string
 		var note *string

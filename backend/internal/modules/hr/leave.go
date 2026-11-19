@@ -38,7 +38,7 @@ type LeaveFilter struct {
 func (s *Service) LeaveRequests(ctx context.Context, p *auth.Principal, f LeaveFilter, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if br := p.ScopeBranches("leave.approve"); br != nil {
 			q.Add("e.branch_id = ANY(?)", br)
@@ -75,7 +75,7 @@ func (s *Service) RequestLeave(ctx context.Context, p *auth.Principal, in LeaveI
 	}
 	id := ids.New()
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		key := "leave.request"
 		if *emp != derefID(p.EmployeeID) {
 			key = "leave.approve"
@@ -158,7 +158,7 @@ func derefID(id *uuid.UUID) uuid.UUID {
 // DecideLeave approves or rejects from the leave screen.
 func (s *Service) DecideLeave(ctx context.Context, p *auth.Principal, id uuid.UUID, approve bool, note string) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		lr, err := s.lockLeave(ctx, tx, p, id, "leave.approve")
 		if err != nil {
 			return err
@@ -270,7 +270,7 @@ func (s *Service) markLeaveDays(ctx context.Context, tx pgx.Tx, p *auth.Principa
 // days are released.
 func (s *Service) CancelLeave(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		lr, err := s.lockLeave(ctx, tx, p, id, "leave.approve")
 		if err != nil {
 			return err

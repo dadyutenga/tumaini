@@ -46,7 +46,7 @@ func (s *Service) ListAttachments(ctx context.Context, p *auth.Principal, entity
 		return nil, httpx.BadRequest("invalid_query", "Unsupported entity_type")
 	}
 	out := []Attachment{}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT a.id, a.entity_type, a.entity_id, a.file_id, f.original_name, f.mime_type, f.size_bytes,
 			       a.label, a.uploaded_by, u.name, a.created_at
@@ -81,7 +81,7 @@ func (s *Service) CreateAttachment(ctx context.Context, p *auth.Principal, in At
 		return Attachment{}, httpx.BadRequest("invalid_body", "entity_id and file_id are required")
 	}
 	var out Attachment
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var origName, mimeType string
 		var size int64
 		if err := tx.QueryRow(ctx, `SELECT original_name, mime_type, size_bytes FROM files WHERE id = $1`, in.FileID).Scan(&origName, &mimeType, &size); err != nil {
@@ -115,7 +115,7 @@ func (s *Service) CreateAttachment(ctx context.Context, p *auth.Principal, in At
 }
 
 func (s *Service) DeleteAttachment(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var entityType string
 		var entityID uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT entity_type, entity_id FROM attachments WHERE id = $1`, id).Scan(&entityType, &entityID); err != nil {

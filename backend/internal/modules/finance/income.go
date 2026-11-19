@@ -23,7 +23,7 @@ import (
 
 func (s *Service) IncomeCategories(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	out := []map[string]any{}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT ic.id, ic.name, ic.is_active, la.code, la.name
 			FROM income_categories ic JOIN ledger_accounts la ON la.id=ic.ledger_account_id ORDER BY ic.name`)
@@ -59,7 +59,7 @@ func (s *Service) CreateIncomeCategory(ctx context.Context, p *auth.Principal, i
 		in.LedgerCode = "4100"
 	}
 	id := ids.New()
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var ledgerID uuid.UUID
 		var typ string
 		if err := tx.QueryRow(ctx, `SELECT id, type FROM ledger_accounts WHERE code=$1 AND is_active`, in.LedgerCode).Scan(&ledgerID, &typ); err != nil {
@@ -120,7 +120,7 @@ func (s *Service) RecordIncome(ctx context.Context, p *auth.Principal, in Income
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -186,7 +186,7 @@ func (s *Service) RecordIncome(ctx context.Context, p *auth.Principal, in Income
 func (s *Service) Income(ctx context.Context, p *auth.Principal, kind string, category *uuid.UUID, from, to string, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if b := p.ScopeBranches("payments.view"); b != nil {
 			q.Add("i.branch_id = ANY(?)", b)
@@ -253,7 +253,7 @@ func (s *Service) outflow(ctx context.Context, p *auth.Principal, in OutflowIn, 
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body

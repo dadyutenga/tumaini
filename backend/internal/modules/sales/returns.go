@@ -46,7 +46,7 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uu
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -354,7 +354,7 @@ type ReturnFilter struct {
 func (s *Service) Returns(ctx context.Context, p *auth.Principal, f ReturnFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if b := p.ScopeBranches("sales.view"); b != nil {
 			q.Add("r.branch_id = ANY(?)", b)
@@ -406,7 +406,7 @@ func scanReturn(row pgx.Row) (map[string]any, error) {
 // Return is one sale return with its lines.
 func (s *Service) Return(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var cashier uuid.UUID
 		m, err := scanReturn(tx.QueryRow(ctx, `
 			SELECT r.id, r.number, r.sale_id, s.number, r.status, r.reason, r.refund_method, r.refund_total, r.requested_by, r.approved_by, r.created_at, r.completed_at, r.branch_id

@@ -66,7 +66,7 @@ func nullable(s string) any {
 func (s *Service) Payments(ctx context.Context, p *auth.Principal, f PaymentFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if b := p.ScopeBranches("payments.view"); b != nil {
 			q.Add("p.branch_id = ANY(?)", b)
@@ -140,7 +140,7 @@ func (s *Service) payment(ctx context.Context, tx pgx.Tx, p *auth.Principal, id 
 
 func (s *Service) Payment(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = s.payment(ctx, tx, p, id, "payments.view")
 		if err != nil {
@@ -155,7 +155,7 @@ func (s *Service) Payment(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 // Voucher returns the payment with the business header for printing (FR-FIN-20).
 func (s *Service) Voucher(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = s.payment(ctx, tx, p, id, "payments.view")
 		if err != nil {
@@ -251,7 +251,7 @@ func (s *Service) Void(ctx context.Context, p *auth.Principal, id uuid.UUID, rea
 	reason = strings.TrimSpace(reason)
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body

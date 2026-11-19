@@ -21,7 +21,7 @@ type CategoryIn struct {
 
 func (s *Service) Categories(ctx context.Context, p *auth.Principal, all bool) ([]map[string]any, error) {
 	out := []map[string]any{}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT ec.id, ec.name, ec.is_active, la.id, la.code, la.name
 			FROM expense_categories ec JOIN ledger_accounts la ON la.id=ec.ledger_account_id
@@ -69,7 +69,7 @@ func (s *Service) CreateCategory(ctx context.Context, p *auth.Principal, in Cate
 		return nil, err
 	}
 	id := ids.New()
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		ledgerID, err := expenseLedger(ctx, tx, in.LedgerCode)
 		if err != nil {
 			return err
@@ -93,7 +93,7 @@ func (s *Service) UpdateCategory(ctx context.Context, p *auth.Principal, id uuid
 	if err := httpx.Check(&in); err != nil {
 		return nil, err
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var oldName, oldCode string
 		var oldActive bool
 		if err := tx.QueryRow(ctx, `SELECT ec.name, la.code, ec.is_active FROM expense_categories ec JOIN ledger_accounts la ON la.id=ec.ledger_account_id WHERE ec.id=$1`, id).Scan(&oldName, &oldCode, &oldActive); err != nil {

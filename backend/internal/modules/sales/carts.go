@@ -29,7 +29,7 @@ func (s *Service) Hold(ctx context.Context, p *auth.Principal, in CreateIn) (map
 		return nil, httpx.BadRequest("invalid_body", "Add at least one product")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		lines, tot, includeTax, err := s.price(ctx, tx, p, in)
 		if err != nil {
 			return err
@@ -76,7 +76,7 @@ func (s *Service) Hold(ctx context.Context, p *auth.Principal, in CreateIn) (map
 // Held lists the caller's own held carts in the active branch.
 func (s *Service) Held(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	out := []map[string]any{}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New().Add("s.status = 'held'").Add("s.cashier_id = ?", p.UserID)
 		q.If(p.BranchID != nil, "s.branch_id = ?", p.BranchID)
 		rows, err := tx.Query(ctx, `
@@ -108,7 +108,7 @@ func (s *Service) Held(ctx context.Context, p *auth.Principal) ([]map[string]any
 }
 
 func (s *Service) DiscardHeld(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `DELETE FROM sales WHERE id=$1 AND status='held' AND cashier_id=$2`, id, p.UserID)
 		if err != nil {
 			return err
@@ -170,7 +170,7 @@ func (s *Service) CreateQuotation(ctx context.Context, p *auth.Principal, in Quo
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
 	}
 	var id uuid.UUID
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		lines, tot, include, cust, date, valid, cart, err := s.quoteParts(ctx, tx, p, in)
 		if err != nil {
 			return err
@@ -199,7 +199,7 @@ func (s *Service) CreateQuotation(ctx context.Context, p *auth.Principal, in Quo
 }
 
 func (s *Service) UpdateQuotation(ctx context.Context, p *auth.Principal, id uuid.UUID, in QuoteIn) (map[string]any, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var branch uuid.UUID
 		var kind, st string
 		var before decimal.Decimal
@@ -237,7 +237,7 @@ func (s *Service) UpdateQuotation(ctx context.Context, p *auth.Principal, id uui
 
 func (s *Service) Quotation(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		m, err := s.loadSale(ctx, tx, p, "quotations.manage", id, "quotation")
 		out = m
 		return err
@@ -255,7 +255,7 @@ type QuoteFilter struct {
 func (s *Service) Quotations(ctx context.Context, p *auth.Principal, f QuoteFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New().Add("s.kind = 'quotation'")
 		if b := p.ScopeBranches("quotations.manage"); b != nil {
 			q.Add("s.branch_id = ANY(?)", b)
@@ -311,7 +311,7 @@ func (s *Service) ConvertQuotation(ctx context.Context, p *auth.Principal, id uu
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body

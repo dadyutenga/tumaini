@@ -79,7 +79,7 @@ func (s *Service) CreateRun(ctx context.Context, p *auth.Principal, in RunIn) (m
 		branch = p.BranchID
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if branch != nil && !p.SeesBranch("payroll.prepare", *branch) {
 			return httpx.NotFound("not_found", "Branch not found")
 		}
@@ -127,7 +127,7 @@ func (s *Service) CreateRun(ctx context.Context, p *auth.Principal, in RunIn) (m
 func (s *Service) ListRuns(ctx context.Context, p *auth.Principal, status, from, to string, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if br := p.ScopeBranches("payroll.view"); br != nil {
 			q.Add("r.branch_id = ANY(?)", br)
@@ -176,7 +176,7 @@ func (s *Service) loadRun(ctx context.Context, tx pgx.Tx, p *auth.Principal, key
 
 func (s *Service) GetRun(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		run, err := s.loadRun(ctx, tx, p, "payroll.view", id, false)
 		if err != nil {
 			return err
@@ -236,7 +236,7 @@ type employee struct {
 // Large runs are queued and the caller gets 202.
 func (s *Service) Calculate(ctx context.Context, p *auth.Principal, runID uuid.UUID) (int, map[string]any, error) {
 	var n int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		run, err := s.loadRun(ctx, tx, p, "payroll.prepare", runID, false)
 		if err != nil {
 			return err
@@ -258,7 +258,7 @@ func (s *Service) Calculate(ctx context.Context, p *auth.Principal, runID uuid.U
 		return 202, map[string]any{"id": runID, "status": "calculating", "employees": n}, nil
 	}
 	var out map[string]any
-	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = s.calculateTx(ctx, tx, p, runID)
 		return err
@@ -661,7 +661,7 @@ var deductionKinds = map[string]bool{"deduction": true, "statutory": true, "loan
 // recomputes its totals. A recalculation of the run removes manual lines.
 func (s *Service) PutLines(ctx context.Context, p *auth.Principal, runID, slipID uuid.UUID, in LinesIn) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		run, err := s.loadRun(ctx, tx, p, "payroll.prepare", runID, true)
 		if err != nil {
 			return err
@@ -749,7 +749,7 @@ func retotalRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) error {
 
 func (s *Service) Submit(ctx context.Context, p *auth.Principal, runID uuid.UUID) (int, map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		run, err := s.loadRun(ctx, tx, p, "payroll.prepare", runID, true)
 		if err != nil {
 			return err
@@ -788,7 +788,7 @@ func (s *Service) Submit(ctx context.Context, p *auth.Principal, runID uuid.UUID
 func (s *Service) Approve(ctx context.Context, p *auth.Principal, runID uuid.UUID) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -936,7 +936,7 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, runID uuid.UUID, i
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -1098,7 +1098,7 @@ func settleLoans(ctx context.Context, tx pgx.Tx, p *auth.Principal, runID uuid.U
 func (s *Service) Reverse(ctx context.Context, p *auth.Principal, runID uuid.UUID, reason string) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -1154,7 +1154,7 @@ func (s *Service) Reverse(ctx context.Context, p *auth.Principal, runID uuid.UUI
 func (s *Service) PaymentList(ctx context.Context, p *auth.Principal, runID uuid.UUID) (map[string]any, []map[string]any, error) {
 	var run map[string]any
 	var rows []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		if run, err = s.loadRun(ctx, tx, p, "payroll.pay", runID, false); err != nil {
 			return err
@@ -1189,7 +1189,7 @@ func (s *Service) slip(ctx context.Context, tx pgx.Tx, id uuid.UUID) (map[string
 // own scope sees only their own approved payslips (FR-PAY-14).
 func (s *Service) Payslip(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		sl, err := s.slip(ctx, tx, id)
 		if err != nil {
 			return err
@@ -1244,7 +1244,7 @@ func (s *Service) Payslip(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 func (s *Service) SalaryPayments(ctx context.Context, p *auth.Principal, employee, run *uuid.UUID, from, to string, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		q.Add("pm.kind = 'salary'")
 		if br := p.ScopeBranches("payroll.view"); br != nil {
@@ -1292,7 +1292,7 @@ const compSQL = `SELECT id, name, kind, calc, value, brackets, is_taxable, is_st
 
 func (s *Service) ComponentsList(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = hrkit.All(ctx, tx, compSQL+` ORDER BY kind, sort_order, name`)
 		return err
@@ -1329,7 +1329,7 @@ func (s *Service) SaveComponent(ctx context.Context, p *auth.Principal, id *uuid
 		brackets = raw
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var before map[string]any
 		rid := ids.New()
 		if id == nil {

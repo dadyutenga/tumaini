@@ -30,7 +30,7 @@ var sortable = map[string]string{"created_at": "s.created_at", "business_date": 
 func (s *Service) List(ctx context.Context, p *auth.Principal, f ListFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		q.Add("s.kind = 'sale'").Add("s.status <> 'held'")
 		if b := p.ScopeBranches("sales.view"); b != nil {
@@ -171,7 +171,7 @@ func (s *Service) items(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uu
 // Get returns a sale with items, payments, returns, approvals and its audit trail (FR-SAL-20).
 func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		m, err := s.loadSale(ctx, tx, p, "sales.view", id, "sale")
 		if err != nil {
 			return err

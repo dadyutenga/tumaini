@@ -102,7 +102,7 @@ func (s *Service) Preview(ctx context.Context, p *auth.Principal, in CreateIn) (
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		lines, tot, _, err := s.price(ctx, tx, p, in)
 		if err != nil {
 			return err
@@ -122,7 +122,7 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in CreateIn) (i
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body

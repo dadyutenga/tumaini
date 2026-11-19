@@ -25,7 +25,7 @@ func (s *Service) MeEmployee(ctx context.Context, p *auth.Principal) (map[string
 		return nil, err
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = hrkit.One(ctx, tx, "Employee not found", `SELECT `+employeeCols+employeeFrom+` WHERE e.id = $1`, *p.EmployeeID)
 		return err
@@ -48,7 +48,7 @@ func (s *Service) MeLeave(ctx context.Context, p *auth.Principal) (map[string]an
 		return nil, err
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		reqs, err := hrkit.All(ctx, tx, leaveSQL+` WHERE lr.employee_id = $1 ORDER BY lr.start_date DESC LIMIT 100`, *p.EmployeeID)
 		if err != nil {
 			return err
@@ -68,7 +68,7 @@ func (s *Service) MeLoans(ctx context.Context, p *auth.Principal) ([]map[string]
 		return nil, err
 	}
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = hrkit.All(ctx, tx, loanSQL+` WHERE l.employee_id = $1 ORDER BY l.created_at DESC`, *p.EmployeeID)
 		for _, l := range out {
@@ -105,7 +105,7 @@ func (s *Service) MePayments(ctx context.Context, p *auth.Principal, from, to st
 func (s *Service) selfList(ctx context.Context, p *auth.Principal, page httpx.Page, from, cols, order, a, b string) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT count(*) `+from, *p.EmployeeID, a, b).Scan(&total); err != nil {
 			return err
 		}

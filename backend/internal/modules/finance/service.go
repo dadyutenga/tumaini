@@ -119,7 +119,7 @@ func scanAccount(row pgx.Row, p *auth.Principal) (Account, error) {
 
 func (s *Service) List(ctx context.Context, p *auth.Principal, typ string, active *bool) ([]Account, error) {
 	out := []Account{}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		q.If(typ != "", "ma.type = ?", typ)
 		q.If(active != nil, "ma.is_active = ?", active)
@@ -153,7 +153,7 @@ func (s *Service) account(ctx context.Context, tx pgx.Tx, p *auth.Principal, id 
 
 func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		a, err := s.account(ctx, tx, p, id, "accounts.view")
 		if err != nil {
 			return err
@@ -212,7 +212,7 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in AccountIn) (
 		return Account{}, httpx.Forbidden("branch_forbidden", "You are not assigned to that branch")
 	}
 	var out Account
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := s.checkCustodian(ctx, tx, in.CustodianID); err != nil {
 			return err
 		}
@@ -253,7 +253,7 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 		return Account{}, err
 	}
 	var out Account
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := s.account(ctx, tx, p, id, "accounts.manage")
 		if err != nil {
 			return err
@@ -303,7 +303,7 @@ func deref(s *string) string {
 // Deactivate turns off an account with a zero balance and no open till.
 func (s *Service) Deactivate(ctx context.Context, p *auth.Principal, id uuid.UUID) (Account, error) {
 	var out Account
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := s.account(ctx, tx, p, id, "accounts.manage")
 		if err != nil {
 			return err
@@ -340,7 +340,7 @@ func (s *Service) Deactivate(ctx context.Context, p *auth.Principal, id uuid.UUI
 // Statement lists movements of one account with opening, running and closing balance (FR-REP-15).
 func (s *Service) Statement(ctx context.Context, p *auth.Principal, id uuid.UUID, from, to string) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		a, err := s.account(ctx, tx, p, id, "accounts.view_balance")
 		if err != nil {
 			return err
@@ -406,7 +406,7 @@ func (s *Service) Reconcile(ctx context.Context, p *auth.Principal, id uuid.UUID
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -477,7 +477,7 @@ func (s *Service) Transfer(ctx context.Context, p *auth.Principal, in TransferIn
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -525,7 +525,7 @@ func (s *Service) Transfer(ctx context.Context, p *auth.Principal, in TransferIn
 func (s *Service) Transfers(ctx context.Context, p *auth.Principal, account *uuid.UUID, from, to string, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		q.If(account != nil, "(t.from_account_id = ? OR t.to_account_id = ?)", account, account)
 		q.If(from != "", "t.transfer_date >= ?::date", from)

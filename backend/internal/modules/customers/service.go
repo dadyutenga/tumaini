@@ -88,7 +88,7 @@ type Filter struct {
 func (s *Service) List(ctx context.Context, p *auth.Principal, f Filter, page httpx.Page) ([]Customer, int, error) {
 	out := []Customer{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if qq := strings.TrimSpace(f.Q); qq != "" {
 			q.Add("(c.name ILIKE '%' || ? || '%' OR c.phone ILIKE '%' || ? || '%' OR c.email::text ILIKE '%' || ? || '%')", qq, qq, qq)
@@ -120,7 +120,7 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in Input) (Cust
 		return Customer{}, httpx.BadRequest("invalid_body", "Customer name is required")
 	}
 	id := ids.New()
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		limit := money.Money(in.CreditLimit)
 		// Setting a credit limit needs its own permission.
 		if _, ok := p.Can("customers.credit_limit"); !ok {
@@ -147,7 +147,7 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in Input) (Cust
 // Get returns the profile with the account summary.
 func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (Customer, error) {
 	var c Customer
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		c, err = s.load(ctx, tx, id)
 		if err != nil {
@@ -187,7 +187,7 @@ func (s *Service) load(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Customer, 
 }
 
 func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, in Input) (Customer, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := s.load(ctx, tx, id)
 		if err != nil {
 			return err
@@ -219,7 +219,7 @@ func (s *Service) CreditLimit(ctx context.Context, p *auth.Principal, id uuid.UU
 	if limit.IsNegative() || days < 0 || days > 365 {
 		return httpx.BadRequest("invalid_body", "Credit limit cannot be negative and terms must be 0 to 365 days")
 	}
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := s.load(ctx, tx, id)
 		if err != nil {
 			return err
@@ -237,7 +237,7 @@ func (s *Service) CreditLimit(ctx context.Context, p *auth.Principal, id uuid.UU
 
 // Deactivate hides a customer from new sales. A customer who still owes cannot be deactivated.
 func (s *Service) Deactivate(ctx context.Context, p *auth.Principal, id uuid.UUID) (Customer, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		c, err := s.load(ctx, tx, id)
 		if err != nil {
 			return err
@@ -291,7 +291,7 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, customerID uui
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -428,7 +428,7 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, customerID uui
 // Unpaid lists the customer's sales with a balance, oldest first, with age and due date.
 func (s *Service) Unpaid(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := s.load(ctx, tx, id); err != nil {
 			return err
 		}
@@ -474,7 +474,7 @@ func (s *Service) Unpaid(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 // A positive balance is owed by the customer; negative is credit held for them.
 func (s *Service) Statement(ctx context.Context, p *auth.Principal, id uuid.UUID, from, to string) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		c, err := s.load(ctx, tx, id)
 		if err != nil {
 			return err
@@ -542,7 +542,7 @@ func mustDate(s string) time.Time {
 // Debts is the aged receivables list for all customers in the caller's branches (FR-CUS-05).
 func (s *Service) Debts(ctx context.Context, p *auth.Principal, key string) ([]map[string]any, error) {
 	out := []map[string]any{}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		today, err := s.bizDate(ctx, tx)
 		if err != nil {
 			return err
@@ -592,7 +592,7 @@ type WriteOffIn struct {
 func (s *Service) WriteOff(ctx context.Context, p *auth.Principal, id uuid.UUID, in WriteOffIn) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body

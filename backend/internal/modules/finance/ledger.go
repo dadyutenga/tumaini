@@ -26,7 +26,7 @@ type TxFilter struct {
 func (s *Service) Transactions(ctx context.Context, p *auth.Principal, f TxFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		inner := sqlq.New()
 		inner.Add("l.money_account_id IS NOT NULL")
 		inner.If(f.AccountID != nil, "l.money_account_id = ?", f.AccountID)
@@ -88,7 +88,7 @@ type EntryFilter struct {
 func (s *Service) Entries(ctx context.Context, p *auth.Principal, f EntryFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		q.If(f.From != "", "e.entry_date >= ?::date", f.From)
 		q.If(f.To != "", "e.entry_date <= ?::date", f.To)
@@ -163,7 +163,7 @@ func (s *Service) Entries(ctx context.Context, p *auth.Principal, f EntryFilter,
 func (s *Service) TrialBalance(ctx context.Context, p *auth.Principal, to string, all bool) (map[string]any, error) {
 	lines := []map[string]any{}
 	debit, credit := money.Zero, money.Zero
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT a.id, a.code, a.name, a.type, a.is_system, a.is_active, COALESCE(a.parent_code,''), COALESCE(SUM(l.debit),0), COALESCE(SUM(l.credit),0)
 			FROM ledger_accounts a
@@ -200,7 +200,7 @@ func (s *Service) TrialBalance(ctx context.Context, p *auth.Principal, to string
 
 func (s *Service) PeriodLock(ctx context.Context, p *auth.Principal) (map[string]any, error) {
 	out := map[string]any{"locked_until": nil, "locked_by": nil, "locked_by_name": nil, "locked_at": nil}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var until, name string
 		var by uuid.UUID
 		var at time.Time
@@ -219,7 +219,7 @@ func (s *Service) PeriodLock(ctx context.Context, p *auth.Principal) (map[string
 
 // SetPeriodLock sets the locked-until date (FR-FIN-19). A null date reopens all periods.
 func (s *Service) SetPeriodLock(ctx context.Context, p *auth.Principal, until *string) (map[string]any, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := s.Ledger.LockedUntil(ctx, tx)
 		if err != nil {
 			return err

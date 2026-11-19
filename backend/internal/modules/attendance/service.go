@@ -101,7 +101,7 @@ func (s *Service) ClockOut(ctx context.Context, p *auth.Principal, employeeID *u
 func (s *Service) clock(ctx context.Context, p *auth.Principal, employeeID *uuid.UUID, typ string) (map[string]any, error) {
 	now := s.Clock.Now()
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		e, source, err := s.employeeFor(ctx, tx, p, employeeID)
 		if err != nil {
 			return err
@@ -313,7 +313,7 @@ type DayFilter struct {
 func (s *Service) Days(ctx context.Context, p *auth.Principal, f DayFilter, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if br := p.ScopeBranches("attendance.view"); br != nil {
 			q.Add("d.branch_id = ANY(?)", br)
@@ -359,7 +359,7 @@ func (s *Service) Today(ctx context.Context, p *auth.Principal, branch *uuid.UUI
 		return nil, httpx.NotFound("not_found", "Branch not found")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		day := hrkit.LocalToday(s.Clock.Now(), setting.String(ctx, tx, "system.timezone", "Africa/Dar_es_Salaam")).Format(hrkit.DateFmt)
 		rows, err := hrkit.All(ctx, tx, `
 			SELECT e.id AS employee_id, e.name AS employee_name, e.employee_no, d.id AS day_id, d.first_in, d.last_out, d.late_minutes,
@@ -392,7 +392,7 @@ func (s *Service) Today(ctx context.Context, p *auth.Principal, branch *uuid.UUI
 // Summary returns per-employee counts for a month (YYYY-MM).
 func (s *Service) Summary(ctx context.Context, p *auth.Principal, month string, branch *uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if month == "" {
 			month = hrkit.LocalToday(s.Clock.Now(), setting.String(ctx, tx, "system.timezone", "Africa/Dar_es_Salaam")).Format("2006-01")
 		}
@@ -448,7 +448,7 @@ type DayIn struct {
 // worked minutes are recalculated from them.
 func (s *Service) PutDay(ctx context.Context, p *auth.Principal, id uuid.UUID, in DayIn) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := hrkit.One(ctx, tx, "Attendance day not found", daySQL+` WHERE d.id=$1 FOR UPDATE OF d`, id)
 		if err != nil {
 			return err
@@ -503,7 +503,7 @@ func (s *Service) AddEvent(ctx context.Context, p *auth.Principal, in EventIn) (
 		return nil, httpx.BadRequest("invalid_body", "A missed event cannot be in the future")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		e, err := s.loadEmp(ctx, tx, in.EmployeeID)
 		if err != nil {
 			return err
@@ -543,7 +543,7 @@ func (s *Service) AddEvent(ctx context.Context, p *auth.Principal, in EventIn) (
 // It never changes a locked day.
 func (s *Service) Mark(ctx context.Context, p *auth.Principal, employee uuid.UUID, day, status, note string) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		e, err := s.loadEmp(ctx, tx, employee)
 		if err != nil {
 			return err
@@ -579,7 +579,7 @@ func (s *Service) Mark(ctx context.Context, p *auth.Principal, employee uuid.UUI
 
 func (s *Service) DecideOvertime(ctx context.Context, p *auth.Principal, dayID uuid.UUID, approve bool, note string) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		day, err := hrkit.One(ctx, tx, "Attendance day not found", daySQL+` WHERE d.id=$1 FOR UPDATE OF d`, dayID)
 		if err != nil {
 			return err
@@ -642,7 +642,7 @@ func (s *Service) Schedules(ctx context.Context, p *auth.Principal, branch, empl
 		branch = p.BranchID
 	}
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		q.If(employee != nil, "w.employee_id = ?", employee)
 		q.If(employee == nil && branch != nil, "w.branch_id = ? AND w.employee_id IS NULL", branch)
@@ -687,7 +687,7 @@ func (s *Service) PutSchedule(ctx context.Context, p *auth.Principal, in Schedul
 	if branch == nil && in.EmployeeID == nil {
 		return nil, httpx.BadRequest("branch_required", "Choose a branch or an employee")
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		scopeBranch := branch
 		if in.EmployeeID != nil {
 			e, err := s.loadEmp(ctx, tx, *in.EmployeeID)
@@ -744,7 +744,7 @@ func (s *Service) PutSchedule(ctx context.Context, p *auth.Principal, in Schedul
 
 func (s *Service) Holidays(ctx context.Context, p *auth.Principal, year int) ([]map[string]any, error) {
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = hrkit.All(ctx, tx, `SELECT id, day, name FROM holidays WHERE ($1 = 0 OR EXTRACT(YEAR FROM day) = $1) ORDER BY day`, year)
 		return err
@@ -759,7 +759,7 @@ type HolidayIn struct {
 
 func (s *Service) CreateHoliday(ctx context.Context, p *auth.Principal, in HolidayIn) (map[string]any, error) {
 	id := ids.New()
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO holidays (id, business_id, day, name) VALUES ($1,$2,$3,$4)`, id, p.BusinessID, in.Day, strings.TrimSpace(in.Name)); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "That day is already a holiday")
@@ -775,7 +775,7 @@ func (s *Service) CreateHoliday(ctx context.Context, p *auth.Principal, in Holid
 }
 
 func (s *Service) DeleteHoliday(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := hrkit.One(ctx, tx, "Holiday not found", `SELECT id, day, name FROM holidays WHERE id=$1`, id)
 		if err != nil {
 			return err

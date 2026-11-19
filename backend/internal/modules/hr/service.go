@@ -118,7 +118,7 @@ type EmployeeFilter struct {
 func (s *Service) ListEmployees(ctx context.Context, p *auth.Principal, f EmployeeFilter, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if br := p.ScopeBranches("employees.view"); br != nil {
 			q.Add("e.branch_id = ANY(?)", br)
@@ -157,7 +157,7 @@ func (s *Service) loadEmployee(ctx context.Context, tx pgx.Tx, p *auth.Principal
 
 func (s *Service) GetEmployee(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		m, err := s.loadEmployee(ctx, tx, p, "employees.view", id)
 		if err != nil {
 			return err
@@ -226,7 +226,7 @@ func (s *Service) CreateEmployee(ctx context.Context, p *auth.Principal, in Empl
 	}
 	id := ids.New()
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := s.validateRefs(ctx, tx, p, in); err != nil {
 			return err
 		}
@@ -275,7 +275,7 @@ func deref(s *string) string {
 
 func (s *Service) UpdateEmployee(ctx context.Context, p *auth.Principal, id uuid.UUID, in EmployeeIn) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := s.loadEmployee(ctx, tx, p, "employees.manage", id)
 		if err != nil {
 			return err
@@ -341,7 +341,7 @@ type TerminateIn struct {
 
 func (s *Service) Terminate(ctx context.Context, p *auth.Principal, id uuid.UUID, in TerminateIn) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := s.loadEmployee(ctx, tx, p, "employees.manage", id)
 		if err != nil {
 			return err
@@ -403,7 +403,7 @@ func (s *Service) CreateLogin(ctx context.Context, p *auth.Principal, id uuid.UU
 	}
 	userID := ids.New()
 	var out map[string]any
-	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		emp, err := s.loadEmployee(ctx, tx, p, "employees.view", id)
 		if err != nil {
 			return err
@@ -472,7 +472,7 @@ func (s *Service) CreateLogin(ctx context.Context, p *auth.Principal, id uuid.UU
 // Statement lists earnings, deductions, payments and loans for a period.
 func (s *Service) Statement(ctx context.Context, p *auth.Principal, id uuid.UUID, from, to string) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		emp, err := s.loadEmployee(ctx, tx, p, "employees.view_salary", id)
 		if err != nil {
 			return err
@@ -539,7 +539,7 @@ func statement(ctx context.Context, tx pgx.Tx, id uuid.UUID, from, to string) (m
 
 func (s *Service) Components(ctx context.Context, p *auth.Principal, id uuid.UUID) ([]map[string]any, error) {
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := s.loadEmployee(ctx, tx, p, "components.manage", id); err != nil {
 			return err
 		}
@@ -564,7 +564,7 @@ type ComponentAssign struct {
 
 // PutComponents replaces the employee's component assignments.
 func (s *Service) PutComponents(ctx context.Context, p *auth.Principal, id uuid.UUID, in []ComponentAssign) ([]map[string]any, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := s.loadEmployee(ctx, tx, p, "components.manage", id); err != nil {
 			return err
 		}
@@ -607,7 +607,7 @@ func (s *Service) PutComponents(ctx context.Context, p *auth.Principal, id uuid.
 
 func (s *Service) LeaveBalance(ctx context.Context, p *auth.Principal, id uuid.UUID, year int) ([]map[string]any, error) {
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := s.loadEmployee(ctx, tx, p, "employees.view", id); err != nil {
 			return err
 		}

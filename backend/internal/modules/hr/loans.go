@@ -43,7 +43,7 @@ type LoanFilter struct {
 func (s *Service) Loans(ctx context.Context, p *auth.Principal, f LoanFilter, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if br := p.ScopeBranches("loans.view"); br != nil {
 			q.Add("e.branch_id = ANY(?)", br)
@@ -82,7 +82,7 @@ func (s *Service) loadLoan(ctx context.Context, tx pgx.Tx, p *auth.Principal, ke
 // GetLoan returns the loan with its repayment schedule and repayments.
 func (s *Service) GetLoan(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		l, err := s.loadLoan(ctx, tx, p, "loans.view", id, false)
 		if err != nil {
 			return err
@@ -139,7 +139,7 @@ func (s *Service) CreateLoan(ctx context.Context, p *auth.Principal, in LoanIn) 
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -229,7 +229,7 @@ func (s *Service) onLoanDecided(approve bool) func(ctx context.Context, tx pgx.T
 func (s *Service) Disburse(ctx context.Context, p *auth.Principal, loanID, account uuid.UUID) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -301,7 +301,7 @@ type RepayIn struct {
 func (s *Service) Repay(ctx context.Context, p *auth.Principal, loanID uuid.UUID, in RepayIn) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body

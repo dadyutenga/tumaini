@@ -36,7 +36,7 @@ func (s *Service) GlobalSearch(ctx context.Context, p *auth.Principal, q string)
 		return ok
 	}
 
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		collect := func(kind, linkPrefix, sql string, args ...any) error {
 			rows, err := tx.Query(ctx, sql, args...)
 			if err != nil {

@@ -79,7 +79,7 @@ func scanRecurring(row pgx.Row) (map[string]any, error) {
 func (s *Service) Recurring(ctx context.Context, p *auth.Principal, page httpx.Page, active *bool) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if b := p.ScopeBranches("recurring_expenses.manage"); b != nil {
 			q.Add("r.branch_id = ANY(?)", b)
@@ -144,7 +144,7 @@ func (s *Service) checkRecurring(ctx context.Context, tx pgx.Tx, p *auth.Princip
 
 func (s *Service) CreateRecurring(ctx context.Context, p *auth.Principal, in RecurringIn) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		branch, err := s.checkRecurring(ctx, tx, p, &in)
 		if err != nil {
 			return err
@@ -167,7 +167,7 @@ func (s *Service) CreateRecurring(ctx context.Context, p *auth.Principal, in Rec
 
 func (s *Service) UpdateRecurring(ctx context.Context, p *auth.Principal, id uuid.UUID, in RecurringIn) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := s.getRecurring(ctx, tx, p, id, true)
 		if err != nil {
 			return err
@@ -209,7 +209,7 @@ func (s *Service) UpdateRecurring(ctx context.Context, p *auth.Principal, id uui
 // that passed while it was paused, so no backlog of expenses appears.
 func (s *Service) SetRecurringActive(ctx context.Context, p *auth.Principal, id uuid.UUID, active bool) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := s.getRecurring(ctx, tx, p, id, true)
 		if err != nil {
 			return err

@@ -45,7 +45,7 @@ type UserInput struct {
 func (s *Service) ListUsers(ctx context.Context, p *auth.Principal, q string, page httpx.Page) ([]User, int, error) {
 	var out []User
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM users WHERE ($1 = '' OR name ILIKE '%'||$1||'%' OR phone ILIKE '%'||$1||'%')`, q).Scan(&total); err != nil {
 			return err
 		}
@@ -86,7 +86,7 @@ func scanUser(row pgx.Row) (User, error) {
 
 func (s *Service) GetUser(ctx context.Context, p *auth.Principal, id uuid.UUID) (User, error) {
 	var u User
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		row := tx.QueryRow(ctx, `
 			SELECT u.id, u.name, u.phone, u.email::text, u.role_id, r.name, r.slug, u.employee_id, u.language, u.is_active, u.must_change_password,
 				ARRAY(SELECT ub.branch_id FROM user_branches ub WHERE ub.user_id = u.id ORDER BY ub.branch_id)
@@ -114,7 +114,7 @@ func (s *Service) CreateUser(ctx context.Context, p *auth.Principal, in UserInpu
 		return User{}, err
 	}
 	id := ids.New()
-	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := s.ensureRole(ctx, tx, in.RoleID); err != nil {
 			return err
 		}
@@ -155,14 +155,14 @@ func (s *Service) CreateUser(ctx context.Context, p *auth.Principal, in UserInpu
 func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUID, in UserInput) (User, error) {
 	if p.UserID == id && in.RoleID != uuid.Nil {
 		var current uuid.UUID
-		_ = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		_ = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 			return tx.QueryRow(ctx, `SELECT role_id FROM users WHERE id = $1`, id).Scan(&current)
 		})
 		if current != in.RoleID {
 			return User{}, httpx.Forbidden("permission_denied", "You cannot change your own role")
 		}
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var slug string
 		var roleID uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT u.role_id, r.slug FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, id).Scan(&roleID, &slug); err != nil {
@@ -215,7 +215,7 @@ func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUI
 }
 
 func (s *Service) SetActive(ctx context.Context, p *auth.Principal, id uuid.UUID, active bool) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var slug string
 		if err := tx.QueryRow(ctx, `SELECT r.slug FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, id).Scan(&slug); err != nil {
 			return httpx.NotFound("not_found", "User not found")
@@ -277,7 +277,7 @@ func (s *Service) ResetPassword(ctx context.Context, p *auth.Principal, id uuid.
 	if err != nil {
 		return err
 	}
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := s.guardTarget(ctx, tx, p, id); err != nil {
 			return err
 		}
@@ -294,7 +294,7 @@ func (s *Service) ResetPassword(ctx context.Context, p *auth.Principal, id uuid.
 }
 
 func (s *Service) EndSessions(ctx context.Context, p *auth.Principal, userID uuid.UUID) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := s.guardTarget(ctx, tx, p, userID); err != nil {
 			return err
 		}
@@ -317,7 +317,7 @@ type SessionView struct {
 
 func (s *Service) ListSessions(ctx context.Context, p *auth.Principal) ([]SessionView, error) {
 	var out []SessionView
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT id, COALESCE(user_agent,''), ip::text, expires_at, last_used_at, created_at
 			FROM sessions WHERE user_id = $1 ORDER BY created_at DESC
@@ -343,7 +343,7 @@ func (s *Service) ListSessions(ctx context.Context, p *auth.Principal) ([]Sessio
 }
 
 func (s *Service) EndOwnSession(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `DELETE FROM sessions WHERE id = $1 AND user_id = $2`, id, p.UserID)
 		if err != nil {
 			return err
@@ -377,7 +377,7 @@ type RoleInput struct {
 
 func (s *Service) ListRoles(ctx context.Context, p *auth.Principal) ([]Role, error) {
 	var out []Role
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT id, name, slug, is_system, perm_version FROM roles ORDER BY name`)
 		if err != nil {
 			return err
@@ -400,7 +400,7 @@ func (s *Service) ListRoles(ctx context.Context, p *auth.Principal) ([]Role, err
 
 func (s *Service) GetRole(ctx context.Context, p *auth.Principal, id uuid.UUID) (Role, error) {
 	var r Role
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT id, name, slug, is_system, perm_version FROM roles WHERE id = $1`, id).
 			Scan(&r.ID, &r.Name, &r.Slug, &r.IsSystem, &r.PermVersion); err != nil {
 			return httpx.NotFound("not_found", "Role not found")
@@ -434,7 +434,7 @@ func (s *Service) CreateRole(ctx context.Context, p *auth.Principal, in RoleInpu
 	}
 	id := ids.New()
 	slug := "custom-" + strings.ReplaceAll(strings.ToLower(strings.TrimSpace(in.Name)), " ", "-")
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO roles (id, business_id, name, slug, is_system) VALUES ($1,$2,$3,$4,false)`, id, p.BusinessID, strings.TrimSpace(in.Name), slug); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "A role with that name already exists")
@@ -457,7 +457,7 @@ func (s *Service) UpdateRole(ctx context.Context, p *auth.Principal, id uuid.UUI
 	if err := s.guardGrant(p, in.Perms); err != nil {
 		return Role{}, err
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var system bool
 		var slug string
 		if err := tx.QueryRow(ctx, `SELECT is_system, slug FROM roles WHERE id = $1`, id).Scan(&system, &slug); err != nil {
@@ -503,7 +503,7 @@ func (s *Service) replacePerms(ctx context.Context, tx pgx.Tx, p *auth.Principal
 }
 
 func (s *Service) DeleteRole(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var system bool
 		if err := tx.QueryRow(ctx, `SELECT is_system FROM roles WHERE id = $1`, id).Scan(&system); err != nil {
 			return httpx.NotFound("not_found", "Role not found")
@@ -537,7 +537,7 @@ type LoginEvent struct {
 func (s *Service) LoginHistory(ctx context.Context, p *auth.Principal, userID *uuid.UUID, from, to string, page httpx.Page) ([]LoginEvent, int, error) {
 	var out []LoginEvent
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM login_history
 			WHERE ($1::uuid IS NULL OR user_id = $1)
@@ -575,7 +575,7 @@ func (s *Service) LoginHistory(ctx context.Context, p *auth.Principal, userID *u
 
 func (s *Service) PermissionCatalogue(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT key, module, description, is_sensitive, has_limit FROM permissions ORDER BY module, key`)
 		if err != nil {
 			return err
@@ -612,7 +612,7 @@ func (s *Service) Me(ctx context.Context, p *auth.Principal) (map[string]any, er
 }
 
 func (s *Service) UpdateMe(ctx context.Context, p *auth.Principal, name, language string) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE users SET name = COALESCE(NULLIF($2,''), name), language = COALESCE(NULLIF($3,''), language) WHERE id = $1`, p.UserID, strings.TrimSpace(name), language)
 		return err
 	})
@@ -627,7 +627,7 @@ type UserPermissionOverride struct {
 
 func (s *Service) GetUserPermissions(ctx context.Context, p *auth.Principal, userID uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var roleID uuid.UUID
 		var roleSlug string
 		if err := tx.QueryRow(ctx, `SELECT u.role_id, r.slug FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, userID).Scan(&roleID, &roleSlug); err != nil {
@@ -683,7 +683,7 @@ func (s *Service) GetUserPermissions(ctx context.Context, p *auth.Principal, use
 }
 
 func (s *Service) PutUserPermissions(ctx context.Context, p *auth.Principal, userID uuid.UUID, overrides []UserPermissionOverride) (map[string]any, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var roleSlug string
 		if err := tx.QueryRow(ctx, `SELECT r.slug FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1`, userID).Scan(&roleSlug); err != nil {
 			return httpx.NotFound("not_found", "User not found")

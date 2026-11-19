@@ -45,7 +45,7 @@ func (s *Service) SaveTax(ctx context.Context, p *auth.Principal, id *uuid.UUID,
 		return TaxRate{}, invalid(fields)
 	}
 	var outID uuid.UUID
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if id == nil {
 			outID = ids.New()
 			wantDefault := in.IsDefault != nil && *in.IsDefault
@@ -104,7 +104,7 @@ func (s *Service) SaveTax(ctx context.Context, p *auth.Principal, id *uuid.UUID,
 		return TaxRate{}, err
 	}
 	var t TaxRate
-	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT id, name, rate, is_default, is_active FROM tax_rates WHERE id=$1`, outID).
 			Scan(&t.ID, &t.Name, &t.Rate, &t.IsDefault, &t.IsActive)
 	})
@@ -179,7 +179,7 @@ func (s *Service) UpdatePaymentMethods(ctx context.Context, p *auth.Principal, b
 	if len(fields) > 0 {
 		return invalid(fields)
 	}
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		cur := map[string]any{}
 		var raw []byte
 		if err := tx.QueryRow(ctx, `SELECT value FROM settings WHERE key='payment.methods'`).Scan(&raw); err == nil {

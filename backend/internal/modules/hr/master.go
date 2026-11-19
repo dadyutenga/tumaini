@@ -30,7 +30,7 @@ const deptSQL = `SELECT d.id, d.name, d.head_id, h.name AS head_name, d.created_
 
 func (s *Service) Departments(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = hrkit.All(ctx, tx, deptSQL+` ORDER BY d.name`)
 		return err
@@ -55,7 +55,7 @@ func (s *Service) SaveDepartment(ctx context.Context, p *auth.Principal, id *uui
 		return nil, httpx.BadRequest("invalid_body", "Department name is required")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := s.checkHead(ctx, tx, in.HeadID); err != nil {
 			return err
 		}
@@ -85,7 +85,7 @@ func (s *Service) SaveDepartment(ctx context.Context, p *auth.Principal, id *uui
 }
 
 func (s *Service) DeleteDepartment(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := hrkit.One(ctx, tx, "Department not found", deptSQL+` WHERE d.id=$1`, id)
 		if err != nil {
 			return err
@@ -117,7 +117,7 @@ const posSQL = `SELECT ps.id, ps.name, ps.default_pay, ps.created_at,
 
 func (s *Service) Positions(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = hrkit.All(ctx, tx, posSQL+` ORDER BY ps.name`)
 		return err
@@ -138,7 +138,7 @@ func (s *Service) SavePosition(ctx context.Context, p *auth.Principal, id *uuid.
 		pay = money.Money(*in.DefaultPay)
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var before map[string]any
 		rid := ids.New()
 		if id == nil {
@@ -165,7 +165,7 @@ func (s *Service) SavePosition(ctx context.Context, p *auth.Principal, id *uuid.
 }
 
 func (s *Service) DeletePosition(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := hrkit.One(ctx, tx, "Position not found", posSQL+` WHERE ps.id=$1`, id)
 		if err != nil {
 			return err
@@ -197,7 +197,7 @@ const ltSQL = `SELECT id, name, days_per_year, is_paid, is_active FROM leave_typ
 
 func (s *Service) LeaveTypes(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = hrkit.All(ctx, tx, ltSQL+` ORDER BY name`)
 		return err
@@ -214,7 +214,7 @@ func (s *Service) SaveLeaveType(ctx context.Context, p *auth.Principal, id *uuid
 		return nil, httpx.BadRequest("invalid_body", "Days per year must be between 0 and 366")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var before map[string]any
 		rid := ids.New()
 		if id == nil {
@@ -265,7 +265,7 @@ const crSQL = `SELECT c.id, c.employee_id, e.name AS employee_name, c.position_i
 
 func (s *Service) CommissionRules(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = hrkit.All(ctx, tx, crSQL+` ORDER BY e.name NULLS LAST, ps.name`)
 		return err
@@ -281,7 +281,7 @@ func (s *Service) SaveCommissionRule(ctx context.Context, p *auth.Principal, id 
 		return nil, httpx.BadRequest("invalid_body", "A percentage cannot be above 100")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if in.EmployeeID != nil {
 			var n int
 			if err := tx.QueryRow(ctx, `SELECT count(*) FROM employees WHERE id=$1`, *in.EmployeeID).Scan(&n); err != nil || n == 0 {
@@ -348,7 +348,7 @@ const adjSQL = `SELECT a.id, a.employee_id, e.name AS employee_name, a.period, a
 func (s *Service) Adjustments(ctx context.Context, p *auth.Principal, employee *uuid.UUID, from, to string, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if br := p.ScopeBranches("adjustments.manage"); br != nil {
 			q.Add("e.branch_id = ANY(?)", br)
@@ -369,7 +369,7 @@ func (s *Service) Adjustments(ctx context.Context, p *auth.Principal, employee *
 func (s *Service) CreateAdjustment(ctx context.Context, p *auth.Principal, in AdjustmentIn) (map[string]any, error) {
 	var out map[string]any
 	id := ids.New()
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		emp, err := s.loadEmployee(ctx, tx, p, "adjustments.manage", in.EmployeeID)
 		if err != nil {
 			return err
@@ -405,7 +405,7 @@ func periodLocked(ctx context.Context, tx pgx.Tx, employee uuid.UUID, date strin
 }
 
 func (s *Service) DeleteAdjustment(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := hrkit.One(ctx, tx, "Adjustment not found", adjSQL+` WHERE a.id=$1`, id)
 		if err != nil {
 			return err

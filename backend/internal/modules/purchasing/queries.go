@@ -79,7 +79,7 @@ func (s *Service) poRows(ctx context.Context, tx pgx.Tx, f POFilter, branches []
 func (s *Service) ListPOs(ctx context.Context, p *auth.Principal, f POFilter, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		branches := p.ScopeBranches("po.view")
 		q := poWhere(f, branches)
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM purchase_orders po`+q.Where(), q.Args...).Scan(&total); err != nil {
@@ -95,7 +95,7 @@ func (s *Service) ListPOs(ctx context.Context, p *auth.Principal, f POFilter, pa
 // GetPO shows ordered, received and outstanding quantity per line (FR-PUR-13).
 func (s *Service) GetPO(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var branch, sup, by uuid.UUID
 		var approver *uuid.UUID
 		var number, status, sname, date string
@@ -156,7 +156,7 @@ func (s *Service) POPDF(ctx context.Context, p *auth.Principal, id uuid.UUID) (s
 		return "", nil, err
 	}
 	var bizName string
-	_ = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	_ = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT name FROM businesses WHERE id=$1`, p.BusinessID).Scan(&bizName)
 	})
 	d := pdf.New()
@@ -193,7 +193,7 @@ func (s *Service) Suggest(ctx context.Context, p *auth.Principal, supplier *uuid
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
 	}
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if supplier != nil {
 			if _, err := supplierRow(ctx, tx, *supplier); err != nil {
 				return err
@@ -279,7 +279,7 @@ func (s *Service) grnRows(ctx context.Context, tx pgx.Tx, f DocFilter, branches 
 func (s *Service) ListGRNs(ctx context.Context, p *auth.Principal, f DocFilter, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		branches := p.ScopeBranches("po.view")
 		q := grnWhere(f, branches)
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM goods_receipts g`+q.Where(), q.Args...).Scan(&total); err != nil {
@@ -294,7 +294,7 @@ func (s *Service) ListGRNs(ctx context.Context, p *auth.Principal, f DocFilter, 
 
 func (s *Service) GetGRN(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var branch uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT branch_id FROM goods_receipts WHERE id=$1`, id).Scan(&branch); err != nil || !p.SeesBranch("po.view", branch) {
 			return httpx.NotFound("not_found", "Goods receipt not found")
@@ -393,7 +393,7 @@ func (s *Service) invoiceRows(ctx context.Context, tx pgx.Tx, f DocFilter, branc
 func (s *Service) ListInvoices(ctx context.Context, p *auth.Principal, f DocFilter, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		branches := p.ScopeBranches("po.view")
 		q := invoiceWhere(f, branches)
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM purchase_invoices i`+q.Where(), q.Args...).Scan(&total); err != nil {
@@ -408,7 +408,7 @@ func (s *Service) ListInvoices(ctx context.Context, p *auth.Principal, f DocFilt
 
 func (s *Service) GetInvoice(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var branch uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT branch_id FROM purchase_invoices WHERE id=$1`, id).Scan(&branch); err != nil || !p.SeesBranch("po.view", branch) {
 			return httpx.NotFound("not_found", "Purchase invoice not found")
@@ -522,7 +522,7 @@ func scanReturns(rows pgx.Rows) ([]map[string]any, error) {
 func (s *Service) ListReturns(ctx context.Context, p *auth.Principal, f DocFilter, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := returnWhere(f, p.ScopeBranches("po.view"))
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM purchase_returns r`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
@@ -539,7 +539,7 @@ func (s *Service) ListReturns(ctx context.Context, p *auth.Principal, f DocFilte
 
 func (s *Service) GetReturn(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, returnCols+` WHERE r.id=$1`, id)
 		if err != nil {
 			return err

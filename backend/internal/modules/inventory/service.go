@@ -125,7 +125,7 @@ func (s *Service) PostEntry(ctx context.Context, p *auth.Principal, in EntryInpu
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -261,7 +261,7 @@ func (s *Service) CreateAdjustment(ctx context.Context, p *auth.Principal, in Ad
 		return nil, err
 	}
 	var result map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		pids := make([]uuid.UUID, len(in.Items))
 		for i, ln := range in.Items {
 			pids[i] = ln.ProductID
@@ -327,7 +327,7 @@ func (s *Service) CountSheet(ctx context.Context, p *auth.Principal, in CountShe
 		in.Reason = "Stock take"
 	}
 	var lines []CountLine
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT p.id, COALESCE(sl.qty_on_hand, 0)
 			FROM products p LEFT JOIN stock_levels sl ON sl.product_id=p.id AND sl.branch_id=$1
@@ -378,7 +378,7 @@ func (s *Service) UpdateAdjustment(ctx context.Context, p *auth.Principal, id uu
 	if err := uniqueCounts(in.Items); err != nil {
 		return nil, err
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		st, branch, _, err := s.loadAdjustment(ctx, tx, p, id)
 		if err != nil {
 			return err
@@ -412,7 +412,7 @@ func (s *Service) UpdateAdjustment(ctx context.Context, p *auth.Principal, id uu
 }
 
 func (s *Service) CancelAdjustment(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		st, _, _, err := s.loadAdjustment(ctx, tx, p, id)
 		if err != nil {
 			return err
@@ -455,7 +455,7 @@ func (s *Service) refreshCounts(ctx context.Context, tx pgx.Tx, id, branch uuid.
 func (s *Service) PostAdjustment(ctx context.Context, p *auth.Principal, id uuid.UUID) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -636,7 +636,7 @@ func (s *Service) CreateTransfer(ctx context.Context, p *auth.Principal, in Tran
 		return nil, err
 	}
 	var result map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := s.checkTransferInput(ctx, tx, *p.BranchID, in); err != nil {
 			return err
 		}
@@ -699,7 +699,7 @@ func (s *Service) UpdateTransfer(ctx context.Context, p *auth.Principal, id uuid
 	if err := httpx.Check(in); err != nil {
 		return nil, err
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		t, err := lockTransfer(ctx, tx, p, id, "transfers.create", "from")
 		if err != nil {
 			return err
@@ -728,7 +728,7 @@ func (s *Service) UpdateTransfer(ctx context.Context, p *auth.Principal, id uuid
 }
 
 func (s *Service) CancelTransfer(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		t, err := lockTransfer(ctx, tx, p, id, "transfers.create", "from")
 		if err != nil {
 			return err
@@ -750,7 +750,7 @@ func (s *Service) CancelTransfer(ctx context.Context, p *auth.Principal, id uuid
 func (s *Service) Dispatch(ctx context.Context, p *auth.Principal, id uuid.UUID) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -833,7 +833,7 @@ func (s *Service) Dispatch(ctx context.Context, p *auth.Principal, id uuid.UUID)
 func (s *Service) ReturnTransfer(ctx context.Context, p *auth.Principal, id uuid.UUID, reason string) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -907,7 +907,7 @@ func (s *Service) ReceiveTransfer(ctx context.Context, p *auth.Principal, id uui
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body

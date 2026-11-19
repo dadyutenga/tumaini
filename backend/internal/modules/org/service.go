@@ -54,7 +54,7 @@ type Business struct {
 
 func (s *Service) GetBusiness(ctx context.Context, p *auth.Principal) (Business, error) {
 	var b Business
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT id, name, legal_name, tax_number, reg_number, phone, email::text, address, logo_file, currency, timezone, is_active
 			FROM businesses WHERE id = $1
@@ -79,7 +79,7 @@ func (s *Service) UpdateBusiness(ctx context.Context, p *auth.Principal, in Busi
 	if len(fields) > 0 {
 		return Business{}, invalid(fields)
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, _ := s.scanBusiness(ctx, tx, p.BusinessID)
 		if _, err := tx.Exec(ctx, `
 			UPDATE businesses SET name=COALESCE(NULLIF($2,''), name), legal_name=COALESCE($3, legal_name),
@@ -134,7 +134,7 @@ func (s *Service) SaveLogo(ctx context.Context, p *auth.Principal, name string, 
 		return "", httpx.BadRequest("invalid_body", err.Error())
 	}
 	id := ids.New()
-	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO files (id, business_id, path, original_name, mime_type, size_bytes, uploaded_by)
 			VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -162,7 +162,7 @@ type Branch struct {
 
 func (s *Service) ListBranches(ctx context.Context, p *auth.Principal) ([]Branch, error) {
 	var out []Branch
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := `SELECT id, name, code, address, phone, manager_id, is_main, is_active, ` + invoicePrefixSQL("branches.id") + ` FROM branches WHERE is_active OR $1`
 		args := []any{p.IsOwner}
 		if !p.IsOwner {
@@ -203,7 +203,7 @@ func (s *Service) CreateBranch(ctx context.Context, p *auth.Principal, in Branch
 	if !branchCode.MatchString(code) {
 		return Branch{}, invalid(map[string]string{"code": "use 1 to 8 letters or digits"})
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := s.checkManager(ctx, tx, in.Manager); err != nil {
 			return err
 		}
@@ -268,7 +268,7 @@ func (s *Service) GetBranch(ctx context.Context, p *auth.Principal, id uuid.UUID
 		return Branch{}, httpx.NotFound("not_found", "Branch not found")
 	}
 	var b Branch
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `SELECT id, name, code, address, phone, manager_id, is_main, is_active, `+invoicePrefixSQL("branches.id")+` FROM branches WHERE id=$1`, id).
 			Scan(&b.ID, &b.Name, &b.Code, &b.Address, &b.Phone, &b.Manager, &b.IsMain, &b.IsActive, &b.InvoicePrefix)
 		if err != nil {
@@ -283,7 +283,7 @@ func (s *Service) UpdateBranch(ctx context.Context, p *auth.Principal, id uuid.U
 	if !p.SeesBranch("branches.manage", id) {
 		return Branch{}, httpx.NotFound("not_found", "Branch not found")
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := s.checkManager(ctx, tx, in.Manager); err != nil {
 			return err
 		}
@@ -318,7 +318,7 @@ func (s *Service) DeactivateBranch(ctx context.Context, p *auth.Principal, id uu
 	if !p.SeesBranch("branches.manage", id) {
 		return httpx.NotFound("not_found", "Branch not found")
 	}
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var isMain bool
 		if err := tx.QueryRow(ctx, `SELECT is_main FROM branches WHERE id=$1 FOR UPDATE`, id).Scan(&isMain); err != nil {
 			return httpx.NotFound("not_found", "Branch not found")
@@ -368,7 +368,7 @@ func (s *Service) BranchStaff(ctx context.Context, p *auth.Principal, id uuid.UU
 		return nil, err
 	}
 	var users, employees []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT u.id, u.name, r.name FROM users u
 			JOIN user_branches ub ON ub.user_id=u.id AND ub.branch_id=$1
@@ -421,7 +421,7 @@ type TaxRate struct {
 
 func (s *Service) ListTax(ctx context.Context, p *auth.Principal) ([]TaxRate, error) {
 	var out []TaxRate
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT id, name, rate, is_default, is_active FROM tax_rates ORDER BY name`)
 		if err != nil {
 			return err
@@ -444,7 +444,7 @@ func (s *Service) ListTax(ctx context.Context, p *auth.Principal) ([]TaxRate, er
 
 func (s *Service) PaymentMethods(ctx context.Context, p *auth.Principal) (any, error) {
 	var raw []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT value FROM settings WHERE key='payment.methods'`).Scan(&raw)
 	})
 	if err != nil {
@@ -466,7 +466,7 @@ func (s *Service) Upload(ctx context.Context, p *auth.Principal, name, _ string,
 		return uuid.Nil, httpx.BadRequest("invalid_body", err.Error())
 	}
 	id := ids.New()
-	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
 			INSERT INTO files (id, business_id, path, original_name, mime_type, size_bytes, uploaded_by)
 			VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -478,7 +478,7 @@ func (s *Service) Upload(ctx context.Context, p *auth.Principal, name, _ string,
 
 func (s *Service) OpenFile(ctx context.Context, p *auth.Principal, id uuid.UUID) (string, string, io.ReadCloser, error) {
 	var path, name, mime string
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `SELECT path, original_name, mime_type FROM files WHERE id=$1`, id).Scan(&path, &name, &mime)
 		if err != nil {
 			return httpx.NotFound("not_found", "File not found")

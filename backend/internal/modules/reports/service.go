@@ -83,7 +83,7 @@ func (f Filter) subtitle() string {
 // tx runs fn in a read transaction for the caller's business, with the
 // business timezone and business date loaded into f.
 func (s *Service) tx(ctx context.Context, p *auth.Principal, f *Filter, fn func(ctx context.Context, tx pgx.Tx) error) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		f.tz = setting.String(ctx, tx, "system.timezone", "Africa/Dar_es_Salaam")
 		day, err := clock.BusinessDate(s.Clock.Now(), f.tz, setting.String(ctx, tx, "system.business_day_start", "00:00"))
 		if err != nil {

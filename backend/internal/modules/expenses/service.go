@@ -76,7 +76,7 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in Input) (int,
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -174,7 +174,7 @@ func (s *Service) OnRejected(ctx context.Context, tx pgx.Tx, p *auth.Principal, 
 func (s *Service) Pay(ctx context.Context, p *auth.Principal, id, account uuid.UUID) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -264,7 +264,7 @@ func (s *Service) Reverse(ctx context.Context, p *auth.Principal, id uuid.UUID, 
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -322,7 +322,7 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 		return nil, err
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := s.get(ctx, tx, p, id, "expenses.create")
 		if err != nil {
 			return err
@@ -365,7 +365,7 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 // request and the expense change together (FR-EXP-03, FR-APR-03).
 func (s *Service) Decide(ctx context.Context, p *auth.Principal, id uuid.UUID, approve bool, note string) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		cur, err := s.get(ctx, tx, p, id, "expenses.approve")
 		if err != nil {
 			return err
@@ -441,7 +441,7 @@ func (s *Service) get(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid
 
 func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		out, err = s.get(ctx, tx, p, id, "expenses.view")
 		if err != nil {
@@ -469,7 +469,7 @@ type ListFilter struct {
 func (s *Service) List(ctx context.Context, p *auth.Principal, f ListFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if b := p.ScopeBranches("expenses.view"); b != nil {
 			q.Add("e.branch_id = ANY(?)", b)

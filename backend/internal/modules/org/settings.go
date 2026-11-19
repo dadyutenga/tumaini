@@ -187,7 +187,7 @@ func invalid(fields map[string]string) error {
 // Settings returns every setting grouped, with the notification rules under notifications.rules.
 func (s *Service) Settings(ctx context.Context, p *auth.Principal) (map[string]any, error) {
 	grouped := map[string]map[string]any{}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT key, value FROM settings ORDER BY key`)
 		if err != nil {
 			return err
@@ -294,7 +294,7 @@ func (s *Service) UpdateSettings(ctx context.Context, p *auth.Principal, group s
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		for _, name := range names {
 			val := clean[name]
 			key := group + "." + name

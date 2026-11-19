@@ -72,7 +72,7 @@ type ProductInput struct {
 func (s *Service) List(ctx context.Context, p *auth.Principal, q string, category *uuid.UUID, active, low *bool, page httpx.Page, showCost bool) ([]Product, int, error) {
 	var out []Product
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		// $1 is the active branch for stock and branch prices; may be NULL.
 		f := sqlq.New(p.BranchID)
 		q = strings.TrimSpace(q)
@@ -122,7 +122,7 @@ func scanProduct(row pgx.Row, showCost bool) (Product, error) {
 
 func (s *Service) Lookup(ctx context.Context, p *auth.Principal, code string) (Product, error) {
 	var pr Product
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT p.id, p.name, p.sku, p.barcode, p.category_id, p.unit_id, u.short_name, p.tax_rate_id, p.kind,
 			       COALESCE(bp.sell_price, p.sell_price), p.reorder_level, p.is_active, sl.qty_on_hand, sl.avg_cost, p.description, p.warranty_months, p.track_serial, p.photo_file
@@ -148,7 +148,7 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 		return nil, err
 	}
 	var levels []map[string]any
-	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
 			SELECT b.id, b.name, COALESCE(sl.qty_on_hand,0), COALESCE(sl.avg_cost,0)
 			FROM branches b LEFT JOIN stock_levels sl ON sl.branch_id=b.id AND sl.product_id=$1
@@ -182,7 +182,7 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 
 func (s *Service) one(ctx context.Context, p *auth.Principal, id uuid.UUID) (Product, error) {
 	var pr Product
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `
 			SELECT p.id, p.name, p.sku, p.barcode, p.category_id, p.unit_id, u.short_name, p.tax_rate_id, p.kind, p.sell_price, p.reorder_level, p.is_active, NULL::numeric, NULL::numeric, p.description, p.warranty_months, p.track_serial, p.photo_file
 			FROM products p JOIN units u ON u.id=p.unit_id WHERE p.id=$1
@@ -206,7 +206,7 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in ProductInput
 		return Product{}, err
 	}
 	id := ids.New()
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		unit := in.UnitID
 		if unit == nil {
 			var uid uuid.UUID
@@ -266,7 +266,7 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 	if err := checkProductInput(in); err != nil {
 		return Product{}, err
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var old decimal.Decimal
 		var kind string
 		if err := tx.QueryRow(ctx, `SELECT sell_price, kind FROM products WHERE id=$1 FOR UPDATE`, id).Scan(&old, &kind); err != nil {
@@ -310,7 +310,7 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 }
 
 func (s *Service) SetActive(ctx context.Context, p *auth.Principal, id uuid.UUID, active bool) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `UPDATE products SET is_active=$2 WHERE id=$1`, id, active)
 		if err != nil {
 			return err
@@ -326,7 +326,7 @@ func (s *Service) BranchPrices(ctx context.Context, p *auth.Principal, id uuid.U
 	BranchID uuid.UUID       `json:"branch_id"`
 	Price    decimal.Decimal `json:"sell_price"`
 }) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var exists bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM products WHERE id=$1)`, id).Scan(&exists); err != nil {
 			return err
@@ -370,7 +370,7 @@ func (s *Service) BranchPrices(ctx context.Context, p *auth.Principal, id uuid.U
 
 func (s *Service) PriceHistory(ctx context.Context, p *auth.Principal, id uuid.UUID) ([]map[string]any, error) {
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT id, branch_id, old_price, new_price, changed_by, changed_at FROM price_history WHERE product_id=$1 ORDER BY changed_at DESC`, id)
 		if err != nil {
 			return err
@@ -403,7 +403,7 @@ type Category struct {
 
 func (s *Service) Categories(ctx context.Context, p *auth.Principal) ([]Category, error) {
 	var out []Category
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT id, parent_id, name, is_active FROM categories ORDER BY name`)
 		if err != nil {
 			return err
@@ -463,7 +463,7 @@ func (s *Service) SaveCategory(ctx context.Context, p *auth.Principal, id *uuid.
 		return Category{}, httpx.BadRequest("invalid_body", "Category name cannot be empty")
 	}
 	var outID uuid.UUID
-	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if parent != nil {
 			var exists bool
 			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM categories WHERE id=$1)`, *parent).Scan(&exists); err != nil {
@@ -520,14 +520,14 @@ func (s *Service) SaveCategory(ctx context.Context, p *auth.Principal, id *uuid.
 		return Category{}, err
 	}
 	var c Category
-	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT id, parent_id, name, is_active FROM categories WHERE id=$1`, outID).Scan(&c.ID, &c.ParentID, &c.Name, &c.IsActive)
 	})
 	return c, err
 }
 
 func (s *Service) DeleteCategory(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var n int
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM products WHERE category_id=$1`, id).Scan(&n); err != nil {
 			return err
@@ -555,7 +555,7 @@ type Unit struct {
 
 func (s *Service) Units(ctx context.Context, p *auth.Principal) ([]Unit, error) {
 	var out []Unit
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `SELECT id, name, short_name, allow_decimal FROM units ORDER BY name`)
 		if err != nil {
 			return err
@@ -598,7 +598,7 @@ func (s *Service) SaveUnit(ctx context.Context, p *auth.Principal, id *uuid.UUID
 		return Unit{}, httpx.BadRequest("invalid_body", "Unit name and short name cannot be empty")
 	}
 	var outID uuid.UUID
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if id == nil {
 			outID = ids.New()
 			allow := in.AllowDecimal != nil && *in.AllowDecimal
@@ -630,7 +630,7 @@ func (s *Service) SaveUnit(ctx context.Context, p *auth.Principal, id *uuid.UUID
 		return Unit{}, err
 	}
 	var u Unit
-	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT id, name, short_name, allow_decimal FROM units WHERE id=$1`, outID).Scan(&u.ID, &u.Name, &u.ShortName, &u.AllowDecimal)
 	})
 	return u, err
@@ -664,7 +664,7 @@ func (s *Service) Import(ctx context.Context, p *auth.Principal, filename string
 	}
 	var report []ImportRow
 	var saved int
-	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		for i, rec := range records[1:] {
 			name := col(rec, header, "name")
 			sku := col(rec, header, "sku")

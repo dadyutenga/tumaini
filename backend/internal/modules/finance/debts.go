@@ -28,7 +28,7 @@ func (s *Service) UnifiedDebts(ctx context.Context, p *auth.Principal) (map[stri
 	owedToUs := []DebtRow{}
 	weOwe := []DebtRow{}
 
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		today, err := s.bizDate(ctx, tx)
 		if err != nil {
 			return err

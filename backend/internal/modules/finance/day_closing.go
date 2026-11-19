@@ -75,7 +75,7 @@ func (s *Service) DaySummary(ctx context.Context, p *auth.Principal, date string
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		d := strings.TrimSpace(date)
 		if d == "" {
 			var err error
@@ -129,7 +129,7 @@ func (s *Service) DaySummary(ctx context.Context, p *auth.Principal, date string
 func (s *Service) ListDayClosings(ctx context.Context, p *auth.Principal, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM day_closings WHERE ($1::uuid IS NULL OR branch_id=$1)`, p.BranchID).Scan(&total); err != nil {
 			return err
 		}
@@ -173,7 +173,7 @@ func (s *Service) CloseDay(ctx context.Context, p *auth.Principal, in CloseDayIn
 		return nil, httpx.BadRequest("invalid_body", "Counted cash cannot be negative")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		d := strings.TrimSpace(in.Date)
 		if d == "" {
 			var err error
@@ -239,7 +239,7 @@ func (s *Service) ReopenDay(ctx context.Context, p *auth.Principal, id uuid.UUID
 		return nil, httpx.BadRequest("invalid_body", "A reason is required to reopen a closed day")
 	}
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var status, date string
 		if err := tx.QueryRow(ctx, `SELECT status, business_date::text FROM day_closings WHERE id=$1 FOR UPDATE`, id).Scan(&status, &date); err != nil {
 			return httpx.NotFound("not_found", "Day closing not found")

@@ -61,7 +61,7 @@ func orEmpty(rows []map[string]any) []map[string]any {
 func (s *Service) idemRun(ctx context.Context, p *auth.Principal, fn func(ctx context.Context, tx pgx.Tx) (int, any, error)) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -155,7 +155,7 @@ func (s *Service) CreatePO(ctx context.Context, p *auth.Principal, in POIn) (map
 		return nil, err
 	}
 	var id uuid.UUID
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if err := activeSupplier(ctx, tx, in.SupplierID); err != nil {
 			return err
 		}
@@ -205,7 +205,7 @@ func (s *Service) UpdatePO(ctx context.Context, p *auth.Principal, id uuid.UUID,
 	if err := httpx.Check(in); err != nil {
 		return nil, err
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		po, err := lockPO(ctx, tx, p, id, "po.create")
 		if err != nil {
 			return err
@@ -241,7 +241,7 @@ func (s *Service) UpdatePO(ctx context.Context, p *auth.Principal, id uuid.UUID,
 func (s *Service) Submit(ctx context.Context, p *auth.Principal, id uuid.UUID) (int, map[string]any, error) {
 	var status int
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		po, err := lockPO(ctx, tx, p, id, "po.create")
 		if err != nil {
 			return err
@@ -296,7 +296,7 @@ func (s *Service) OnPORejected(ctx context.Context, tx pgx.Tx, p *auth.Principal
 
 // CancelPO cancels a draft, pending or approved order on which nothing was received (FR-PUR-04).
 func (s *Service) CancelPO(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		po, err := lockPO(ctx, tx, p, id, "po.create")
 		if err != nil {
 			return err
@@ -332,7 +332,7 @@ func (s *Service) CancelPO(ctx context.Context, p *auth.Principal, id uuid.UUID)
 
 // ClosePO closes a partially received order so the rest is no longer expected.
 func (s *Service) ClosePO(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		po, err := lockPO(ctx, tx, p, id, "po.approve")
 		if err != nil {
 			return err

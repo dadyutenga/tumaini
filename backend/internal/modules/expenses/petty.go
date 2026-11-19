@@ -17,7 +17,7 @@ import (
 // PettyCash lists petty cash accounts in scope with balance and custodian (FR-EXP-06).
 func (s *Service) PettyCash(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	out := []map[string]any{}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New().Add("ma.type = 'petty_cash'")
 		if b := p.ScopeBranches("petty_cash.manage"); b != nil {
 			q.Add("(ma.branch_id IS NULL OR ma.branch_id = ANY(?))", b)
@@ -88,7 +88,7 @@ func (s *Service) TopUp(ctx context.Context, p *auth.Principal, id uuid.UUID, in
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
@@ -146,7 +146,7 @@ func (s *Service) Reconcile(ctx context.Context, p *auth.Principal, id uuid.UUID
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body

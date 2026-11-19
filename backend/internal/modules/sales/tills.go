@@ -30,7 +30,7 @@ func (s *Service) OpenTill(ctx context.Context, p *auth.Principal, account uuid.
 		return nil, httpx.BadRequest("invalid_body", "Opening float cannot be negative")
 	}
 	id := ids.New()
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var typ string
 		var active bool
 		var branch *uuid.UUID
@@ -63,7 +63,7 @@ func (s *Service) OpenTill(ctx context.Context, p *auth.Principal, account uuid.
 
 func (s *Service) CurrentTill(ctx context.Context, p *auth.Principal) (any, error) {
 	var out any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var id, account, branch uuid.UUID
 		var float decimal.Decimal
 		var opened any
@@ -104,7 +104,7 @@ func (s *Service) CloseTill(ctx context.Context, p *auth.Principal, id uuid.UUID
 		return nil, httpx.BadRequest("invalid_body", "Counted cash cannot be negative")
 	}
 	var result map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var opening decimal.Decimal
 		var account, branch, cashier uuid.UUID
 		if err := tx.QueryRow(ctx, `SELECT opening_float, money_account_id, branch_id, cashier_id FROM till_sessions WHERE id=$1 AND status='open' FOR UPDATE`, id).Scan(&opening, &account, &branch, &cashier); err != nil {
@@ -171,7 +171,7 @@ type TillFilter struct {
 func (s *Service) Tills(ctx context.Context, p *auth.Principal, f TillFilter, page httpx.Page) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		if b := p.ScopeBranches("tills.view"); b != nil {
 			q.Add("t.branch_id = ANY(?)", b)
@@ -215,7 +215,7 @@ func (s *Service) Tills(ctx context.Context, p *auth.Principal, f TillFilter, pa
 // Till is the session report: sales by method, refunds, customer payments and pay-outs (FR-REP-04).
 func (s *Service) Till(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var branch, cashier, account uuid.UUID
 		var cname, aname, status string
 		var opening decimal.Decimal
@@ -327,7 +327,7 @@ func (s *Service) PayOut(ctx context.Context, p *auth.Principal, tillID uuid.UUI
 	}
 	var status int
 	var body []byte
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body

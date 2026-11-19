@@ -40,7 +40,7 @@ func (s *Service) CreateSupplier(ctx context.Context, p *auth.Principal, in Supp
 		return nil, err
 	}
 	id := ids.New()
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
 			INSERT INTO suppliers (id, business_id, name, contact_person, phone, email, address, tax_number, payment_terms_days, created_by)
 			VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,''),NULLIF($6,'')::citext,NULLIF($7,''),NULLIF($8,''),$9,$10)
@@ -64,7 +64,7 @@ func (s *Service) UpdateSupplier(ctx context.Context, p *auth.Principal, id uuid
 	if err := httpx.Check(in); err != nil {
 		return nil, err
 	}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		before, err := supplierRow(ctx, tx, id)
 		if err != nil {
 			return err
@@ -89,7 +89,7 @@ func (s *Service) UpdateSupplier(ctx context.Context, p *auth.Principal, id uuid
 }
 
 func (s *Service) DeactivateSupplier(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := supplierRow(ctx, tx, id); err != nil {
 			return err
 		}
@@ -123,7 +123,7 @@ func supplierRow(ctx context.Context, tx pgx.Tx, id uuid.UUID) (map[string]any, 
 func (s *Service) ListSuppliers(ctx context.Context, p *auth.Principal, search string, active *bool, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		q.If(search != "", "(s.name ILIKE '%' || ? || '%' OR s.phone ILIKE '%' || ? || '%')", search, search)
 		q.If(active != nil, "s.is_active = ?", active)
@@ -158,7 +158,7 @@ func (s *Service) ListSuppliers(ctx context.Context, p *auth.Principal, search s
 // GetSupplier returns the profile with the account summary of FR-SUP-03.
 func (s *Service) GetSupplier(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		row, err := supplierRow(ctx, tx, id)
 		if err != nil {
 			return err
@@ -236,7 +236,7 @@ func (s *Service) aging(ctx context.Context, tx pgx.Tx, supplier *uuid.UUID) ([]
 func (s *Service) Debts(ctx context.Context, p *auth.Principal) (map[string]any, error) {
 	var rows []map[string]any
 	totals := map[string]decimal.Decimal{}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
 		rows, err = s.aging(ctx, tx, nil)
 		return err
@@ -251,7 +251,7 @@ func (s *Service) Debts(ctx context.Context, p *auth.Principal) (map[string]any,
 
 func (s *Service) Unpaid(ctx context.Context, p *auth.Principal, supplier uuid.UUID) ([]map[string]any, error) {
 	var out []map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := supplierRow(ctx, tx, supplier); err != nil {
 			return err
 		}
@@ -285,7 +285,7 @@ func (s *Service) Unpaid(ctx context.Context, p *auth.Principal, supplier uuid.U
 // running balance (FR-SUP-06). Positive balance means the business owes.
 func (s *Service) Statement(ctx context.Context, p *auth.Principal, supplier uuid.UUID, from, to string) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		sup, err := supplierRow(ctx, tx, supplier)
 		if err != nil {
 			return err
@@ -337,7 +337,7 @@ func (s *Service) Statement(ctx context.Context, p *auth.Principal, supplier uui
 // Purchases lists the supplier's orders, receipts and invoices (FR-SUP-02).
 func (s *Service) SupplierPurchases(ctx context.Context, p *auth.Principal, supplier uuid.UUID) (map[string]any, error) {
 	out := map[string]any{}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := supplierRow(ctx, tx, supplier); err != nil {
 			return err
 		}
