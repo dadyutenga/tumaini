@@ -303,6 +303,46 @@ func (h *Handler) SetPeriodLock(c fiber.Ctx) error {
 	return httpx.OK(c, out, err)
 }
 
+func (h *Handler) DaySummary(c fiber.Ctx) error {
+	out, err := h.Svc.DaySummary(c.Context(), middleware.Principal(c), c.Query("date"))
+	return httpx.OK(c, out, err)
+}
+
+func (h *Handler) ListDayClosings(c fiber.Ctx) error {
+	page := httpx.PageFrom(c)
+	rows, total, err := h.Svc.ListDayClosings(c.Context(), middleware.Principal(c), page)
+	return httpx.Paged(c, rows, page, total, err)
+}
+
+func (h *Handler) CloseDay(c fiber.Ctx) error {
+	var body CloseDayIn
+	if err := httpx.Bind(c, &body); err != nil {
+		return err
+	}
+	out, err := h.Svc.CloseDay(c.Context(), middleware.Principal(c), body)
+	return httpx.Created(c, out, err)
+}
+
+func (h *Handler) ReopenDay(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if err := httpx.Bind(c, &body); err != nil {
+		return err
+	}
+	out, err := h.Svc.ReopenDay(c.Context(), middleware.Principal(c), id, body.Reason)
+	return httpx.OK(c, out, err)
+}
+
+func (h *Handler) UnifiedDebts(c fiber.Ctx) error {
+	out, err := h.Svc.UnifiedDebts(c.Context(), middleware.Principal(c))
+	return httpx.OK(c, out, err)
+}
+
 func Register(r fiber.Router, h *Handler) {
 	r.Get("/money-accounts", middleware.RequireAny("accounts.view", "sales.create", "tills.open_close", "payments.receive"), h.List)
 	r.Post("/money-accounts", middleware.Require("accounts.manage"), h.Create)
@@ -335,4 +375,9 @@ func Register(r fiber.Router, h *Handler) {
 	r.Get("/reports/trial-balance", middleware.Require("reports.financial"), h.Trial)
 	r.Get("/periods/lock", middleware.Require("periods.lock"), h.PeriodLock)
 	r.Put("/periods/lock", middleware.Require("periods.lock"), h.SetPeriodLock)
+	r.Get("/day-closings/summary", middleware.RequireAny("tills.open_close", "tills.view", "accounts.view", "periods.lock"), h.DaySummary)
+	r.Get("/day-closings", middleware.RequireAny("tills.open_close", "tills.view", "accounts.view", "periods.lock"), h.ListDayClosings)
+	r.Post("/day-closings", middleware.RequireAny("tills.open_close", "reconcile.manage", "periods.lock"), h.CloseDay)
+	r.Post("/day-closings/:id/reopen", middleware.Require("periods.lock"), h.ReopenDay)
+	r.Get("/debts", middleware.RequireAny("customers.view", "suppliers.view", "service_billing.view", "contractors.view", "reports.debts"), h.UnifiedDebts)
 }

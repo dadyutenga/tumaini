@@ -13,10 +13,15 @@ export function useGet<T>(path: string, query?: Query, options: { enabled?: bool
   });
 }
 
-export function useGetPage<T>(path: string, query?: Query) {
+export function useGetPage<T>(
+  path: string,
+  query?: Query,
+  options: { enabled?: boolean } = {},
+) {
   return useQuery({
     queryKey: [path, "page", query ?? {}],
     queryFn: ({ signal }) => getPage<T>(path, query, signal),
+    enabled: options.enabled,
     placeholderData: keepPreviousData,
     staleTime: 15_000,
   });

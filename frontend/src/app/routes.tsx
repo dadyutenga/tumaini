@@ -38,6 +38,8 @@ import {
   DatabaseBackup,
   History,
   Hammer,
+  Scale,
+  CalendarCheck,
 } from "lucide-react";
 
 export interface AppRoute {
@@ -287,6 +289,22 @@ export const routes: AppRoute[] = [
     component: lazy(() => import("@/pages/Money")),
     navigation: true,
     permission: ["accounts.view", "transactions.view"],
+  },
+  {
+    path: "/debts",
+    label: "Debts",
+    icon: Scale,
+    component: lazy(() => import("@/pages/Debts")),
+    navigation: true,
+    permission: ["reports.debts", "customers.view", "clients.view", "suppliers.view", "contractors.view"],
+  },
+  {
+    path: "/day-closing",
+    label: "Day closing",
+    icon: CalendarCheck,
+    component: lazy(() => import("@/pages/DayClosing")),
+    navigation: true,
+    permission: ["tills.open_close", "accounts.view", "transactions.view"],
   },
   {
     path: "/expenses",

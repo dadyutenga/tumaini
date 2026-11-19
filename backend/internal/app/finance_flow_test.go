@@ -177,6 +177,33 @@ func TestFinanceFlow(t *testing.T) {
 	require.Equal(t, 200, staffPays.code, staffPays.raw)
 	requireBalanced(t, e.owner)
 
+	// Unified debts endpoint returns both owed_to_us and we_owe lists.
+	debts := e.owner.call(t, http.MethodGet, "/api/v1/debts", nil, "")
+	require.Equal(t, 200, debts.code, debts.raw)
+	require.NotNil(t, debts.data["owed_to_us"])
+	require.NotNil(t, debts.data["we_owe"])
+
+	// End-of-day closing flow: summary -> close -> duplicate conflict -> non-owner reopen forbidden -> owner reopen succeeds -> re-close succeeds.
+	daySum := e.owner.call(t, http.MethodGet, "/api/v1/day-closings/summary?date=2026-11-19", nil, "")
+	require.Equal(t, 200, daySum.code, daySum.raw)
+	require.Equal(t, "2026-11-19", daySum.data["date"])
+	closeRes := e.owner.call(t, http.MethodPost, "/api/v1/day-closings", map[string]any{"date": "2026-11-19", "counted_cash": "620000", "note": "All counted"}, "")
+	require.Equal(t, 201, closeRes.code, closeRes.raw)
+	closingID := str(closeRes.data["id"])
+	require.Equal(t, "closed", closeRes.data["status"])
+	dupClose := e.owner.call(t, http.MethodPost, "/api/v1/day-closings", map[string]any{"date": "2026-11-19", "counted_cash": "620000"}, "")
+	require.Equal(t, 409, dupClose.code, dupClose.raw)
+	listClose := e.owner.call(t, http.MethodGet, "/api/v1/day-closings", nil, "")
+	require.Equal(t, 200, listClose.code, listClose.raw)
+	require.Len(t, asList(listClose.body["data"]), 1)
+	require.Equal(t, 403, manager.call(t, http.MethodPost, "/api/v1/day-closings/"+closingID+"/reopen", map[string]any{"reason": "Forgot receipt"}, "").code)
+	reopenRes := e.owner.call(t, http.MethodPost, "/api/v1/day-closings/"+closingID+"/reopen", map[string]any{"reason": "Forgot cash receipt"}, "")
+	require.Equal(t, 200, reopenRes.code, reopenRes.raw)
+	require.Equal(t, "reopened", reopenRes.data["status"])
+	recloseRes := e.owner.call(t, http.MethodPost, "/api/v1/day-closings", map[string]any{"date": "2026-11-19", "counted_cash": "620500", "note": "Recounted"}, "")
+	require.Equal(t, 201, recloseRes.code, recloseRes.raw)
+	require.Equal(t, "closed", recloseRes.data["status"])
+
 	// Another business sees none of it.
 	other := newEnv(t, defaultNow)
 	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/money-accounts/"+bankID, nil, "").code)

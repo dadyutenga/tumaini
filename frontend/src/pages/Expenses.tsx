@@ -1,7 +1,9 @@
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Check, Eye, Paperclip, Plus, Upload, X } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import {
   DataGrid,
   Field,
@@ -11,9 +13,10 @@ import {
   Pager,
   StatusBadge,
 } from "@/components/shared/kit";
+import { FilePreviewDialog } from "@/components/shared/FilePreview";
 import { useAuth } from "@/features/auth/auth";
-import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
-import { isPendingApproval } from "@/lib/api";
+import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
+import { isPendingApproval, uploadFile } from "@/lib/api";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
 
@@ -31,7 +34,16 @@ interface Expense {
   category_name?: string;
   payee?: string;
   submitted_by_name?: string;
+  receipt_file?: string;
 }
+
+const STATUS_OPTIONS = [
+  ["submitted", "Waiting approval"],
+  ["approved", "Approved"],
+  ["paid", "Paid"],
+  ["rejected", "Rejected"],
+  ["reversed", "Reversed"],
+];
 
 export default function Expenses() {
   const { can } = useAuth();
@@ -45,41 +57,106 @@ export default function Expenses() {
   const [open, setOpen] = useState(false);
   const [paying, setPaying] = useState<Expense | null>(null);
   const [account, setAccount] = useState("");
+  const [preview, setPreview] = useState<{ id: string; name: string } | null>(null);
+  const [rejecting, setRejecting] = useState<Expense | null>(null);
+  const [rejectNote, setRejectNote] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const [receiptName, setReceiptName] = useState("");
+
   const [draft, setDraft] = useState({
     category_id: "",
     amount: "",
     description: "",
     payee: "",
     date: today(),
+    receipt_file: "",
   });
 
   const create = useWrite<typeof draft, Expense & { status: string }>("POST", "/expenses", {
     idempotent: true,
     success: "Expense submitted",
-    invalidate: ["/expenses", "/dashboard"],
+    invalidate: ["/expenses", "/dashboard", "/approvals"],
     onSuccess: (result) => {
       setOpen(false);
-      if (isPendingApproval(result)) return;
-      setDraft({ category_id: "", amount: "", description: "", payee: "", date: today() });
+      setReceiptName("");
+      if (isPendingApproval(result)) {
+        setDraft({
+          category_id: "",
+          amount: "",
+          description: "",
+          payee: "",
+          date: today(),
+          receipt_file: "",
+        });
+        return;
+      }
+      setDraft({
+        category_id: "",
+        amount: "",
+        description: "",
+        payee: "",
+        date: today(),
+        receipt_file: "",
+      });
     },
   });
+
   const pay = useWrite<{ money_account_id: string }, unknown>(
     "POST",
     () => `/expenses/${paying?.id}/pay`,
     {
       idempotent: true,
       success: "Expense paid",
-      invalidate: ["/money", "/expenses"],
+      invalidate: ["/money-accounts", "/transactions", "/expenses", "/dashboard"],
       onSuccess: () => setPaying(null),
     },
   );
+
+  const approve = useWrite<{ id: string }, unknown>(
+    "POST",
+    (vars) => `/expenses/${vars.id}/approve`,
+    {
+      toBody: () => ({}),
+      success: "Expense approved",
+      invalidate: ["/expenses", "/approvals", "/dashboard"],
+    },
+  );
+
+  const reject = useWrite<{ note: string }, unknown>(
+    "POST",
+    () => `/expenses/${rejecting?.id}/reject`,
+    {
+      success: "Expense rejected",
+      invalidate: ["/expenses", "/approvals", "/dashboard"],
+      onSuccess: () => {
+        setRejecting(null);
+        setRejectNote("");
+      },
+    },
+  );
+
+  async function onReceiptPicked(file: File | undefined) {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const id = await uploadFile(file);
+      setDraft((d) => ({ ...d, receipt_file: id }));
+      setReceiptName(file.name);
+      toast.success("Receipt uploaded");
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setUploading(false);
+    }
+  }
+
   const usable = (accounts.data ?? []).filter((a) => a.is_active);
 
   return (
     <>
       <PageHeader
         title="Expenses"
-        description="Record spending. Amounts above your limit go to a manager for approval."
+        description="Record spending with receipt photos. Amounts above your limit go to a manager for approval."
         actions={
           can("expenses.create") && (
             <Button onClick={() => setOpen(true)}>
@@ -90,7 +167,7 @@ export default function Expenses() {
       />
       <NativeSelect
         aria-label="Filter by status"
-        className="mb-4 max-w-[12rem]"
+        className="mb-4 max-w-[13rem]"
         value={status}
         onChange={(e) => {
           setStatus(e.target.value);
@@ -98,9 +175,9 @@ export default function Expenses() {
         }}
       >
         <option value="">All statuses</option>
-        {["pending_approval", "approved", "paid", "rejected", "reversed"].map((v) => (
+        {STATUS_OPTIONS.map(([v, label]) => (
           <option key={v} value={v}>
-            {v.replace("_", " ")}
+            {label}
           </option>
         ))}
       </NativeSelect>
@@ -116,10 +193,27 @@ export default function Expenses() {
           {
             header: "Description",
             cell: (e) => (
-              <>
-                {e.description}
-                {e.payee && <span className="text-muted-foreground"> · {e.payee}</span>}
-              </>
+              <div className="flex items-center gap-1.5">
+                <span>
+                  {e.description}
+                  {e.payee && <span className="text-muted-foreground"> · {e.payee}</span>}
+                </span>
+                {e.receipt_file && (
+                  <button
+                    type="button"
+                    title="Preview receipt photo"
+                    className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs text-primary hover:bg-primary/10"
+                    onClick={() =>
+                      setPreview({
+                        id: e.receipt_file!,
+                        name: `Receipt ${e.number ?? e.id}`,
+                      })
+                    }
+                  >
+                    <Eye size={13} /> Receipt
+                  </button>
+                )}
+              </div>
             ),
           },
           { header: "By", cell: (e) => e.submitted_by_name ?? "-" },
@@ -127,22 +221,49 @@ export default function Expenses() {
           { header: "Status", cell: (e) => <StatusBadge value={e.status} /> },
           {
             header: "",
-            cell: (e) =>
-              can("expenses.pay") &&
-              e.status === "approved" && (
-                <Button size="sm" variant="outline" onClick={() => setPaying(e)}>
-                  Pay
-                </Button>
-              ),
+            cell: (e) => (
+              <div className="flex justify-end gap-1.5">
+                {can("expenses.approve") && e.status === "submitted" && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-emerald-700 hover:text-emerald-800"
+                      disabled={approve.isPending}
+                      onClick={() => approve.mutate({ id: e.id })}
+                    >
+                      <Check size={14} /> Approve
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="text-rose-700 hover:text-rose-800"
+                      onClick={() => {
+                        setRejecting(e);
+                        setRejectNote("");
+                      }}
+                    >
+                      <X size={14} /> Reject
+                    </Button>
+                  </>
+                )}
+                {can("expenses.pay") && e.status === "approved" && (
+                  <Button size="sm" variant="outline" onClick={() => setPaying(e)}>
+                    Pay
+                  </Button>
+                )}
+              </div>
+            ),
           },
         ]}
       />
       <Pager meta={list.data?.meta} onPage={setPage} />
+
       <FormDialog
         open={open}
         onOpenChange={setOpen}
         title="New expense"
-        busy={create.isPending}
+        busy={create.isPending || uploading}
         onSubmit={() => create.mutate(draft)}
       >
         <Field label="Category">
@@ -190,7 +311,55 @@ export default function Expenses() {
             onChange={(e) => setDraft((d) => ({ ...d, payee: e.target.value }))}
           />
         </Field>
+        <Field label="Receipt photo or PDF (optional)">
+          {draft.receipt_file ? (
+            <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-xs">
+              <span className="flex items-center gap-1.5 truncate">
+                <Paperclip size={13} />
+                <span className="truncate">{receiptName || "Receipt attached"}</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-2 text-xs"
+                  onClick={() =>
+                    setPreview({ id: draft.receipt_file, name: receiptName || "Receipt" })
+                  }
+                >
+                  Preview
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  className="h-6 px-1.5 text-xs text-destructive"
+                  onClick={() => {
+                    setDraft((d) => ({ ...d, receipt_file: "" }));
+                    setReceiptName("");
+                  }}
+                >
+                  <X size={13} />
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-3 py-3 text-xs text-muted-foreground transition hover:border-primary hover:text-foreground">
+              <Upload size={14} />
+              <span>{uploading ? "Uploading…" : "Upload receipt photo or PDF"}</span>
+              <input
+                type="file"
+                accept="image/*,application/pdf"
+                className="hidden"
+                disabled={uploading}
+                onChange={(e) => onReceiptPicked(e.target.files?.[0])}
+              />
+            </label>
+          )}
+        </Field>
       </FormDialog>
+
       <FormDialog
         open={paying !== null}
         onOpenChange={(o) => !o && setPaying(null)}
@@ -210,6 +379,31 @@ export default function Expenses() {
           </NativeSelect>
         </Field>
       </FormDialog>
+
+      <FormDialog
+        open={rejecting !== null}
+        onOpenChange={(o) => !o && setRejecting(null)}
+        title={`Reject expense ${rejecting?.number ?? ""}`}
+        submitLabel="Reject expense"
+        busy={reject.isPending}
+        onSubmit={() => reject.mutate({ note: rejectNote })}
+      >
+        <Field label="Reason for rejection">
+          <Textarea
+            rows={3}
+            required
+            value={rejectNote}
+            onChange={(e) => setRejectNote(e.target.value)}
+            placeholder="Explain why this expense is rejected…"
+          />
+        </Field>
+      </FormDialog>
+
+      <FilePreviewDialog
+        fileId={preview?.id ?? null}
+        fileName={preview?.name}
+        onClose={() => setPreview(null)}
+      />
     </>
   );
 }

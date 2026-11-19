@@ -4321,6 +4321,85 @@ paths:
       tags:
         - Dashboard
       x-permission: any
+  /day-closings:
+    get:
+      operationId: get_day_closings
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      summary: List past end-of-day closings
+      tags:
+        - Finance
+    post:
+      operationId: post_day_closings
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+      responses:
+        "201":
+          description: Created
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      summary: Close the business day with counted cash
+      tags:
+        - Finance
+  /day-closings/{id}/reopen:
+    post:
+      operationId: post_day_closings_id_reopen
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+      summary: Reopen a closed day (Owner only, reason required)
+      tags:
+        - Finance
+      x-permission: periods.lock
+  /day-closings/summary:
+    get:
+      operationId: get_day_closings_summary
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: query
+          name: date
+          schema:
+            type: string
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      summary: End-of-day cash, sales, payments and expenses summary for a date
+      tags:
+        - Finance
+  /debts:
+    get:
+      operationId: get_debts
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+      responses:
+        "200":
+          description: OK
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+      summary: Unified debts (Owed to us and We owe across Shop and Services with 0-30, 31-60, >60 aging)
+      tags:
+        - Finance
   /departments:
     get:
       operationId: get_departments
