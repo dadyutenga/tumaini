@@ -87,7 +87,10 @@ type RegisterInput struct {
 	UserAgent    string
 }
 
-var nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
+var (
+	nonSlug = regexp.MustCompile(`[^a-z0-9]+`)
+	nonCode = regexp.MustCompile(`[^a-z0-9_]+`)
+)
 
 func slugFor(name string) string {
 	base := strings.Trim(nonSlug.ReplaceAllString(strings.ToLower(name), "-"), "-")
@@ -548,13 +551,13 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 		var roleCode string
 		var employee *uuid.UUID
 		if err := tx.QueryRow(ctx, `
-			SELECT m.status = 'active' AND t.status = 'active', coalesce(r.code::text, ''), r.id, e.id
+			SELECT m.status = 'active' AND t.status = 'active', coalesce(r.code::text, ''), r.id, coalesce(r.rank, 0), e.id
 			FROM app.memberships m
 			JOIN app.tenants t ON t.id = m.tenant_id
 			LEFT JOIN app.membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.membership_id = m.id
 			LEFT JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id
 			LEFT JOIN app.employees e ON e.tenant_id = m.tenant_id AND e.membership_id = m.id
-			WHERE m.id = $1`, claims.MembershipID).Scan(&active, &roleCode, &p.RoleID, &employee); err != nil || !active {
+			WHERE m.id = $1`, claims.MembershipID).Scan(&active, &roleCode, &p.RoleID, &p.RoleRank, &employee); err != nil || !active {
 			return ended
 		}
 		p.RoleSlug, p.IsOwner, p.EmployeeID = roleCode, roleCode == "admin", employee

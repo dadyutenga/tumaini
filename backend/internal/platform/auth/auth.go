@@ -176,6 +176,9 @@ type Principal struct {
 	// compiling; the port of each module replaces it with TenantID, and this field is then removed.
 	BusinessID uuid.UUID
 	RoleID     uuid.UUID
+	// RoleRank is the rank of the caller's role (app.roles.rank, 100 = Admin). A delegated administrator
+	// may not change an account or hand out a role that outranks their own.
+	RoleRank   int
 	EmployeeID *uuid.UUID
 	// Limits are the caller's authority limits (app.authority_limits), keyed by limit code. A missing
 	// key means unlimited for a holder of the matching permission.
