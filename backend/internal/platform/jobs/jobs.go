@@ -64,7 +64,7 @@ func (c *Client) Enqueue(ctx context.Context, businessID uuid.UUID, kind string,
 	if err != nil {
 		return err
 	}
-	_, err = c.pool.Exec(ctx, `INSERT INTO jobs (id, business_id, kind, payload, run_at) VALUES ($1,$2,$3,$4, now())`, ids.New(), businessID, kind, raw)
+	_, err = c.pool.Exec(ctx, `INSERT INTO app.job_queue (id, tenant_id, kind, payload, run_at) VALUES ($1,$2,$3,$4, now())`, ids.New(), businessID, kind, raw)
 	return err
 }
 
@@ -75,7 +75,10 @@ func (c *Client) Schedule(ctx context.Context) error {
 	if len(c.daily) == 0 {
 		return nil
 	}
-	rows, err := c.pool.Query(ctx, `SELECT id, timezone, day_start FROM job_businesses()`)
+	rows, err := c.pool.Query(ctx, `
+		SELECT t.id, t.timezone,
+		       coalesce((SELECT v.value #>> '{}' FROM app.tenant_setting_values v WHERE v.tenant_id = t.id AND v.key = 'system.business_day_start'), '00:00')
+		FROM app.tenants t WHERE t.status = 'active'`)
 	if err != nil {
 		return err
 	}
@@ -122,7 +125,7 @@ func (c *Client) Schedule(ctx context.Context) error {
 				runDate = local.AddDate(0, 0, -1).Format("2006-01-02")
 			}
 			tag, err := c.pool.Exec(ctx, `
-				INSERT INTO scheduled_job_marks (business_id, kind, run_date) VALUES ($1,$2,$3)
+				INSERT INTO app.scheduled_job_marks (tenant_id, kind, run_date) VALUES ($1,$2,$3)
 				ON CONFLICT DO NOTHING
 			`, b.id, d.kind, runDate)
 			if err != nil {
@@ -160,7 +163,7 @@ func EnqueueTx(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, kind string
 		return err
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO jobs (id, business_id, kind, payload, run_at)
+		INSERT INTO app.job_queue (id, tenant_id, kind, payload, run_at)
 		VALUES ($1, $2, $3, $4, now())
 	`, ids.New(), businessID, kind, raw)
 	return err
@@ -212,8 +215,8 @@ func (c *Client) one(ctx context.Context) (bool, error) {
 	var payload []byte
 	var attempts, maxAttempts int
 	err = tx.QueryRow(ctx, `
-		SELECT id, business_id, kind, payload, attempts, max_attempts
-		FROM jobs
+		SELECT id, tenant_id, kind, payload, attempts, max_attempts
+		FROM app.job_queue
 		WHERE status = 'queued' AND run_at <= now()
 		ORDER BY run_at
 		FOR UPDATE SKIP LOCKED
@@ -222,7 +225,7 @@ func (c *Client) one(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, nil
 	}
-	if _, err := tx.Exec(ctx, `UPDATE jobs SET status = 'running', locked_at = now(), attempts = attempts + 1 WHERE id = $1`, id); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE app.job_queue SET status = 'running', locked_at = now(), attempts = attempts + 1, updated_at = now() WHERE id = $1`, id); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -248,7 +251,7 @@ func (c *Client) one(ctx context.Context) (bool, error) {
 		}
 		slog.Error("job failed", "kind", kind, "err", runErr)
 	}
-	_, err = c.pool.Exec(ctx, `UPDATE jobs SET status = $2, last_error = NULLIF($3,''), run_at = now() + interval '30 seconds' WHERE id = $1`, id, status, msg)
+	_, err = c.pool.Exec(ctx, `UPDATE app.job_queue SET status = $2, last_error = left(NULLIF($3,''), 2000), run_at = now() + interval '30 seconds', updated_at = now() WHERE id = $1`, id, status, msg)
 	return true, err
 }
 

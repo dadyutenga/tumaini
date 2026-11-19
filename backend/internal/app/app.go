@@ -72,7 +72,11 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	ap := approval.New(n)
 	pepper := sha256.Sum256([]byte("auth-events:" + cfg.JWTSecret))
 	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, TTL: cfg.RefreshTokenTTL, IdleTimeout: cfg.SessionIdleTimeout, Pepper: pepper[:]}
-	worker := jobs.New(database.Pool)
+	jobPool := database.Jobs
+	if jobPool == nil {
+		jobPool = database.Pool
+	}
+	worker := jobs.New(jobPool)
 	worker.SetClock(clk.Now)
 	d := deps.Deps{
 		Config: cfg, DB: database, Ledger: led, Stock: st, Audit: aud, Notify: n, Approval: ap,
