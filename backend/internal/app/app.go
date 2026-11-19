@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v3"
@@ -52,6 +53,7 @@ type App struct {
 }
 
 func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) {
+	setupLogging(cfg.LogLevel)
 	database, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		return nil, err
@@ -66,7 +68,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	led := ledger.New()
 	st := stock.New()
 	ap := approval.New(n)
-	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, Ledger: led, TTL: cfg.RefreshTokenTTL}
+	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, Ledger: led, TTL: cfg.RefreshTokenTTL, DefaultTimezone: cfg.DefaultTimezone, DefaultCurrency: cfg.DefaultCurrency}
 	worker := jobs.New(database.Pool)
 	worker.SetClock(clk.Now)
 	d := deps.Deps{
@@ -142,4 +144,20 @@ func (a *App) Close() { a.DB.Close() }
 
 func init() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+}
+
+// setupLogging applies LOG_LEVEL to the structured JSON logger.
+func setupLogging(level string) {
+	var l slog.Level
+	switch strings.ToLower(level) {
+	case "debug":
+		l = slog.LevelDebug
+	case "warn":
+		l = slog.LevelWarn
+	case "error":
+		l = slog.LevelError
+	default:
+		l = slog.LevelInfo
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: l})))
 }

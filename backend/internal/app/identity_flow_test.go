@@ -385,3 +385,41 @@ func meID(t *testing.T, c *client) string {
 	user, _ := me.data["user"].(map[string]any)
 	return str(user["id"])
 }
+
+func TestPINGuessingIsLimitedAndPasswordChangeEndsOtherSessions(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	app := e.app.Fiber
+	c, userID := e.user(t, "staff")
+	phone := str(e.owner.call(t, http.MethodGet, "/api/v1/users/"+userID, nil, "").data["phone"])
+	require.Equal(t, 200, c.call(t, http.MethodPut, "/api/v1/auth/pin", map[string]any{"pin": "4821"}, "").code)
+
+	// Five wrong PINs block the sixth, even with the right PIN: a 4-digit PIN cannot be guessed (FR-AUTH-06).
+	for i := 0; i < 5; i++ {
+		require.Equal(t, 401, c.call(t, http.MethodPost, "/api/v1/auth/pin", map[string]any{"pin": "000" + string(rune('0'+i))}, "").code)
+	}
+	locked := c.call(t, http.MethodPost, "/api/v1/auth/pin", map[string]any{"pin": "4821"}, "")
+	require.Equal(t, 429, locked.code, locked.raw)
+	// The block is for PIN guesses only: the session and the password still work.
+	require.Equal(t, 200, c.call(t, http.MethodGet, "/api/v1/me", nil, "").code)
+
+	// A password change signs out every other session of that user, but not the one making the change.
+	other := &client{app: app, token: login(t, app, phone, "staff-pass-123"), branch: c.branch}
+	third := &client{app: app, token: login(t, app, phone, "staff-pass-123"), branch: c.branch}
+	require.Equal(t, 200, other.call(t, http.MethodGet, "/api/v1/me", nil, "").code)
+	code, _, refresh := raw(t, app, http.MethodPost, "/api/v1/auth/login", map[string]any{"identifier": phone, "password": "staff-pass-123"}, nil)
+	require.Equal(t, 200, code)
+	require.Equal(t, 200, third.call(t, http.MethodPut, "/api/v1/auth/password", map[string]any{"current_password": "staff-pass-123", "new_password": "a-brand-new-pass"}, "").code)
+	require.Equal(t, 200, third.call(t, http.MethodGet, "/api/v1/me", nil, "").code, "the session that changed the password stays")
+	require.Equal(t, 401, other.call(t, http.MethodGet, "/api/v1/me", nil, "").code, "another session is signed out")
+	require.Equal(t, 401, c.call(t, http.MethodGet, "/api/v1/me", nil, "").code)
+	code, _, _ = raw(t, app, http.MethodPost, "/api/v1/auth/refresh", nil, map[string]string{"Cookie": "refresh_token=" + refresh})
+	require.Equal(t, 401, code, "a stolen refresh token stops working too")
+
+	// Guessing the current password is limited as well.
+	for i := 0; i < 5; i++ {
+		require.Equal(t, 401, third.call(t, http.MethodPut, "/api/v1/auth/password", map[string]any{"current_password": "guess-" + string(rune('a'+i)), "new_password": "another-new-pass"}, "").code)
+	}
+	blocked := third.call(t, http.MethodPut, "/api/v1/auth/password", map[string]any{"current_password": "a-brand-new-pass", "new_password": "another-new-pass"}, "")
+	require.Equal(t, 429, blocked.code, blocked.raw)
+	login(t, app, phone, "a-brand-new-pass")
+}

@@ -28,7 +28,6 @@ type Config struct {
 	ArgonMemory        uint32
 	ArgonTime          uint32
 	ArgonThreads       uint8
-	AutoMigrate        bool
 	// TrustedProxies are the reverse proxies (IPs or CIDRs) whose X-Forwarded-For is believed.
 	// Empty means the socket address is used, so rate limits and audit IPs cannot be spoofed.
 	TrustedProxies []string
@@ -63,7 +62,6 @@ func Load() (Config, error) {
 		ArgonMemory:        uint32(intenv("ARGON_MEMORY", 19456)),
 		ArgonTime:          uint32(intenv("ARGON_TIME", 2)),
 		ArgonThreads:       uint8(intenv("ARGON_THREADS", 1)),
-		AutoMigrate:        boolenv("AUTO_MIGRATE", false),
 		TrustedProxies:     splitCSV(os.Getenv("TRUSTED_PROXIES")),
 		SMTPHost:           os.Getenv("SMTP_HOST"),
 		SMTPPort:           intenv("SMTP_PORT", 587),
@@ -94,6 +92,17 @@ func Load() (Config, error) {
 	}
 	if c.ArgonMemory < 8192 || c.ArgonTime < 1 || c.ArgonThreads < 1 {
 		return c, fmt.Errorf("ARGON_MEMORY must be at least 8192 and ARGON_TIME, ARGON_THREADS at least 1")
+	}
+	switch strings.ToLower(c.LogLevel) {
+	case "debug", "info", "warn", "error":
+	default:
+		return c, fmt.Errorf("LOG_LEVEL must be debug, info, warn or error")
+	}
+	if _, err := time.LoadLocation(c.DefaultTimezone); err != nil {
+		return c, fmt.Errorf("DEFAULT_TIMEZONE %q is not a known timezone", c.DefaultTimezone)
+	}
+	if len(c.DefaultCurrency) != 3 || strings.ToUpper(c.DefaultCurrency) != c.DefaultCurrency {
+		return c, fmt.Errorf("DEFAULT_CURRENCY must be a three-letter code such as TZS")
 	}
 	if c.StorageDriver != "local" {
 		return c, fmt.Errorf("STORAGE_DRIVER %q is not supported; use local", c.StorageDriver)

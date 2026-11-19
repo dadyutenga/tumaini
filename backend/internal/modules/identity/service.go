@@ -32,6 +32,23 @@ type Service struct {
 	Notify *notify.Service
 	Ledger *ledger.Service
 	TTL    time.Duration
+	// DefaultTimezone and DefaultCurrency are given to every new business (DEFAULT_TIMEZONE, DEFAULT_CURRENCY).
+	DefaultTimezone string
+	DefaultCurrency string
+}
+
+func (s *Service) tz() string {
+	if s.DefaultTimezone == "" {
+		return "Africa/Dar_es_Salaam"
+	}
+	return s.DefaultTimezone
+}
+
+func (s *Service) ccy() string {
+	if s.DefaultCurrency == "" {
+		return "TZS"
+	}
+	return s.DefaultCurrency
 }
 
 type SessionResult struct {
@@ -75,8 +92,8 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (SessionResult
 	err = s.DB.InTx(ctx, businessID, func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO businesses (id, name, phone, currency, timezone)
-			VALUES ($1,$2,$3,'TZS','Africa/Dar_es_Salaam')
-		`, businessID, strings.TrimSpace(in.BusinessName), strings.TrimSpace(in.Phone)); err != nil {
+			VALUES ($1,$2,$3,$4,$5)
+		`, businessID, strings.TrimSpace(in.BusinessName), strings.TrimSpace(in.Phone), s.ccy(), s.tz()); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
@@ -198,13 +215,13 @@ func (s *Service) grantDefaults(ctx context.Context, tx pgx.Tx, businessID, owne
 func (s *Service) defaultSettings(ctx context.Context, tx pgx.Tx, businessID uuid.UUID) error {
 	vals := map[string]any{
 		"tax.prices_include_tax": false,
-		"currency.code":          "TZS", "currency.symbol": "TZS", "currency.decimals": 2, "currency.thousands_separator": ",",
+		"currency.code":          s.ccy(), "currency.symbol": s.ccy(), "currency.decimals": 2, "currency.thousands_separator": ",",
 		"invoice.prefix": "INV", "invoice.terms": "Payment is due as stated.", "invoice.footer": "", "invoice.due_days": 0,
 		"receipt.header": "", "receipt.footer": "Thank you", "receipt.show_logo": true, "receipt.paper_width": 80,
 		"receipt.show_cashier": true, "receipt.show_tax": true,
 		"payroll.pay_day": 25, "payroll.working_days": 26, "payroll.standard_hours": 8, "payroll.overtime_multiplier": 1.5,
 		"payroll.late_grace_minutes": 10, "payroll.lateness_deducts": false,
-		"system.timezone": "Africa/Dar_es_Salaam", "system.date_format": "02 Jan 2006", "system.language": "en",
+		"system.timezone": s.tz(), "system.date_format": "02 Jan 2006", "system.language": "en",
 		"system.allow_negative_stock": false, "system.business_day_start": "00:00", "system.session_timeout_minutes": 30,
 		"system.till_difference_threshold": 1000,
 		"notifications.supplier_due_days":  7, "notifications.salary_due_days": 3,
@@ -474,23 +491,77 @@ func (s *Service) ChangePassword(ctx context.Context, p *auth.Principal, current
 	if err := auth.PasswordOK(next); err != nil {
 		return httpx.BadRequest("weak_password", err.Error())
 	}
+	if err := s.checkReauth(ctx, p, "password_change"); err != nil {
+		return err
+	}
 	hash, err := auth.HashPassword(next, s.Hash)
 	if err != nil {
 		return err
 	}
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	wrong := false
+	err = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		var old string
 		if err := tx.QueryRow(ctx, `SELECT password_hash FROM users WHERE id = $1`, p.UserID).Scan(&old); err != nil {
 			return err
 		}
 		if !auth.VerifyPassword(old, current) {
-			return httpx.Unauthorized("invalid_credentials", "Current password is wrong")
+			wrong = true
+			return nil
 		}
-		_, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2, must_change_password = false WHERE id = $1`, p.UserID, hash)
-		if err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE users SET password_hash = $2, must_change_password = false WHERE id = $1`, p.UserID, hash); err != nil {
+			return err
+		}
+		// Everyone else signed in as this user is signed out: a stolen session must not survive a password change.
+		if _, err := tx.Exec(ctx, `DELETE FROM sessions WHERE user_id = $1 AND id <> $2`, p.UserID, p.SessionID); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "user.password_changed", "user", p.UserID, nil, map[string]any{"id": p.UserID})
+	})
+	if err != nil {
+		return err
+	}
+	if wrong {
+		s.recordReauth(ctx, p, "password_change", false)
+		return httpx.Unauthorized("invalid_credentials", "Current password is wrong")
+	}
+	return nil
+}
+
+// reauthMaxFailures wrong answers in reauthWindow block further tries for the same user.
+const (
+	reauthMaxFailures = 5
+	reauthWindow      = 15 * time.Minute
+)
+
+// checkReauth refuses a re-authentication attempt (PIN, current password) after too many recent failures.
+func (s *Service) checkReauth(ctx context.Context, p *auth.Principal, reason string) error {
+	var n int
+	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT count(*) FROM login_history WHERE user_id = $1 AND reason = $2 AND NOT success AND created_at > $3
+		`, p.UserID, reason, s.Clock.Now().Add(-reauthWindow)).Scan(&n)
+	})
+	if err != nil {
+		return err
+	}
+	if n >= reauthMaxFailures {
+		return httpx.TooMany("too_many_requests", "Too many wrong answers. Wait 15 minutes, or sign in with your password again.")
+	}
+	return nil
+}
+
+// recordReauth logs the attempt in its own transaction, so a failure is counted even though the request fails.
+func (s *Service) recordReauth(ctx context.Context, p *auth.Principal, reason string, ok bool) {
+	var ip any
+	if p.IP != "" {
+		ip = p.IP
+	}
+	_ = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO login_history (id, business_id, user_id, identifier, success, reason, ip, user_agent, created_at)
+			VALUES ($1,$2,$3,$4,$5,$6,$7::inet,$8,$9)
+		`, ids.New(), p.BusinessID, p.UserID, p.UserID.String(), ok, reason, ip, p.UserAgent, s.Clock.Now())
+		return err
 	})
 }
 
@@ -509,17 +580,25 @@ func (s *Service) SetPIN(ctx context.Context, p *auth.Principal, pin string) err
 }
 
 func (s *Service) ExchangePIN(ctx context.Context, p *auth.Principal, pin string) (string, error) {
+	if err := s.checkReauth(ctx, p, "pin"); err != nil {
+		return "", err
+	}
 	var hash *string
-	var fails int
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT pin_hash FROM users WHERE id = $1`, p.UserID).Scan(&hash)
 	})
-	if err != nil || hash == nil || !auth.VerifyPassword(*hash, pin) {
-		return "", httpx.Unauthorized("invalid_credentials", "PIN is wrong. After 5 failures you must sign in with your password.")
+	if err != nil {
+		return "", err
 	}
-	_ = fails
-	tok, err := s.Auth.Sign(p.UserID, p.BusinessID, p.RoleID, p.SessionID, 0, s.Clock.Now())
-	return tok, err
+	if hash == nil || !auth.VerifyPassword(*hash, pin) {
+		s.recordReauth(ctx, p, "pin", false)
+		return "", httpx.Unauthorized("invalid_credentials", "PIN is wrong. After 5 failures you must wait 15 minutes or sign in with your password.")
+	}
+	var perm int
+	_ = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT perm_version FROM roles WHERE id = $1`, p.RoleID).Scan(&perm)
+	})
+	return s.Auth.Sign(p.UserID, p.BusinessID, p.RoleID, p.SessionID, perm, s.Clock.Now())
 }
 
 func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal, error) {

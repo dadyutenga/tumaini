@@ -241,7 +241,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /auth/pin:
     post:
-      summary: Exchange the PIN for a fresh access token on a device where a full login happened
+      summary: Exchange the PIN for a fresh access token on a device where a full login happened. Five wrong PINs in 15 minutes
+        block further tries for 15 minutes (429); the password still works
       operationId: post_auth_pin
       tags:
       - Auth
@@ -273,6 +274,12 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Too many attempts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
     put:
       summary: Set or change own 4 to 6 digit PIN
       operationId: put_auth_pin
@@ -308,7 +315,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
   /auth/password:
     put:
-      summary: Change own password
+      summary: Change own password. Every other session of the user is signed out. Five wrong current passwords in 15 minutes
+        block further tries for 15 minutes (429)
       operationId: put_auth_password
       tags:
       - Auth
@@ -345,6 +353,12 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '422':
           $ref: '#/components/responses/Unprocessable'
+        '429':
+          description: Too many attempts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /me:
     get:
       summary: Profile, role, permission map with scopes and limits, branches and the settings the UI needs

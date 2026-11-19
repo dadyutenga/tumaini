@@ -227,3 +227,16 @@ func TestBranchesRulesAndScope(t *testing.T) {
 	list := o.call(t, http.MethodGet, "/api/v1/branches", nil, "")
 	require.Equal(t, false, find(asList(list.body["data"]), "id", bID)["is_active"])
 }
+
+// DEFAULT_TIMEZONE and DEFAULT_CURRENCY decide what a new business starts with.
+func TestNewBusinessesGetTheConfiguredDefaults(t *testing.T) {
+	t.Setenv("DEFAULT_TIMEZONE", "Africa/Nairobi")
+	t.Setenv("DEFAULT_CURRENCY", "KES")
+	e := newEnv(t, defaultNow)
+	biz := e.owner.call(t, http.MethodGet, "/api/v1/business", nil, "")
+	require.Equal(t, "Africa/Nairobi", str(biz.data["timezone"]))
+	require.Equal(t, "KES", str(biz.data["currency"]))
+	settings := e.owner.call(t, http.MethodGet, "/api/v1/settings", nil, "")
+	require.Equal(t, "Africa/Nairobi", str(settings.data["system"].(map[string]any)["timezone"]))
+	require.Equal(t, "KES", str(settings.data["currency"].(map[string]any)["code"]))
+}
