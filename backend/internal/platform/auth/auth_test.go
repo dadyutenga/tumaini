@@ -54,7 +54,7 @@ func TestScopeHelpers(t *testing.T) {
 	require.Equal(t, p.UserID, *p.OwnOnly("sales.view"))
 	require.Nil(t, p.OwnOnly("stock.view"))
 	require.True(t, p.SeesBranch("stock.view", a))
-	require.False(t, p.SeesBranch("stock.view", b))
+	require.True(t, p.SeesBranch("stock.view", b), "no per-person location assignment in the approved model")
 	require.True(t, p.SeesBranch("reports.sales", b))
 	require.False(t, p.SeesBranch("missing.perm", a))
 	p.BranchID = &b

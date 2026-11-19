@@ -212,17 +212,9 @@ func (p *Principal) Can(key string) (Grant, bool) {
 	return g, ok
 }
 
-func (p *Principal) AllowsBranch(id uuid.UUID) bool {
-	if p.IsOwner {
-		return true
-	}
-	for _, b := range p.BranchIDs {
-		if b == id {
-			return true
-		}
-	}
-	return false
-}
+// AllowsBranch is true for every location: the approved model has no per-person location
+// assignment, and row-level security already confines ids to the caller's tenant.
+func (p *Principal) AllowsBranch(id uuid.UUID) bool { return true }
 
 // BranchFilter returns the branches a list query must be limited to for a grant.
 // nil means no branch filter. An active branch (X-Branch-Id or default) always
