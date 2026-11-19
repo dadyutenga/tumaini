@@ -21,17 +21,20 @@ func orEmpty(rows []map[string]any) []map[string]any {
 	return rows
 }
 
+// locationFilter is the location a stock read is limited to: the active branch, or every location
+// when none is selected (X-Branch-Id: all).
+func locationFilter(p *auth.Principal) *uuid.UUID { return p.BranchID }
+
 func (s *Service) Levels(ctx context.Context, p *auth.Principal, showCost bool) ([]map[string]any, error) {
-	if p.BranchID == nil {
-		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
-	}
-	var out []map[string]any
+	out := []map[string]any{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT p.id, p.name, p.sku, COALESCE(sl.qty_on_hand,0), COALESCE(sl.avg_cost,0), p.reorder_level
-			FROM products p LEFT JOIN stock_levels sl ON sl.product_id=p.id AND sl.branch_id=$1
-			WHERE p.kind='stock' AND p.is_active ORDER BY p.name
-		`, *p.BranchID)
+			SELECT p.id, p.name::text, coalesce(p.sku, ''), coalesce(sum(b.quantity_on_hand), 0), p.average_cost,
+			       coalesce(p.min_stock_level, ts.low_stock_default)
+			FROM app.products p JOIN app.tenant_settings ts ON ts.tenant_id = p.tenant_id
+			LEFT JOIN app.stock_balances b ON b.tenant_id = p.tenant_id AND b.product_id = p.id AND ($1::uuid IS NULL OR b.location_id = $1)
+			WHERE p.tenant_id = $2 AND p.status = 'active'
+			GROUP BY p.id, ts.low_stock_default ORDER BY p.name`, locationFilter(p), p.TenantID)
 		if err != nil {
 			return err
 		}
@@ -52,21 +55,20 @@ func (s *Service) Levels(ctx context.Context, p *auth.Principal, showCost bool) 
 		}
 		return rows.Err()
 	})
-	return orEmpty(out), err
+	return out, err
 }
 
 func (s *Service) Low(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
-	if p.BranchID == nil {
-		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
-	}
-	var out []map[string]any
+	out := []map[string]any{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT p.id, p.name, p.sku, COALESCE(sl.qty_on_hand,0), p.reorder_level
-			FROM products p LEFT JOIN stock_levels sl ON sl.product_id=p.id AND sl.branch_id=$1
-			WHERE p.kind='stock' AND p.is_active AND p.reorder_level > 0 AND COALESCE(sl.qty_on_hand,0) <= p.reorder_level
-			ORDER BY p.name
-		`, *p.BranchID)
+			SELECT p.id, p.name::text, coalesce(p.sku, ''), coalesce(sum(b.quantity_on_hand), 0), coalesce(p.min_stock_level, ts.low_stock_default)
+			FROM app.products p JOIN app.tenant_settings ts ON ts.tenant_id = p.tenant_id
+			LEFT JOIN app.stock_balances b ON b.tenant_id = p.tenant_id AND b.product_id = p.id AND ($1::uuid IS NULL OR b.location_id = $1)
+			WHERE p.tenant_id = $2 AND p.status = 'active'
+			GROUP BY p.id, ts.low_stock_default, p.min_stock_level
+			HAVING coalesce(sum(b.quantity_on_hand), 0) <= coalesce(p.min_stock_level, ts.low_stock_default)
+			ORDER BY p.name`, locationFilter(p), p.TenantID)
 		if err != nil {
 			return err
 		}
@@ -86,93 +88,85 @@ func (s *Service) Low(ctx context.Context, p *auth.Principal) ([]map[string]any,
 		}
 		return rows.Err()
 	})
-	return orEmpty(out), err
+	return out, err
 }
 
-// StockCard lists movements with running balance (qty_after) for one product
-// in the active branch (FR-INV-29). The response stays a plain list for
-// existing clients; with from, opening_qty on each row is the balance before it.
+// sourceJoins resolves which document a stock movement came from. Each movement row points at exactly
+// one line (the table has a one-of constraint), so exactly one of these joins matches.
+const sourceJoins = `
+	LEFT JOIN app.sale_lines sl ON sl.tenant_id = m.tenant_id AND sl.id = m.sale_line_id
+	LEFT JOIN app.sale_return_lines srl ON srl.tenant_id = m.tenant_id AND srl.id = m.sale_return_line_id
+	LEFT JOIN app.goods_receipt_lines grl ON grl.tenant_id = m.tenant_id AND grl.id = m.goods_receipt_line_id
+	LEFT JOIN app.stock_adjustment_lines sal ON sal.tenant_id = m.tenant_id AND sal.id = m.stock_adjustment_line_id
+	LEFT JOIN app.stock_transfer_lines stl ON stl.tenant_id = m.tenant_id AND stl.id = m.stock_transfer_line_id`
+
+const sourceID = `coalesce(sl.sale_id, srl.sale_return_id, grl.goods_receipt_id, sal.stock_adjustment_id, stl.stock_transfer_id)`
+const sourceType = `CASE WHEN sl.id IS NOT NULL THEN 'sale' WHEN srl.id IS NOT NULL THEN 'sale_return' WHEN grl.id IS NOT NULL THEN 'goods_receipt'
+	WHEN sal.id IS NOT NULL THEN 'stock_adjustment' ELSE 'stock_transfer' END`
+
+// StockCard lists movements with a running balance for one product. With from, opening_qty on each row
+// is the balance before it. The balance is the running sum of signed quantity changes.
 func (s *Service) StockCard(ctx context.Context, p *auth.Principal, productID uuid.UUID, from, to string) ([]map[string]any, error) {
-	if p.BranchID == nil {
-		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
-	}
-	var out []map[string]any
+	out := []map[string]any{}
 	var name string
 	opening := money.Zero
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT name FROM products WHERE id=$1`, productID).Scan(&name); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT name::text FROM app.products WHERE tenant_id = $1 AND id = $2`, p.TenantID, productID).Scan(&name); err != nil {
 			return httpx.NotFound("not_found", "Product not found")
 		}
-		if from != "" {
-			if err := tx.QueryRow(ctx, `
-				SELECT COALESCE((SELECT qty_after FROM stock_movements WHERE branch_id=$1 AND product_id=$2 AND created_at < $3::date
-				ORDER BY created_at DESC, id DESC LIMIT 1), 0)
-			`, *p.BranchID, productID, from).Scan(&opening); err != nil {
-				return err
-			}
+		if err := tx.QueryRow(ctx, `
+			SELECT coalesce(sum(quantity_delta), 0) FROM app.stock_movements
+			WHERE tenant_id = $1 AND product_id = $2 AND ($3::uuid IS NULL OR location_id = $3)
+			  AND ($4 = '' OR occurred_at < $4::date)`, p.TenantID, productID, locationFilter(p), from).Scan(&opening); err != nil {
+			return err
 		}
-		q := sqlq.New(*p.BranchID, productID)
-		q.If(from != "", "created_at >= ?::date", from)
-		q.If(to != "", "created_at < ?::date + 1", to)
 		rows, err := tx.Query(ctx, `
-			SELECT id, type, qty, unit_cost, qty_after, avg_cost_after, source_type, source_id, created_at
-			FROM stock_movements WHERE branch_id=$1 AND product_id=$2`+q.And()+` ORDER BY created_at, id`, q.Args...)
+			SELECT m.id, m.movement_type::text, m.quantity_delta, coalesce(m.unit_cost, 0), `+sourceType+`, `+sourceID+`, m.occurred_at
+			FROM app.stock_movements m`+sourceJoins+`
+			WHERE m.tenant_id = $1 AND m.product_id = $2 AND ($3::uuid IS NULL OR m.location_id = $3)
+			  AND ($4 = '' OR m.occurred_at >= $4::date) AND ($5 = '' OR m.occurred_at < $5::date + 1)
+			ORDER BY m.occurred_at, m.id`, p.TenantID, productID, locationFilter(p), from, to)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
+		balance := opening
 		for rows.Next() {
 			var id, source uuid.UUID
-			var typ, sourceType string
-			var qty, cost, after, avg decimal.Decimal
+			var typ, st string
+			var qty, cost decimal.Decimal
 			var at time.Time
-			if err := rows.Scan(&id, &typ, &qty, &cost, &after, &avg, &sourceType, &source, &at); err != nil {
+			if err := rows.Scan(&id, &typ, &qty, &cost, &st, &source, &at); err != nil {
 				return err
 			}
-			out = append(out, map[string]any{"id": id, "type": typ, "qty": qty, "unit_cost": cost, "qty_after": after, "balance": after, "avg_cost_after": avg, "source_type": sourceType, "source_id": source, "created_at": at})
+			before := balance
+			balance = balance.Add(qty)
+			out = append(out, map[string]any{"id": id, "type": typ, "qty": qty, "unit_cost": cost, "qty_after": balance, "balance": balance,
+				"opening_qty": before, "product_name": name, "source_type": st, "source_id": source, "created_at": at})
 		}
 		return rows.Err()
 	})
-	if err != nil {
-		return nil, err
-	}
-	prev := opening
-	for _, row := range out {
-		row["opening_qty"] = prev
-		row["product_name"] = name
-		prev = row["qty_after"].(decimal.Decimal)
-	}
-	return orEmpty(out), nil
+	return out, err
 }
 
-// Valuation values stock per product, category and branch, today or as of a past date (FR-INV-28).
+// Valuation values stock per product, category and location, today or as of a past date. Quantities
+// are exact for any date (the sum of movements up to it); the cost is each product's current moving
+// average, because the approved model keeps one running average per product, not a history of it.
 func (s *Service) Valuation(ctx context.Context, p *auth.Principal, asOf string) (map[string]any, error) {
-	branches := p.ScopeBranches("valuation.view")
-	var lines []map[string]any
+	lines := []map[string]any{}
 	total := money.Zero
 	byCat := map[string]decimal.Decimal{}
 	byBranch := map[string]decimal.Decimal{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		var sql string
-		q := sqlq.New()
-		if asOf == "" {
-			q.If(branches != nil, "sl.branch_id = ANY(?)", branches)
-			sql = `SELECT sl.branch_id, b.name, p.id, p.name, c.name, sl.qty_on_hand, sl.avg_cost
-				FROM stock_levels sl JOIN products p ON p.id=sl.product_id JOIN branches b ON b.id=sl.branch_id
-				LEFT JOIN categories c ON c.id=p.category_id
-				WHERE sl.qty_on_hand <> 0` + q.And() + ` ORDER BY b.name, p.name`
-		} else {
-			cut := q.Arg(asOf)
-			q.If(branches != nil, "m.branch_id = ANY(?)", branches)
-			sql = `SELECT x.branch_id, b.name, p.id, p.name, c.name, x.qty_after, x.avg_cost_after
-				FROM (SELECT DISTINCT ON (m.branch_id, m.product_id) m.branch_id, m.product_id, m.qty_after, m.avg_cost_after
-				      FROM stock_movements m WHERE m.created_at < ` + cut + `::date + 1` + q.And() + `
-				      ORDER BY m.branch_id, m.product_id, m.created_at DESC, m.id DESC) x
-				JOIN products p ON p.id=x.product_id JOIN branches b ON b.id=x.branch_id
-				LEFT JOIN categories c ON c.id=p.category_id
-				WHERE x.qty_after <> 0 ORDER BY b.name, p.name`
-		}
-		rows, err := tx.Query(ctx, sql, q.Args...)
+		rows, err := tx.Query(ctx, `
+			SELECT x.location_id, l.name::text, pr.id, pr.name::text, c.name::text, x.qty, pr.average_cost
+			FROM (SELECT m.location_id, m.product_id, sum(m.quantity_delta) AS qty FROM app.stock_movements m
+			      WHERE m.tenant_id = $1 AND ($2::uuid IS NULL OR m.location_id = $2) AND ($3 = '' OR m.occurred_at < $3::date + 1)
+			      GROUP BY m.location_id, m.product_id) x
+			JOIN app.products pr ON pr.tenant_id = $1 AND pr.id = x.product_id
+			JOIN app.locations l ON l.tenant_id = $1 AND l.id = x.location_id
+			LEFT JOIN app.product_categories c ON c.tenant_id = $1 AND c.id = pr.category_id
+			WHERE x.qty <> 0 ORDER BY l.name, pr.name`, p.TenantID, locationFilter(p), asOf)
 		if err != nil {
 			return err
 		}
@@ -205,7 +199,7 @@ func (s *Service) Valuation(ctx context.Context, p *auth.Principal, asOf string)
 	for k, v := range byBranch {
 		brs = append(brs, map[string]any{"branch": k, "value": v})
 	}
-	return map[string]any{"as_of": asOf, "total": total, "lines": orEmpty(lines), "by_category": cats, "by_branch": brs}, err
+	return map[string]any{"as_of": asOf, "total": total, "lines": lines, "by_category": cats, "by_branch": brs}, err
 }
 
 type MovementFilter struct {
@@ -214,24 +208,33 @@ type MovementFilter struct {
 	From, To  string
 }
 
+// movementTypes maps the legacy movement names a client may still send to the enum values.
+var movementTypes = map[string]string{
+	"purchase": "purchase_receipt", "purchase_receipt": "purchase_receipt", "sale": "sale", "sale_void": "sale_void",
+	"sale_return": "sale_return", "adjustment": "adjustment", "transfer_out": "transfer_out", "transfer_in": "transfer_in",
+}
+
 func (s *Service) Movements(ctx context.Context, p *auth.Principal, f MovementFilter, page httpx.Page) ([]map[string]any, int, error) {
-	var out []map[string]any
+	out := []map[string]any{}
 	var total int
+	typ := movementTypes[f.Type]
+	if f.Type != "" && typ == "" {
+		return out, 0, nil
+	}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		if b := p.ScopeBranches("stock.view"); b != nil {
-			q.Add("m.branch_id = ANY(?)", b)
-		}
-		q.If(f.ProductID != nil, "m.product_id = ?", f.ProductID)
-		q.If(f.Type != "", "m.type = ?", f.Type)
-		q.If(f.From != "", "m.created_at >= ?::date", f.From)
-		q.If(f.To != "", "m.created_at < ?::date + 1", f.To)
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM stock_movements m`+q.Where(), q.Args...).Scan(&total); err != nil {
+		const where = ` WHERE m.tenant_id = $1 AND ($2::uuid IS NULL OR m.location_id = $2) AND ($3::uuid IS NULL OR m.product_id = $3)
+			AND ($4 = '' OR m.movement_type = $4::app.stock_movement_type)
+			AND ($5 = '' OR m.occurred_at >= $5::date) AND ($6 = '' OR m.occurred_at < $6::date + 1)`
+		args := []any{p.TenantID, locationFilter(p), f.ProductID, typ, f.From, f.To}
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.stock_movements m`+where, args...).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT m.id, m.branch_id, m.product_id, p.name, m.type, m.qty, m.unit_cost, m.qty_after, m.source_type, m.source_id, m.created_by, m.created_at
-			FROM stock_movements m JOIN products p ON p.id=m.product_id`+q.Where()+` ORDER BY m.created_at DESC, m.id DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
+			SELECT m.id, m.location_id, m.product_id, p.name::text, m.movement_type::text, m.quantity_delta, coalesce(m.unit_cost, 0),
+			       `+sourceType+`, `+sourceID+`, mb.user_id, m.occurred_at
+			FROM app.stock_movements m JOIN app.products p ON p.tenant_id = m.tenant_id AND p.id = m.product_id`+sourceJoins+`
+			LEFT JOIN app.memberships mb ON mb.tenant_id = m.tenant_id AND mb.id = m.created_by`+where+`
+			ORDER BY m.occurred_at DESC, m.id DESC LIMIT $7 OFFSET $8`, append(args, page.PerPage, page.Offset)...)
 		if err != nil {
 			return err
 		}
@@ -239,17 +242,18 @@ func (s *Service) Movements(ctx context.Context, p *auth.Principal, f MovementFi
 		for rows.Next() {
 			var id, branch, pid, source uuid.UUID
 			var by *uuid.UUID
-			var name, typ, st string
-			var qty, cost, after decimal.Decimal
+			var name, mt, st string
+			var qty, cost decimal.Decimal
 			var at time.Time
-			if err := rows.Scan(&id, &branch, &pid, &name, &typ, &qty, &cost, &after, &st, &source, &by, &at); err != nil {
+			if err := rows.Scan(&id, &branch, &pid, &name, &mt, &qty, &cost, &st, &source, &by, &at); err != nil {
 				return err
 			}
-			out = append(out, map[string]any{"id": id, "branch_id": branch, "product_id": pid, "product_name": name, "type": typ, "qty": qty, "unit_cost": cost, "qty_after": after, "source_type": st, "source_id": source, "created_by": by, "created_at": at})
+			out = append(out, map[string]any{"id": id, "branch_id": branch, "product_id": pid, "product_name": name, "type": mt, "qty": qty,
+				"unit_cost": cost, "source_type": st, "source_id": source, "created_by": by, "created_at": at})
 		}
 		return rows.Err()
 	})
-	return orEmpty(out), total, err
+	return out, total, err
 }
 
 type DocFilter struct {

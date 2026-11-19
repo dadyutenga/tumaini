@@ -49,7 +49,7 @@ func (h *Handler) GetEntry(c fiber.Ctx) error {
 
 func (h *Handler) Levels(c fiber.Ctx) error {
 	p := middleware.Principal(c)
-	_, cost := p.Can("products.view_cost")
+	_, cost := p.Can("shop.product.view_cost")
 	list, err := h.Svc.Levels(c.Context(), p, cost)
 	return httpx.OK(c, list, err)
 }
@@ -251,11 +251,11 @@ func (h *Handler) ReturnTransfer(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
-	r.Get("/stock/levels", middleware.Require("stock.view"), h.Levels)
-	r.Get("/stock/low", middleware.Require("stock.view"), h.Low)
-	r.Get("/stock/movements", middleware.Require("stock.view"), h.Movements)
-	r.Get("/stock/valuation", middleware.Require("valuation.view"), h.Valuation)
-	r.Get("/products/:id/stock-card", middleware.Require("stock.view"), h.Card)
+	r.Get("/stock/levels", middleware.Require("shop.stock.view"), h.Levels)
+	r.Get("/stock/low", middleware.Require("shop.stock.view"), h.Low)
+	r.Get("/stock/movements", middleware.Require("shop.stock.view"), h.Movements)
+	r.Get("/stock/valuation", middleware.Require("shop.product.view_cost"), h.Valuation)
+	r.Get("/products/:id/stock-card", middleware.Require("shop.stock.view"), h.Card)
 
 	r.Get("/stock-entries", middleware.Require("stock.view"), h.Entries)
 	r.Post("/stock-entries", middleware.RequireAny("stock.in", "stock.out"), middleware.Idempotent(), h.PostEntry)
