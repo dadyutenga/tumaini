@@ -881,12 +881,18 @@ func (s *Service) UpdatePrintOrder(ctx context.Context, p *auth.Principal, id uu
 	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		var cur string
 		var jobID uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT status, job_id FROM design_print_orders WHERE id=$1 FOR UPDATE`, id).Scan(&cur, &jobID); err != nil {
+		var costID *uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT status, job_id, cost_id FROM design_print_orders WHERE id=$1 FOR UPDATE`, id).Scan(&cur, &jobID, &costID); err != nil {
 			return httpx.NotFound("not_found", "Print order not found")
 		}
 		order := map[string]int{"sent": 0, "ready": 1, "delivered": 2}
 		if cur == "cancelled" || cur == "delivered" || (status != "cancelled" && order[status] <= order[cur]) {
 			return httpx.Conflict("invalid_status", "A "+cur+" print order cannot move to "+status)
+		}
+		if status == "cancelled" && costID != nil {
+			if err := s.voidCostTx(ctx, tx, p, *costID, "Print order cancelled"); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `UPDATE design_print_orders SET status=$2 WHERE id=$1`, id, status); err != nil {
 			return err
@@ -905,11 +911,82 @@ func (s *Service) UpdatePrintOrder(ctx context.Context, p *auth.Principal, id uu
 				}
 			}
 		}
+		if err := s.Audit.Record(ctx, tx, p, "print_order.updated", "design_print_order", id, map[string]any{"status": cur}, map[string]any{"status": status}); err != nil {
+			return err
+		}
 		var err error
 		out, err = one(ctx, tx, "Print order", `SELECT id, job_id, contractor_id, quantity, cost, due_date, status, note FROM design_print_orders WHERE id=$1`, id)
 		return err
 	})
 	return out, err
+}
+
+// ListPrintOrders lists print orders across design jobs with optional status, contractor, or job filters.
+func (s *Service) ListPrintOrders(ctx context.Context, p *auth.Principal, status string, contractorID, jobID *uuid.UUID, page httpx.Page) ([]map[string]any, int, error) {
+	var out []map[string]any
+	total := 0
+	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		q := sqlq.New()
+		q.If(status != "", "po.status = ?", status)
+		q.If(contractorID != nil, "po.contractor_id = ?", contractorID)
+		q.If(jobID != nil, "po.job_id = ?", jobID)
+		if d := scopeOwn(p, "design.view"); d != nil {
+			q.Add("(j.designer_id = ? OR j.created_by = ?)", *d, *d)
+		}
+		from := ` FROM design_print_orders po JOIN design_jobs j ON j.id = po.job_id JOIN svc_clients c ON c.id = j.client_id LEFT JOIN contractors ct ON ct.id = po.contractor_id`
+		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+q.Where(), q.Args...).Scan(&total); err != nil {
+			return err
+		}
+		var err error
+		out, err = rows(ctx, tx, `
+			SELECT po.id, po.job_id, j.number AS job_number, j.title AS job_title, j.client_id, c.name AS client_name,
+			       po.contractor_id, ct.name AS contractor_name, po.quantity, po.cost, po.due_date, po.status, po.note, po.created_at`+
+			from+q.Where()+` ORDER BY po.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
+		return err
+	})
+	return out, total, err
+}
+
+type ExtraRevisionIn struct {
+	Amount         decimal.Decimal `json:"amount" validate:"dpos"`
+	ExtraRevisions int             `json:"extra_revisions" validate:"gte=0,lte=50"`
+	Note           string          `json:"note" validate:"max=500"`
+}
+
+// AddExtraRevisionCharge adds an extra revision fee to a design job's price (and optionally adds extra included revisions).
+func (s *Service) AddExtraRevisionCharge(ctx context.Context, p *auth.Principal, id uuid.UUID, in ExtraRevisionIn) (map[string]any, error) {
+	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		before, err := s.jobRow(ctx, tx, p, id, true)
+		if err != nil {
+			return err
+		}
+		if before["status"] == "cancelled" || before["status"] == "delivered" {
+			return httpx.Conflict("invalid_status", "A "+before["status"].(string)+" job cannot be charged extra revisions")
+		}
+		fee := money.Money(in.Amount)
+		extra := in.ExtraRevisions
+		if extra == 0 {
+			extra = 1
+		}
+		if _, err := tx.Exec(ctx, `UPDATE design_jobs SET price = price + $2, revisions_included = revisions_included + $3 WHERE id=$1`, id, fee, extra); err != nil {
+			return err
+		}
+		msg := "Extra revision charge added: " + fee.StringFixed(2)
+		if note := clean(in.Note); note != "" {
+			msg += " — " + note
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO design_feedback (id, business_id, job_id, author_type, author_id, comment) VALUES ($1,$2,$3,'staff',$4,$5)`,
+			ids.New(), p.BusinessID, id, p.UserID, msg); err != nil {
+			return err
+		}
+		return s.Audit.Record(ctx, tx, p, "design_job.extra_revision_charged", "design_job", id,
+			map[string]any{"price": before["price"], "revisions_included": before["revisions_included"]},
+			map[string]any{"added_amount": fee, "extra_revisions": extra, "note": clean(in.Note)})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetJob(ctx, p, id)
 }
 
 // ---------- branding stage link ----------

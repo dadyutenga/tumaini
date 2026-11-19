@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Download, Plus } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -13,7 +14,8 @@ import { DataGrid, Field, FormDialog, PageHeader, StatusBadge } from "@/componen
 import { PageLoader } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
 import { PaymentDialog } from "@/features/services/shared";
-import { useGet, useWrite } from "@/hooks/useApi";
+import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
+import { download } from "@/lib/api";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { Contractor, ContractorStatement } from "@/types/services";
 
@@ -60,13 +62,27 @@ function Statement({ id, onClose }: { id: string; onClose: () => void }) {
                 { header: "Balance", align: "right", cell: (l) => formatMoney(l.balance) },
               ]}
             />
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm">
                 We owe <strong>{formatMoney(s.owed)}</strong>
               </p>
-              {can("contractors.manage") && toNumber(s.owed) > 0 && (
-                <Button onClick={() => setPaying(true)}>Pay contractor</Button>
-              )}
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    download(
+                      `/contractors/${id}/statement`,
+                      { format: "pdf" },
+                      `contractor-statement-${s.contractor.name}.pdf`,
+                    ).catch((e) => toast.error(errorMessage(e)))
+                  }
+                >
+                  <Download size={14} /> Statement PDF
+                </Button>
+                {can("contractors.manage") && toNumber(s.owed) > 0 && (
+                  <Button onClick={() => setPaying(true)}>Pay contractor</Button>
+                )}
+              </div>
             </div>
           </div>
         )}
@@ -91,6 +107,7 @@ export default function Contractors() {
   const [q, setQ] = useState("");
   const list = useGet<Contractor[]>("/contractors", { q, all: manage || undefined, per_page: 100 });
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<Contractor | null>(null);
   const [draft, setDraft] = useState(blank);
   const [viewing, setViewing] = useState<string | null>(null);
   const add = useWrite("POST", "/contractors", {
@@ -98,6 +115,14 @@ export default function Contractors() {
     success: "Contractor added",
     onSuccess: () => {
       setOpen(false);
+      setDraft(blank);
+    },
+  });
+  const save = useWrite("PUT", () => `/contractors/${editing?.id}`, {
+    invalidate: ["/contractors"],
+    success: "Contractor updated",
+    onSuccess: () => {
+      setEditing(null);
       setDraft(blank);
     },
   });
@@ -158,26 +183,48 @@ export default function Contractors() {
             className: "text-right",
             cell: (c) =>
               manage ? (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    toggle.mutate({ id: c.id, active: !c.is_active });
-                  }}
-                >
-                  {c.is_active ? "Deactivate" : "Activate"}
-                </Button>
+                <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setDraft({
+                        name: c.name,
+                        trade: c.trade ?? "",
+                        phone: c.phone ?? "",
+                        email: c.email ?? "",
+                        address: c.address ?? "",
+                        notes: c.notes ?? "",
+                      });
+                      setEditing(c);
+                    }}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => toggle.mutate({ id: c.id, active: !c.is_active })}
+                  >
+                    {c.is_active ? "Deactivate" : "Activate"}
+                  </Button>
+                </div>
               ) : null,
           },
         ]}
       />
       <FormDialog
-        open={open}
-        onOpenChange={setOpen}
-        title="New contractor"
-        busy={add.isPending}
-        onSubmit={() => add.mutate(draft)}
+        open={open || editing !== null}
+        onOpenChange={(o) => {
+          if (!o) {
+            setOpen(false);
+            setEditing(null);
+            setDraft(blank);
+          }
+        }}
+        title={editing ? "Edit contractor" : "New contractor"}
+        busy={add.isPending || save.isPending}
+        onSubmit={() => (editing ? save.mutate(draft) : add.mutate(draft))}
       >
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="Name *">

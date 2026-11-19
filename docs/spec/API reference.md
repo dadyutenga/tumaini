@@ -416,6 +416,7 @@ Clients, catalog, projects, quotations, invoices, costs, contractors, tasks, ren
 | POST `/service-invoices/:id/payments` (I) | `service_billing.manage` | Record a payment against the invoice. More than the balance is 409 |
 | GET `/service-invoices/:id/pdf` | `service_billing.view` | Printable invoice |
 | GET `/service-payments?client_id=&project_id=&design_job_id=&from=&to=` | `service_billing.view` | Client payments |
+| GET `/service-payments/:id/receipt?format=` | `service_billing.view` | Service payment receipt (`json` or `pdf`) |
 | POST `/service-payments/:id/void` | `service_billing.manage` | Void a client payment, its deposit applications and invoice allocations. Reason required |
 | GET `/service-costs?project_id=&design_job_id=&contractor_id=` | `service_billing.view` | Project, design job and contractor costs |
 | POST `/service-costs` (I) | `service_billing.manage` | Record a cost. With `money_account_id` it is paid now; with only `contractor_id` it is owed |
@@ -440,8 +441,10 @@ Clients, catalog, projects, quotations, invoices, costs, contractors, tasks, ren
 | POST `/design-jobs/:id/payments` (I) | `service_billing.manage` | Receive a deposit or balance for the job |
 | POST `/design-jobs/:id/timer/start` | `design.view` | Start the caller's timer |
 | POST `/design-jobs/:id/timer/stop` | `design.view` | Stop the caller's timer |
+| POST `/design-jobs/:id/extra-revision-charge` | `design.manage` | Add an extra revision fee to a design job's price |
 | POST `/design-jobs/:id/print-orders` | `design.manage` | Create a print order for an approved design. Its cost is owed to the contractor |
-| PUT `/print-orders/:id` | `design.manage` | Set status: ready, delivered or cancelled |
+| GET `/print-orders?status=&contractor_id=&job_id=` | `design.view` | List print orders across design jobs |
+| PUT `/print-orders/:id` | `design.manage` | Set status: ready, delivered or cancelled (cancelling voids linked contractor cost) |
 | GET `/public/design-approvals/:token` | none (private link) | What the client sees on the approval page |
 | GET `/public/design-approvals/:token/file` | none (private link) | The version file |
 | POST `/public/design-approvals/:token/decision` | none (private link) | Approve, or request changes with a comment. One decision per link |

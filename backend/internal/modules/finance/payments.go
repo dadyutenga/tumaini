@@ -30,7 +30,9 @@ const paymentCols = `p.id, p.number, p.branch_id, p.direction, p.kind, COALESCE(
 	COALESCE(CASE p.party_type
 		WHEN 'customer' THEN (SELECT name FROM customers WHERE id=p.party_id)
 		WHEN 'supplier' THEN (SELECT name FROM suppliers WHERE id=p.party_id)
-		WHEN 'employee' THEN (SELECT name FROM employees WHERE id=p.party_id) END, ''),
+		WHEN 'employee' THEN (SELECT name FROM employees WHERE id=p.party_id)
+		WHEN 'client' THEN (SELECT name FROM svc_clients WHERE id=p.party_id)
+		WHEN 'contractor' THEN (SELECT name FROM contractors WHERE id=p.party_id) END, ''),
 	p.money_account_id, ma.name, ma.type, p.method, p.amount, COALESCE(p.reference,''), p.payment_date::text, p.status,
 	COALESCE(p.note,''), p.till_session_id, p.created_by, COALESCE(u.name,''), p.created_at, p.voided_at, COALESCE(p.void_reason,'')`
 

@@ -257,6 +257,20 @@ export async function uploadFile(file: File): Promise<string> {
   return json.data.id;
 }
 
+/** Fetch an authenticated binary file (image, PDF) as a temporary object URL for inline preview. */
+export async function fetchFileBlob(
+  path: string,
+  signal?: AbortSignal,
+): Promise<{ url: string; mime: string }> {
+  let response = await send(path, { signal });
+  if (response.status === 401 && (await refreshSession())) response = await send(path, { signal });
+  if (!response.ok) {
+    throw new ApiError("Could not load the file preview", response.status);
+  }
+  const blob = await response.blob();
+  return { url: URL.createObjectURL(blob), mime: blob.type || response.headers.get("Content-Type") || "" };
+}
+
 /** Absolute URL for a public (no sign-in) endpoint, for use in img/iframe/link tags. */
 export function publicUrl(path: string) {
   return buildUrl(path);

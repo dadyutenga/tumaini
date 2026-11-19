@@ -29,6 +29,7 @@ import {
   type CatalogItem,
   type DesignJobRow,
   type DesignStatus,
+  type PrintOrderRow,
   type ProjectRow,
 } from "@/types/services";
 
@@ -393,10 +394,11 @@ function NewJobDialog({
 }
 
 export default function DesignJobs() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const navigate = useNavigate();
   const [designer, setDesigner] = useState("");
   const [status, setStatus] = useState("");
+  const [printStatusFilter, setPrintStatusFilter] = useState("");
   const [overdue, setOverdue] = useState(false);
   const [q, setQ] = useState("");
   const [creating, setCreating] = useState(false);
@@ -407,7 +409,28 @@ export default function DesignJobs() {
     overdue: overdue || undefined,
     per_page: 100,
   });
+  const printOrders = useGet<PrintOrderRow[]>("/print-orders", {
+    status: printStatusFilter,
+    per_page: 100,
+  });
+  const updatePrint = useWrite<{ id: string; status: string }>(
+    "PUT",
+    (b) => `/print-orders/${b.id}`,
+    {
+      invalidate: ["/print-orders", "/design-jobs", "/service-costs", "/contractors"],
+      success: "Print order updated",
+      toBody: (b) => ({ status: b.status }),
+    },
+  );
   const staff = useStaff();
+  const manage = can("design.manage");
+  const myJobs = (list.data ?? []).filter((j) => j.designer_id === user?.id);
+  const myDueToday = myJobs.filter((j) => {
+    const d = daysUntil(j.deadline);
+    return d !== null && d <= 0 && !["delivered", "cancelled"].includes(j.status);
+  }).length;
+  const myWithClient = myJobs.filter((j) => j.status === "with_client").length;
+  const myChanges = myJobs.filter((j) => j.status === "changes_requested").length;
 
   return (
     <>
@@ -415,18 +438,53 @@ export default function DesignJobs() {
         title="Design jobs"
         description="Logos, cards, posters, banners and branding, from brief to delivery."
         actions={
-          can("design.manage") && (
-            <Button onClick={() => setCreating(true)}>
-              <Plus size={16} /> New job
-            </Button>
-          )
+          <div className="flex flex-wrap gap-2">
+            {user?.id && (
+              <Button
+                variant={designer === user.id ? "default" : "outline"}
+                onClick={() => setDesigner((d) => (d === user.id ? "" : user.id))}
+              >
+                My jobs{myJobs.length ? ` (${myJobs.length})` : ""}
+              </Button>
+            )}
+            {manage && (
+              <Button onClick={() => setCreating(true)}>
+                <Plus size={16} /> New job
+              </Button>
+            )}
+          </div>
         }
       />
+      {user?.id && myJobs.length > 0 && (
+        <div className="mb-4 grid gap-3 sm:grid-cols-4">
+          <div className="rounded-xl border bg-card px-4 py-3 text-sm">
+            <p className="text-xs text-muted-foreground">Assigned to me</p>
+            <p className="text-xl font-semibold">{myJobs.length}</p>
+          </div>
+          <div className="rounded-xl border bg-card px-4 py-3 text-sm">
+            <p className="text-xs text-muted-foreground">Due today / overdue</p>
+            <p className={cn("text-xl font-semibold", myDueToday > 0 && "text-destructive")}>
+              {myDueToday}
+            </p>
+          </div>
+          <div className="rounded-xl border bg-card px-4 py-3 text-sm">
+            <p className="text-xs text-muted-foreground">Waiting for client</p>
+            <p className="text-xl font-semibold">{myWithClient}</p>
+          </div>
+          <div className="rounded-xl border bg-card px-4 py-3 text-sm">
+            <p className="text-xs text-muted-foreground">Changes requested</p>
+            <p className={cn("text-xl font-semibold", myChanges > 0 && "text-destructive")}>
+              {myChanges}
+            </p>
+          </div>
+        </div>
+      )}
       <Tabs defaultValue="board">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <TabsList>
             <TabsTrigger value="board">Board</TabsTrigger>
             <TabsTrigger value="list">List</TabsTrigger>
+            <TabsTrigger value="print">Print orders</TabsTrigger>
           </TabsList>
           {staff.length > 0 && (
             <NativeSelect
@@ -504,6 +562,82 @@ export default function DesignJobs() {
               },
               { header: "Price", align: "right", cell: (j) => formatMoney(j.price) },
               { header: "Balance", align: "right", cell: (j) => formatMoney(j.balance) },
+            ]}
+          />
+        </TabsContent>
+        <TabsContent value="print">
+          <div className="mb-4 flex flex-wrap items-center gap-3">
+            <NativeSelect
+              aria-label="Print order status"
+              className="w-44"
+              value={printStatusFilter}
+              onChange={(e) => setPrintStatusFilter(e.target.value)}
+            >
+              <option value="">All statuses</option>
+              <option value="sent">Sent to print</option>
+              <option value="ready">Ready</option>
+              <option value="delivered">Delivered</option>
+              <option value="cancelled">Cancelled</option>
+            </NativeSelect>
+          </div>
+          <DataGrid
+            rows={printOrders.data}
+            loading={printOrders.isLoading}
+            rowKey={(o) => o.id}
+            empty="No print orders yet"
+            onRowClick={(o) => navigate(`/design-jobs/${o.job_id}`)}
+            columns={[
+              {
+                header: "Design job",
+                cell: (o) => (
+                  <div>
+                    <p className="font-medium">{o.job_title}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {o.job_number} · {o.client_name}
+                    </p>
+                  </div>
+                ),
+              },
+              { header: "Printer", cell: (o) => o.contractor_name ?? "-" },
+              { header: "Qty", align: "right", cell: (o) => o.quantity },
+              { header: "Due", cell: (o) => (o.due_date ? formatDate(o.due_date) : "-") },
+              { header: "Status", cell: (o) => <StatusBadge value={o.status} /> },
+              { header: "Cost", align: "right", cell: (o) => formatMoney(o.cost) },
+              {
+                header: "",
+                className: "text-right",
+                cell: (o) =>
+                  manage && (o.status === "sent" || o.status === "ready") ? (
+                    <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                      {o.status === "sent" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => updatePrint.mutate({ id: o.id, status: "ready" })}
+                        >
+                          Ready
+                        </Button>
+                      )}
+                      {o.status === "ready" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => updatePrint.mutate({ id: o.id, status: "delivered" })}
+                        >
+                          Delivered
+                        </Button>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive"
+                        onClick={() => updatePrint.mutate({ id: o.id, status: "cancelled" })}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  ) : null,
+              },
             ]}
           />
         </TabsContent>

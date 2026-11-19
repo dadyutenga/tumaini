@@ -5222,3 +5222,137 @@ paths:
                 error:
                   code: permission_denied
                   message: You do not have permission to do that
+
+  /service-payments/{id}/receipt:
+    get:
+      summary: Service payment receipt (JSON or printable PDF)
+      operationId: get_service_payments_id_receipt
+      tags:
+      - 'Services: Billing'
+      x-permission: service_billing.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: format
+        in: query
+        required: false
+        schema:
+          type: string
+          enum: [json, pdf]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /design-jobs/{id}/extra-revision-charge:
+    post:
+      summary: Add an extra revision fee to a design job price
+      operationId: post_design_jobs_id_extra_revision_charge
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.manage
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: string
+                extra_revisions:
+                  type: integer
+                note:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /print-orders:
+    get:
+      summary: List print orders across design jobs
+      operationId: get_print_orders
+      tags:
+      - 'Services: Design jobs'
+      x-permission: design.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/Page'
+      - $ref: '#/components/parameters/PerPage'
+      - name: status
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: contractor_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - name: job_id
+        in: query
+        required: false
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: {}
+        '403':
+          description: Missing permission
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'

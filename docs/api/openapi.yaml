@@ -4800,6 +4800,51 @@ paths:
       tags:
         - 'Services: Design jobs'
       x-permission: design.manage
+  /design-jobs/{id}/extra-revision-charge:
+    post:
+      operationId: post_design_jobs_id_extra_revision_charge
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                amount:
+                  type: string
+                extra_revisions:
+                  type: integer
+                note:
+                  type: string
+              required:
+                - amount
+              type: object
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data: {}
+                type: object
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing permission
+      summary: Add an extra revision fee to a design job price
+      tags:
+        - 'Services: Design jobs'
+      x-permission: design.manage
   /design-jobs/{id}/feedback:
     post:
       operationId: post_design_jobs_id_feedback
@@ -12587,6 +12632,49 @@ paths:
       tags:
         - Employees
       x-permission: departments.manage
+  /print-orders:
+    get:
+      operationId: get_print_orders
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+        - in: query
+          name: status
+          required: false
+          schema:
+            type: string
+        - in: query
+          name: contractor_id
+          required: false
+          schema:
+            format: uuid
+            type: string
+        - in: query
+          name: job_id
+          required: false
+          schema:
+            format: uuid
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data: {}
+                type: object
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing permission
+      summary: List print orders across design jobs
+      tags:
+        - 'Services: Design jobs'
+      x-permission: design.view
   /print-orders/{id}:
     put:
       operationId: put_print_orders_id
@@ -23541,6 +23629,54 @@ paths:
                 $ref: '#/components/schemas/Error'
           description: Missing permission
       summary: Client payments
+      tags:
+        - 'Services: Billing'
+      x-permission: service_billing.view
+  /service-payments/{id}/receipt:
+    get:
+      operationId: get_service_payments_id_receipt
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: id
+          required: true
+          schema:
+            format: uuid
+            type: string
+        - in: query
+          name: format
+          required: false
+          schema:
+            enum:
+              - json
+              - pdf
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data: {}
+                type: object
+            application/pdf:
+              schema:
+                format: binary
+                type: string
+          description: OK
+        "403":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Missing permission
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+          description: Not found
+      summary: Service payment receipt (JSON or printable PDF)
       tags:
         - 'Services: Billing'
       x-permission: service_billing.view

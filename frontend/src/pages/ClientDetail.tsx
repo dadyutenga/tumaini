@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { Download } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataGrid, FormDialog, PageHeader, StatusBadge } from "@/components/shared/kit";
@@ -8,7 +10,8 @@ import { useAuth } from "@/features/auth/auth";
 import { NewProjectDialog } from "@/features/services/NewProjectDialog";
 import { PdfButton, Tile } from "@/features/services/shared";
 import { label } from "@/features/services/helpers";
-import { useGet, useWrite } from "@/hooks/useApi";
+import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
+import { download } from "@/lib/api";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import { ClientFields } from "@/pages/Clients";
 import { clientBlank } from "@/features/services/helpers";
@@ -169,6 +172,25 @@ export default function ClientDetail() {
               { header: "Method", cell: (p) => label(p.method) },
               { header: "Status", cell: (p) => <StatusBadge value={p.status} /> },
               { header: "Amount", align: "right", cell: (p) => formatMoney(p.amount) },
+              {
+                header: "",
+                className: "text-right",
+                cell: (p) => (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      download(
+                        `/service-payments/${p.id}/receipt`,
+                        { format: "pdf" },
+                        `receipt-${p.number}.pdf`,
+                      ).catch((e) => toast.error(errorMessage(e)))
+                    }
+                  >
+                    <Download size={14} /> Receipt PDF
+                  </Button>
+                ),
+              },
             ]}
           />
         </TabsContent>

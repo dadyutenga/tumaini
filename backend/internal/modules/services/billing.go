@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -1009,6 +1010,130 @@ func (s *Service) ListPayments(ctx context.Context, p *auth.Principal, clientID,
 	return out, total, err
 }
 
+// PaymentReceipt returns a service payment receipt (SRS Section 11: Service receipt)
+// with business details, client, project/design job, purpose, total paid so far and balance remaining.
+func (s *Service) PaymentReceipt(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
+	var out map[string]any
+	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		row, err := one(ctx, tx, "Payment", `
+			SELECT sp.id, pa.number, pa.payment_date AS date, sp.amount, sp.applied, (sp.amount - sp.applied) AS deposit,
+			       pa.method, COALESCE(pa.reference,'') AS reference, sp.status,
+			       sp.client_id, c.name AS client_name, COALESCE(c.phone,'') AS client_phone,
+			       sp.project_id, COALESCE(pr.number,'') AS project_number, COALESCE(pr.name,'') AS project_name, COALESCE(pr.total_price, 0) AS project_price,
+			       sp.design_job_id, COALESCE(dj.number,'') AS design_job_number, COALESCE(dj.title,'') AS design_job_title, COALESCE(dj.price, 0) AS design_job_price,
+			       COALESCE(u.name,'') AS received_by
+			FROM svc_payments sp
+			JOIN payments pa ON pa.id = sp.id
+			JOIN svc_clients c ON c.id = sp.client_id
+			LEFT JOIN svc_projects pr ON pr.id = sp.project_id
+			LEFT JOIN design_jobs dj ON dj.id = sp.design_job_id
+			LEFT JOIN users u ON u.id = sp.created_by
+			WHERE sp.id=$1`, id)
+		if err != nil {
+			return err
+		}
+		var bName, bPhone, bAddr, bTin string
+		_ = tx.QueryRow(ctx, `SELECT name, COALESCE(phone,''), COALESCE(address,''), COALESCE(tax_number,'') FROM businesses WHERE id=$1`, p.BusinessID).Scan(&bName, &bPhone, &bAddr, &bTin)
+
+		totalPaid := money.Zero
+		totalPrice := money.Zero
+		purpose := "Payment"
+		if pid, ok := row["project_id"].(uuid.UUID); ok && pid != uuid.Nil {
+			totalPrice = num(row, "project_price")
+			_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0) FROM svc_payments WHERE project_id=$1 AND status='posted'`, pid).Scan(&totalPaid)
+		} else if jid, ok := row["design_job_id"].(uuid.UUID); ok && jid != uuid.Nil {
+			totalPrice = num(row, "design_job_price")
+			_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0) FROM svc_payments WHERE design_job_id=$1 AND status='posted'`, jid).Scan(&totalPaid)
+		} else {
+			cid := row["client_id"].(uuid.UUID)
+			_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(total),0) FROM svc_invoices WHERE client_id=$1 AND status IN ('issued','partial','paid')`, cid).Scan(&totalPrice)
+			_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0) FROM svc_payments WHERE client_id=$1 AND status='posted'`, cid).Scan(&totalPaid)
+		}
+		balance := totalPrice.Sub(totalPaid)
+		if balance.IsNegative() {
+			balance = money.Zero
+		}
+		if num(row, "deposit").IsPositive() && num(row, "applied").IsZero() {
+			purpose = "Deposit"
+		} else if balance.IsZero() && totalPrice.IsPositive() {
+			purpose = "Final payment"
+		} else {
+			purpose = "Installment payment"
+		}
+		allocs, err := rows(ctx, tx, `
+			SELECT a.invoice_id, i.number AS invoice_number, a.amount
+			FROM svc_payment_allocations a JOIN svc_invoices i ON i.id = a.invoice_id
+			WHERE a.payment_id=$1 ORDER BY i.number`, id)
+		if err != nil {
+			return err
+		}
+		row["business"] = map[string]any{"name": bName, "phone": bPhone, "address": bAddr, "tax_number": bTin}
+		row["purpose"] = purpose
+		row["total_paid_so_far"] = totalPaid
+		row["balance_remaining"] = balance
+		row["allocations"] = allocs
+		out = row
+		return nil
+	})
+	return out, err
+}
+
+func serviceReceiptPDF(m map[string]any) []byte {
+	biz := m["business"].(map[string]any)
+	d := pdf.New()
+	d.Heading(export.Cell(biz["name"]), 15)
+	var sub []string
+	if v := export.Cell(biz["address"]); v != "" {
+		sub = append(sub, v)
+	}
+	if v := export.Cell(biz["phone"]); v != "" {
+		sub = append(sub, v)
+	}
+	if v := export.Cell(biz["tax_number"]); v != "" {
+		sub = append(sub, "TIN: "+v)
+	}
+	if len(sub) > 0 {
+		d.Text(strings.Join(sub, " | "))
+	}
+	d.Rule()
+	d.Heading("Service Payment Receipt "+export.Cell(m["number"]), 12)
+	d.KV("Receipt No", export.Cell(m["number"]))
+	d.KV("Date", export.Cell(m["date"]))
+	d.KV("Client", export.Cell(m["client_name"]))
+	if v := export.Cell(m["project_name"]); v != "" {
+		d.KV("Project", export.Cell(m["project_number"])+" - "+v)
+	}
+	if v := export.Cell(m["design_job_title"]); v != "" {
+		d.KV("Design job", export.Cell(m["design_job_number"])+" - "+v)
+	}
+	d.KV("Payment for", export.Cell(m["purpose"]))
+	d.KV("Method", export.Cell(m["method"]))
+	if v := export.Cell(m["reference"]); v != "" {
+		d.KV("Reference", v)
+	}
+	d.Space(6)
+	d.Rule()
+	d.KV("Amount received", export.Cell(m["amount"]))
+	d.KV("Total paid so far", export.Cell(m["total_paid_so_far"]))
+	d.KV("Balance remaining", export.Cell(m["balance_remaining"]))
+	d.Rule()
+	if allocs, ok := m["allocations"].([]map[string]any); ok && len(allocs) > 0 {
+		d.Space(4)
+		var body [][]string
+		for _, a := range allocs {
+			body = append(body, []string{export.Cell(a["invoice_number"]), export.Cell(a["amount"])})
+		}
+		d.Table([]string{"Applied to invoice", "Amount"}, []float64{3, 1.5}, body)
+	}
+	d.Space(6)
+	d.KV("Received by", export.Cell(m["received_by"]))
+	if export.Cell(m["status"]) == "voided" {
+		d.Space(4)
+		d.Heading("VOIDED", 12)
+	}
+	return d.Bytes()
+}
+
 // VoidPayment reverses a client payment, its deposit applications and its invoice allocations.
 func (s *Service) VoidPayment(ctx context.Context, p *auth.Principal, id uuid.UUID, reason string) (map[string]any, error) {
 	reason = clean(reason)
@@ -1205,6 +1330,45 @@ func (s *Service) ListCosts(ctx context.Context, p *auth.Principal, projectID, j
 	return out, total, err
 }
 
+func (s *Service) voidCostTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID, reason string) error {
+	var status, number, date string
+	var settled decimal.Decimal
+	var payment *uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT status, number, settled, payment_id, cost_date::text FROM svc_costs WHERE id=$1 FOR UPDATE`, id).Scan(&status, &number, &settled, &payment, &date); err != nil {
+		return httpx.NotFound("not_found", "Cost not found")
+	}
+	if status == "voided" {
+		return httpx.Conflict("invalid_status", "This cost is already voided")
+	}
+	if settled.IsPositive() {
+		return httpx.Conflict("has_payments", "This cost has been paid to the contractor. Void those payments first")
+	}
+	if err := s.Ledger.EnsureOpen(ctx, tx, date); err != nil {
+		return err
+	}
+	today, err := s.bizDate(ctx, tx)
+	if err != nil {
+		return err
+	}
+	src := id
+	if payment != nil {
+		src = *payment
+	}
+	user := p.UserID
+	if _, err := s.Ledger.ReverseSource(ctx, tx, p.BusinessID, src, today, "Void of cost "+number+": "+reason, &user); err != nil {
+		return err
+	}
+	if payment != nil {
+		if _, err := tx.Exec(ctx, `UPDATE payments SET status='voided', voided_by=$2, voided_at=now(), void_reason=$3 WHERE id=$1`, *payment, p.UserID, reason); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE svc_costs SET status='voided' WHERE id=$1`, id); err != nil {
+		return err
+	}
+	return s.Audit.Record(ctx, tx, p, "service_cost.voided", "svc_cost", id, map[string]any{"status": status}, map[string]any{"status": "voided", "reason": reason})
+}
+
 func (s *Service) VoidCost(ctx context.Context, p *auth.Principal, id uuid.UUID, reason string) (map[string]any, error) {
 	reason = clean(reason)
 	if reason == "" {
@@ -1212,44 +1376,10 @@ func (s *Service) VoidCost(ctx context.Context, p *auth.Principal, id uuid.UUID,
 	}
 	var out map[string]any
 	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		var status, number, date string
-		var settled decimal.Decimal
-		var payment *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT status, number, settled, payment_id, cost_date::text FROM svc_costs WHERE id=$1 FOR UPDATE`, id).Scan(&status, &number, &settled, &payment, &date); err != nil {
-			return httpx.NotFound("not_found", "Cost not found")
-		}
-		if status == "voided" {
-			return httpx.Conflict("invalid_status", "This cost is already voided")
-		}
-		if settled.IsPositive() {
-			return httpx.Conflict("has_payments", "This cost has been paid to the contractor. Void those payments first")
-		}
-		if err := s.Ledger.EnsureOpen(ctx, tx, date); err != nil {
+		if err := s.voidCostTx(ctx, tx, p, id, reason); err != nil {
 			return err
 		}
-		today, err := s.bizDate(ctx, tx)
-		if err != nil {
-			return err
-		}
-		src := id
-		if payment != nil {
-			src = *payment
-		}
-		user := p.UserID
-		if _, err := s.Ledger.ReverseSource(ctx, tx, p.BusinessID, src, today, "Void of cost "+number+": "+reason, &user); err != nil {
-			return err
-		}
-		if payment != nil {
-			if _, err := tx.Exec(ctx, `UPDATE payments SET status='voided', voided_by=$2, voided_at=now(), void_reason=$3 WHERE id=$1`, *payment, p.UserID, reason); err != nil {
-				return err
-			}
-		}
-		if _, err := tx.Exec(ctx, `UPDATE svc_costs SET status='voided' WHERE id=$1`, id); err != nil {
-			return err
-		}
-		if err := s.Audit.Record(ctx, tx, p, "service_cost.voided", "svc_cost", id, map[string]any{"status": status}, map[string]any{"status": "voided", "reason": reason}); err != nil {
-			return err
-		}
+		var err error
 		out, err = one(ctx, tx, "Cost", costSQL+` WHERE k.id=$1`, id)
 		return err
 	})
@@ -1367,10 +1497,42 @@ func (s *Service) ContractorStatement(ctx context.Context, p *auth.Principal, id
 			ln["balance"] = bal
 			delete(ln, "created_at")
 		}
-		out = map[string]any{"contractor": c, "lines": lines, "owed": c["owed"]}
+		out = map[string]any{"contractor": c, "lines": lines, "owed": c["owed"], "business_name": s.businessName(ctx, tx, p)}
 		return nil
 	})
 	return out, err
+}
+
+func contractorStatementPDF(m map[string]any) []byte {
+	c := m["contractor"].(map[string]any)
+	d := pdf.New()
+	if biz := export.Cell(m["business_name"]); biz != "" {
+		d.Heading(biz, 15)
+	}
+	d.Heading("Contractor statement", 13)
+	d.KV("Contractor", export.Cell(c["name"]))
+	if v := export.Cell(c["trade"]); v != "" {
+		d.KV("Trade", v)
+	}
+	if v := export.Cell(c["phone"]); v != "" {
+		d.KV("Phone", v)
+	}
+	d.Space(6)
+	var body [][]string
+	for _, ln := range m["lines"].([]map[string]any) {
+		body = append(body, []string{
+			export.Cell(ln["date"]),
+			export.Cell(ln["number"]),
+			export.Cell(ln["description"]),
+			export.Cell(ln["owed_amount"]),
+			export.Cell(ln["paid_amount"]),
+			export.Cell(ln["balance"]),
+		})
+	}
+	d.Table([]string{"Date", "Reference", "Description", "Work", "Paid", "Balance"}, []float64{1.3, 1.8, 3, 1.3, 1.3, 1.3}, body)
+	d.Rule()
+	d.KV("Amount we owe", export.Cell(m["owed"]))
+	return d.Bytes()
 }
 
 type ContractorPayIn struct {

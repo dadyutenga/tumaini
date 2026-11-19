@@ -174,6 +174,17 @@ export interface ProjectNote {
   author?: string;
 }
 
+export interface StageEvent {
+  id: string;
+  stage_id: string;
+  stage_name: string;
+  from_status: string | null;
+  to_status: string;
+  note: string | null;
+  created_at: string;
+  actor_name: string | null;
+}
+
 export interface ProjectDetail extends ProjectRow {
   stages: Stage[];
   documents: ClientDocument[];
@@ -182,6 +193,24 @@ export interface ProjectDetail extends ProjectRow {
   notes_list: ProjectNote[];
   invoices: InvoiceRow[];
   design_jobs: DesignJobRow[];
+  stage_events?: StageEvent[];
+}
+
+export interface PrintOrderRow {
+  id: string;
+  job_id: string;
+  job_number: string;
+  job_title: string;
+  client_id: string;
+  client_name: string;
+  contractor_id: string | null;
+  contractor_name: string | null;
+  quantity: number;
+  cost: string;
+  due_date: string | null;
+  status: "sent" | "ready" | "delivered" | "cancelled";
+  note: string | null;
+  created_at: string;
 }
 
 export interface DocLine {

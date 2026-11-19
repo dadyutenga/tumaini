@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Download, Plus, Trash2, Upload } from "lucide-react";
+import { Download, Eye, MessageCircle, Plus, Trash2, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,13 +16,15 @@ import {
   StatusBadge,
 } from "@/components/shared/kit";
 import { PageLoader } from "@/components/shared/Display";
+import { FilePreviewDialog } from "@/components/shared/FilePreview";
+import { RecordHistoryTab } from "@/components/shared/RecordHistoryTab";
 import { useAuth } from "@/features/auth/auth";
 import { CostDialog } from "@/features/services/CostDialog";
 import { PaymentDialog, ReasonDialog, StaffSelect, Tile } from "@/features/services/shared";
-import { daysUntil, label } from "@/features/services/helpers";
+import { daysUntil, label, whatsappUrl } from "@/features/services/helpers";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { download, uploadFile } from "@/lib/api";
-import { formatDate, formatMoney, today, toNumber } from "@/lib/formatters";
+import { formatDate, formatDateTime, formatMoney, today, toNumber } from "@/lib/formatters";
 import {
   JOB_TYPES,
   type ProjectDetail as Project,
@@ -261,6 +263,7 @@ export default function ProjectDetail() {
   const [note, setNote] = useState({ kind: "call", body: "" });
   const fileInput = useRef<HTMLInputElement>(null);
   const [uploadFor, setUploadFor] = useState<string | null>(null);
+  const [previewDoc, setPreviewDoc] = useState<{ id: string; name: string } | null>(null);
 
   const refresh = ["/projects", "/services", "/clients", "/client-documents", "/service-"];
   const update = useWrite("PUT", `/projects/${id}`, {
@@ -496,6 +499,7 @@ export default function ProjectDetail() {
           <TabsTrigger value="payments">Payments</TabsTrigger>
           <TabsTrigger value="costs">Costs</TabsTrigger>
           <TabsTrigger value="notes">Notes</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
@@ -571,17 +575,26 @@ export default function ProjectDetail() {
                 cell: (d) => (
                   <div className="flex justify-end gap-2">
                     {d.file_id && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          download(`/files/${d.file_id}`, {}, d.name).catch((e) =>
-                            toast.error(errorMessage(e)),
-                          )
-                        }
-                      >
-                        <Download size={14} /> Download
-                      </Button>
+                      <>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setPreviewDoc({ id: d.file_id!, name: d.name })}
+                        >
+                          <Eye size={14} /> Preview
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            download(`/files/${d.file_id}`, {}, d.name).catch((e) =>
+                              toast.error(errorMessage(e)),
+                            )
+                          }
+                        >
+                          <Download size={14} /> Download
+                        </Button>
+                      </>
                     )}
                     {manage && (
                       <>
@@ -630,17 +643,33 @@ export default function ProjectDetail() {
               {
                 header: "",
                 className: "text-right",
-                cell: (x) =>
-                  billing && x.status === "posted" ? (
+                cell: (x) => (
+                  <div className="flex justify-end gap-2">
                     <Button
                       size="sm"
-                      variant="ghost"
-                      className="text-destructive"
-                      onClick={() => setVoiding(x.id)}
+                      variant="outline"
+                      onClick={() =>
+                        download(
+                          `/service-payments/${x.id}/receipt`,
+                          { format: "pdf" },
+                          `receipt-${x.number}.pdf`,
+                        ).catch((e) => toast.error(errorMessage(e)))
+                      }
                     >
-                      Void
+                      <Download size={14} /> Receipt PDF
                     </Button>
-                  ) : null,
+                    {billing && x.status === "posted" && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive"
+                        onClick={() => setVoiding(x.id)}
+                      >
+                        Void
+                      </Button>
+                    )}
+                  </div>
+                ),
               },
             ]}
           />
@@ -728,6 +757,32 @@ export default function ProjectDetail() {
             ]}
           />
         </TabsContent>
+
+        <TabsContent value="history" className="space-y-6">
+          <div>
+            <h2 className="mb-2 font-semibold">Stage updates</h2>
+            <DataGrid
+              rows={p.stage_events ?? []}
+              rowKey={(e) => e.id}
+              empty="No stage updates yet"
+              columns={[
+                { header: "When", cell: (e) => formatDateTime(e.created_at) },
+                { header: "Stage", cell: (e) => <span className="font-medium">{e.stage_name}</span> },
+                {
+                  header: "Change",
+                  cell: (e) =>
+                    `${e.from_status ? label(e.from_status) : "Created"} → ${label(e.to_status)}`,
+                },
+                { header: "By", cell: (e) => e.actor_name ?? "-" },
+                { header: "Note", cell: (e) => e.note ?? "-", className: "whitespace-normal" },
+              ]}
+            />
+          </div>
+          <div>
+            <h2 className="mb-2 font-semibold">Record audit log</h2>
+            <RecordHistoryTab entityType="svc_project" entityId={p.id} />
+          </div>
+        </TabsContent>
       </Tabs>
 
       <StageDialog
@@ -804,6 +859,19 @@ export default function ProjectDetail() {
             onChange={(e) => setMessage(e.target.value)}
           />
         </Field>
+        {message.trim() && (
+          <div className="flex justify-end">
+            <Button type="button" size="sm" variant="outline" asChild>
+              <a
+                href={whatsappUrl(undefined, `${p.name}: ${message}`)}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <MessageCircle size={14} /> Open in WhatsApp
+              </a>
+            </Button>
+          </div>
+        )}
       </FormDialog>
       <FormDialog
         open={editing}
@@ -878,6 +946,11 @@ export default function ProjectDetail() {
           />
         </Field>
       </FormDialog>
+      <FilePreviewDialog
+        fileId={previewDoc?.id ?? null}
+        fileName={previewDoc?.name}
+        onClose={() => setPreviewDoc(null)}
+      />
     </>
   );
 }

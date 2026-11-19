@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
-import { Download } from "lucide-react";
+import { useNavigate } from "react-router-dom";
+import { Download, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -186,6 +187,20 @@ const catalogue: Catalogue[] = [
     permission: "reports.payroll",
   },
   {
+    group: "Projects & Design",
+    label: "Project profit",
+    path: "/reports/projects",
+    permission: "reports.services",
+    dated: true,
+  },
+  {
+    group: "Projects & Design",
+    label: "Design jobs",
+    path: "/reports/design-jobs",
+    permission: "reports.services",
+    dated: true,
+  },
+  {
     group: "Team",
     label: "Staff performance",
     path: "/reports/staff-performance",
@@ -225,6 +240,7 @@ function cell(key: string, value: unknown) {
 
 export default function Reports() {
   const { can } = useAuth();
+  const navigate = useNavigate();
   const available = useMemo(() => catalogue.filter((r) => can(r.permission)), [can]);
   const [path, setPath] = useState("");
   const current = available.find((r) => r.path === path) ?? available[0];
@@ -277,6 +293,9 @@ export default function Reports() {
           </>
         )}
         <div className="ml-auto flex gap-2">
+          <Button variant="outline" size="sm" onClick={() => window.print()}>
+            <Printer size={14} /> Print
+          </Button>
           {["csv", "xlsx", "pdf"].map((f) => (
             <Button key={f} variant="outline" size="sm" onClick={() => save(f)}>
               <Download size={14} /> {f.toUpperCase()}
@@ -295,6 +314,13 @@ export default function Reports() {
         }
         loading={report.isLoading}
         rowKey={(r) => String(r.id ?? r.product_id ?? JSON.stringify(r))}
+        onRowClick={
+          current.path === "/reports/projects"
+            ? (r) => {
+                if (!r.__total && typeof r.id === "string") navigate(`/projects/${r.id}`);
+              }
+            : undefined
+        }
         empty="No data for this report and period"
         columns={columns.map((c, i) => ({
           header: c.label,

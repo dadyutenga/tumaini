@@ -1,6 +1,6 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Download, Plus, Upload } from "lucide-react";
+import { Download, Eye, FolderOpen, List, Plus, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import {
   PageHeader,
   StatusBadge,
 } from "@/components/shared/kit";
+import { FilePreviewDialog } from "@/components/shared/FilePreview";
 import { useAuth } from "@/features/auth/auth";
 import { ClientSelect } from "@/features/services/shared";
 import { label } from "@/features/services/helpers";
@@ -164,6 +165,8 @@ export default function ClientDocuments() {
     per_page: 100,
   });
   const [adding, setAdding] = useState(false);
+  const [view, setView] = useState<"folders" | "table">("folders");
+  const [preview, setPreview] = useState<{ id: string; name: string } | null>(null);
   const manage = can("clients.manage") || can("projects.manage");
   const mark = useWrite<{ id: string; status: string }>("PUT", (b) => `/client-documents/${b.id}`, {
     invalidate: ["/client-documents", "/projects", "/clients"],
@@ -171,17 +174,49 @@ export default function ClientDocuments() {
     toBody: (b) => ({ status: b.status }),
   });
 
+  const folders = useMemo(() => {
+    const byClient = new Map<string, { name: string; projects: Map<string, ClientDocument[]> }>();
+    for (const d of docs.data ?? []) {
+      const cname = d.client_name ?? "Client";
+      const ckey = d.client_id ?? cname;
+      if (!byClient.has(ckey)) byClient.set(ckey, { name: cname, projects: new Map() });
+      const pkey = d.project_number ? `Project ${d.project_number}` : "General documents";
+      const grp = byClient.get(ckey)!.projects;
+      if (!grp.has(pkey)) grp.set(pkey, []);
+      grp.get(pkey)!.push(d);
+    }
+    return [...byClient.entries()];
+  }, [docs.data]);
+
   return (
     <>
       <PageHeader
         title="Client documents"
         description="Every document, by client and project. Final design files are kept here too."
         actions={
-          manage && (
-            <Button onClick={() => setAdding(true)}>
-              <Plus size={16} /> Add document
-            </Button>
-          )
+          <div className="flex gap-2">
+            <div className="inline-flex rounded-lg border bg-card p-0.5">
+              <Button
+                size="sm"
+                variant={view === "folders" ? "default" : "ghost"}
+                onClick={() => setView("folders")}
+              >
+                <FolderOpen size={14} /> Folders
+              </Button>
+              <Button
+                size="sm"
+                variant={view === "table" ? "default" : "ghost"}
+                onClick={() => setView("table")}
+              >
+                <List size={14} /> Table
+              </Button>
+            </div>
+            {manage && (
+              <Button onClick={() => setAdding(true)}>
+                <Plus size={16} /> Add document
+              </Button>
+            )}
+          </div>
         }
       />
       <div className="mb-4 flex flex-wrap gap-3">
@@ -211,56 +246,155 @@ export default function ClientDocuments() {
           </Button>
         )}
       </div>
-      <DataGrid
-        rows={docs.data}
-        loading={docs.isLoading}
-        rowKey={(d) => d.id}
-        empty="No documents match"
-        columns={[
-          { header: "Document", cell: (d) => <span className="font-medium">{d.name}</span> },
-          { header: "Client", cell: (d) => d.client_name },
-          { header: "Project", cell: (d) => d.project_number ?? "-" },
-          { header: "Type", cell: (d) => label(d.doc_type) },
-          { header: "Status", cell: (d) => <StatusBadge value={d.status} /> },
-          { header: "Received", cell: (d) => (d.received_at ? formatDate(d.received_at) : "-") },
-          {
-            header: "",
-            className: "text-right",
-            cell: (d) => (
-              <div className="flex justify-end gap-2">
-                {d.file_id && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      download(`/files/${d.file_id}`, {}, d.file_name ?? d.name).catch((e) =>
-                        toast.error(errorMessage(e)),
-                      )
-                    }
-                  >
-                    <Download size={14} /> Download
-                  </Button>
-                )}
-                {manage && (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() =>
-                      mark.mutate({
-                        id: d.id,
-                        status: d.status === "received" ? "missing" : "received",
-                      })
-                    }
-                  >
-                    {d.status === "received" ? "Mark missing" : "Mark received"}
-                  </Button>
-                )}
+      {view === "folders" ? (
+        <div className="space-y-4">
+          {folders.length === 0 && !docs.isLoading && (
+            <p className="rounded-2xl border bg-card p-8 text-center text-sm text-muted-foreground">
+              No documents match
+            </p>
+          )}
+          {folders.map(([ckey, group]) => (
+            <section key={ckey} className="rounded-2xl border bg-card p-4">
+              <h2 className="mb-3 flex items-center gap-2 font-semibold">
+                <FolderOpen size={16} className="text-primary" /> {group.name}
+              </h2>
+              <div className="space-y-3 pl-2 sm:pl-4">
+                {[...group.projects.entries()].map(([folderName, list]) => (
+                  <div key={folderName} className="rounded-xl border bg-muted/20 p-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {folderName} ({list.length})
+                    </p>
+                    <ul className="divide-y">
+                      {list.map((d) => (
+                        <li
+                          key={d.id}
+                          className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+                        >
+                          <div className="min-w-0">
+                            <p className="font-medium">{d.name}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {label(d.doc_type)}
+                              {d.received_at ? ` · Received ${formatDate(d.received_at)}` : ""}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <StatusBadge value={d.status} />
+                            {d.file_id && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    setPreview({ id: d.file_id!, name: d.file_name ?? d.name })
+                                  }
+                                >
+                                  <Eye size={14} /> Preview
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() =>
+                                    download(`/files/${d.file_id}`, {}, d.file_name ?? d.name).catch(
+                                      (e) => toast.error(errorMessage(e)),
+                                    )
+                                  }
+                                >
+                                  <Download size={14} /> Download
+                                </Button>
+                              </>
+                            )}
+                            {manage && (
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() =>
+                                  mark.mutate({
+                                    id: d.id,
+                                    status: d.status === "received" ? "missing" : "received",
+                                  })
+                                }
+                              >
+                                {d.status === "received" ? "Mark missing" : "Mark received"}
+                              </Button>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
               </div>
-            ),
-          },
-        ]}
-      />
+            </section>
+          ))}
+        </div>
+      ) : (
+        <DataGrid
+          rows={docs.data}
+          loading={docs.isLoading}
+          rowKey={(d) => d.id}
+          empty="No documents match"
+          columns={[
+            { header: "Document", cell: (d) => <span className="font-medium">{d.name}</span> },
+            { header: "Client", cell: (d) => d.client_name },
+            { header: "Project", cell: (d) => d.project_number ?? "-" },
+            { header: "Type", cell: (d) => label(d.doc_type) },
+            { header: "Status", cell: (d) => <StatusBadge value={d.status} /> },
+            { header: "Received", cell: (d) => (d.received_at ? formatDate(d.received_at) : "-") },
+            {
+              header: "",
+              className: "text-right",
+              cell: (d) => (
+                <div className="flex justify-end gap-2">
+                  {d.file_id && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          setPreview({ id: d.file_id!, name: d.file_name ?? d.name })
+                        }
+                      >
+                        <Eye size={14} /> Preview
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          download(`/files/${d.file_id}`, {}, d.file_name ?? d.name).catch((e) =>
+                            toast.error(errorMessage(e)),
+                          )
+                        }
+                      >
+                        <Download size={14} /> Download
+                      </Button>
+                    </>
+                  )}
+                  {manage && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() =>
+                        mark.mutate({
+                          id: d.id,
+                          status: d.status === "received" ? "missing" : "received",
+                        })
+                      }
+                    >
+                      {d.status === "received" ? "Mark missing" : "Mark received"}
+                    </Button>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
+      )}
       <AddDialog key={client} open={adding} onOpenChange={setAdding} clientId={client} />
+      <FilePreviewDialog
+        fileId={preview?.id ?? null}
+        fileName={preview?.name}
+        onClose={() => setPreview(null)}
+      />
     </>
   );
 }

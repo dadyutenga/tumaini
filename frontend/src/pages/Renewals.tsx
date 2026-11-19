@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus } from "lucide-react";
+import { MessageCircle, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,7 @@ import {
 import { ConfirmDialog } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
 import { ClientSelect } from "@/features/services/shared";
+import { whatsappUrl } from "@/features/services/helpers";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { Renewal } from "@/types/services";
@@ -152,6 +153,18 @@ export default function Renewals() {
                 <div className="flex justify-end gap-2">
                   <Button size="sm" variant="outline" onClick={() => remind.mutate({ id: r.id })}>
                     Remind
+                  </Button>
+                  <Button size="sm" variant="outline" asChild>
+                    <a
+                      href={whatsappUrl(
+                        undefined,
+                        `Hello ${r.client_name}, reminder: ${r.item} is due on ${formatDate(r.due_date)}.`,
+                      )}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      <MessageCircle size={14} /> WhatsApp
+                    </a>
                   </Button>
                   <Button size="sm" variant="outline" onClick={() => setRenewing(r)}>
                     Renewed

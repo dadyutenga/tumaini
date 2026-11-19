@@ -338,6 +338,15 @@ func (s *Service) GetProject(ctx context.Context, p *auth.Principal, id uuid.UUI
 		if pr["design_jobs"], err = rows(ctx, tx, `SELECT id, number, title, job_type, status, deadline, stage_id FROM design_jobs WHERE project_id=$1 ORDER BY created_at`, id); err != nil {
 			return err
 		}
+		if pr["stage_events"], err = rows(ctx, tx, `
+			SELECT e.id, e.stage_id, st.name AS stage_name, e.from_status, e.to_status, e.note, e.changed_at AS created_at, u.name AS actor_name
+			FROM svc_stage_events e
+			JOIN svc_project_stages st ON st.id = e.stage_id
+			LEFT JOIN users u ON u.id = e.changed_by
+			WHERE e.project_id=$1
+			ORDER BY e.changed_at DESC`, id); err != nil {
+			return err
+		}
 		out = pr
 		return nil
 	})

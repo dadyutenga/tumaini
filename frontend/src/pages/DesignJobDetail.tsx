@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Download, Play, Square, Upload } from "lucide-react";
+import { Download, MessageCircle, Play, Square, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,10 +15,12 @@ import {
   StatusBadge,
 } from "@/components/shared/kit";
 import { CopyButton, PageLoader } from "@/components/shared/Display";
+import { FilePreviewDialog, FileThumbnail } from "@/components/shared/FilePreview";
+import { RecordHistoryTab } from "@/components/shared/RecordHistoryTab";
 import { useAuth } from "@/features/auth/auth";
 import { CostDialog } from "@/features/services/CostDialog";
 import { PaymentDialog, StaffSelect, Tile } from "@/features/services/shared";
-import { label } from "@/features/services/helpers";
+import { label, whatsappUrl } from "@/features/services/helpers";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { download, uploadFile } from "@/lib/api";
 import { formatDate, formatDateTime, formatMoney, toNumber } from "@/lib/formatters";
@@ -323,24 +325,39 @@ function EditDialog({ job, onClose }: { job: Job | null; onClose: () => void }) 
   );
 }
 
-function Preview({ v }: { v: DesignVersion }) {
-  const image = v.mime_type?.startsWith("image/");
-  return (
-    <div className="flex h-28 w-40 items-center justify-center overflow-hidden rounded-lg border bg-muted text-xs text-muted-foreground">
-      {v.file_id ? (
+function Preview({
+  v,
+  onPreview,
+}: {
+  v: DesignVersion;
+  onPreview: (file: { id: string; name: string }) => void;
+}) {
+  if (v.file_id) {
+    const name = v.file_name ?? `version-${v.version_no}`;
+    return (
+      <div className="flex flex-col items-start gap-1.5">
+        <FileThumbnail
+          fileId={v.file_id}
+          fileName={name}
+          mimeType={v.mime_type}
+          onOpen={() => onPreview({ id: v.file_id!, name })}
+        />
         <Button
+          size="sm"
           variant="ghost"
-          className="h-full w-full flex-col gap-1 whitespace-normal"
+          className="h-7 px-2 text-xs"
           onClick={() =>
-            download(`/files/${v.file_id}`, {}, v.file_name ?? `version-${v.version_no}`).catch(
-              (e) => toast.error(errorMessage(e)),
-            )
+            download(`/files/${v.file_id}`, {}, name).catch((e) => toast.error(errorMessage(e)))
           }
         >
-          <Download size={16} />
-          {image ? "Download image" : (v.file_name ?? "Download file")}
+          <Download size={12} /> Download
         </Button>
-      ) : v.link ? (
+      </div>
+    );
+  }
+  return (
+    <div className="flex h-28 w-40 items-center justify-center overflow-hidden rounded-lg border bg-muted text-xs text-muted-foreground">
+      {v.link ? (
         <a className="p-2 text-center underline" href={v.link} target="_blank" rel="noreferrer">
           Open link
         </a>
@@ -361,10 +378,21 @@ export default function DesignJobDetail() {
   const [costing, setCosting] = useState(false);
   const [printing, setPrinting] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [charging, setCharging] = useState(false);
+  const [extraCharge, setExtraCharge] = useState({ amount: "", extra_revisions: "1", note: "" });
+  const [previewFile, setPreviewFile] = useState<{ id: string; name: string } | null>(null);
   const [comment, setComment] = useState("");
   const [link, setLink] = useState<{ path: string; delivered: boolean } | null>(null);
 
-  const refresh = ["/design-jobs", "/services", "/service-"];
+  const refresh = ["/design-jobs", "/services", "/service-", "/print-orders"];
+  const chargeExtra = useWrite("POST", `/design-jobs/${id}/extra-revision-charge`, {
+    invalidate: refresh,
+    success: "Extra revision charge added",
+    onSuccess: () => {
+      setCharging(false);
+      setExtraCharge({ amount: "", extra_revisions: "1", note: "" });
+    },
+  });
   const move = useWrite<{ status: string }>("POST", `/design-jobs/${id}/status`, {
     invalidate: refresh,
     success: "Status updated",
@@ -485,9 +513,16 @@ export default function DesignJobDetail() {
         </span>
       </div>
       {job.revisions_over && (
-        <p className="mb-4 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-400">
-          The included revisions are used up. Add an extra charge to the price before more changes.
-        </p>
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-400">
+          <p>
+            The included revisions are used up. Add an extra charge to the price before more changes.
+          </p>
+          {manage && (
+            <Button size="sm" variant="outline" onClick={() => setCharging(true)}>
+              Add extra charge
+            </Button>
+          )}
+        </div>
       )}
       {link && (
         <div className="mb-4 rounded-xl border bg-card p-4 text-sm">
@@ -496,9 +531,21 @@ export default function DesignJobDetail() {
               ? "Link sent to the client by SMS."
               : "Share this private link with the client (valid for 14 days)."}
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <code className="flex-1 break-all rounded bg-muted px-2 py-1">{`${window.location.origin}${link.path}`}</code>
             <CopyButton text={`${window.location.origin}${link.path}`} />
+            <Button size="sm" variant="outline" asChild>
+              <a
+                href={whatsappUrl(
+                  undefined,
+                  `Design ready for your approval (${job.title}): ${window.location.origin}${link.path}`,
+                )}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <MessageCircle size={14} /> WhatsApp
+              </a>
+            </Button>
           </div>
         </div>
       )}
@@ -564,6 +611,7 @@ export default function DesignJobDetail() {
           <TabsTrigger value="costs">Costs</TabsTrigger>
           <TabsTrigger value="payments">Payments</TabsTrigger>
           <TabsTrigger value="work">Print and time</TabsTrigger>
+          <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
 
         <TabsContent value="brief" className="space-y-3">
@@ -615,7 +663,7 @@ export default function DesignJobDetail() {
               key={v.id}
               className="flex flex-wrap items-start gap-4 rounded-2xl border bg-card p-4"
             >
-              <Preview v={v} />
+              <Preview v={v} onPreview={setPreviewFile} />
               <div className="min-w-48 flex-1 text-sm">
                 <p className="font-medium">
                   {v.kind === "design" ? `Version ${v.version_no}` : label(v.kind)}
@@ -718,6 +766,25 @@ export default function DesignJobDetail() {
               { header: "Date", cell: (p) => formatDate(p.date) },
               { header: "Method", cell: (p) => label(p.method) },
               { header: "Amount", align: "right", cell: (p) => formatMoney(p.amount) },
+              {
+                header: "",
+                className: "text-right",
+                cell: (p) => (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      download(
+                        `/service-payments/${p.id}/receipt`,
+                        { format: "pdf" },
+                        `receipt-${p.number}.pdf`,
+                      ).catch((e) => toast.error(errorMessage(e)))
+                    }
+                  >
+                    <Download size={14} /> Receipt PDF
+                  </Button>
+                ),
+              },
             ]}
           />
           {job.invoices.length > 0 && (
@@ -758,22 +825,35 @@ export default function DesignJobDetail() {
                   header: "",
                   className: "text-right",
                   cell: (o) =>
-                    manage && o.status === "sent" ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => printStatus.mutate({ id: o.id, status: "ready" })}
-                      >
-                        Mark ready
-                      </Button>
-                    ) : manage && o.status === "ready" ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => printStatus.mutate({ id: o.id, status: "delivered" })}
-                      >
-                        Mark delivered
-                      </Button>
+                    manage && (o.status === "sent" || o.status === "ready") ? (
+                      <div className="flex justify-end gap-2">
+                        {o.status === "sent" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => printStatus.mutate({ id: o.id, status: "ready" })}
+                          >
+                            Mark ready
+                          </Button>
+                        )}
+                        {o.status === "ready" && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => printStatus.mutate({ id: o.id, status: "delivered" })}
+                          >
+                            Mark delivered
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-destructive"
+                          onClick={() => printStatus.mutate({ id: o.id, status: "cancelled" })}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
                     ) : null,
                 },
               ]}
@@ -797,7 +877,57 @@ export default function DesignJobDetail() {
             />
           </div>
         </TabsContent>
+
+        <TabsContent value="history">
+          <RecordHistoryTab entityType="design_job" entityId={job.id} />
+        </TabsContent>
       </Tabs>
+
+      <FormDialog
+        open={charging}
+        onOpenChange={setCharging}
+        title="Add extra revision charge"
+        description="Adds the fee to this job's price and grants additional revisions."
+        busy={chargeExtra.isPending}
+        onSubmit={() =>
+          chargeExtra.mutate({
+            amount: extraCharge.amount,
+            extra_revisions: Number(extraCharge.extra_revisions) || 1,
+            note: extraCharge.note,
+          })
+        }
+      >
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label="Extra charge amount *">
+            <Input
+              required
+              inputMode="decimal"
+              placeholder="25000"
+              value={extraCharge.amount}
+              onChange={(e) => setExtraCharge({ ...extraCharge, amount: e.target.value })}
+            />
+          </Field>
+          <Field label="Extra revisions granted">
+            <Input
+              inputMode="numeric"
+              value={extraCharge.extra_revisions}
+              onChange={(e) => setExtraCharge({ ...extraCharge, extra_revisions: e.target.value })}
+            />
+          </Field>
+        </div>
+        <Field label="Note">
+          <Input
+            placeholder="Additional concept changes requested by client"
+            value={extraCharge.note}
+            onChange={(e) => setExtraCharge({ ...extraCharge, note: e.target.value })}
+          />
+        </Field>
+      </FormDialog>
+      <FilePreviewDialog
+        fileId={previewFile?.id ?? null}
+        fileName={previewFile?.name}
+        onClose={() => setPreviewFile(null)}
+      />
 
       <VersionDialog
         key={`v-${versioning}`}

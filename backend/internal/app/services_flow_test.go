@@ -258,6 +258,27 @@ func TestServicesFlow(t *testing.T) {
 	require.Equal(t, 409, o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/status", map[string]any{"status": "in_design"}, "").code)
 	jobPay := o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/payments", map[string]any{"amount": "20000", "method": "cash", "money_account_id": cash}, key())
 	require.Equal(t, 201, jobPay.code, jobPay.raw)
+	// Service payment receipt (JSON + PDF) and party_name resolution on /payments.
+	rcpt := o.call(t, http.MethodGet, "/api/v1/service-payments/"+str(jobPay.data["id"])+"/receipt", nil, "")
+	require.Equal(t, 200, rcpt.code, rcpt.raw)
+	require.Equal(t, "Mama Amina Shop", str(rcpt.data["client_name"]))
+	require.NotEmpty(t, str(rcpt.data["purpose"]))
+	rcptPDF := o.call(t, http.MethodGet, "/api/v1/service-payments/"+str(jobPay.data["id"])+"/receipt?format=pdf", nil, "")
+	require.Equal(t, 200, rcptPDF.code)
+	require.True(t, strings.HasPrefix(rcptPDF.raw, "%PDF-"))
+	allPays := o.call(t, http.MethodGet, "/api/v1/payments?party_type=client", nil, "")
+	require.Equal(t, 200, allPays.code, allPays.raw)
+	require.NotEmpty(t, asList(allPays.body["data"]))
+	require.Equal(t, "Mama Amina Shop", str(asList(allPays.body["data"])[0]["party_name"]))
+
+	// Contractor statement PDF and print-orders list + cancellation voiding linked cost.
+	ctPDF := o.call(t, http.MethodGet, "/api/v1/contractors/"+ctID+"/statement?format=pdf", nil, "")
+	require.Equal(t, 200, ctPDF.code)
+	require.True(t, strings.HasPrefix(ctPDF.raw, "%PDF-"))
+	poList := o.call(t, http.MethodGet, "/api/v1/print-orders", nil, "")
+	require.Equal(t, 200, poList.code, poList.raw)
+	require.GreaterOrEqual(t, len(asList(poList.body["data"])), 1)
+
 	tm := o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/timer/start", nil, "")
 	require.Equal(t, 200, tm.code, tm.raw)
 	require.Equal(t, 409, o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/timer/start", nil, "").code)
@@ -267,20 +288,34 @@ func TestServicesFlow(t *testing.T) {
 	require.Len(t, asList(board.body["data"]), 8)
 	requireBalanced(t, o)
 
-	// Branding stage link: several jobs at once; the stage completes when all are approved.
+	// Branding stage link: several jobs at once; test extra revision charge & print order cancellation voiding cost.
 	stageID := str(stages[0]["id"])
 	multi := o.call(t, http.MethodPost, "/api/v1/projects/"+projectID+"/stages/"+stageID+"/design-jobs", map[string]any{"jobs": []map[string]any{{"job_type": "logo", "title": "Logo"}, {"job_type": "signage", "title": "Signboard"}}}, "")
 	require.Equal(t, 201, multi.code, multi.raw)
 	jobIDs := multi.data["job_ids"].([]any)
 	require.Len(t, jobIDs, 2)
+	// Extra revision charge increases price and revisions_included on the first branding job.
+	firstJobID := str(jobIDs[0])
+	ext := o.call(t, http.MethodPost, "/api/v1/design-jobs/"+firstJobID+"/extra-revision-charge", map[string]any{"amount": "25000", "extra_revisions": 2, "note": "Extra logo concepts"}, "")
+	require.Equal(t, 200, ext.code, ext.raw)
+	require.Equal(t, "25000.00", dec(ext.data["price"]).StringFixed(2))
 	for _, id := range jobIDs {
 		jid := str(id)
 		require.Equal(t, 201, o.call(t, http.MethodPost, "/api/v1/design-jobs/"+jid+"/versions", map[string]any{"link": "https://example.com/x.png"}, "").code)
 		require.Equal(t, 200, o.call(t, http.MethodPost, "/api/v1/design-jobs/"+jid+"/status", map[string]any{"status": "with_client"}, "").code)
 		require.Equal(t, 200, o.call(t, http.MethodPost, "/api/v1/design-jobs/"+jid+"/status", map[string]any{"status": "approved"}, "").code)
 	}
+	// Create a print order on the approved job and cancel it: linked cost must be voided.
+	poCancel := o.call(t, http.MethodPost, "/api/v1/design-jobs/"+firstJobID+"/print-orders", map[string]any{"contractor_id": ctID, "quantity": 50, "cost": "10000"}, "")
+	require.Equal(t, 201, poCancel.code, poCancel.raw)
+	cancelledPO := o.call(t, http.MethodPut, "/api/v1/print-orders/"+str(poCancel.data["id"]), map[string]any{"status": "cancelled"}, "")
+	require.Equal(t, 200, cancelledPO.code, cancelledPO.raw)
+	firstJobAfter := o.call(t, http.MethodGet, "/api/v1/design-jobs/"+firstJobID, nil, "")
+	require.Equal(t, "0.00", dec(firstJobAfter.data["costs"]).StringFixed(2), "cancelling print order must void linked contractor cost")
+
 	prj = o.call(t, http.MethodGet, "/api/v1/projects/"+projectID, nil, "")
 	require.Equal(t, "done", str(asList(prj.data["stages"])[0]["status"]))
+	require.NotEmpty(t, asList(prj.data["stage_events"]), "project detail must include stage_events history")
 
 	// Tasks, renewals and the daily reminder job.
 	_, staffID := e.user(t, "staff")

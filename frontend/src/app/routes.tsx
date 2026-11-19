@@ -359,6 +359,7 @@ export const routes: AppRoute[] = [
       "reports.payroll",
       "reports.staff",
       "reports.branches",
+      "reports.services",
     ],
   },
   {

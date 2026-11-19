@@ -36,6 +36,13 @@ export const COST_KINDS = [
   "other",
 ];
 
+/** Builds a WhatsApp click-to-chat URL (`wa.me`) prefilled with a message. */
+export function whatsappUrl(phone: string | null | undefined, text: string) {
+  const digits = (phone ?? "").replace(/\D/g, "");
+  const encoded = encodeURIComponent(text);
+  return digits ? `https://wa.me/${digits}?text=${encoded}` : `https://wa.me/?text=${encoded}`;
+}
+
 export const clientBlank = {
   name: "",
   phone: "",

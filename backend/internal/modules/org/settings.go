@@ -171,6 +171,8 @@ var NotificationTypes = []string{
 	"low_stock", "approval_request", "approval_decision", "salary_due", "customer_debt", "customer_credit", "supplier_debt",
 	"pending_payment", "security", "daily_summary", "transfer_difference", "till_difference", "payroll_awaiting_approval",
 	"attendance_review", "leave_decision", "export_ready",
+	"project_completed", "design_assigned", "design_feedback", "design_client_decision", "design_print_ready",
+	"renewal_due", "design_deadline", "task_due", "task_assigned",
 }
 
 func invalid(fields map[string]string) error {

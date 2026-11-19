@@ -461,6 +461,23 @@ func (h *Handler) Register(r fiber.Router) {
 		}
 		return s.ListPayments(c.Context(), p, uuidQ(c, "client_id"), uuidQ(c, "project_id"), uuidQ(c, "design_job_id"), from, to, page)
 	}))
+	r.Get("/service-payments/:id/receipt", middleware.Require("service_billing.view"), func(c fiber.Ctx) error {
+		id, err := idp(c)
+		if err != nil {
+			return err
+		}
+		data, err := s.PaymentReceipt(c.Context(), middleware.Principal(c), id)
+		if err != nil {
+			return err
+		}
+		switch strings.ToLower(c.Query("format")) {
+		case "", "json":
+			return c.JSON(httpx.Data(data))
+		case "pdf":
+			return export.File(c, "service-receipt-"+export.Cell(data["number"])+".pdf", "application/pdf", serviceReceiptPDF(data))
+		}
+		return httpx.BadRequest("invalid_query", "format must be json or pdf")
+	})
 	r.Post("/service-payments/:id/void", middleware.Require("service_billing.manage"), withID(func(c fiber.Ctx, p *auth.Principal, id uuid.UUID, in reasonIn) (any, error) {
 		return s.VoidPayment(c.Context(), p, id, in.Reason)
 	}))
@@ -510,9 +527,23 @@ func (h *Handler) Register(r fiber.Router) {
 		t := true
 		return s.UpdateContractor(c.Context(), p, id, ContractorIn{}, &t)
 	}))
-	r.Get("/contractors/:id/statement", middleware.Require("contractors.view"), withIDOnly(func(c fiber.Ctx, p *auth.Principal, id uuid.UUID) (any, error) {
-		return s.ContractorStatement(c.Context(), p, id)
-	}))
+	r.Get("/contractors/:id/statement", middleware.Require("contractors.view"), func(c fiber.Ctx) error {
+		id, err := idp(c)
+		if err != nil {
+			return err
+		}
+		data, err := s.ContractorStatement(c.Context(), middleware.Principal(c), id)
+		if err != nil {
+			return err
+		}
+		switch strings.ToLower(c.Query("format")) {
+		case "", "json":
+			return c.JSON(httpx.Data(data))
+		case "pdf":
+			return export.File(c, "contractor-statement.pdf", "application/pdf", contractorStatementPDF(data))
+		}
+		return httpx.BadRequest("invalid_query", "format must be json or pdf")
+	})
 	r.Post("/contractors/:id/payments", middleware.Require("contractors.manage"), middleware.Idempotent(), send(func(c fiber.Ctx, p *auth.Principal) (int, []byte, error) {
 		id, err := idp(c)
 		if err != nil {
@@ -608,6 +639,9 @@ func (h *Handler) Register(r fiber.Router) {
 	r.Post("/design-jobs/:id/timer/stop", middleware.Require("design.view"), withIDOnly(func(c fiber.Ctx, p *auth.Principal, id uuid.UUID) (any, error) {
 		return s.StopTimer(c.Context(), p, id)
 	}))
+	r.Post("/design-jobs/:id/extra-revision-charge", middleware.Require("design.manage"), withID(func(c fiber.Ctx, p *auth.Principal, id uuid.UUID, in ExtraRevisionIn) (any, error) {
+		return s.AddExtraRevisionCharge(c.Context(), p, id, in)
+	}))
 	r.Post("/design-jobs/:id/print-orders", middleware.Require("design.manage"), make201(func(c fiber.Ctx, p *auth.Principal) (any, error) {
 		id, err := idp(c)
 		if err != nil {
@@ -618,6 +652,12 @@ func (h *Handler) Register(r fiber.Router) {
 			return nil, err
 		}
 		return s.CreatePrintOrder(c.Context(), p, id, in)
+	}))
+	r.Get("/print-orders", middleware.Require("design.view"), h.paged(func(c fiber.Ctx, p *auth.Principal, page httpx.Page) ([]map[string]any, int, error) {
+		if err := checkQ(c, "contractor_id", "job_id"); err != nil {
+			return nil, 0, err
+		}
+		return s.ListPrintOrders(c.Context(), p, c.Query("status"), uuidQ(c, "contractor_id"), uuidQ(c, "job_id"), page)
 	}))
 	r.Put("/print-orders/:id", middleware.Require("design.manage"), withID(func(c fiber.Ctx, p *auth.Principal, id uuid.UUID, in struct {
 		Status string `json:"status" validate:"required,oneof=ready delivered cancelled"`
