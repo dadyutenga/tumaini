@@ -54,13 +54,15 @@ func (h *Handler) Register(c fiber.Ctx) error {
 
 func (h *Handler) Login(c fiber.Ctx) error {
 	var body struct {
-		Identifier string `json:"identifier"`
-		Password   string `json:"password"`
+		Identifier string     `json:"identifier"`
+		Password   string     `json:"password"`
+		TenantID   *uuid.UUID `json:"tenant_id"`
 	}
 	if err := c.Bind().Body(&body); err != nil {
 		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
 	}
-	out, err := h.Svc.Login(c.Context(), body.Identifier, body.Password, c.IP(), c.Get("User-Agent"))
+	out, err := h.Svc.Login(c.Context(), LoginInput{Identifier: body.Identifier, Password: body.Password,
+		IP: c.IP(), UserAgent: c.Get("User-Agent"), TenantID: body.TenantID})
 	if err != nil {
 		return err
 	}
@@ -98,33 +100,6 @@ func (h *Handler) Password(c fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(httpx.Data(fiber.Map{"ok": true}))
-}
-
-func (h *Handler) SetPIN(c fiber.Ctx) error {
-	var body struct {
-		PIN string `json:"pin"`
-	}
-	if err := c.Bind().Body(&body); err != nil {
-		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
-	}
-	if err := h.Svc.SetPIN(c.Context(), middleware.Principal(c), body.PIN); err != nil {
-		return err
-	}
-	return c.JSON(httpx.Data(fiber.Map{"ok": true}))
-}
-
-func (h *Handler) PIN(c fiber.Ctx) error {
-	var body struct {
-		PIN string `json:"pin"`
-	}
-	if err := c.Bind().Body(&body); err != nil {
-		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
-	}
-	tok, err := h.Svc.ExchangePIN(c.Context(), middleware.Principal(c), body.PIN)
-	if err != nil {
-		return err
-	}
-	return c.JSON(httpx.Data(fiber.Map{"access_token": tok}))
 }
 
 func (h *Handler) Me(c fiber.Ctx) error {
@@ -399,8 +374,6 @@ func RegisterPublic(r fiber.Router, h *Handler, limit fiber.Handler) {
 func Register(r fiber.Router, h *Handler) {
 	r.Post("/auth/logout", h.Logout)
 	r.Put("/auth/password", h.Password)
-	r.Put("/auth/pin", h.SetPIN)
-	r.Post("/auth/pin", h.PIN)
 	r.Get("/me", h.Me)
 	r.Put("/me", h.UpdateMe)
 	r.Get("/me/sessions", h.Sessions)
