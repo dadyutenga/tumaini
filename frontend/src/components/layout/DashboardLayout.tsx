@@ -40,16 +40,20 @@ function Navigation({
   compact?: boolean;
   onNavigate?: () => void;
 }) {
-  const visible = useVisibleRoutes();
+  const visible = useVisibleRoutes().filter((route) => route.navigation);
   return (
     <nav aria-label="Main navigation" className="space-y-1">
-      {visible
-        .filter((route) => route.navigation)
-        .map(({ path, label, icon: Icon }) => (
+      {visible.map(({ path, label, icon: Icon, group }) => (
+        <div key={path}>
+          {group && !compact && (
+            <p className="mt-4 px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground/70">
+              {group}
+            </p>
+          )}
+          {group && compact && <div className="my-2 border-t" />}
           <NavLink
             end={path === "/"}
             onClick={onNavigate}
-            key={path}
             to={path}
             title={compact ? label : undefined}
             className={({ isActive }) =>
@@ -63,7 +67,8 @@ function Navigation({
             <Icon size={19} />
             {!compact && <span>{label}</span>}
           </NavLink>
-        ))}
+        </div>
+      ))}
     </nav>
   );
 }

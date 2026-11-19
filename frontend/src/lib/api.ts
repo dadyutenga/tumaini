@@ -220,3 +220,44 @@ export async function download(path: string, query: Query, filename: string) {
   link.click();
   URL.revokeObjectURL(url);
 }
+
+/** Upload one file as multipart form data. Returns the stored file id. */
+export async function uploadFile(file: File): Promise<string> {
+  const send = () => {
+    const form = new FormData();
+    form.append("file", file);
+    const headers: Record<string, string> = {};
+    if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+    if (branchId) headers["X-Branch-Id"] = branchId;
+    return fetch(buildUrl("/files"), {
+      method: "POST",
+      headers,
+      credentials: "include",
+      body: form,
+    });
+  };
+  let response: Response;
+  try {
+    response = await send();
+    if (response.status === 401 && (await refreshSession())) response = await send();
+  } catch {
+    throw new ApiError("Cannot reach the server. Check your connection.", 0, "network");
+  }
+  const json = (await response.json().catch(() => null)) as {
+    data?: { id: string };
+    error?: { code?: string; message?: string };
+  } | null;
+  if (!response.ok || !json?.data) {
+    throw new ApiError(
+      json?.error?.message ?? "Could not upload the file",
+      response.status,
+      json?.error?.code,
+    );
+  }
+  return json.data.id;
+}
+
+/** Absolute URL for a public (no sign-in) endpoint, for use in img/iframe/link tags. */
+export function publicUrl(path: string) {
+  return buildUrl(path);
+}

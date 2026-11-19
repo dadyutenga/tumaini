@@ -22,6 +22,8 @@ Password recovery needs an SMTP or SMS webhook configured. Without one, `POST /a
 | Expenses | Expenses, Expense setup | List and filters, categories, recurring, petty cash top-up and count |
 | People | People, Attendance, HR setup, My work | Employees, leave, clock in/out, overtime, working week, departments, positions, holidays, loans, staff self-service |
 | Payroll | Payroll, Payroll run, Payroll setup | Calculate, approve, pay, payment list, payslip PDF, components, commission, adjustments |
+| Services | Services home, Clients and leads, Client, Projects (table and board), Project, Service catalog, Service quotations, Service invoices, Design jobs (board and list), Design job, Client documents, Tasks and calendar, Renewals, Contractors | Stage updates with checklists, deposits and installment payments, costs and profit per job, quotation accept to invoice and project, design versions with a private client approval link, print orders, timer |
+| Public | Client approval page at `/approve/:token` | No sign-in. Shows the design, one decision per link, 14 day expiry |
 | Reports | Reports | The whole catalogue with date ranges and CSV, XLSX and PDF export |
 | Admin | Team and roles, Settings, Activity log, Approvals | Role and permission editor, business, branches, tax, preferences |
 | Auth | Sign in, Register, Forgot password, My account | |
@@ -38,5 +40,6 @@ Each screen shows only what the signed-in role can use.
 - Settings: payment-method to account mapping, logo upload.
 - English and Swahili switching on the newer pages.
 - The Staff role has no `accounts.view`, so staff cannot pick a mobile-money or bank account at the till.
-- The Services business has its backend (see below) but no screens yet.
+- Services screens: no reports page for projects and design (the API has `/reports/projects` and `/reports/design-jobs`), and the project "Send update" sends a free-text SMS only.
+- The sidebar groups follow the spec (Shop, Services, Finance, Staff). The spec's Staff home screen with New Sale, New Job and Receive Payment buttons, and the global "+ New" menu, are not built.
 - `npm audit` reports vulnerabilities in dev dependencies that have not been reviewed.

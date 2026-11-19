@@ -5,6 +5,7 @@ import { ProtectedRoute } from "@/features/auth/auth";
 import { routes } from "./routes";
 import AuthPage from "@/pages/Auth";
 import ForgotPassword from "@/pages/ForgotPassword";
+import ClientApproval from "@/pages/ClientApproval";
 import Status from "@/pages/Status";
 import { PageLoader } from "@/components/shared/Display";
 import { ErrorBoundary, NotFound } from "@/components/shared/RouteErrors";
@@ -35,6 +36,8 @@ export const router = createBrowserRouter([
     element: <AuthPage mode={path} />,
   })),
   { path: "forgot-password", element: <ForgotPassword /> },
+  // Private link the client opens from an SMS to approve a design. No sign-in.
+  { path: "approve/:token", element: <ClientApproval /> },
   {
     path: "403",
     element: (
