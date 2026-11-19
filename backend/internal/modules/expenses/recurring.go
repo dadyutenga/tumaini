@@ -10,86 +10,71 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
-	"bms/internal/kernel/approval"
+	"bms/internal/kernel/notify"
 	"bms/internal/kernel/sequence"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
-	"bms/internal/platform/ids"
 	"bms/internal/platform/money"
 	"bms/internal/platform/sqlq"
 )
 
 type RecurringIn struct {
-	BranchID    *uuid.UUID      `json:"branch_id"`
-	CategoryID  uuid.UUID       `json:"category_id" validate:"required"`
-	Amount      decimal.Decimal `json:"amount" validate:"dpos"`
-	Description string          `json:"description" validate:"required,max=500"`
-	Payee       string          `json:"payee" validate:"max=200"`
-	Frequency   string          `json:"frequency" validate:"required,oneof=weekly monthly yearly"`
-	StartDate   string          `json:"start_date" validate:"required,date"`
-	EndDate     string          `json:"end_date" validate:"date"`
+	BranchID       *uuid.UUID      `json:"branch_id"`
+	CategoryID     uuid.UUID       `json:"category_id" validate:"required"`
+	Amount         decimal.Decimal `json:"amount" validate:"dpos"`
+	Description    string          `json:"description" validate:"required,max=200"`
+	MoneyAccountID *uuid.UUID      `json:"money_account_id"`
+	DayOfMonth     int             `json:"day_of_month" validate:"gte=0,lte=28"`
+	NextRunOn      string          `json:"next_run_on" validate:"date"`
+	StartDate      string          `json:"start_date" validate:"date"` // legacy alias for next_run_on
 }
 
-// advance returns the next due date after d for a frequency. Monthly and
-// yearly keep the day of the start date where the month allows it.
-func advance(d time.Time, freq string, anchorDay int) time.Time {
-	switch freq {
-	case "weekly":
-		return d.AddDate(0, 0, 7)
-	case "yearly":
-		return clampDay(d.Year()+1, d.Month(), anchorDay)
-	default:
-		y, m := d.Year(), d.Month()+1
-		if m > 12 {
-			y, m = y+1, 1
-		}
-		return clampDay(y, m, anchorDay)
+func nextMonth(d time.Time, dayOfMonth int) time.Time {
+	y, m := d.Year(), d.Month()+1
+	if m > 12 {
+		y, m = y+1, 1
 	}
-}
-
-func clampDay(y int, m time.Month, day int) time.Time {
-	last := time.Date(y, m+1, 0, 0, 0, 0, 0, time.UTC).Day()
-	if day > last {
-		day = last
+	if dayOfMonth < 1 {
+		dayOfMonth = 1
 	}
-	return time.Date(y, m, day, 0, 0, 0, 0, time.UTC)
+	if dayOfMonth > 28 {
+		dayOfMonth = 28
+	}
+	return time.Date(y, m, dayOfMonth, 0, 0, 0, 0, time.UTC)
 }
 
-const recurringCols = `r.id, r.branch_id, r.category_id, ec.name, r.amount, r.description, COALESCE(r.payee,''), r.frequency,
-	r.start_date::text, COALESCE(r.end_date::text,''), r.next_run::text, r.is_active, r.created_by, r.created_at`
+const recurringCols = `r.id, r.location_id, r.category_id, ec.name::text, r.amount, r.description::text, r.account_id,
+	r.day_of_month, r.next_run_on::text, r.active, r.created_by, r.created_at`
 
 func scanRecurring(row pgx.Row) (map[string]any, error) {
-	var id, branch, category, by uuid.UUID
-	var catName, desc, payee, freq, start, end, next string
+	var id, branch, category uuid.UUID
+	var account, by *uuid.UUID
+	var catName, desc, next string
 	var amount decimal.Decimal
+	var dom int
 	var active bool
 	var created time.Time
-	if err := row.Scan(&id, &branch, &category, &catName, &amount, &desc, &payee, &freq, &start, &end, &next, &active, &by, &created); err != nil {
+	if err := row.Scan(&id, &branch, &category, &catName, &amount, &desc, &account, &dom, &next, &active, &by, &created); err != nil {
 		return nil, err
 	}
-	m := map[string]any{"id": id, "branch_id": branch, "category_id": category, "category_name": catName, "amount": amount,
-		"description": desc, "payee": payee, "frequency": freq, "start_date": start, "end_date": nil, "next_run": next,
-		"is_active": active, "created_by": by, "created_at": created}
-	if end != "" {
-		m["end_date"] = end
-	}
-	return m, nil
+	return map[string]any{"id": id, "branch_id": branch, "category_id": category, "category_name": catName, "amount": amount,
+		"description": desc, "money_account_id": account, "day_of_month": dom, "frequency": "monthly",
+		"next_run": next, "next_run_on": next, "is_active": active, "created_by": by, "created_at": created}, nil
 }
 
 func (s *Service) Recurring(ctx context.Context, p *auth.Principal, page httpx.Page, active *bool) ([]map[string]any, int, error) {
 	out := []map[string]any{}
 	total := 0
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		if b := p.ScopeBranches("recurring_expenses.manage"); b != nil {
-			q.Add("r.branch_id = ANY(?)", b)
-		}
-		q.If(active != nil, "r.is_active = ?", active)
-		from := ` FROM recurring_expenses r JOIN expense_categories ec ON ec.id=r.category_id`
+		q := sqlq.New(p.TenantID)
+		q.Add("r.tenant_id = $1")
+		q.If(p.BranchID != nil, "r.location_id = ?", p.BranchID)
+		q.If(active != nil, "r.active = ?", active)
+		from := ` FROM app.recurring_expenses r JOIN app.expense_categories ec ON ec.tenant_id = r.tenant_id AND ec.id = r.category_id`
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `SELECT `+recurringCols+from+q.Where()+` ORDER BY r.next_run, r.created_at`+q.Page(page.PerPage, page.Offset), q.Args...)
+		rows, err := tx.Query(ctx, `SELECT `+recurringCols+from+q.Where()+` ORDER BY r.next_run_on, r.created_at`+q.Page(page.PerPage, page.Offset), q.Args...)
 		if err != nil {
 			return err
 		}
@@ -106,57 +91,76 @@ func (s *Service) Recurring(ctx context.Context, p *auth.Principal, page httpx.P
 	return out, total, err
 }
 
-func (s *Service) getRecurring(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID, lock bool) (map[string]any, error) {
+func (s *Service) getRecurring(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, lock bool) (map[string]any, error) {
 	suffix := ""
 	if lock {
 		suffix = " FOR UPDATE OF r"
 	}
-	m, err := scanRecurring(tx.QueryRow(ctx, `SELECT `+recurringCols+` FROM recurring_expenses r JOIN expense_categories ec ON ec.id=r.category_id WHERE r.id=$1`+suffix, id))
-	if err != nil || !p.SeesBranch("recurring_expenses.manage", m["branch_id"].(uuid.UUID)) {
+	m, err := scanRecurring(tx.QueryRow(ctx, `
+		SELECT `+recurringCols+` FROM app.recurring_expenses r
+		JOIN app.expense_categories ec ON ec.tenant_id = r.tenant_id AND ec.id = r.category_id
+		WHERE r.tenant_id = $1 AND r.id = $2`+suffix, tenantID, id))
+	if err != nil {
 		return nil, httpx.NotFound("not_found", "Recurring expense not found")
 	}
 	return m, nil
 }
 
-func (s *Service) checkRecurring(ctx context.Context, tx pgx.Tx, p *auth.Principal, in *RecurringIn) (uuid.UUID, error) {
+func (s *Service) checkRecurring(ctx context.Context, tx pgx.Tx, p *auth.Principal, in *RecurringIn) (uuid.UUID, int, string, error) {
 	in.Description = strings.TrimSpace(in.Description)
 	if err := httpx.Check(in); err != nil {
-		return uuid.Nil, err
-	}
-	if in.EndDate != "" && in.EndDate < in.StartDate {
-		return uuid.Nil, &httpx.Error{Status: 422, Code: "validation_failed", Message: "End date must not be before start date", Fields: map[string]string{"end_date": "after_start"}}
+		return uuid.Nil, 0, "", err
 	}
 	branch := in.BranchID
 	if branch == nil {
 		branch = p.BranchID
 	}
 	if branch == nil {
-		return uuid.Nil, httpx.BadRequest("branch_required", "Choose a branch first")
+		return uuid.Nil, 0, "", httpx.BadRequest("branch_required", "Choose a branch first")
 	}
-	if !p.SeesBranch("recurring_expenses.manage", *branch) {
-		return uuid.Nil, httpx.Forbidden("branch_forbidden", "You are not assigned to that branch")
+	if err := s.categoryOK(ctx, tx, p.TenantID, in.CategoryID); err != nil {
+		return uuid.Nil, 0, "", err
 	}
-	if err := s.categoryOK(ctx, tx, in.CategoryID); err != nil {
-		return uuid.Nil, err
+	next := strings.TrimSpace(in.NextRunOn)
+	if next == "" {
+		next = strings.TrimSpace(in.StartDate)
 	}
-	return *branch, nil
+	if next == "" {
+		var err error
+		if next, err = s.bizDate(ctx, tx); err != nil {
+			return uuid.Nil, 0, "", err
+		}
+	}
+	dom := in.DayOfMonth
+	if dom == 0 {
+		if d, err := time.Parse("2006-01-02", next); err == nil {
+			dom = d.Day()
+			if dom > 28 {
+				dom = 28
+			}
+		} else {
+			dom = 1
+		}
+	}
+	return *branch, dom, next, nil
 }
 
 func (s *Service) CreateRecurring(ctx context.Context, p *auth.Principal, in RecurringIn) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		branch, err := s.checkRecurring(ctx, tx, p, &in)
+		branch, dom, next, err := s.checkRecurring(ctx, tx, p, &in)
 		if err != nil {
 			return err
 		}
-		id := ids.New()
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO recurring_expenses (id, business_id, branch_id, category_id, amount, description, payee, frequency, start_date, end_date, next_run, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,NULLIF($7,''),$8,$9,NULLIF($10,'')::date,$9,$11)
-		`, id, p.BusinessID, branch, in.CategoryID, money.Money(in.Amount), in.Description, in.Payee, in.Frequency, in.StartDate, in.EndDate, p.UserID); err != nil {
+		var id uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO app.recurring_expenses (tenant_id, category_id, description, amount, business_unit_id, location_id, account_id, day_of_month, next_run_on)
+			VALUES ($1,$2,$3,$4,(SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $5),$5,$6,$7,$8::date)
+			RETURNING id`,
+			p.TenantID, in.CategoryID, in.Description, money.Money(in.Amount), branch, in.MoneyAccountID, dom, next).Scan(&id); err != nil {
 			return err
 		}
-		out, err = s.getRecurring(ctx, tx, p, id, false)
+		out, err = s.getRecurring(ctx, tx, p.TenantID, id, false)
 		if err != nil {
 			return err
 		}
@@ -168,7 +172,7 @@ func (s *Service) CreateRecurring(ctx context.Context, p *auth.Principal, in Rec
 func (s *Service) UpdateRecurring(ctx context.Context, p *auth.Principal, id uuid.UUID, in RecurringIn) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		before, err := s.getRecurring(ctx, tx, p, id, true)
+		before, err := s.getRecurring(ctx, tx, p.TenantID, id, true)
 		if err != nil {
 			return err
 		}
@@ -176,27 +180,19 @@ func (s *Service) UpdateRecurring(ctx context.Context, p *auth.Principal, id uui
 			b := before["branch_id"].(uuid.UUID)
 			in.BranchID = &b
 		}
-		branch, err := s.checkRecurring(ctx, tx, p, &in)
+		branch, dom, next, err := s.checkRecurring(ctx, tx, p, &in)
 		if err != nil {
 			return err
 		}
-		// Changing the start date moves the next run only when nothing was generated yet.
-		next := before["next_run"].(string)
-		var generated int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM expenses WHERE recurring_id=$1`, id).Scan(&generated); err != nil {
-			return err
-		}
-		if generated == 0 {
-			next = in.StartDate
-		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE recurring_expenses SET branch_id=$2, category_id=$3, amount=$4, description=$5, payee=NULLIF($6,''), frequency=$7,
-				start_date=$8, end_date=NULLIF($9,'')::date, next_run=$10
-			WHERE id=$1
-		`, id, branch, in.CategoryID, money.Money(in.Amount), in.Description, in.Payee, in.Frequency, in.StartDate, in.EndDate, next); err != nil {
+			UPDATE app.recurring_expenses
+			SET business_unit_id = (SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $3),
+			    location_id = $3, category_id = $4, amount = $5, description = $6, account_id = $7, day_of_month = $8, next_run_on = $9::date
+			WHERE tenant_id = $1 AND id = $2`,
+			p.TenantID, id, branch, in.CategoryID, money.Money(in.Amount), in.Description, in.MoneyAccountID, dom, next); err != nil {
 			return err
 		}
-		out, err = s.getRecurring(ctx, tx, p, id, false)
+		out, err = s.getRecurring(ctx, tx, p.TenantID, id, false)
 		if err != nil {
 			return err
 		}
@@ -205,35 +201,33 @@ func (s *Service) UpdateRecurring(ctx context.Context, p *auth.Principal, id uui
 	return out, err
 }
 
-// SetRecurringActive pauses or resumes a template. Resuming skips due dates
-// that passed while it was paused, so no backlog of expenses appears.
 func (s *Service) SetRecurringActive(ctx context.Context, p *auth.Principal, id uuid.UUID, active bool) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		before, err := s.getRecurring(ctx, tx, p, id, true)
+		before, err := s.getRecurring(ctx, tx, p.TenantID, id, true)
 		if err != nil {
 			return err
 		}
 		if before["is_active"] == active {
 			return httpx.Conflict("invalid_status", map[bool]string{true: "This template is already active", false: "This template is already paused"}[active])
 		}
-		next := before["next_run"].(string)
+		next := before["next_run_on"].(string)
 		if active {
 			today, err := s.bizDate(ctx, tx)
 			if err != nil {
 				return err
 			}
-			start, _ := time.Parse("2006-01-02", before["start_date"].(string))
+			dom := before["day_of_month"].(int)
 			d, _ := time.Parse("2006-01-02", next)
 			for d.Format("2006-01-02") < today {
-				d = advance(d, before["frequency"].(string), start.Day())
+				d = nextMonth(d, dom)
 			}
 			next = d.Format("2006-01-02")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE recurring_expenses SET is_active=$2, next_run=$3 WHERE id=$1`, id, active, next); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.recurring_expenses SET active = $3, next_run_on = $4::date WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, active, next); err != nil {
 			return err
 		}
-		out, err = s.getRecurring(ctx, tx, p, id, false)
+		out, err = s.getRecurring(ctx, tx, p.TenantID, id, false)
 		if err != nil {
 			return err
 		}
@@ -246,39 +240,41 @@ func (s *Service) SetRecurringActive(ctx context.Context, p *auth.Principal, id 
 	return out, err
 }
 
-// RunRecurring is the RecurringExpenses job (FR-EXP-09). For each active
-// template due on or before the run date it creates a submitted expense per
-// due date, raises an approval request, and advances next_run. The unique
-// (recurring_id, expense_date) index makes a second run a no-op.
-func (s *Service) RunRecurring(ctx context.Context, businessID uuid.UUID, payload json.RawMessage) error {
+// RunRecurring generates submitted expenses for every active template due on or before the run date
+// and advances next_run_on by one month.
+func (s *Service) RunRecurring(ctx context.Context, tenantID uuid.UUID, payload json.RawMessage) error {
 	var in struct {
 		Date string `json:"date"`
 	}
 	_ = json.Unmarshal(payload, &in)
-	return s.DB.InTx(ctx, businessID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		date := in.Date
 		if _, err := time.Parse("2006-01-02", date); err != nil {
 			if date, err = s.bizDate(ctx, tx); err != nil {
 				return err
 			}
 		}
+		var fallbackMember uuid.UUID
+		_ = tx.QueryRow(ctx, `SELECT id FROM app.memberships WHERE tenant_id = $1 AND status = 'active' ORDER BY created_at LIMIT 1`, tenantID).Scan(&fallbackMember)
 		rows, err := tx.Query(ctx, `
-			SELECT id, branch_id, category_id, amount, description, COALESCE(payee,''), frequency, start_date::text, COALESCE(end_date::text,''), next_run::text, created_by
-			FROM recurring_expenses WHERE is_active AND next_run <= $1::date
-			ORDER BY next_run FOR UPDATE SKIP LOCKED
-		`, date)
+			SELECT id, business_unit_id, location_id, category_id, account_id, amount, description::text, day_of_month, next_run_on::text, created_by
+			FROM app.recurring_expenses
+			WHERE tenant_id = $1 AND active AND next_run_on <= $2::date
+			ORDER BY next_run_on FOR UPDATE SKIP LOCKED`, tenantID, date)
 		if err != nil {
 			return err
 		}
 		type tpl struct {
-			id, branch, category, by            uuid.UUID
-			amount                              decimal.Decimal
-			desc, payee, freq, start, end, next string
+			id, unit, loc, cat uuid.UUID
+			account, by        *uuid.UUID
+			amount             decimal.Decimal
+			desc, next         string
+			dom                int
 		}
 		var list []tpl
 		for rows.Next() {
 			var t tpl
-			if err := rows.Scan(&t.id, &t.branch, &t.category, &t.amount, &t.desc, &t.payee, &t.freq, &t.start, &t.end, &t.next, &t.by); err != nil {
+			if err := rows.Scan(&t.id, &t.unit, &t.loc, &t.cat, &t.account, &t.amount, &t.desc, &t.dom, &t.next, &t.by); err != nil {
 				rows.Close()
 				return err
 			}
@@ -289,57 +285,48 @@ func (s *Service) RunRecurring(ctx context.Context, businessID uuid.UUID, payloa
 			return err
 		}
 		for _, t := range list {
-			branch := t.branch
-			p := &auth.Principal{BusinessID: businessID, UserID: t.by, BranchID: &branch, RequestID: "job:recurring_expenses"}
-			start, _ := time.Parse("2006-01-02", t.start)
+			reqBy := fallbackMember
+			if t.by != nil {
+				reqBy = *t.by
+			}
+			if reqBy == uuid.Nil {
+				continue
+			}
 			due, _ := time.Parse("2006-01-02", t.next)
-			active := true
 			for due.Format("2006-01-02") <= date {
 				day := due.Format("2006-01-02")
-				if t.end != "" && day > t.end {
-					active = false
-					break
-				}
-				if err := s.generate(ctx, tx, p, t.id, t.category, t.amount, t.desc, t.payee, day); err != nil {
+				var exists bool
+				if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.expenses WHERE tenant_id = $1 AND recurring_expense_id = $2 AND expense_date = $3::date)`, tenantID, t.id, day).Scan(&exists); err != nil {
 					return err
 				}
-				due = advance(due, t.freq, start.Day())
+				if !exists {
+					number, err := sequence.Next(ctx, tx, uuid.Nil, "expense")
+					if err != nil {
+						return err
+					}
+					var expID uuid.UUID
+					if err := tx.QueryRow(ctx, `
+						INSERT INTO app.expenses (tenant_id, expense_no, category_id, description, amount, expense_date,
+						                          business_unit_id, location_id, account_id, status, requested_by, created_by, recurring_expense_id)
+						VALUES ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,'submitted',$10,$10,$11)
+						RETURNING id`,
+						tenantID, number, t.cat, t.desc, t.amount, day, t.unit, t.loc, t.account, reqBy, t.id).Scan(&expID); err != nil {
+						return err
+					}
+					amt := t.amount
+					loc := t.loc
+					_ = s.Notify.ToApprovers(ctx, tx, tenantID, &loc, "finance.expense.approve", &amt, uuid.Nil, notify.Message{
+						Type: "approval_waiting", Title: "Recurring expense awaiting approval",
+						Body: "Expense " + number + ": " + t.desc,
+						Link: "/expenses/" + expID.String(), EntityType: "expense", EntityID: &expID,
+					})
+				}
+				due = nextMonth(due, t.dom)
 			}
-			if t.end != "" && due.Format("2006-01-02") > t.end {
-				active = false
-			}
-			if _, err := tx.Exec(ctx, `UPDATE recurring_expenses SET next_run=$2, is_active=$3 WHERE id=$1`, t.id, due.Format("2006-01-02"), active); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE app.recurring_expenses SET next_run_on = $3::date WHERE tenant_id = $1 AND id = $2`, tenantID, t.id, due.Format("2006-01-02")); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
-}
-
-func (s *Service) generate(ctx context.Context, tx pgx.Tx, p *auth.Principal, tplID, category uuid.UUID, amount decimal.Decimal, desc, payee, day string) error {
-	var exists bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM expenses WHERE recurring_id=$1 AND expense_date=$2)`, tplID, day).Scan(&exists); err != nil {
-		return err
-	}
-	if exists {
-		return nil
-	}
-	number, err := sequence.Next(ctx, tx, *p.BranchID, "expense")
-	if err != nil {
-		return err
-	}
-	id := ids.New()
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO expenses (id, business_id, branch_id, number, category_id, expense_date, amount, description, payee, status, recurring_id, submitted_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,''),'submitted',$10,$11)
-	`, id, p.BusinessID, *p.BranchID, number, category, day, amount, desc, payee, tplID, p.UserID); err != nil {
-		return err
-	}
-	if _, err := s.Approval.Request(ctx, tx, p, approval.Input{
-		BranchID: p.BranchID, Kind: "expense", SubjectType: "expense", SubjectID: id,
-		Amount: decimal.NullDecimal{Decimal: amount, Valid: true}, Summary: "Recurring expense " + number + " " + desc,
-	}); err != nil {
-		return err
-	}
-	return s.Audit.Record(ctx, tx, p, "expense.created", "expense", id, nil, map[string]any{"number": number, "amount": amount, "recurring_id": tplID, "status": "submitted"})
 }

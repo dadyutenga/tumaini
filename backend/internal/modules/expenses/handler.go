@@ -32,10 +32,14 @@ func (h *Handler) List(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	proj, err := httpx.QueryUUID(c, "project_id")
+	if err != nil {
+		return err
+	}
 	page := httpx.PageFrom(c)
-	sort := httpx.SortFrom(c, map[string]string{"date": "e.expense_date", "amount": "e.amount", "created_at": "e.created_at", "number": "e.number"}, "")
+	sort := httpx.SortFrom(c, map[string]string{"date": "e.expense_date", "amount": "e.amount", "created_at": "e.created_at", "number": "e.expense_no"}, "")
 	rows, total, err := h.Svc.List(c.Context(), middleware.Principal(c), ListFilter{
-		Status: c.Query("status"), CategoryID: cat, SubmittedBy: by, From: from, To: to, Q: c.Query("q"), Sort: sort,
+		Status: c.Query("status"), CategoryID: cat, SubmittedBy: by, ProjectID: proj, From: from, To: to, Q: c.Query("q"), Sort: sort,
 	}, page)
 	return httpx.Paged(c, rows, page, total, err)
 }
@@ -69,7 +73,7 @@ func (h *Handler) decide(approve bool) fiber.Handler {
 			return err
 		}
 		var body struct {
-			Note string `json:"note" validate:"max=500"`
+			Note string `json:"note" validate:"max=1000"`
 		}
 		if err := httpx.BindOptional(c, &body); err != nil {
 			return err
@@ -77,6 +81,15 @@ func (h *Handler) decide(approve bool) fiber.Handler {
 		data, err := h.Svc.Decide(c.Context(), middleware.Principal(c), id, approve, body.Note)
 		return httpx.OK(c, data, err)
 	}
+}
+
+func (h *Handler) Cancel(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	data, err := h.Svc.Cancel(c.Context(), middleware.Principal(c), id)
+	return httpx.OK(c, data, err)
 }
 
 func (h *Handler) Pay(c fiber.Ctx) error {
@@ -207,27 +220,30 @@ func (h *Handler) Reconcile(c fiber.Ctx) error {
 }
 
 func Register(r fiber.Router, h *Handler) {
-	// The expense form needs the category list, so submitters can read it too.
-	r.Get("/expense-categories", middleware.RequireAny("expense_categories.manage", "expenses.view", "expenses.create"), h.Categories)
-	r.Post("/expense-categories", middleware.Require("expense_categories.manage"), h.CreateCategory)
-	r.Put("/expense-categories/:id", middleware.Require("expense_categories.manage"), h.UpdateCategory)
+	canView := middleware.RequireAny("finance.expense.submit", "finance.expense.enter", "finance.expense.approve", "finance.expense.pay", "finance.transaction.view")
+	canCreate := middleware.RequireAny("finance.expense.submit", "finance.expense.enter")
 
-	r.Get("/expenses", middleware.Require("expenses.view"), h.List)
-	r.Post("/expenses", middleware.Require("expenses.create"), middleware.Idempotent(), h.Create)
-	r.Get("/expenses/:id", middleware.Require("expenses.view"), h.Get)
-	r.Put("/expenses/:id", middleware.Require("expenses.create"), h.Update)
-	r.Post("/expenses/:id/approve", middleware.Require("expenses.approve"), h.decide(true))
-	r.Post("/expenses/:id/reject", middleware.Require("expenses.approve"), h.decide(false))
-	r.Post("/expenses/:id/pay", middleware.Require("expenses.pay"), middleware.Idempotent(), h.Pay)
-	r.Post("/expenses/:id/reverse", middleware.Require("expenses.reverse"), middleware.Idempotent(), h.Reverse)
+	r.Get("/expense-categories", middleware.RequireAny("finance.expense.submit", "finance.expense.enter", "finance.expense.approve", "finance.expense.pay", "settings.manage"), h.Categories)
+	r.Post("/expense-categories", middleware.RequireAny("finance.expense.enter", "settings.manage"), h.CreateCategory)
+	r.Put("/expense-categories/:id", middleware.RequireAny("finance.expense.enter", "settings.manage"), h.UpdateCategory)
 
-	r.Get("/recurring-expenses", middleware.Require("recurring_expenses.manage"), h.Recurring)
-	r.Post("/recurring-expenses", middleware.Require("recurring_expenses.manage"), h.CreateRecurring)
-	r.Put("/recurring-expenses/:id", middleware.Require("recurring_expenses.manage"), h.UpdateRecurring)
-	r.Post("/recurring-expenses/:id/pause", middleware.Require("recurring_expenses.manage"), h.setRecurring(false))
-	r.Post("/recurring-expenses/:id/resume", middleware.Require("recurring_expenses.manage"), h.setRecurring(true))
+	r.Get("/expenses", canView, h.List)
+	r.Post("/expenses", canCreate, middleware.Idempotent(), h.Create)
+	r.Get("/expenses/:id", canView, h.Get)
+	r.Put("/expenses/:id", canCreate, h.Update)
+	r.Post("/expenses/:id/approve", middleware.Require("finance.expense.approve"), h.decide(true))
+	r.Post("/expenses/:id/reject", middleware.Require("finance.expense.approve"), h.decide(false))
+	r.Post("/expenses/:id/cancel", middleware.RequireAny("finance.expense.submit", "finance.expense.enter", "finance.expense.approve"), h.Cancel)
+	r.Post("/expenses/:id/pay", middleware.Require("finance.expense.pay"), middleware.Idempotent(), h.Pay)
+	r.Post("/expenses/:id/reverse", middleware.Require("finance.transaction.correct"), h.Reverse)
 
-	r.Get("/petty-cash", middleware.Require("petty_cash.manage"), h.PettyCash)
-	r.Post("/petty-cash/:id/top-up", middleware.Require("petty_cash.manage"), middleware.Idempotent(), h.TopUp)
-	r.Post("/petty-cash/:id/reconcile", middleware.Require("petty_cash.manage"), middleware.Idempotent(), h.Reconcile)
+	r.Get("/recurring-expenses", middleware.RequireAny("finance.expense.enter", "finance.expense.approve", "finance.expense.pay"), h.Recurring)
+	r.Post("/recurring-expenses", middleware.RequireAny("finance.expense.enter", "finance.expense.approve"), h.CreateRecurring)
+	r.Put("/recurring-expenses/:id", middleware.RequireAny("finance.expense.enter", "finance.expense.approve"), h.UpdateRecurring)
+	r.Post("/recurring-expenses/:id/pause", middleware.RequireAny("finance.expense.enter", "finance.expense.approve"), h.setRecurring(false))
+	r.Post("/recurring-expenses/:id/resume", middleware.RequireAny("finance.expense.enter", "finance.expense.approve"), h.setRecurring(true))
+
+	r.Get("/petty-cash", middleware.RequireAny("finance.account.view", "finance.account.manage", "finance.expense.pay"), h.PettyCash)
+	r.Post("/petty-cash/:id/top-up", middleware.Require("finance.account.manage"), middleware.Idempotent(), h.TopUp)
+	r.Post("/petty-cash/:id/reconcile", middleware.RequireAny("finance.account.manage", "finance.day.close"), middleware.Idempotent(), h.Reconcile)
 }

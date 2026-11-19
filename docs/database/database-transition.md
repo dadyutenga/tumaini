@@ -48,7 +48,7 @@ Legend: [x] done (compiles; not yet integration-tested), [~] partly done, [ ] no
 - [x] Finance (accounts, statements, transfers, transactions, payments, void, debts, day closing; ledger, income, drawings, statutory are not in the approved model)
 - [x] Sales and POS (sales, lines, units, held carts, returns, void; tills and shop quotations are not in the approved model)
 - [x] Purchasing (purchases, goods receipts, serial units, suppliers, supplier payments; separate purchase invoices and purchase returns are not in the approved model)
-- [ ] Expenses (expenses, recurring, petty cash)
+- [x] Expenses (categories, expenses, recurring templates, petty cash top-up and reconciliations; reversing a paid expense uses transaction corrections)
 - [ ] HR, attendance, payroll
 - [ ] Services and design (clients, projects, quotations, invoices, design jobs, contractors, renewals, tasks)
 - [ ] Reports and dashboard
