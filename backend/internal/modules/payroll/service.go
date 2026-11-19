@@ -933,7 +933,7 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, runID uuid.UUID, i
 		if run["status"] != "approved" {
 			return httpx.Conflict("invalid_status", "Approve the run before paying it")
 		}
-		method, err := hrkit.MethodFor(ctx, tx, in.MoneyAccountID)
+		method, err := hrkit.MethodFor(ctx, tx, p, "payroll.pay", in.MoneyAccountID)
 		if err != nil {
 			return err
 		}

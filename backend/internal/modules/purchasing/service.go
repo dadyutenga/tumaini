@@ -406,6 +406,15 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, in ReceiptIn) 
 				return 0, nil, err
 			}
 			branch, supplier = *p.BranchID, *in.SupplierID
+			// A direct receipt creates its own approved order, so it must not be a way round the limit
+			// on creating orders (FR-PUR-02): above it, a person with a higher limit raises the order.
+			orderValue := money.Zero
+			for _, it := range in.Items {
+				orderValue = orderValue.Add(money.Money(it.Qty.Mul(it.UnitCost)))
+			}
+			if g, ok := p.Can("po.create"); !p.IsOwner && !auth.WithinLimit(g, ok, orderValue) {
+				return 0, nil, httpx.Forbidden("over_limit", "This purchase is above your order limit. Raise a purchase order for approval, or ask someone with a higher limit")
+			}
 			number, err := sequence.Next(ctx, tx, branch, "po")
 			if err != nil {
 				return 0, nil, err
@@ -633,8 +642,13 @@ func (s *Service) Invoice(ctx context.Context, p *auth.Principal, in InvoiceIn) 
 			return 0, nil, err
 		}
 		if in.PayNow != nil && total.IsPositive() {
-			if _, ok := p.Can("payments.pay"); !ok && !p.IsOwner {
+			g, ok := p.Can("payments.pay")
+			if !ok && !p.IsOwner {
 				return 0, nil, httpx.Forbidden("permission_denied", "You cannot pay suppliers")
+			}
+			// Paying on the spot is a supplier payment like any other, so the same limit applies (FR-PUR-10).
+			if !p.IsOwner && !auth.WithinLimit(g, ok, total) {
+				return 0, nil, httpx.Forbidden("over_limit", "This payment is above your limit. Record the invoice and ask someone with a higher limit to pay it")
 			}
 			method := in.PayNow.Method
 			if method == "" {
@@ -756,8 +770,12 @@ func (s *Service) pay(ctx context.Context, tx pgx.Tx, p *auth.Principal, branch,
 		return nil, err
 	}
 	var active bool
-	if err := tx.QueryRow(ctx, `SELECT is_active FROM money_accounts WHERE id=$1`, in.MoneyAccountID).Scan(&active); err != nil || !active {
+	var accBranch *uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT is_active, branch_id FROM money_accounts WHERE id=$1`, in.MoneyAccountID).Scan(&active, &accBranch); err != nil || !active {
 		return nil, httpx.Conflict("invalid_status", "That money account is inactive")
+	}
+	if accBranch != nil && !p.SeesBranch("payments.pay", *accBranch) {
+		return nil, httpx.NotFound("not_found", "Money account not found")
 	}
 	if err := s.Ledger.EnsureFunds(ctx, tx, in.MoneyAccountID, amt); err != nil {
 		return nil, err

@@ -166,12 +166,14 @@ func OptionalIdempotent() fiber.Handler {
 }
 
 // MethodFor returns the payment method that matches a money account type,
-// and fails when the account does not exist or is inactive.
-func MethodFor(ctx context.Context, tx pgx.Tx, accountID uuid.UUID) (string, error) {
+// and fails when the account does not exist, is inactive, or belongs to a branch
+// the caller has no access to under permission perm (a business-wide account is open to all).
+func MethodFor(ctx context.Context, tx pgx.Tx, p *auth.Principal, perm string, accountID uuid.UUID) (string, error) {
 	var typ string
 	var active bool
-	err := tx.QueryRow(ctx, `SELECT type, is_active FROM money_accounts WHERE id=$1`, accountID).Scan(&typ, &active)
-	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !active) {
+	var branch *uuid.UUID
+	err := tx.QueryRow(ctx, `SELECT type, is_active, branch_id FROM money_accounts WHERE id=$1`, accountID).Scan(&typ, &active, &branch)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && !active) || (err == nil && branch != nil && !p.SeesBranch(perm, *branch)) {
 		return "", httpx.NotFound("not_found", "Money account not found")
 	}
 	if err != nil {

@@ -254,6 +254,15 @@ func (s *Service) reverseOne(ctx context.Context, tx pgx.Tx, businessID, origina
 	if err := s.ensureOpen(ctx, tx, entryDate); err != nil {
 		return err
 	}
+	// FR-FIN-19: a document dated inside a locked period cannot be voided or reversed either,
+	// even though the reversing entry itself is dated today.
+	var originalDate string
+	if err := tx.QueryRow(ctx, `SELECT entry_date::text FROM journal_entries WHERE id=$1`, original).Scan(&originalDate); err != nil {
+		return err
+	}
+	if err := s.ensureOpen(ctx, tx, originalDate); err != nil {
+		return err
+	}
 	newID := ids.New()
 	var createdBy any
 	if userID != nil {

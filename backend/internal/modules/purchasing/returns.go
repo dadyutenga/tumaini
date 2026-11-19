@@ -147,6 +147,13 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, in Return
 			if err != nil {
 				return 0, nil, httpx.NotFound("not_found", "Money account not found")
 			}
+			var refundBranch *uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT branch_id FROM money_accounts WHERE id=$1`, *in.MoneyAccountID).Scan(&refundBranch); err != nil {
+				return 0, nil, err
+			}
+			if refundBranch != nil && !p.SeesBranch("purchase_returns.create", *refundBranch) {
+				return 0, nil, httpx.NotFound("not_found", "Money account not found")
+			}
 			method := in.Method
 			if method == "" {
 				method = "cash"

@@ -248,7 +248,7 @@ func (s *Service) Disburse(ctx context.Context, p *auth.Principal, loanID, accou
 		if !p.IsOwner && !auth.WithinLimit(g, ok, amount) {
 			return httpx.Forbidden("over_limit", "This loan is above your limit")
 		}
-		method, err := hrkit.MethodFor(ctx, tx, account)
+		method, err := hrkit.MethodFor(ctx, tx, p, "loans.approve", account)
 		if err != nil {
 			return err
 		}
@@ -332,7 +332,7 @@ func (s *Service) Repay(ctx context.Context, p *auth.Principal, loanID uuid.UUID
 		if amount.Add(reserved).GreaterThan(bal) {
 			return httpx.Conflict("invalid_amount", "An approved payroll already deducts part of this balance")
 		}
-		method, err := hrkit.MethodFor(ctx, tx, in.MoneyAccountID)
+		method, err := hrkit.MethodFor(ctx, tx, p, "payments.receive", in.MoneyAccountID)
 		if err != nil {
 			return err
 		}

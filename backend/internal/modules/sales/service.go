@@ -103,7 +103,7 @@ func (s *Service) Preview(ctx context.Context, p *auth.Principal, in CreateIn) (
 		if err != nil {
 			return err
 		}
-		out = view(uuid.Nil, "", "preview", lines, tot, money.Zero, tot.Total, money.Zero)
+		out = view(uuid.Nil, "", "preview", lines, tot, money.Zero, tot.Total, money.Zero, canSeeCost(p))
 		return nil
 	})
 	return out, err
@@ -403,7 +403,7 @@ func (s *Service) finish(ctx context.Context, tx pgx.Tx, p *auth.Principal, sale
 	if err := s.Audit.Record(ctx, tx, p, "sale.completed", "sale", saleID, nil, map[string]any{"number": number, "total": tot.Total}); err != nil {
 		return nil, err
 	}
-	out := view(saleID, number, "completed", lines, tot, paid, balance, change)
+	out := view(saleID, number, "completed", lines, tot, paid, balance, change, canSeeCost(p))
 	out["receipt_url"] = "/api/v1/sales/" + saleID.String() + "/receipt"
 	return out, nil
 }
@@ -603,10 +603,21 @@ func (s *Service) bizDate(ctx context.Context, tx pgx.Tx) (string, error) {
 	return d.Format("2006-01-02"), nil
 }
 
-func view(id uuid.UUID, number, status string, lines []line, tot totals, paid, balance, change decimal.Decimal) map[string]any {
+// canSeeCost reports whether the caller may see cost and margin (FR-INV-08).
+func canSeeCost(p *auth.Principal) bool {
+	_, ok := p.Can("products.view_cost")
+	return ok || p.IsOwner
+}
+
+// view builds the sale response. Unit cost is included only when showCost is set, so cashiers
+// do not learn what the shop paid for what they sell.
+func view(id uuid.UUID, number, status string, lines []line, tot totals, paid, balance, change decimal.Decimal, showCost bool) map[string]any {
 	items := make([]map[string]any, len(lines))
 	for i, ln := range lines {
-		items[i] = map[string]any{"product_id": ln.ProductID, "product_name": ln.Name, "qty": ln.Qty, "unit_price": ln.UnitPrice, "discount": ln.Discount, "tax_amount": ln.Tax, "line_total": ln.LineTotal, "unit_cost": ln.UnitCost}
+		items[i] = map[string]any{"product_id": ln.ProductID, "product_name": ln.Name, "qty": ln.Qty, "unit_price": ln.UnitPrice, "discount": ln.Discount, "tax_amount": ln.Tax, "line_total": ln.LineTotal}
+		if showCost {
+			items[i]["unit_cost"] = ln.UnitCost
+		}
 	}
 	out := map[string]any{
 		"status": status, "subtotal": tot.Subtotal, "discount_total": tot.Discount, "tax_total": tot.Tax,

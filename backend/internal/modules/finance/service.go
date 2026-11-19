@@ -389,6 +389,8 @@ type ReconcileIn struct {
 	ActualBalance decimal.Decimal `json:"actual_balance"`
 	Date          string          `json:"date" validate:"date"`
 	Note          string          `json:"note" validate:"max=500"`
+	// DryRun shows the difference without posting anything.
+	DryRun bool `json:"dry_run"`
 }
 
 func (s *Service) Reconcile(ctx context.Context, p *auth.Principal, id uuid.UUID, in ReconcileIn) (int, []byte, error) {
@@ -411,6 +413,13 @@ func (s *Service) Reconcile(ctx context.Context, p *auth.Principal, id uuid.UUID
 		if err != nil {
 			return err
 		}
+		// The difference gives away the balance, so for bank and mobile money it is only for people
+		// who may see those balances (FR-FIN-18).
+		if acc.Type != "cash" && acc.Type != "petty_cash" {
+			if _, ok := p.Can("accounts.view_balance"); !ok && !p.IsOwner {
+				return httpx.Forbidden("permission_denied", "You need permission to view bank and mobile money balances to reconcile this account")
+			}
+		}
 		branch, err := postingBranch(ctx, tx, p, &acc)
 		if err != nil {
 			return err
@@ -422,9 +431,14 @@ func (s *Service) Reconcile(ctx context.Context, p *auth.Principal, id uuid.UUID
 			}
 		}
 		res, err := payments.Reconcile(ctx, tx, s.Ledger, payments.ReconcileInput{
-			BusinessID: p.BusinessID, BranchID: branch, UserID: p.UserID, AccountID: id, Actual: in.ActualBalance, Date: date, Note: in.Note,
+			BusinessID: p.BusinessID, BranchID: branch, UserID: p.UserID, AccountID: id, Actual: in.ActualBalance, Date: date, Note: in.Note, DryRun: in.DryRun,
 		})
 		if err != nil {
+			return err
+		}
+		if in.DryRun {
+			raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(res))
+			status, body = 200, raw
 			return err
 		}
 		if err := s.Audit.Record(ctx, tx, p, "money_account.reconciled", "money_account", id, nil, res); err != nil {
