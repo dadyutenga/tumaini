@@ -82,7 +82,7 @@ Found by running the tests and reading the code, and fixed:
 
 323 operations on 260 paths (`docs/api/openapi.yaml`). The 313 routes of the API reference are all present. Added beyond the reference:
 
-`POST /auth/forgot-password`, `POST /auth/reset-password`, `GET /sales/held` detail views, `GET /quotations/:id`, `GET /stock-adjustments/:id`, `POST /stock-transfers/:id/return`, `GET|POST|DELETE /employees/:id/documents`, `GET /reports/inventory/expiring`, and the `attendance` settings group.
+`POST /auth/forgot-password`, `POST /auth/reset-password`, `GET /quotations/:id`, `GET /stock-adjustments/:id`, `POST /stock-transfers/:id/return`, `GET|POST|DELETE /employees/:id/documents`, `GET /reports/inventory/expiring`, and the `attendance` settings group.
 
 `internal/app/openapi_contract_test.go` fails if a registered route is missing from the OpenAPI file, if the file documents a route that does not exist, or if a route in the API reference is not implemented.
 
@@ -117,7 +117,7 @@ Migrations 0013 to 0022 (21 files; there is no 0018), each with a working down f
 
 No load test was run, so no speed claim is made. What changed:
 
-- 45 indexes added for the list, lookup and report queries of the new endpoints.
+- 46 indexes added across migrations 0013 to 0022 for the list, lookup and report queries of the new endpoints.
 - Reports aggregate in SQL; there are no per-row queries in report paths. All lists are paginated with a maximum of 100 rows. Imports are capped at 5,000 rows and uploads at 10 MB.
 - Payroll above 200 employees calculates as a background job.
 - A panicking job is recorded as a failed attempt instead of stopping the worker; daily jobs are idempotent per business per date.

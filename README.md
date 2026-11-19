@@ -7,10 +7,10 @@ The product contract is the specification in `docs/spec/`: `SRS.md`, `Backend de
 ## Layout
 
 ```
-backend/    Go API (Fiber v3, PostgreSQL)
+backend/    Go API (Fiber v3, PostgreSQL); see backend/README.md
 frontend/   Vite + React app
 deploy/     Docker Compose and Postgres init
-docs/       spec/ (SRS, designs, schema, API reference) and implementation reports
+docs/       spec/ (SRS, designs, schema, API reference), api/ (OpenAPI) and implementation reports
 ```
 
 ## Stack
@@ -22,7 +22,7 @@ docs/       spec/ (SRS, designs, schema, API reference) and implementation repor
 
 ## Prerequisites
 
-- Go 1.25 or newer
+- Go 1.27 or newer (the module requires 1.27.3; the toolchain downloads itself when needed)
 - PostgreSQL 16 or newer, or Podman/Docker
 
 ## Local database
@@ -45,7 +45,7 @@ go run ./cmd/migrate up
 go run ./cmd/api
 ```
 
-Health checks: `GET /healthz` and `GET /readyz`.
+Health checks: `GET /healthz` and `GET /readyz`. Copy `.env.example` for the full list of settings, including optional email and SMS.
 
 ## Run the frontend
 
@@ -61,17 +61,24 @@ Open <http://localhost:5173> and register a business. See `frontend/README.md`.
 
 ## Tests
 
-The acceptance test uses the database in `DATABASE_URL`. It registers its own businesses and does not wipe other data.
+The integration tests drive the real HTTP handlers against a real PostgreSQL as the `bms_app` role. Each test registers its own business and does not wipe other data.
 
 ```bash
 cd backend
 export DATABASE_URL='postgres://bms_app:bms_app_dev@127.0.0.1:5433/bms?sslmode=disable'
 export JWT_SECRET='0123456789abcdef0123456789abcdef'
-go test ./...
+go test -race -count=1 ./...
 ```
+
+CI (`.github/workflows/backend-ci.yml`) runs the same commands against a PostgreSQL service, checks formatting and `go vet`, applies the migrations up, down and up again, and checks that `docs/api/openapi.yaml` is current.
 
 ## What is implemented
 
-Registration, users and roles, branches and settings, products and stock, sales and tills, customers and credit, purchases, expenses and approvals, money accounts and transfers, attendance, and payroll. See `docs/BACKEND_IMPLEMENTATION_REPORT.md` for the exact coverage and what is still open.
+Every route of `docs/spec/API reference.md` (313) is implemented, documented in `docs/api/openapi.yaml` and covered by a contract test: authentication and password recovery, users, roles and delegation limits, business, branches and validated settings, products and stock (entries, adjustments, transfers, batch and expiry), purchasing, sales and tills, quotations, customers and credit, expenses and petty cash, money accounts, payments and period lock, employees, leave, loans, attendance, payroll, approvals, notifications, audit, data export, 29 reports and the dashboard, and the background jobs behind them.
+
+- Backend details, configuration, jobs and deployment checklist: [`backend/README.md`](backend/README.md)
+- What was built, what was fixed, what is not verified: [`docs/BACKEND_IMPLEMENTATION_REPORT.md`](docs/BACKEND_IMPLEMENTATION_REPORT.md)
+- Progress and decisions: [`docs/BACKEND_COMPLETION_PROGRESS.md`](docs/BACKEND_COMPLETION_PROGRESS.md)
+- API: [`docs/api/openapi.yaml`](docs/api/openapi.yaml), generated from `docs/api/base.yaml` and `docs/api/fragments/`
 
 Passwords in `deploy/postgres/init.sql` are local development placeholders. Do not use them outside a private machine.
