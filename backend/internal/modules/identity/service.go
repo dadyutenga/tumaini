@@ -208,6 +208,7 @@ func (s *Service) defaultSettings(ctx context.Context, tx pgx.Tx, businessID uui
 		"system.allow_negative_stock": false, "system.business_day_start": "00:00", "system.session_timeout_minutes": 30,
 		"system.till_difference_threshold": 1000,
 		"notifications.supplier_due_days":  7, "notifications.salary_due_days": 3,
+		"invoice.quotation_valid_days": 14,
 		"payment.methods": map[string]any{
 			"cash": map[string]any{"enabled": true}, "bank": map[string]any{"enabled": true},
 			"mobile_money": map[string]any{"enabled": true}, "credit": map[string]any{"enabled": true},

@@ -464,6 +464,19 @@ func (s *Service) reopen(ctx context.Context, tx pgx.Tx, r paymentRow) error {
 			`, a.doc); err != nil {
 				return err
 			}
+			// Loan deductions on this payslip were applied when the run was fully paid; put them back.
+			if _, err := tx.Exec(ctx, `
+				UPDATE employee_loans l SET balance = l.balance + x.amt,
+				  status = CASE WHEN l.status = 'settled' THEN 'disbursed' ELSE l.status END
+				FROM (SELECT loan_id, SUM(amount) AS amt FROM loan_repayments
+				      WHERE payslip_id = $1 AND voided_at IS NULL GROUP BY loan_id) x
+				WHERE l.id = x.loan_id
+			`, a.doc); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE loan_repayments SET voided_at = now() WHERE payslip_id = $1 AND voided_at IS NULL`, a.doc); err != nil {
+				return err
+			}
 			q = `UPDATE payslips SET paid_total=GREATEST(paid_total-$2,0), status=CASE WHEN paid_total-$2 <= 0 THEN 'approved' ELSE 'partially_paid' END WHERE id=$1`
 		case a.typ == "expense":
 			q = `UPDATE expenses SET status='approved', payment_id=NULL, money_account_id=NULL, paid_at=NULL WHERE id=$1 AND status='paid' AND $2::numeric > 0`
@@ -477,6 +490,9 @@ func (s *Service) reopen(ctx context.Context, tx pgx.Tx, r paymentRow) error {
 			}
 			q = `UPDATE employee_loans SET status='approved', payment_id=NULL WHERE id=$1 AND $2::numeric > 0`
 		case a.typ == "loan" && r.kind == "loan_repayment":
+			if _, err := tx.Exec(ctx, `UPDATE loan_repayments SET voided_at = now() WHERE payment_id = $1 AND voided_at IS NULL`, r.id); err != nil {
+				return err
+			}
 			q = `UPDATE employee_loans SET balance=balance+$2, status=CASE WHEN status='settled' THEN 'disbursed' ELSE status END WHERE id=$1`
 		default:
 			continue

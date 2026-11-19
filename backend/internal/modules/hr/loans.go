@@ -88,7 +88,7 @@ func (s *Service) GetLoan(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 			return err
 		}
 		reps, err := hrkit.All(ctx, tx, `
-			SELECT lr.id, lr.amount, lr.source, lr.payslip_id, ps.number AS payslip_number, lr.payment_id, lr.created_at
+			SELECT lr.id, lr.amount, lr.source, lr.payslip_id, ps.number AS payslip_number, lr.payment_id, lr.created_at, lr.voided_at
 			FROM loan_repayments lr LEFT JOIN payslips ps ON ps.id = lr.payslip_id
 			WHERE lr.loan_id = $1 ORDER BY lr.created_at
 		`, id)
