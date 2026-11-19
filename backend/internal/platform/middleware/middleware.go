@@ -31,10 +31,10 @@ func RequestLogger() fiber.Handler {
 		start := time.Now()
 		err := c.Next()
 		p, _ := c.Locals(principalKey).(*auth.Principal)
-		uid, bid := "", ""
+		uid, tid := "", ""
 		if p != nil {
 			uid = p.UserID.String()
-			bid = p.BusinessID.String()
+			tid = p.TenantID.String()
 		}
 		slog.Info("request",
 			"request_id", requestid.FromContext(c),
@@ -43,7 +43,7 @@ func RequestLogger() fiber.Handler {
 			"status", c.Response().StatusCode(),
 			"duration_ms", time.Since(start).Milliseconds(),
 			"user_id", uid,
-			"business_id", bid,
+			"tenant_id", tid,
 		)
 		return err
 	}

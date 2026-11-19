@@ -14,6 +14,11 @@ type Config struct {
 	HTTPAddr           string
 	DatabaseURL        string
 	MigrateDatabaseURL string
+	// JobsDatabaseURL connects as the worker role (bms_jobs); it is used only for tenant provisioning
+	// and background jobs. Empty means the API role is used, which the schema does not allow to provision.
+	JobsDatabaseURL string
+	// SessionIdleTimeout ends a session that has not been used for this long.
+	SessionIdleTimeout time.Duration
 	JWTSecret          string
 	AccessTokenTTL     time.Duration
 	RefreshTokenTTL    time.Duration
@@ -48,6 +53,8 @@ func Load() (Config, error) {
 		HTTPAddr:           getenv("HTTP_ADDR", ":8080"),
 		DatabaseURL:        os.Getenv("DATABASE_URL"),
 		MigrateDatabaseURL: os.Getenv("MIGRATE_DATABASE_URL"),
+		JobsDatabaseURL:    os.Getenv("JOBS_DATABASE_URL"),
+		SessionIdleTimeout: duration("SESSION_IDLE_TIMEOUT", 30*time.Minute),
 		JWTSecret:          os.Getenv("JWT_SECRET"),
 		AccessTokenTTL:     duration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL:    duration("REFRESH_TOKEN_TTL", 30*24*time.Hour),

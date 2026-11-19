@@ -14,6 +14,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 	"golang.org/x/crypto/argon2"
+
+	"bms/internal/platform/db"
 )
 
 type Params struct {
@@ -105,12 +107,14 @@ func HashToken(raw string) ([]byte, error) {
 	return sum[:], nil
 }
 
+// Claims is what the access token proves: who, in which tenant, as which member, in which session.
+// Permissions are not in the token; they are loaded on every request so a revoked permission or a
+// disabled user takes effect immediately.
 type Claims struct {
 	jwt.RegisteredClaims
-	BusinessID  uuid.UUID `json:"bid"`
-	RoleID      uuid.UUID `json:"rid"`
-	SessionID   uuid.UUID `json:"sid"`
-	PermVersion int       `json:"pv"`
+	TenantID     uuid.UUID `json:"tid"`
+	MembershipID uuid.UUID `json:"mid"`
+	SessionID    uuid.UUID `json:"sid"`
 }
 
 type Tokens struct {
@@ -121,17 +125,16 @@ type Tokens struct {
 	Now func() time.Time
 }
 
-func (t Tokens) Sign(userID, businessID, roleID, sessionID uuid.UUID, permVersion int, now time.Time) (string, error) {
+func (t Tokens) Sign(userID, tenantID, membershipID, sessionID uuid.UUID, now time.Time) (string, error) {
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID.String(),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(t.Access)),
 		},
-		BusinessID:  businessID,
-		RoleID:      roleID,
-		SessionID:   sessionID,
-		PermVersion: permVersion,
+		TenantID:     tenantID,
+		MembershipID: membershipID,
+		SessionID:    sessionID,
 	}
 	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 	return tok.SignedString(t.Secret)
@@ -166,21 +169,39 @@ type Grant struct {
 }
 
 type Principal struct {
-	UserID     uuid.UUID
+	UserID       uuid.UUID
+	TenantID     uuid.UUID
+	MembershipID uuid.UUID
+	// BusinessID equals TenantID. It exists only so modules not yet ported to the new schema keep
+	// compiling; the port of each module replaces it with TenantID, and this field is then removed.
 	BusinessID uuid.UUID
 	RoleID     uuid.UUID
 	EmployeeID *uuid.UUID
-	Name       string
-	Language   string
-	RoleSlug   string
-	IsOwner    bool
-	BranchIDs  []uuid.UUID
-	Perms      map[string]Grant
-	BranchID   *uuid.UUID
-	SessionID  uuid.UUID
-	IP         string
-	UserAgent  string
-	RequestID  string
+	// Limits are the caller's authority limits (app.authority_limits), keyed by limit code. A missing
+	// key means unlimited for a holder of the matching permission.
+	Limits    map[string]decimal.Decimal
+	Name      string
+	Language  string
+	RoleSlug  string
+	IsOwner   bool
+	BranchIDs []uuid.UUID
+	Perms     map[string]Grant
+	BranchID  *uuid.UUID
+	SessionID uuid.UUID
+	IP        string
+	UserAgent string
+	RequestID string
+}
+
+// Actor is the database request context for this caller.
+func (p *Principal) Actor() db.Actor {
+	return db.Actor{TenantID: p.TenantID, UserID: p.UserID, MembershipID: p.MembershipID, RequestID: p.RequestID, ClientIP: p.IP}
+}
+
+// Has reports whether the caller holds a permission code.
+func (p *Principal) Has(code string) bool {
+	_, ok := p.Perms[code]
+	return ok
 }
 
 func (p *Principal) Can(key string) (Grant, bool) {
