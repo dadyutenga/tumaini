@@ -64,7 +64,7 @@ func (s *Service) Low(ctx context.Context, p *auth.Principal) ([]map[string]any,
 		rows, err := tx.Query(ctx, `
 			SELECT p.id, p.name, p.sku, COALESCE(sl.qty_on_hand,0), p.reorder_level
 			FROM products p LEFT JOIN stock_levels sl ON sl.product_id=p.id AND sl.branch_id=$1
-			WHERE p.kind='stock' AND p.is_active AND COALESCE(sl.qty_on_hand,0) <= p.reorder_level
+			WHERE p.kind='stock' AND p.is_active AND p.reorder_level > 0 AND COALESCE(sl.qty_on_hand,0) <= p.reorder_level
 			ORDER BY p.name
 		`, *p.BranchID)
 		if err != nil {

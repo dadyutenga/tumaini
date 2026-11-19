@@ -1089,7 +1089,8 @@ func (s *Service) CheckLowStock(ctx context.Context, businessID uuid.UUID, paylo
 				}
 				continue
 			}
-			if notified || (reorder.IsZero() && qty.IsPositive()) {
+			// A reorder level of zero means the product is not tracked for low stock.
+			if notified || !reorder.IsPositive() {
 				continue
 			}
 			if err := s.Notify.ToPermission(ctx, tx, businessID, &body.BranchID, "stock.view", notify.Message{

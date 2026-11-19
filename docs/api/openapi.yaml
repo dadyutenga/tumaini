@@ -196,7 +196,7 @@ info:
     - Errors are `{ "error": { "code", "message", "fields" } }`. 400 malformed, 401 not signed in, 403 no permission,
       404 missing or outside your scope, 409 state conflict, 422 field validation, 429 rate limited.
     - 202 means the action waits for approval; the body carries `approval_request_id`.
-    - Money and quantities are decimal strings, never floats. Business dates are `YYYY-MM-DD`; timestamps are RFC 3339 UTC.
+    - Money and quantities are decimal strings, never floats, at the scale of the value: money `"2500.00"`, quantities `"3.000"`, unit costs `"1200.0000"`. Business dates are `YYYY-MM-DD`; timestamps are RFC 3339 UTC.
     - `x-permission` on each operation is the permission key the route checks. Scope (all, branch, own) then limits rows.
     - This file is generated: edit docs/api/base.yaml or docs/api/fragments/*.yaml and run `go run ./cmd/openapi` in backend/.
   title: Tumaini BMS API
@@ -1666,7 +1666,7 @@ paths:
           $ref: '#/components/responses/Conflict'
         "422":
           $ref: '#/components/responses/Unprocessable'
-      summary: Create a branch with document sequences and a default cash account
+      summary: Create a branch with document sequences and a default cash account. The code is 1 to 8 letters or digits and appears in document numbers
       tags:
         - Business and settings
       x-permission: branches.manage
@@ -1780,7 +1780,7 @@ paths:
           $ref: '#/components/responses/NotFound'
         "409":
           $ref: '#/components/responses/Conflict'
-      summary: Deactivate a branch with no stock, open tills or unposted documents
+      summary: Deactivate a branch with no stock, open tills or open documents (drafts, transfers in transit, pending approvals, unpaid expenses). The main branch cannot be deactivated
       tags:
         - Business and settings
       x-permission: branches.manage
@@ -1855,6 +1855,8 @@ paths:
               properties:
                 address:
                   type: string
+                currency:
+                  type: string
                 email:
                   type: string
                 legal_name:
@@ -1866,6 +1868,8 @@ paths:
                 reg_number:
                   type: string
                 tax_number:
+                  type: string
+                timezone:
                   type: string
               type: object
         required: true
@@ -1887,7 +1891,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "422":
           $ref: '#/components/responses/Unprocessable'
-      summary: Update the business profile
+      summary: Update the business profile. Fields not sent are kept. A timezone or currency is validated and mirrored into the settings
       tags:
         - Business and settings
       x-permission: business.manage
@@ -2139,13 +2143,15 @@ paths:
           application/json:
             schema:
               properties:
+                is_active:
+                  type: boolean
                 name:
                   type: string
                 parent_id:
                   format: uuid
-                  type: string
-              required:
-                - name
+                  type:
+                    - string
+                    - "null"
               type: object
         required: true
       responses:
@@ -2216,7 +2222,7 @@ paths:
                     $ref: '#/components/schemas/Error'
                 type: object
           description: Field validation failed (validation_failed with fields)
-      summary: Rename or move a category
+      summary: Rename, move or deactivate a category. Every field is optional; parent_id changes only when sent (null moves it to the top level)
       tags:
         - Products
       x-permission: categories.manage
@@ -7736,7 +7742,20 @@ paths:
         content:
           application/json:
             schema:
-              additionalProperties: true
+              additionalProperties:
+                properties:
+                  enabled:
+                    type: boolean
+                  money_account_id:
+                    format: uuid
+                    type:
+                      - string
+                      - "null"
+                type: object
+              example:
+                bank:
+                  enabled: true
+                  money_account_id: 0192f0c4-...
               type: object
         required: true
       responses:
@@ -7755,7 +7774,9 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         "403":
           $ref: '#/components/responses/Forbidden'
-      summary: Enable methods and map them to money accounts
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      summary: Enable or disable cash, bank, mobile_money and credit and map each to an active money account of a matching type. Only the methods sent change
       tags:
         - Business and settings
       x-permission: settings.manage
@@ -10362,7 +10383,7 @@ paths:
                     $ref: '#/components/schemas/Error'
                 type: object
           description: Not found or outside your branch scope
-      summary: Upload CSV or Excel; returns a validation report. ?commit=true saves
+      summary: Upload CSV or Excel (up to 5,000 rows); returns a validation report. ?commit=true saves the valid rows
       tags:
         - Products
       x-permission: products.import
@@ -17806,6 +17827,9 @@ paths:
           application/json:
             schema:
               additionalProperties: true
+              example:
+                business_day_start: "04:00"
+                timezone: Africa/Dar_es_Salaam
               type: object
         required: true
       responses:
@@ -17826,7 +17850,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "422":
           $ref: '#/components/responses/Unprocessable'
-      summary: 'Update one group: tax, currency, invoice, receipt, payroll, notifications, system'
+      summary: 'Update one group: tax, currency, invoice, receipt, payroll, notifications, system. Every key is type- and range-checked (unknown keys, bad timezones and wrong types are 422 field errors and change nothing); each change is audited with old and new value. In the notifications group, `rules` maps an event type (low_stock, approval_request, salary_due, ...) to {in_app, email, sms, days_before}'
       tags:
         - Business and settings
       x-permission: settings.manage
@@ -20807,7 +20831,9 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "409":
           $ref: '#/components/responses/Conflict'
-      summary: Create a tax rate
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      summary: Create a tax rate (0 to 100). Making it the default moves the default flag
       tags:
         - Business and settings
       x-permission: settings.manage
@@ -20855,7 +20881,11 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
-      summary: Edit a tax rate
+        "409":
+          $ref: '#/components/responses/Conflict'
+        "422":
+          $ref: '#/components/responses/Unprocessable'
+      summary: Edit a tax rate. Every field is optional. The default rate cannot be unset or deactivated; make another rate the default instead
       tags:
         - Business and settings
       x-permission: settings.manage
@@ -21354,9 +21384,6 @@ paths:
                   type: string
                 short_name:
                   type: string
-              required:
-                - name
-                - short_name
               type: object
         required: true
       responses:
@@ -21427,7 +21454,7 @@ paths:
                     $ref: '#/components/schemas/Error'
                 type: object
           description: Field validation failed (validation_failed with fields)
-      summary: Edit a unit
+      summary: Edit a unit. Every field is optional
       tags:
         - Products
       x-permission: categories.manage

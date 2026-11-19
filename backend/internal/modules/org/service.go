@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/google/uuid"
@@ -62,6 +63,21 @@ func (s *Service) GetBusiness(ctx context.Context, p *auth.Principal) (Business,
 }
 
 func (s *Service) UpdateBusiness(ctx context.Context, p *auth.Principal, in Business) (Business, error) {
+	fields := map[string]string{}
+	if in.Timezone != "" {
+		if _, err := timezone(in.Timezone); err != nil {
+			fields["timezone"] = err.Error()
+		}
+	}
+	if in.Currency != "" && !currencyCode.MatchString(in.Currency) {
+		fields["currency"] = "must be a three-letter code such as TZS"
+	}
+	if in.Email != nil && *in.Email != "" && !strings.Contains(*in.Email, "@") {
+		fields["email"] = "must be an email address"
+	}
+	if len(fields) > 0 {
+		return Business{}, invalid(fields)
+	}
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
 		before, _ := s.scanBusiness(ctx, tx, p.BusinessID)
 		if _, err := tx.Exec(ctx, `
@@ -72,6 +88,19 @@ func (s *Service) UpdateBusiness(ctx context.Context, p *auth.Principal, in Busi
 			WHERE id=$1
 		`, p.BusinessID, in.Name, in.LegalName, in.TaxNumber, in.RegNumber, in.Phone, in.Email, in.Address, in.Currency, in.Timezone); err != nil {
 			return err
+		}
+		// The rest of the system reads these two from settings, so keep them in step.
+		for key, val := range map[string]string{"system.timezone": in.Timezone, "currency.code": in.Currency} {
+			if val == "" {
+				continue
+			}
+			raw, _ := json.Marshal(val)
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO settings (business_id, key, value, updated_by) VALUES ($1,$2,$3,$4)
+				ON CONFLICT (business_id, key) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by
+			`, p.BusinessID, key, raw, p.UserID); err != nil {
+				return err
+			}
 		}
 		after, err := s.scanBusiness(ctx, tx, p.BusinessID)
 		if err != nil {
@@ -161,16 +190,24 @@ func (s *Service) ListBranches(ctx context.Context, p *auth.Principal) ([]Branch
 }
 
 func (s *Service) CreateBranch(ctx context.Context, p *auth.Principal, in Branch) (Branch, error) {
-	if strings.TrimSpace(in.Name) == "" || strings.TrimSpace(in.Code) == "" {
+	name := strings.TrimSpace(in.Name)
+	if name == "" || strings.TrimSpace(in.Code) == "" {
 		return Branch{}, httpx.BadRequest("invalid_body", "Branch name and code are required")
 	}
 	id := ids.New()
 	code := strings.ToUpper(strings.TrimSpace(in.Code))
+	// The code is part of every document number, so keep it short and plain.
+	if !branchCode.MatchString(code) {
+		return Branch{}, invalid(map[string]string{"code": "use 1 to 8 letters or digits"})
+	}
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		if err := s.checkManager(ctx, tx, in.Manager); err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO branches (id, business_id, name, code, address, phone, manager_id)
 			VALUES ($1,$2,$3,$4,$5,$6,$7)
-		`, id, p.BusinessID, strings.TrimSpace(in.Name), code, in.Address, in.Phone, in.Manager); err != nil {
+		`, id, p.BusinessID, name, code, in.Address, in.Phone, in.Manager); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "Branch name or code already exists")
 			}
@@ -180,7 +217,7 @@ func (s *Service) CreateBranch(ctx context.Context, p *auth.Principal, in Branch
 			return err
 		}
 		if _, err := chart.CreateMoneyAccount(ctx, tx, s.Ledger, chart.MoneyInput{
-			BusinessID: p.BusinessID, BranchID: &id, Name: in.Name + " till", Type: "cash",
+			BusinessID: p.BusinessID, BranchID: &id, Name: name + " till", Type: "cash",
 			UserID: p.UserID, EntryDate: s.Clock.Now().Format("2006-01-02"),
 		}); err != nil {
 			return err
@@ -193,12 +230,29 @@ func (s *Service) CreateBranch(ctx context.Context, p *auth.Principal, in Branch
 		if err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "branch.created", "branch", id, nil, map[string]any{"name": in.Name, "code": code})
+		return s.Audit.Record(ctx, tx, p, "branch.created", "branch", id, nil, map[string]any{"name": name, "code": code})
 	})
 	if err != nil {
 		return Branch{}, err
 	}
 	return s.GetBranch(ctx, p, id)
+}
+
+var branchCode = regexp.MustCompile(`^[A-Z0-9]{1,8}$`)
+
+// checkManager makes sure a branch manager is an employee of this business.
+func (s *Service) checkManager(ctx context.Context, tx pgx.Tx, id *uuid.UUID) error {
+	if id == nil {
+		return nil
+	}
+	var ok bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM employees WHERE id=$1)`, *id).Scan(&ok); err != nil {
+		return err
+	}
+	if !ok {
+		return invalid(map[string]string{"manager_id": "employee not found"})
+	}
+	return nil
 }
 
 func (s *Service) GetBranch(ctx context.Context, p *auth.Principal, id uuid.UUID) (Branch, error) {
@@ -218,7 +272,13 @@ func (s *Service) GetBranch(ctx context.Context, p *auth.Principal, id uuid.UUID
 }
 
 func (s *Service) UpdateBranch(ctx context.Context, p *auth.Principal, id uuid.UUID, in Branch) (Branch, error) {
+	if !p.SeesBranch("branches.manage", id) {
+		return Branch{}, httpx.NotFound("not_found", "Branch not found")
+	}
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		if err := s.checkManager(ctx, tx, in.Manager); err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE branches SET name=COALESCE(NULLIF($2,''), name), address=COALESCE($3, address), phone=COALESCE($4, phone), manager_id=COALESCE($5, manager_id)
 			WHERE id=$1
@@ -238,7 +298,17 @@ func (s *Service) UpdateBranch(ctx context.Context, p *auth.Principal, id uuid.U
 }
 
 func (s *Service) DeactivateBranch(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
+	if !p.SeesBranch("branches.manage", id) {
+		return httpx.NotFound("not_found", "Branch not found")
+	}
 	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+		var isMain bool
+		if err := tx.QueryRow(ctx, `SELECT is_main FROM branches WHERE id=$1 FOR UPDATE`, id).Scan(&isMain); err != nil {
+			return httpx.NotFound("not_found", "Branch not found")
+		}
+		if isMain {
+			return httpx.Conflict("invalid_status", "The main branch cannot be deactivated")
+		}
 		var stock decimal.Decimal
 		var tills, docs int
 		if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(qty_on_hand),0) FROM stock_levels WHERE branch_id=$1`, id).Scan(&stock); err != nil {
@@ -254,12 +324,16 @@ func (s *Service) DeactivateBranch(ctx context.Context, p *auth.Principal, id uu
 			return httpx.Conflict("invalid_status", "Close the open tills before deactivating this branch")
 		}
 		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM sales WHERE branch_id=$1 AND status IN ('draft','held','pending_approval')
+			SELECT (SELECT count(*) FROM sales WHERE branch_id=$1 AND status IN ('draft','held','pending_approval'))
+			     + (SELECT count(*) FROM stock_transfers WHERE (from_branch_id=$1 OR to_branch_id=$1) AND status IN ('draft','dispatched'))
+			     + (SELECT count(*) FROM stock_adjustments WHERE branch_id=$1 AND status IN ('draft','pending_approval'))
+			     + (SELECT count(*) FROM purchase_orders WHERE branch_id=$1 AND status IN ('draft','pending_approval'))
+			     + (SELECT count(*) FROM expenses WHERE branch_id=$1 AND status IN ('submitted','approved'))
 		`, id).Scan(&docs); err != nil {
 			return err
 		}
 		if docs > 0 {
-			return httpx.Conflict("invalid_status", "This branch has unposted documents")
+			return httpx.Conflict("invalid_status", "This branch has open documents (drafts, transfers in transit, pending approvals or unpaid expenses)")
 		}
 		tag, err := tx.Exec(ctx, `UPDATE branches SET is_active=false WHERE id=$1 AND NOT is_main`, id)
 		if err != nil {
@@ -320,76 +394,6 @@ func (s *Service) BranchStaff(ctx context.Context, p *auth.Principal, id uuid.UU
 	return map[string]any{"users": users, "employees": employees}, err
 }
 
-func (s *Service) Settings(ctx context.Context, p *auth.Principal) (map[string]any, error) {
-	grouped := map[string]map[string]any{}
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT key, value FROM settings ORDER BY key`)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var key string
-			var raw []byte
-			if err := rows.Scan(&key, &raw); err != nil {
-				return err
-			}
-			group, name, ok := strings.Cut(key, ".")
-			if !ok {
-				group, name = "system", key
-			}
-			if grouped[group] == nil {
-				grouped[group] = map[string]any{}
-			}
-			var v any
-			_ = json.Unmarshal(raw, &v)
-			grouped[group][name] = v
-		}
-		return rows.Err()
-	})
-	out := map[string]any{}
-	for k, v := range grouped {
-		out[k] = v
-	}
-	return out, err
-}
-
-func (s *Service) UpdateSettings(ctx context.Context, p *auth.Principal, group string, body map[string]any) error {
-	allowed := map[string]bool{"tax": true, "currency": true, "invoice": true, "receipt": true, "payroll": true, "notifications": true, "system": true}
-	if !allowed[group] {
-		return httpx.BadRequest("invalid_body", "Unknown settings group")
-	}
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		for name, val := range body {
-			key := group + "." + name
-			raw, err := json.Marshal(val)
-			if err != nil {
-				return err
-			}
-			var old []byte
-			_ = tx.QueryRow(ctx, `SELECT value FROM settings WHERE key=$1`, key).Scan(&old)
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO settings (business_id, key, value, updated_by) VALUES ($1,$2,$3,$4)
-				ON CONFLICT (business_id, key) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by
-			`, p.BusinessID, key, raw, p.UserID); err != nil {
-				return err
-			}
-			if group == "currency" && name == "code" {
-				if code, ok := val.(string); ok && code != "" {
-					_, _ = tx.Exec(ctx, `UPDATE businesses SET currency=$2 WHERE id=$1`, p.BusinessID, code)
-				}
-			}
-			if group == "system" && name == "timezone" {
-				if tz, ok := val.(string); ok && tz != "" {
-					_, _ = tx.Exec(ctx, `UPDATE businesses SET timezone=$2 WHERE id=$1`, p.BusinessID, tz)
-				}
-			}
-			_ = s.Audit.Record(ctx, tx, p, "settings.updated", "settings", p.BusinessID, map[string]any{"key": key, "value": json.RawMessage(old)}, map[string]any{"key": key, "value": val})
-		}
-		return nil
-	})
-}
-
 type TaxRate struct {
 	ID        uuid.UUID       `json:"id"`
 	Name      string          `json:"name"`
@@ -421,40 +425,6 @@ func (s *Service) ListTax(ctx context.Context, p *auth.Principal) ([]TaxRate, er
 	return out, err
 }
 
-func (s *Service) SaveTax(ctx context.Context, p *auth.Principal, id *uuid.UUID, in TaxRate) (TaxRate, error) {
-	var outID uuid.UUID
-	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if in.IsDefault {
-			_, _ = tx.Exec(ctx, `UPDATE tax_rates SET is_default=false`)
-		}
-		if id == nil {
-			outID = ids.New()
-			_, err := tx.Exec(ctx, `INSERT INTO tax_rates (id, business_id, name, rate, is_default, is_active) VALUES ($1,$2,$3,$4,$5,true)`,
-				outID, p.BusinessID, in.Name, in.Rate, in.IsDefault)
-			return err
-		}
-		outID = *id
-		tag, err := tx.Exec(ctx, `UPDATE tax_rates SET name=COALESCE(NULLIF($2,''), name), rate=$3, is_default=$4, is_active=$5 WHERE id=$1`,
-			outID, in.Name, in.Rate, in.IsDefault, in.IsActive)
-		if err != nil {
-			return err
-		}
-		if tag.RowsAffected() == 0 {
-			return httpx.NotFound("not_found", "Tax rate not found")
-		}
-		return s.Audit.Record(ctx, tx, p, "tax_rate.updated", "tax_rate", outID, nil, in)
-	})
-	if err != nil {
-		return TaxRate{}, err
-	}
-	var t TaxRate
-	_ = s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT id, name, rate, is_default, is_active FROM tax_rates WHERE id=$1`, outID).
-			Scan(&t.ID, &t.Name, &t.Rate, &t.IsDefault, &t.IsActive)
-	})
-	return t, nil
-}
-
 func (s *Service) PaymentMethods(ctx context.Context, p *auth.Principal) (any, error) {
 	var raw []byte
 	err := s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
@@ -466,23 +436,6 @@ func (s *Service) PaymentMethods(ctx context.Context, p *auth.Principal) (any, e
 	var v any
 	_ = json.Unmarshal(raw, &v)
 	return v, nil
-}
-
-func (s *Service) UpdatePaymentMethods(ctx context.Context, p *auth.Principal, body any) error {
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	return s.DB.InTx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `
-			INSERT INTO settings (business_id, key, value, updated_by) VALUES ($1,'payment.methods',$2,$3)
-			ON CONFLICT (business_id, key) DO UPDATE SET value=EXCLUDED.value, updated_by=EXCLUDED.updated_by
-		`, p.BusinessID, raw, p.UserID)
-		if err != nil {
-			return err
-		}
-		return s.Audit.Record(ctx, tx, p, "payment_methods.updated", "settings", p.BusinessID, nil, body)
-	})
 }
 
 // Upload stores a file after checking its content. The client's Content-Type is ignored.

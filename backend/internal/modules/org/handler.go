@@ -149,7 +149,7 @@ func (h *Handler) Tax(c fiber.Ctx) error {
 }
 
 func (h *Handler) CreateTax(c fiber.Ctx) error {
-	var body TaxRate
+	var body TaxIn
 	if err := c.Bind().Body(&body); err != nil {
 		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
 	}
@@ -165,7 +165,7 @@ func (h *Handler) UpdateTax(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	var body TaxRate
+	var body TaxIn
 	if err := c.Bind().Body(&body); err != nil {
 		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
 	}

@@ -886,7 +886,7 @@ paths:
                     $ref: '#/components/schemas/Error'
   /products/import:
     post:
-      summary: Upload CSV or Excel; returns a validation report. ?commit=true saves
+      summary: Upload CSV or Excel (up to 5,000 rows); returns a validation report. ?commit=true saves the valid rows
       operationId: import_products
       tags:
       - Products
@@ -1083,7 +1083,8 @@ paths:
                     $ref: '#/components/schemas/Error'
   /categories/{id}:
     put:
-      summary: Rename or move a category
+      summary: Rename, move or deactivate a category. Every field is optional; parent_id changes only when sent (null moves
+        it to the top level)
       operationId: update_category
       tags:
       - Products
@@ -1106,10 +1107,12 @@ paths:
                 name:
                   type: string
                 parent_id:
-                  type: string
+                  type:
+                  - string
+                  - 'null'
                   format: uuid
-              required:
-              - name
+                is_active:
+                  type: boolean
       responses:
         '200':
           description: OK
@@ -1377,7 +1380,7 @@ paths:
                     $ref: '#/components/schemas/Error'
   /units/{id}:
     put:
-      summary: Edit a unit
+      summary: Edit a unit. Every field is optional
       operationId: update_unit
       tags:
       - Products
@@ -1403,9 +1406,6 @@ paths:
                   type: string
                 allow_decimal:
                   type: boolean
-              required:
-              - name
-              - short_name
       responses:
         '200':
           description: OK
@@ -1883,7 +1883,8 @@ paths:
       tags:
       - Stock
       x-permission: stock.in or stock.out by direction
-      description: 'In: opening credits 3100, other reasons credit 4200. Out leaves at average cost: internal_use debits 6090, other reasons 5100.'
+      description: 'In: opening credits 3100, other reasons credit 4200. Out leaves at average cost: internal_use debits 6090,
+        other reasons 5100.'
       parameters:
       - $ref: '#/components/parameters/BranchId'
       - $ref: '#/components/parameters/IdempotencyKey'
@@ -3298,7 +3299,8 @@ paths:
       tags:
       - Transfers
       x-permission: transfers.dispatch
-      description: Only for status dispatched, in the sender's branch scope. Items re-enter the sender at the cost they left; the dispatch entry is mirrored (1200 Dr / 1210 Cr).
+      description: Only for status dispatched, in the sender's branch scope. Items re-enter the sender at the cost they left;
+        the dispatch entry is mirrored (1200 Dr / 1210 Cr).
       parameters:
       - name: id
         in: path
