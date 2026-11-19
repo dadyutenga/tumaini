@@ -47,7 +47,7 @@ Legend: [x] done (compiles; not yet integration-tested), [~] partly done, [ ] no
 - [x] Customers (profiles, receive payment, unpaid, statement, debts; write-off is not in the approved model)
 - [x] Finance (accounts, statements, transfers, transactions, payments, void, debts, day closing; ledger, income, drawings, statutory are not in the approved model)
 - [x] Sales and POS (sales, lines, units, held carts, returns, void; tills and shop quotations are not in the approved model)
-- [ ] Purchasing (purchases, goods receipts, suppliers, supplier payments)
+- [x] Purchasing (purchases, goods receipts, serial units, suppliers, supplier payments; separate purchase invoices and purchase returns are not in the approved model)
 - [ ] Expenses (expenses, recurring, petty cash)
 - [ ] HR, attendance, payroll
 - [ ] Services and design (clients, projects, quotations, invoices, design jobs, contractors, renewals, tasks)
