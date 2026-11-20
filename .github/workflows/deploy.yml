@@ -1,0 +1,135 @@
+name: Deploy
+# Push to main: verify, build and push images to GHCR, then deploy to the server over SSH.
+# Run it by hand (Actions > Deploy > Run workflow) to redeploy or to deploy any branch.
+#
+# Repository secrets: SSH_HOST, SSH_PORT, SSH_USER (deploy), SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS.
+# See docs/deployment.md.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  verify-backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: postgres_ci
+          POSTGRES_DB: bms
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - run: go mod verify
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go build ./...
+      - name: Migrations apply to an empty database and verify
+        env:
+          MIGRATE_DATABASE_URL: postgres://postgres:postgres_ci@127.0.0.1:5433/bms?sslmode=disable
+        run: go run ./cmd/migrate up && go run ./cmd/migrate verify
+      - run: go run ./cmd/openapi -check
+
+  verify-frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  images:
+    needs: [verify-backend, verify-frontend]
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    strategy:
+      matrix:
+        include:
+          - { name: api, context: backend }
+          - { name: web, context: frontend }
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        run: |
+          echo "tag=sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+          echo "prefix=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.prefix }}/${{ matrix.name }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.prefix }}/${{ matrix.name }}:latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+  deploy:
+    needs: images
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - name: SSH setup
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.SSH_KNOWN_HOSTS }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" > ~/.ssh/id_deploy && chmod 600 ~/.ssh/id_deploy
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<CFG
+          Host target
+            HostName ${{ secrets.SSH_HOST }}
+            Port ${{ secrets.SSH_PORT }}
+            User ${{ secrets.SSH_USER }}
+            IdentityFile ~/.ssh/id_deploy
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+          CFG
+      - name: Copy deploy files
+        run: |
+          tar -C deploy -cf - docker-compose.prod.yml deploy.sh backup-prod.sh .env.production.example \
+            | ssh target 'tar -C /opt/tumaini -xf - && chmod +x /opt/tumaini/deploy.sh /opt/tumaini/backup-prod.sh'
+      - name: Deploy
+        env:
+          TAG: ${{ needs.images.outputs.tag }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | ssh target "docker login ghcr.io -u '$GHCR_USER' --password-stdin >/dev/null"
+          ssh target "/opt/tumaini/deploy.sh '$TAG'" && rc=0 || rc=$?
+          ssh target "docker logout ghcr.io >/dev/null" || true
+          exit $rc
