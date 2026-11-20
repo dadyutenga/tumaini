@@ -1,15 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import {
-  ArrowLeft,
-  Eye,
-  KeyRound,
-  Plus,
-  Printer,
-  Trash2,
-  Upload,
-  UserX,
-} from "lucide-react";
+import { ArrowLeft, Eye, KeyRound, Plus, Printer, Trash2, Upload, UserX } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,9 +31,8 @@ interface EmployeeDetailData {
   email?: string | null;
   national_id?: string | null;
   address?: string | null;
-  department_id?: string | null;
+  position?: string | null;
   department_name?: string | null;
-  position_id?: string | null;
   position_name?: string | null;
   branch_name?: string | null;
   status: string;
@@ -64,9 +54,12 @@ interface Option {
 
 interface LeaveBal {
   leave_type_id: string;
-  leave_type: string;
-  entitled: string;
-  used: string;
+  name?: string;
+  leave_type?: string;
+  allowed?: string;
+  entitled?: string;
+  taken?: string;
+  used?: string;
   remaining: string;
 }
 
@@ -80,21 +73,19 @@ interface EmpDoc {
   created_at: string;
 }
 
-interface EmpComp {
-  component_id: string;
+interface EmpAllowance {
+  id?: string;
   name: string;
-  kind: string;
-  calc: string;
-  default_value: string | null;
-  override_value: string | null;
-  assigned: boolean;
+  amount: string;
+  effective_from?: string | null;
 }
 
 interface LoanRow {
   id: string;
   number: string;
   kind: string;
-  amount: string;
+  principal?: string;
+  amount?: string;
   balance: string;
   status: string;
   created_at: string;
@@ -110,29 +101,34 @@ interface StatementRes {
 
 export default function EmployeeDetail() {
   const { id } = useParams();
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const qc = useQueryClient();
 
+  const canManage = can("hr.employee.manage");
+  const canViewComp = canAny("hr.compensation.view", "hr.compensation.manage");
+  const canManageComp = can("hr.compensation.manage");
+  const canManageAdj = canAny("hr.compensation.manage", "hr.payroll.manage");
+  const canViewLoans = canAny("hr.compensation.view", "hr.compensation.manage", "hr.payroll.view");
+  const canViewStatement = canAny("hr.compensation.view", "hr.payroll.view");
+
   const emp = useGet<EmployeeDetailData>(`/employees/${id}`, undefined, { enabled: Boolean(id) });
-  const depts = useGet<Option[]>("/departments", undefined, { enabled: can("departments.manage") });
-  const positions = useGet<Option[]>("/positions", undefined, { enabled: can("departments.manage") });
-  const roles = useGet<Option[]>("/roles", undefined, { enabled: can("roles.view") });
+  const roles = useGet<Option[]>("/roles", undefined, { enabled: can("security.user.manage") });
   const leaveBal = useGet<LeaveBal[]>(`/employees/${id}/leave-balance`, undefined, {
-    enabled: Boolean(id) && can("employees.view"),
+    enabled: Boolean(id) && canAny("hr.employee.view", "hr.employee.manage", "hr.leave.approve"),
   });
   const docs = useGet<EmpDoc[]>(`/employees/${id}/documents`, undefined, {
-    enabled: Boolean(id) && can("employees.manage"),
+    enabled: Boolean(id) && canManage,
   });
-  const comps = useGet<EmpComp[]>(`/employees/${id}/components`, undefined, {
-    enabled: Boolean(id) && can("components.manage"),
+  const allowancesRes = useGet<EmpAllowance[]>(`/employees/${id}/components`, undefined, {
+    enabled: Boolean(id) && canViewComp,
   });
   const loans = useGet<LoanRow[]>(
     "/loans",
     { employee_id: id, per_page: 50 },
-    { enabled: Boolean(id) && can("loans.view") },
+    { enabled: Boolean(id) && canViewLoans },
   );
   const statement = useGet<StatementRes>(`/employees/${id}/statement`, undefined, {
-    enabled: Boolean(id) && can("employees.view_salary"),
+    enabled: Boolean(id) && canViewStatement,
   });
 
   const [editing, setEditing] = useState(false);
@@ -142,8 +138,7 @@ export default function EmployeeDetail() {
     email: "",
     national_id: "",
     address: "",
-    department_id: "",
-    position_id: "",
+    position: "",
     pay_type: "monthly",
     base_pay: "0",
     bank_name: "",
@@ -177,9 +172,9 @@ export default function EmployeeDetail() {
   const [uploadingDoc, setUploadingDoc] = useState(false);
   const [preview, setPreview] = useState<{ id: string; name: string } | null>(null);
 
-  const [selectedComps, setSelectedComps] = useState<
-    Record<string, { assigned: boolean; override: string }>
-  >({});
+  const [allowances, setAllowances] = useState<
+    Array<{ name: string; amount: string; effective_from: string }>
+  >([]);
 
   useEffect(() => {
     if (emp.data) {
@@ -189,8 +184,7 @@ export default function EmployeeDetail() {
         email: emp.data.email ?? "",
         national_id: emp.data.national_id ?? "",
         address: emp.data.address ?? "",
-        department_id: emp.data.department_id ?? "",
-        position_id: emp.data.position_id ?? "",
+        position: emp.data.position ?? emp.data.position_name ?? "",
         pay_type: emp.data.pay_type ?? "monthly",
         base_pay: emp.data.base_pay ?? "0",
         bank_name: emp.data.bank_name ?? "",
@@ -207,17 +201,16 @@ export default function EmployeeDetail() {
   }, [emp.data]);
 
   useEffect(() => {
-    if (comps.data) {
-      const next: Record<string, { assigned: boolean; override: string }> = {};
-      for (const c of comps.data) {
-        next[c.component_id] = {
-          assigned: Boolean(c.assigned),
-          override: c.override_value ?? "",
-        };
-      }
-      setSelectedComps(next);
+    if (allowancesRes.data) {
+      setAllowances(
+        allowancesRes.data.map((a) => ({
+          name: a.name ?? "",
+          amount: a.amount ?? "",
+          effective_from: a.effective_from ? a.effective_from.slice(0, 10) : today(),
+        })),
+      );
     }
-  }, [comps.data]);
+  }, [allowancesRes.data]);
 
   const updateEmp = useWrite<Record<string, unknown>, unknown>("PUT", `/employees/${id}`, {
     invalidate: [`/employees/${id}`, "/employees"],
@@ -249,9 +242,9 @@ export default function EmployeeDetail() {
     },
   });
 
-  const saveComps = useWrite<unknown, unknown>("PUT", `/employees/${id}/components`, {
+  const saveAllowances = useWrite<unknown, unknown>("PUT", `/employees/${id}/components`, {
     invalidate: [`/employees/${id}/components`],
-    success: "Salary components updated",
+    success: "Employee allowances updated",
   });
 
   const deleteDoc = useWrite<string, unknown>(
@@ -308,26 +301,26 @@ export default function EmployeeDetail() {
 
       <PageHeader
         title={`${e.name} (${e.employee_no})`}
-        description={`${e.position_name ?? "No position"}${e.department_name ? ` · ${e.department_name}` : ""}${e.branch_name ? ` · ${e.branch_name}` : ""}`}
+        description={`${e.position || e.position_name || "No position"}${e.branch_name ? ` · ${e.branch_name}` : ""}`}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge value={e.status} />
-            {can("employees.view_salary") && (
+            {canViewStatement && (
               <Button variant="outline" size="sm" onClick={() => window.print()}>
                 <Printer size={14} /> Print statement
               </Button>
             )}
-            {can("users.manage") && !e.user_id && e.status !== "terminated" && (
+            {can("security.user.manage") && !e.user_id && e.status !== "terminated" && (
               <Button variant="outline" size="sm" onClick={() => setLoginOpen(true)}>
                 <KeyRound size={14} /> Create login
               </Button>
             )}
-            {can("employees.manage") && (
+            {canManage && (
               <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
                 Edit profile
               </Button>
             )}
-            {can("employees.manage") && e.status !== "terminated" && (
+            {canManage && e.status !== "terminated" && (
               <Button
                 variant="outline"
                 size="sm"
@@ -344,10 +337,10 @@ export default function EmployeeDetail() {
       <Tabs defaultValue="profile">
         <TabsList className="mb-4 flex flex-wrap">
           <TabsTrigger value="profile">Profile &amp; Statement</TabsTrigger>
-          {(can("components.manage") || can("adjustments.manage")) && (
-            <TabsTrigger value="salary">Salary &amp; Bonuses</TabsTrigger>
+          {(canViewComp || canManageAdj) && (
+            <TabsTrigger value="salary">Allowances &amp; Bonuses</TabsTrigger>
           )}
-          <TabsTrigger value="leave">Leave &amp; Loans</TabsTrigger>
+          <TabsTrigger value="leave">Leave &amp; Advances</TabsTrigger>
           <TabsTrigger value="documents">Documents &amp; Attachments</TabsTrigger>
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
@@ -374,7 +367,7 @@ export default function EmployeeDetail() {
               </div>
             </div>
 
-            {can("employees.view_salary") && (
+            {canViewComp && (
               <div className="space-y-2 rounded-2xl border bg-card p-5 text-sm">
                 <h3 className="font-semibold">Compensation &amp; Payout Details</h3>
                 <div className="grid grid-cols-2 gap-y-2 pt-2">
@@ -390,7 +383,7 @@ export default function EmployeeDetail() {
                   <span>{e.mobile_money_number || "-"}</span>
                   {statement.data?.loan_balance && (
                     <>
-                      <span className="text-muted-foreground">Loan balance</span>
+                      <span className="text-muted-foreground">Advance balance</span>
                       <span className="font-semibold text-amber-700">
                         {formatMoney(statement.data.loan_balance)}
                       </span>
@@ -401,7 +394,7 @@ export default function EmployeeDetail() {
             )}
           </div>
 
-          {can("employees.view_salary") && statement.data && (
+          {canViewStatement && statement.data && (
             <div className="space-y-2">
               <h3 className="font-semibold">
                 Employee Statement ({formatDate(statement.data.from)} –{" "}
@@ -422,9 +415,9 @@ export default function EmployeeDetail() {
           )}
         </TabsContent>
 
-        {(can("components.manage") || can("adjustments.manage")) && (
+        {(canViewComp || canManageAdj) && (
           <TabsContent value="salary" className="space-y-6">
-            {can("adjustments.manage") && (
+            {canManageAdj && (
               <div className="flex items-center justify-between rounded-2xl border bg-card p-4">
                 <div>
                   <h3 className="font-semibold">One-off Bonus or Deduction</h3>
@@ -438,71 +431,111 @@ export default function EmployeeDetail() {
               </div>
             )}
 
-            {can("components.manage") && comps.data && (
+            {canViewComp && (
               <div className="space-y-3 rounded-2xl border bg-card p-5">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold">Assigned Salary Components</h3>
-                  <Button
-                    size="sm"
-                    disabled={saveComps.isPending}
-                    onClick={() => {
-                      const payload = Object.entries(selectedComps)
-                        .filter(([, v]) => v.assigned)
-                        .map(([component_id, v]) => ({
-                          component_id,
-                          override_value: v.override.trim() ? v.override.trim() : null,
-                        }));
-                      saveComps.mutate({ components: payload });
-                    }}
-                  >
-                    Save components
-                  </Button>
-                </div>
-                <div className="divide-y rounded-lg border">
-                  {comps.data.map((c) => {
-                    const st = selectedComps[c.component_id] ?? {
-                      assigned: false,
-                      override: "",
-                    };
-                    return (
-                      <div
-                        key={c.component_id}
-                        className="flex flex-wrap items-center justify-between gap-3 px-3 py-2 text-sm"
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-semibold">Recurring Allowances</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Monthly allowances paid alongside base salary (e.g. Housing, Transport).
+                    </p>
+                  </div>
+                  {canManageComp && (
+                    <div className="flex gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          setAllowances((prev) => [
+                            ...prev,
+                            { name: "", amount: "", effective_from: today() },
+                          ])
+                        }
                       >
-                        <label className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={st.assigned}
-                            onChange={(ev) =>
-                              setSelectedComps((prev) => ({
-                                ...prev,
-                                [c.component_id]: { ...st, assigned: ev.target.checked },
-                              }))
+                        <Plus size={14} /> Add allowance
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={saveAllowances.isPending}
+                        onClick={() => {
+                          const payload = allowances
+                            .filter((a) => a.name.trim() && Number(a.amount) > 0)
+                            .map((a) => ({
+                              name: a.name.trim(),
+                              amount: a.amount.trim(),
+                              effective_from: a.effective_from || today(),
+                            }));
+                          saveAllowances.mutate({ components: payload });
+                        }}
+                      >
+                        Save allowances
+                      </Button>
+                    </div>
+                  )}
+                </div>
+                {allowances.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">No active allowances configured.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {allowances.map((a, idx) => (
+                      <div
+                        key={idx}
+                        className="grid grid-cols-[1fr_8rem_9rem_2rem] items-center gap-2"
+                      >
+                        <Input
+                          disabled={!canManageComp}
+                          placeholder="Allowance name (e.g. Transport)"
+                          value={a.name}
+                          onChange={(ev) =>
+                            setAllowances((prev) =>
+                              prev.map((row, i) =>
+                                i === idx ? { ...row, name: ev.target.value } : row,
+                              ),
+                            )
+                          }
+                        />
+                        <Input
+                          disabled={!canManageComp}
+                          inputMode="decimal"
+                          placeholder="Amount"
+                          value={a.amount}
+                          onChange={(ev) =>
+                            setAllowances((prev) =>
+                              prev.map((row, i) =>
+                                i === idx ? { ...row, amount: ev.target.value } : row,
+                              ),
+                            )
+                          }
+                        />
+                        <Input
+                          disabled={!canManageComp}
+                          type="date"
+                          value={a.effective_from}
+                          onChange={(ev) =>
+                            setAllowances((prev) =>
+                              prev.map((row, i) =>
+                                i === idx ? { ...row, effective_from: ev.target.value } : row,
+                              ),
+                            )
+                          }
+                        />
+                        {canManageComp && (
+                          <Button
+                            type="button"
+                            size="icon"
+                            variant="ghost"
+                            className="h-8 w-8 text-destructive"
+                            onClick={() =>
+                              setAllowances((prev) => prev.filter((_, i) => i !== idx))
                             }
-                          />
-                          <span className="font-medium">{c.name}</span>
-                          <span className="text-xs text-muted-foreground">
-                            ({c.kind} · default {c.default_value ?? "-"})
-                          </span>
-                        </label>
-                        {st.assigned && (
-                          <Input
-                            className="h-8 w-36 text-xs"
-                            inputMode="decimal"
-                            placeholder="Custom override"
-                            value={st.override}
-                            onChange={(ev) =>
-                              setSelectedComps((prev) => ({
-                                ...prev,
-                                [c.component_id]: { ...st, override: ev.target.value },
-                              }))
-                            }
-                          />
+                          >
+                            <Trash2 size={14} />
+                          </Button>
                         )}
                       </div>
-                    );
-                  })}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </TabsContent>
@@ -517,9 +550,12 @@ export default function EmployeeDetail() {
               rowKey={(l) => l.leave_type_id}
               empty="No leave types configured"
               columns={[
-                { header: "Leave type", cell: (l) => <span className="font-medium">{l.leave_type}</span> },
-                { header: "Entitled", align: "right", cell: (l) => l.entitled },
-                { header: "Used", align: "right", cell: (l) => l.used },
+                {
+                  header: "Leave type",
+                  cell: (l) => <span className="font-medium">{l.name ?? l.leave_type}</span>,
+                },
+                { header: "Entitled", align: "right", cell: (l) => l.allowed ?? l.entitled ?? "0" },
+                { header: "Used", align: "right", cell: (l) => l.taken ?? l.used ?? "0" },
                 {
                   header: "Remaining",
                   align: "right",
@@ -529,9 +565,9 @@ export default function EmployeeDetail() {
             />
           </div>
 
-          {can("loans.view") && (
+          {canViewLoans && (
             <div className="space-y-2">
-              <h3 className="font-semibold">Loans &amp; Salary Advances</h3>
+              <h3 className="font-semibold">Advances &amp; Loans</h3>
               <DataGrid
                 rows={loans.data}
                 loading={loans.isLoading}
@@ -540,7 +576,11 @@ export default function EmployeeDetail() {
                 columns={[
                   { header: "Number", cell: (l) => l.number },
                   { header: "Kind", cell: (l) => <span className="capitalize">{l.kind}</span> },
-                  { header: "Amount", align: "right", cell: (l) => formatMoney(l.amount) },
+                  {
+                    header: "Amount",
+                    align: "right",
+                    cell: (l) => formatMoney(l.principal ?? l.amount),
+                  },
                   { header: "Balance", align: "right", cell: (l) => formatMoney(l.balance) },
                   { header: "Status", cell: (l) => <StatusBadge value={l.status} /> },
                 ]}
@@ -550,7 +590,7 @@ export default function EmployeeDetail() {
         </TabsContent>
 
         <TabsContent value="documents" className="space-y-6">
-          {can("employees.manage") && (
+          {canManage && (
             <div className="space-y-3 rounded-2xl border bg-card p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-semibold">Official HR Documents</h3>
@@ -592,7 +632,10 @@ export default function EmployeeDetail() {
                 rowKey={(d) => d.id}
                 empty="No official documents uploaded yet"
                 columns={[
-                  { header: "Type", cell: (d) => <span className="capitalize">{d.kind.replace("_", " ")}</span> },
+                  {
+                    header: "Type",
+                    cell: (d) => <span className="capitalize">{d.kind.replace("_", " ")}</span>,
+                  },
                   { header: "Name", cell: (d) => <span className="font-medium">{d.name}</span> },
                   { header: "Uploaded", cell: (d) => formatDate(d.created_at) },
                   {
@@ -635,23 +678,23 @@ export default function EmployeeDetail() {
         onOpenChange={setEditing}
         title="Edit employee profile"
         busy={updateEmp.isPending}
-        onSubmit={() =>
-          updateEmp.mutate({
+        onSubmit={() => {
+          const payload: Record<string, unknown> = {
             name: form.name,
             phone: form.phone,
             email: form.email,
             national_id: form.national_id,
             address: form.address,
-            department_id: form.department_id || null,
-            position_id: form.position_id || null,
+            position: form.position,
             pay_type: form.pay_type,
-            base_pay: form.base_pay,
             bank_name: form.bank_name,
             bank_account: form.bank_account,
             mobile_money_number: form.mobile_money_number,
             emergency_contact: form.emergency_contact,
-          })
-        }
+          };
+          if (canManageComp) payload.base_pay = form.base_pay;
+          updateEmp.mutate(payload);
+        }}
       >
         <Field label="Full name">
           <Input
@@ -686,36 +729,12 @@ export default function EmployeeDetail() {
               onChange={(ev) => setForm((f) => ({ ...f, emergency_contact: ev.target.value }))}
             />
           </Field>
-          {depts.data && (
-            <Field label="Department">
-              <NativeSelect
-                value={form.department_id}
-                onChange={(ev) => setForm((f) => ({ ...f, department_id: ev.target.value }))}
-              >
-                <option value="">None</option>
-                {depts.data.map((d) => (
-                  <option key={d.id} value={d.id}>
-                    {d.name}
-                  </option>
-                ))}
-              </NativeSelect>
-            </Field>
-          )}
-          {positions.data && (
-            <Field label="Position">
-              <NativeSelect
-                value={form.position_id}
-                onChange={(ev) => setForm((f) => ({ ...f, position_id: ev.target.value }))}
-              >
-                <option value="">None</option>
-                {positions.data.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </NativeSelect>
-            </Field>
-          )}
+          <Field label="Position / job title">
+            <Input
+              value={form.position}
+              onChange={(ev) => setForm((f) => ({ ...f, position: ev.target.value }))}
+            />
+          </Field>
           <Field label="Pay type">
             <NativeSelect
               value={form.pay_type}
@@ -726,7 +745,7 @@ export default function EmployeeDetail() {
               <option value="hourly">Hourly</option>
             </NativeSelect>
           </Field>
-          {can("employees.view_salary") && (
+          {canManageComp && (
             <Field label="Base pay">
               <Input
                 inputMode="decimal"

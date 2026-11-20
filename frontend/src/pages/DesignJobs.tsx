@@ -119,7 +119,7 @@ function Board({ designer }: { designer: string }) {
         <section
           key={col.status}
           onDragOver={(e) => {
-            if (can("design.manage")) {
+            if (can("services.design.manage")) {
               e.preventDefault();
               setOver(col.status);
             }
@@ -423,7 +423,7 @@ export default function DesignJobs() {
     },
   );
   const staff = useStaff();
-  const manage = can("design.manage");
+  const manage = can("services.design.manage");
   const myJobs = (list.data ?? []).filter((j) => j.designer_id === user?.id);
   const myDueToday = myJobs.filter((j) => {
     const d = daysUntil(j.deadline);

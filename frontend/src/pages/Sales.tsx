@@ -12,6 +12,7 @@ import {
   Pager,
   StatusBadge,
 } from "@/components/shared/kit";
+import { useAuth } from "@/features/auth/auth";
 import { useDebounce } from "@/hooks/useDebounce";
 import { useGetPage } from "@/hooks/useApi";
 import { downloadCsv } from "@/lib/csv";
@@ -31,6 +32,8 @@ interface ReturnRow {
 }
 
 export default function Sales() {
+  const { canAny } = useAuth();
+  const canViewReturns = canAny("shop.sale.view_all", "shop.return.create", "shop.return.approve");
   const [page, setPage] = useState(1);
   const [retPage, setRetPage] = useState(1);
   const [q, setQ] = useState("");
@@ -50,12 +53,16 @@ export default function Sales() {
     page,
     per_page: 25,
   });
-  const returns = useGetPage<ReturnRow>("/sale-returns", {
-    from,
-    to,
-    page: retPage,
-    per_page: 25,
-  });
+  const returns = useGetPage<ReturnRow>(
+    "/sale-returns",
+    {
+      from,
+      to,
+      page: retPage,
+      per_page: 25,
+    },
+    { enabled: canViewReturns },
+  );
 
   const rows = sales.data?.data ?? [];
 
@@ -79,7 +86,7 @@ export default function Sales() {
     <>
       <PageHeader
         title="Sales & returns"
-        description="Sales history, receipts and returns at the active branch."
+        description="Sales history, receipts and returns at the active location."
         actions={
           rows.length > 0 && (
             <Button variant="outline" size="sm" onClick={exportCsv}>
@@ -92,7 +99,7 @@ export default function Sales() {
       <Tabs defaultValue="sales">
         <TabsList className="mb-4">
           <TabsTrigger value="sales">Sales history</TabsTrigger>
-          <TabsTrigger value="returns">Returns</TabsTrigger>
+          {canViewReturns && <TabsTrigger value="returns">Returns</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="sales">

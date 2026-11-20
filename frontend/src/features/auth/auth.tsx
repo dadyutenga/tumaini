@@ -52,6 +52,7 @@ interface Auth {
   setBranchId: (id: string) => void;
   can: (permission: string) => boolean;
   canAny: (...permissions: string[]) => boolean;
+  limit: (code: string) => string | null;
   login: (input: Credentials) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
@@ -83,8 +84,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (defaultBranch?: string) => {
       const profile = await get<Me>("/me");
       const allowed = profile.branches ?? [];
-      const wanted = [branchId, defaultBranch].find((id) => id && allowed.includes(id));
-      const next = wanted ?? allowed[0] ?? null;
+      const next = branchId || defaultBranch || allowed[0] || null;
       session.setBranch(next);
       setBranch(next);
       setMe(profile);
@@ -210,7 +210,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<Auth>(() => {
     const perms = me?.permissions ?? {};
+    const limits = me?.limits ?? {};
     const can = (permission: string) => Boolean(me?.is_owner || perms[permission]);
+    const limit = (code: string) => limits[code] ?? null;
     return {
       status,
       me,
@@ -219,6 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setBranchId,
       can,
       canAny: (...permissions: string[]) => permissions.some(can),
+      limit,
       login,
       register,
       logout,

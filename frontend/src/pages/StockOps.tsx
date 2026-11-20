@@ -99,10 +99,12 @@ function TransfersTab() {
     setReceiving(detail);
   }
 
+  const manage = can("shop.stock.manage");
+
   return (
     <>
       <div className="mb-4 flex justify-end">
-        {can("transfers.create") && (
+        {manage && (
           <Button onClick={() => setOpen(true)}>
             <Plus size={16} /> New transfer
           </Button>
@@ -123,12 +125,12 @@ function TransfersTab() {
             header: "",
             cell: (t) => (
               <div className="flex gap-2">
-                {t.status === "draft" && can("transfers.dispatch") && (
+                {t.status === "draft" && manage && (
                   <Button size="sm" onClick={() => act.mutate({ id: t.id, action: "dispatch" })}>
                     Dispatch
                   </Button>
                 )}
-                {t.status === "draft" && can("transfers.create") && (
+                {t.status === "draft" && manage && (
                   <Button
                     size="sm"
                     variant="outline"
@@ -137,7 +139,7 @@ function TransfersTab() {
                     Cancel
                   </Button>
                 )}
-                {t.status === "dispatched" && can("transfers.receive") && (
+                {t.status === "dispatched" && manage && (
                   <Button size="sm" onClick={() => void startReceive(t)}>
                     Receive
                   </Button>
@@ -158,7 +160,7 @@ function TransfersTab() {
           create.mutate({ to_branch_id: to, items: lines.filter((l) => l.product_id) })
         }
       >
-        <Field label="Send to branch">
+        <Field label="Send to location">
           <NativeSelect required value={to} onChange={(e) => setTo(e.target.value)}>
             <option value="">Choose…</option>
             {branches.data
@@ -178,13 +180,11 @@ function TransfersTab() {
                 onChange={(e) => setLine(i, { product_id: e.target.value })}
               >
                 <option value="">Choose…</option>
-                {products.data
-                  ?.filter((p) => p.kind === "stock")
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
+                {products.data?.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
               </NativeSelect>
             </Field>
             <Field label={i === 0 ? "Qty" : ""}>
@@ -290,10 +290,12 @@ function CountsTab() {
     setEditing(detail);
   }
 
+  const manage = can("shop.stock.manage");
+
   return (
     <>
       <div className="mb-4 flex flex-wrap justify-end gap-2">
-        {can("stock.adjust") && (
+        {manage && (
           <>
             <Button
               variant="outline"
@@ -334,7 +336,7 @@ function CountsTab() {
             header: "",
             cell: (a) =>
               a.status === "draft" &&
-              can("stock.adjust") && (
+              manage && (
                 <div className="flex gap-2">
                   <Button size="sm" variant="outline" onClick={() => void edit(a)}>
                     Counts
@@ -374,13 +376,11 @@ function CountsTab() {
                 onChange={(e) => setLine(i, { product_id: e.target.value })}
               >
                 <option value="">Choose…</option>
-                {products.data
-                  ?.filter((p) => p.kind === "stock")
-                  .map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
+                {products.data?.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
               </NativeSelect>
             </Field>
             <Field label={i === 0 ? "Counted qty" : ""}>
@@ -470,20 +470,21 @@ function MovementsTab() {
 }
 
 export default function StockOps() {
-  const { can } = useAuth();
+  const { canAny } = useAuth();
+  const canView = canAny("shop.stock.view", "shop.stock.manage");
   return (
     <>
       <PageHeader
         title="Transfers and counts"
-        description="Move stock between branches, count what is on the shelf and correct differences."
+        description="Move stock between locations, count what is on the shelf and correct differences."
       />
-      <Tabs defaultValue={can("transfers.view") ? "transfers" : "counts"}>
+      <Tabs defaultValue="transfers">
         <TabsList className="mb-4">
-          {can("transfers.view") && <TabsTrigger value="transfers">Transfers</TabsTrigger>}
+          {canView && <TabsTrigger value="transfers">Transfers</TabsTrigger>}
           <TabsTrigger value="counts">Counts and adjustments</TabsTrigger>
           <TabsTrigger value="movements">Movements</TabsTrigger>
         </TabsList>
-        {can("transfers.view") && (
+        {canView && (
           <TabsContent value="transfers">
             <TransfersTab />
           </TabsContent>

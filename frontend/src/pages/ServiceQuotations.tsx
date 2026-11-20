@@ -204,7 +204,8 @@ function Detail({
     onSuccess: () => setRejecting(false),
   });
   const q = quote.data;
-  const manage = can("service_billing.manage");
+  const manage = can("services.quotation.manage");
+  const canDraft = can("services.quotation.manage") || can("services.quotation.draft");
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
@@ -232,15 +233,15 @@ function Detail({
             {q.notes && <p className="rounded-xl bg-muted/50 p-3 text-sm">{q.notes}</p>}
             <div className="flex flex-wrap justify-end gap-2">
               <PdfButton path={`/service-quotations/${id}/pdf`} filename={`${q.number}.pdf`} />
+              {canDraft && q.status === "draft" && (
+                <Button variant="outline" onClick={() => onEdit(q)}>
+                  Edit
+                </Button>
+              )}
               {manage && q.status === "draft" && (
-                <>
-                  <Button variant="outline" onClick={() => onEdit(q)}>
-                    Edit
-                  </Button>
-                  <Button onClick={() => send.mutate(undefined)} disabled={send.isPending}>
-                    Mark as sent
-                  </Button>
-                </>
+                <Button onClick={() => send.mutate(undefined)} disabled={send.isPending}>
+                  Mark as sent
+                </Button>
               )}
               {manage && (q.status === "draft" || q.status === "sent") && (
                 <>
@@ -280,7 +281,8 @@ function Detail({
 }
 
 export default function ServiceQuotations() {
-  const { can } = useAuth();
+  const { canAny } = useAuth();
+  const canCreate = canAny("services.quotation.manage", "services.quotation.draft");
   const [params, setParams] = useSearchParams();
   const [status, setStatus] = useState("");
   const [q, setQ] = useState("");
@@ -291,11 +293,11 @@ export default function ServiceQuotations() {
   // Arriving from a client page with ?client=: start a quotation for them.
   const preset = params.get("client");
   useEffect(() => {
-    if (preset && can("service_billing.manage")) {
+    if (preset && canCreate) {
       setForm({ ...blank, client_id: preset });
       setParams({}, { replace: true });
     }
-  }, [preset, can, setParams]);
+  }, [preset, canCreate, setParams]);
 
   async function edit(quote: Quotation) {
     setOpenId(null);
@@ -315,7 +317,7 @@ export default function ServiceQuotations() {
         title="Quotations"
         description="Price a job for a client. When they agree, accept it to get the invoice and project."
         actions={
-          can("service_billing.manage") && (
+          canCreate && (
             <Button onClick={() => setForm(blank)}>
               <Plus size={16} /> New quotation
             </Button>

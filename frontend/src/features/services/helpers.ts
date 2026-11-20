@@ -13,7 +13,11 @@ export function label(value: string | null | undefined) {
 /** Staff the signed-in user may assign work to. Empty when they cannot list users. */
 export function useStaff() {
   const { can } = useAuth();
-  const users = useGet<UserLite[]>("/users", { per_page: 100 }, { enabled: can("users.view") });
+  const users = useGet<UserLite[]>(
+    "/users",
+    { per_page: 100 },
+    { enabled: can("security.user.manage") },
+  );
   return (users.data ?? []).filter((u) => u.is_active);
 }
 

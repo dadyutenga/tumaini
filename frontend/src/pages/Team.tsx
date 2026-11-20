@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { KeyRound, LogOut, Pencil, Plus, Shield } from "lucide-react";
+import { KeyRound, LogOut, Pencil, Plus, Shield, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -23,6 +23,7 @@ interface Role {
   id: string;
   name: string;
   slug: string;
+  rank?: number;
   is_system: boolean;
 }
 const blank = {
@@ -31,16 +32,17 @@ const blank = {
   email: "",
   password: "",
   role_id: "",
-  branch_ids: [] as string[],
+  default_branch_id: "",
 };
 
 export default function Team() {
   const { can } = useAuth();
   const [editingRole, setEditingRole] = useState<string | null | undefined>(undefined);
+  const [retireRole, setRetireRole] = useState<Role | null>(null);
   const [page, setPage] = useState(1);
   const users = useGetPage<SessionUser>("/users", { page, per_page: 25 });
-  const roles = useGet<Role[]>("/roles", undefined, { enabled: can("roles.view") });
-  const branches = useGet<Branch[]>("/branches", undefined, { enabled: can("branches.view") });
+  const roles = useGet<Role[]>("/roles", undefined, { enabled: can("security.user.manage") });
+  const branches = useGet<Branch[]>("/branches");
   const [open, setOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<SessionUser | null>(null);
   const [draft, setDraft] = useState(blank);
@@ -50,7 +52,7 @@ export default function Team() {
   const [kickTarget, setKickTarget] = useState<SessionUser | null>(null);
   const [permTarget, setPermTarget] = useState<SessionUser | null>(null);
 
-  const create = useWrite<typeof blank, unknown>("POST", "/users", {
+  const create = useWrite<Record<string, unknown>, unknown>("POST", "/users", {
     invalidate: ["/users"],
     success: "User created",
     onSuccess: () => {
@@ -58,7 +60,7 @@ export default function Team() {
       setDraft(blank);
     },
   });
-  const update = useWrite<Omit<typeof blank, "password">, unknown>(
+  const update = useWrite<Record<string, unknown>, unknown>(
     "PUT",
     () => `/users/${editingUser?.id}`,
     {
@@ -99,16 +101,21 @@ export default function Team() {
     success: "User signed out of all devices",
     onSuccess: () => setKickTarget(null),
   });
+  const retire = useWrite("DELETE", () => `/roles/${retireRole?.id}`, {
+    invalidate: ["/roles"],
+    success: "Role retired",
+    onSuccess: () => setRetireRole(null),
+  });
 
-  const manage = can("users.manage");
-  const canSessions = can("sessions.manage");
+  const manage = can("security.user.manage");
   const branchNames = new Map((branches.data ?? []).map((b) => [b.id, b.name]));
+  const activeBranches = (branches.data ?? []).filter((b) => b.is_active);
 
   return (
     <>
       <PageHeader
         title="Team and roles"
-        description="Who can sign in, at which branches, and what they may do."
+        description="Manage seats, default locations, roles, authority limits, and per-user permission overrides."
         actions={
           manage && (
             <Button
@@ -141,8 +148,8 @@ export default function Team() {
       )}
       <Tabs defaultValue="users">
         <TabsList>
-          {can("users.view") && <TabsTrigger value="users">Users</TabsTrigger>}
-          {can("roles.view") && <TabsTrigger value="roles">Roles</TabsTrigger>}
+          <TabsTrigger value="users">Users</TabsTrigger>
+          <TabsTrigger value="roles">Roles</TabsTrigger>
         </TabsList>
         <TabsContent value="users">
           <DataGrid
@@ -154,7 +161,7 @@ export default function Team() {
               { header: "Contact", cell: (u) => u.phone ?? u.email ?? "-" },
               { header: "Role", cell: (u) => u.role_name },
               {
-                header: "Branches",
+                header: "Default location",
                 cell: (u) =>
                   (u.branch_ids ?? [])
                     .map((id) => branchNames.get(id) ?? id.slice(0, 6))
@@ -168,58 +175,46 @@ export default function Team() {
                 header: "",
                 className: "text-right",
                 cell: (u) =>
-                  (manage || canSessions) && (
+                  manage && (
                     <div className="flex justify-end gap-1">
-                      {manage && (
-                        <>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setDraft({
-                                name: u.name,
-                                phone: u.phone ?? "",
-                                email: u.email ?? "",
-                                password: "",
-                                role_id: u.role_id,
-                                branch_ids: u.branch_ids ?? [],
-                              });
-                              setEditingUser(u);
-                            }}
-                          >
-                            <Pencil size={14} /> Edit
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => {
-                              setResetPw("");
-                              setResetTarget(u);
-                            }}
-                          >
-                            <KeyRound size={14} /> Reset PW
-                          </Button>
-                          {u.role_slug !== "owner" && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => setPermTarget(u)}
-                            >
-                              <Shield size={14} /> Perms
-                            </Button>
-                          )}
-                        </>
-                      )}
-                      {canSessions && (
-                        <Button variant="ghost" size="sm" onClick={() => setKickTarget(u)}>
-                          <LogOut size={14} /> Sign out
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setDraft({
+                            name: u.name,
+                            phone: u.phone ?? "",
+                            email: u.email ?? "",
+                            password: "",
+                            role_id: u.role_id ?? "",
+                            default_branch_id: (u.branch_ids ?? [])[0] ?? "",
+                          });
+                          setEditingUser(u);
+                        }}
+                      >
+                        <Pencil size={14} /> Edit
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setResetPw("");
+                          setResetTarget(u);
+                        }}
+                      >
+                        <KeyRound size={14} /> Reset PW
+                      </Button>
+                      {u.role_slug !== "admin" && u.role_slug !== "owner" && (
+                        <Button variant="ghost" size="sm" onClick={() => setPermTarget(u)}>
+                          <Shield size={14} /> Perms
                         </Button>
                       )}
-                      {manage && (
-                        <Button variant="ghost" size="sm" onClick={() => toggle.mutate(u)}>
-                          {u.is_active ? "Deactivate" : "Activate"}
-                        </Button>
-                      )}
+                      <Button variant="ghost" size="sm" onClick={() => setKickTarget(u)}>
+                        <LogOut size={14} /> Sign out
+                      </Button>
+                      <Button variant="ghost" size="sm" onClick={() => toggle.mutate(u)}>
+                        {u.is_active ? "Deactivate" : "Activate"}
+                      </Button>
                     </div>
                   ),
               },
@@ -228,7 +223,7 @@ export default function Team() {
           <Pager meta={users.data?.meta} onPage={setPage} />
         </TabsContent>
         <TabsContent value="roles">
-          {can("roles.manage") && (
+          {manage && (
             <div className="mb-4 flex justify-end">
               <Button onClick={() => setEditingRole(null)}>
                 <Plus size={16} /> New role
@@ -241,13 +236,26 @@ export default function Team() {
             rowKey={(r) => r.id}
             columns={[
               { header: "Role", cell: (r) => <span className="font-medium">{r.name}</span> },
+              { header: "Rank", align: "right", cell: (r) => r.rank ?? "-" },
               { header: "Type", cell: (r) => (r.is_system ? "Built in" : "Custom") },
               {
                 header: "",
                 cell: (r) => (
-                  <Button size="sm" variant="outline" onClick={() => setEditingRole(r.id)}>
-                    {can("roles.manage") ? "Edit permissions" : "View"}
-                  </Button>
+                  <div className="flex justify-end gap-1.5">
+                    <Button size="sm" variant="outline" onClick={() => setEditingRole(r.id)}>
+                      {manage ? "Edit permissions" : "View"}
+                    </Button>
+                    {manage && !r.is_system && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-destructive"
+                        onClick={() => setRetireRole(r)}
+                      >
+                        <Trash2 size={14} /> Retire
+                      </Button>
+                    )}
+                  </div>
                 ),
               },
             ]}
@@ -271,12 +279,17 @@ export default function Team() {
         title={editingUser ? `Edit ${editingUser.name}` : "New user"}
         busy={create.isPending || update.isPending}
         onSubmit={() => {
+          const payload: Record<string, unknown> = {
+            name: draft.name,
+            phone: draft.phone,
+            email: draft.email,
+            role_id: draft.role_id,
+            branch_ids: draft.default_branch_id ? [draft.default_branch_id] : [],
+          };
           if (editingUser) {
-            const { password: _pw, ...rest } = draft;
-            void _pw;
-            update.mutate(rest);
+            update.mutate(payload);
           } else {
-            create.mutate(draft);
+            create.mutate({ ...payload, password: draft.password });
           }
         }}
       >
@@ -327,26 +340,18 @@ export default function Team() {
             ))}
           </NativeSelect>
         </Field>
-        <Field label="Branches">
-          <div className="space-y-1">
-            {(branches.data ?? []).map((b) => (
-              <label key={b.id} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={draft.branch_ids.includes(b.id)}
-                  onChange={(e) =>
-                    setDraft((d) => ({
-                      ...d,
-                      branch_ids: e.target.checked
-                        ? [...d.branch_ids, b.id]
-                        : d.branch_ids.filter((x) => x !== b.id),
-                    }))
-                  }
-                />
+        <Field label="Default location">
+          <NativeSelect
+            value={draft.default_branch_id}
+            onChange={(e) => setDraft((d) => ({ ...d, default_branch_id: e.target.value }))}
+          >
+            <option value="">Main / default</option>
+            {activeBranches.map((b) => (
+              <option key={b.id} value={b.id}>
                 {b.name}
-              </label>
+              </option>
             ))}
-          </div>
+          </NativeSelect>
         </Field>
       </FormDialog>
       <FormDialog
@@ -374,6 +379,13 @@ export default function Team() {
         title={`Force sign out ${kickTarget?.name ?? ""}?`}
         description="Every active session on all devices for this user will be ended immediately."
         onConfirm={() => forceSignOut.mutate(undefined)}
+      />
+      <ConfirmDialog
+        open={retireRole !== null}
+        onOpenChange={(o) => !o && setRetireRole(null)}
+        title={`Retire role "${retireRole?.name ?? ""}"?`}
+        description="Retired roles are marked inactive and can no longer be assigned. Reassign all users first."
+        onConfirm={() => retire.mutate(undefined)}
       />
       {permTarget && (
         <UserPermissionsDialog

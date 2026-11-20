@@ -7,7 +7,9 @@ import DesignJobs from "./DesignJobs";
 import ProjectDetail from "./ProjectDetail";
 import ServicesHome from "./ServicesHome";
 
-vi.mock("@/features/auth/auth", () => ({ useAuth: () => ({ can: () => true }) }));
+vi.mock("@/features/auth/auth", () => ({
+  useAuth: () => ({ can: () => true, canAny: () => true, limit: () => null }),
+}));
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });

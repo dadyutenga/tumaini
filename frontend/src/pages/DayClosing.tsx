@@ -56,7 +56,7 @@ interface ClosingRow {
 }
 
 export default function DayClosing() {
-  const { me, can } = useAuth();
+  const { can } = useAuth();
   const [date, setDate] = useState(today());
   const [page, setPage] = useState(1);
 
@@ -72,21 +72,20 @@ export default function DayClosing() {
 
   useEffect(() => {
     if (summary.data) {
-      setCountedCash(
-        summary.data.closing?.counted_cash ?? summary.data.expected_cash ?? "0",
-      );
+      setCountedCash(summary.data.closing?.counted_cash ?? summary.data.expected_cash ?? "0");
       setNote(summary.data.closing?.note ?? "");
     }
   }, [summary.data?.date, summary.data?.expected_cash, summary.data?.closing?.status]);
 
-  const closeDay = useWrite<
-    { date: string; counted_cash: string; note: string },
-    unknown
-  >("POST", "/day-closings", {
-    success: "Day closed",
-    invalidate: ["/day-closings/summary", "/day-closings"],
-    onSuccess: () => setConfirmingClose(false),
-  });
+  const closeDay = useWrite<{ date: string; counted_cash: string; note: string }, unknown>(
+    "POST",
+    "/day-closings",
+    {
+      success: "Day closed",
+      invalidate: ["/day-closings/summary", "/day-closings"],
+      onSuccess: () => setConfirmingClose(false),
+    },
+  );
 
   const reopenDay = useWrite<{ reason: string }, unknown>(
     "POST",
@@ -243,16 +242,17 @@ export default function DayClosing() {
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
                   <div>
-                    Closed by <strong className="text-foreground">{closing.closed_by_name ?? "—"}</strong>{" "}
-                    on {formatDateTime(closing.closed_at)}
+                    Closed by{" "}
+                    <strong className="text-foreground">{closing.closed_by_name ?? "—"}</strong> on{" "}
+                    {formatDateTime(closing.closed_at)}
                     {closing.note && <p className="mt-1 text-foreground">Note: {closing.note}</p>}
                   </div>
-                  {me?.is_owner && (
+                  {can("finance.day.reopen") && (
                     <Button
                       variant="outline"
                       onClick={() => setReopening({ id: closing.id, date: data.date })}
                     >
-                      <LockOpen size={15} /> Reopen day (Owner)
+                      <LockOpen size={15} /> Reopen day
                     </Button>
                   )}
                 </div>
@@ -261,7 +261,7 @@ export default function DayClosing() {
               <div className="space-y-4">
                 {closing?.status === "reopened" && (
                   <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-                    Previously reopened by <strong>{closing.reopened_by_name ?? "Owner"}</strong>:{" "}
+                    Previously reopened by <strong>{closing.reopened_by_name ?? "Admin"}</strong>:{" "}
                     {closing.reopen_reason}
                   </div>
                 )}
@@ -304,7 +304,7 @@ export default function DayClosing() {
                   </Field>
                 </div>
 
-                {can("tills.open_close") || can("accounts.manage") || me?.is_owner ? (
+                {can("finance.day.close") ? (
                   <div className="flex justify-end">
                     <Button onClick={() => setConfirmingClose(true)}>
                       <CheckCircle2 size={16} /> Close Day
@@ -330,9 +330,16 @@ export default function DayClosing() {
           empty="No closed days recorded yet"
           onRowClick={(r) => setDate(r.date)}
           columns={[
-            { header: "Date", cell: (r) => <span className="font-medium">{formatDate(r.date)}</span> },
+            {
+              header: "Date",
+              cell: (r) => <span className="font-medium">{formatDate(r.date)}</span>,
+            },
             { header: "Branch", cell: (r) => r.branch_name },
-            { header: "Payments in", align: "right", cell: (r) => formatMoney(r.payments_received) },
+            {
+              header: "Payments in",
+              align: "right",
+              cell: (r) => formatMoney(r.payments_received),
+            },
             { header: "Expenses", align: "right", cell: (r) => formatMoney(r.expenses_total) },
             { header: "Expected cash", align: "right", cell: (r) => formatMoney(r.expected_cash) },
             { header: "Counted cash", align: "right", cell: (r) => formatMoney(r.counted_cash) },

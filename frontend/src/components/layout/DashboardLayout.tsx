@@ -14,7 +14,6 @@ import {
 } from "@/components/shared/Toolbar";
 import { LanguageSwitcher } from "@/features/i18n/LanguageSwitcher";
 import { useI18n } from "@/features/i18n/i18n";
-import { useAuth } from "@/features/auth/auth";
 import { useGet } from "@/hooks/useApi";
 import { setActiveCurrency } from "@/lib/formatters";
 import { Button } from "@/components/ui/button";
@@ -69,9 +68,7 @@ function Navigation({
             {sec.name && !compact && (
               <button
                 type="button"
-                onClick={() =>
-                  setCollapsed((c) => ({ ...c, [sec.name!]: !c[sec.name!] }))
-                }
+                onClick={() => setCollapsed((c) => ({ ...c, [sec.name!]: !c[sec.name!] }))}
                 className="mt-4 flex w-full items-center justify-between px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground/80 hover:text-foreground"
               >
                 <span>{groupLabel(sec.name)}</span>
@@ -114,17 +111,15 @@ export default function DashboardLayout() {
   const [open, setOpen] = useState(false);
   const location = useLocation();
   const { t, routeLabel } = useI18n();
-  const { can } = useAuth();
-  const business = useGet<{ name?: string; currency: string }>("/business", undefined, {
-    enabled: can("settings.view"),
-  });
+  const business = useGet<{ name?: string; currency: string }>("/business");
   setActiveCurrency(business.data?.currency);
   const brand = business.data?.name || APP_NAME;
-  const initials = brand
-    .split(/\s+/)
-    .slice(0, 2)
-    .map((w) => w[0]?.toUpperCase() ?? "")
-    .join("") || APP_NAME;
+  const initials =
+    brand
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? "")
+      .join("") || APP_NAME;
 
   const currentRoute = routes.find((r) =>
     matchPath({ path: r.path, end: true }, location.pathname),

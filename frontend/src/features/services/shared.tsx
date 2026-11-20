@@ -23,7 +23,7 @@ export function StaffSelect({
 }) {
   const staff = useStaff();
   const { can } = useAuth();
-  if (!can("users.view")) return null;
+  if (!can("security.user.manage")) return null;
   return (
     <NativeSelect value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{empty}</option>
@@ -127,9 +127,9 @@ export function PaymentDialog({
   invalidate: string[];
   success?: string;
 }) {
-  const { can } = useAuth();
+  const { canAny } = useAuth();
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
-    enabled: can("accounts.view"),
+    enabled: canAny("finance.account.view", "finance.payment.receive", "services.invoice.manage"),
   });
   const [pay, setPay] = useState<PayValues>(blankPay);
   const write = useWrite<unknown>("POST", path, {

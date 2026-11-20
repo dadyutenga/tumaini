@@ -15,14 +15,13 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FormDialog, NativeSelect, PageHeader } from "@/components/shared/kit";
-import { PageLoader } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
 import { whatsappUrl } from "@/features/services/helpers";
 import { useDebounce } from "@/hooks/useDebounce";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { api, download, get, isPendingApproval, newIdempotencyKey } from "@/lib/api";
 import { formatMoney, toNumber } from "@/lib/formatters";
-import type { Category, Customer, MoneyAccount, Product, Sale, Till } from "@/types";
+import type { Category, Customer, MoneyAccount, Product, Sale } from "@/types";
 
 interface CartLine {
   product: Product;
@@ -75,15 +74,21 @@ function writeStorage(key: string, value: unknown) {
 }
 
 export default function Pos() {
-  const { can } = useAuth();
+  const { can, canAny, limit } = useAuth();
   const [params, setParams] = useSearchParams();
   const queryClient = useQueryClient();
-  const till = useGet<Till | null>("/tills/current");
   const accounts = useGet<MoneyAccount[]>("/money-accounts", { is_active: true });
-  const customers = useGet<Customer[]>("/customers", { per_page: 200 }, { enabled: can("customers.view") });
+  const canViewCustomers = canAny("shop.customer.view_all", "shop.customer.manage");
+  const customers = useGet<Customer[]>(
+    "/customers",
+    { per_page: 200 },
+    { enabled: canViewCustomers },
+  );
   const categories = useGet<Category[]>("/categories");
 
-  const [online, setOnline] = useState(() => (typeof navigator === "undefined" ? true : navigator.onLine));
+  const [online, setOnline] = useState(() =>
+    typeof navigator === "undefined" ? true : navigator.onLine,
+  );
   const [offlineQueue, setOfflineQueue] = useState<OfflineSale[]>(() => readStorage(QUEUE_KEY, []));
   const [syncing, setSyncing] = useState(false);
 
@@ -99,30 +104,16 @@ export default function Pos() {
     { id: "p1", method: "cash", money_account_id: "", amount: "", reference: "" },
   ]);
   const [receipt, setReceipt] = useState<Sale | null>(null);
-  const [closing, setClosing] = useState(false);
   const [heldOpen, setHeldOpen] = useState(false);
-  const [payingOut, setPayingOut] = useState(false);
   const [quickCustOpen, setQuickCustOpen] = useState(false);
   const [quickCust, setQuickCust] = useState({ name: "", phone: "" });
-  const [payout, setPayout] = useState({ to_account_id: "", amount: "", note: "" });
   const [heldId, setHeldId] = useState<string | null>(null);
-  const held = useGet<HeldCart[]>("/sales/held", undefined, { enabled: can("sales.create") && online });
+  const held = useGet<HeldCart[]>("/sales/held", undefined, {
+    enabled: can("shop.sale.create") && online,
+  });
   const idempotencyKey = useRef(newIdempotencyKey());
   const [busy, setBusy] = useState(false);
 
-  const payOutCash = useWrite<typeof payout, unknown>(
-    "POST",
-    () => `/tills/${till.data?.id}/pay-out`,
-    {
-      idempotent: true,
-      invalidate: ["/tills", "/money"],
-      success: "Cash paid out of the till",
-      onSuccess: () => {
-        setPayingOut(false);
-        setPayout({ to_account_id: "", amount: "", note: "" });
-      },
-    },
-  );
   const addQuickCustomer = useWrite<typeof quickCust, Customer>("POST", "/customers", {
     invalidate: ["/customers"],
     success: "Customer added",
@@ -236,9 +227,7 @@ export default function Pos() {
     [cart],
   );
   const discountPayload =
-    toNumber(discountValue) > 0
-      ? { type: discountType, value: discountValue }
-      : undefined;
+    toNumber(discountValue) > 0 ? { type: discountType, value: discountValue } : undefined;
 
   const preview = useQuery({
     queryKey: ["/sales/preview", items, customerId, discountPayload],
@@ -256,8 +245,11 @@ export default function Pos() {
     idempotencyKey.current = newIdempotencyKey();
   }, [cart, customerId, discountType, discountValue, dueDate, payments]);
 
-  if (till.isLoading && online) return <PageLoader />;
-  if (!till.data && online) return <OpenTill accounts={accounts.data} />;
+  const activeCashAccounts = useMemo(
+    () => (accounts.data ?? []).filter((a) => a.type === "cash" && a.is_active),
+    [accounts.data],
+  );
+  const defaultCashAccountId = activeCashAccounts[0]?.id ?? "";
 
   const offlineSubtotal = cart.reduce(
     (s, l) => s + toNumber(l.qty) * toNumber(l.product.sell_price),
@@ -272,7 +264,7 @@ export default function Pos() {
   }, 0);
 
   function add(product: Product) {
-    if (product.kind === "stock" && product.qty_on_hand !== undefined && toNumber(product.qty_on_hand) <= 0) {
+    if (product.qty_on_hand !== undefined && toNumber(product.qty_on_hand) <= 0) {
       toast.error(`${product.name} is out of stock.`);
       return;
     }
@@ -329,12 +321,22 @@ export default function Pos() {
     }
   }
 
+  function resolveAccountId(p: PaymentRow) {
+    if (p.money_account_id) return p.money_account_id;
+    return p.method === "cash" ? defaultCashAccountId : "";
+  }
+
   function buildPaymentPayload() {
     return payments
       .map((p, idx) => {
-        const amt = payments.length === 1 && idx === 0 && p.amount === "" ? total : toNumber(p.amount);
-        const accId = p.method === "cash" ? till.data?.money_account_id ?? "" : p.money_account_id;
-        return { method: p.method, money_account_id: accId, amount: String(amt), reference: p.reference };
+        const amt =
+          payments.length === 1 && idx === 0 && p.amount === "" ? total : toNumber(p.amount);
+        return {
+          method: p.method,
+          money_account_id: resolveAccountId(p),
+          amount: String(amt),
+          reference: p.reference,
+        };
       })
       .filter((p) => toNumber(p.amount) > 0);
   }
@@ -388,7 +390,9 @@ export default function Pos() {
         setDiscountValue("");
         setDueDate("");
         setHeldId(null);
-        setPayments([{ id: "p1", method: "cash", money_account_id: "", amount: "", reference: "" }]);
+        setPayments([
+          { id: "p1", method: "cash", money_account_id: "", amount: "", reference: "" },
+        ]);
         void queryClient.invalidateQueries({
           predicate: (q) => /^\/(sales|products|stock|customers|money)/.test(String(q.queryKey[0])),
         });
@@ -403,7 +407,7 @@ export default function Pos() {
   const paymentsValid = payments.every((p, idx) => {
     const amt = payments.length === 1 && idx === 0 && p.amount === "" ? total : toNumber(p.amount);
     if (amt <= 0) return true;
-    return p.method === "cash" || Boolean(p.money_account_id);
+    return !online || Boolean(resolveAccountId(p));
   });
   const canSell =
     cart.length > 0 &&
@@ -416,9 +420,7 @@ export default function Pos() {
       <PageHeader
         title="Point of sale"
         description={
-          till.data
-            ? `Till open since ${new Date(till.data.opened_at).toLocaleTimeString()} · float ${formatMoney(till.data.opening_float)}`
-            : "Offline POS mode"
+          online ? "Sell items, record payments and print receipts." : "Offline POS mode"
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -440,15 +442,10 @@ export default function Pos() {
             <Button variant="outline" size="sm" onClick={() => setHeldOpen(true)}>
               Held carts{held.data?.length ? ` (${held.data.length})` : ""}
             </Button>
-            {till.data && (
-              <>
-                <Button variant="outline" size="sm" onClick={() => setPayingOut(true)}>
-                  Pay out cash
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setClosing(true)}>
-                  Close till
-                </Button>
-              </>
+            {can("finance.day.close") && (
+              <Button variant="outline" size="sm" asChild>
+                <Link to="/day-closing">Day closing</Link>
+              </Button>
             )}
           </div>
         }
@@ -494,7 +491,7 @@ export default function Pos() {
           {/* Product Quick-Tap Grid */}
           <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
             {tiles.slice(0, 12).map((p) => {
-              const outOfStock = p.kind === "stock" && p.qty_on_hand !== undefined && toNumber(p.qty_on_hand) <= 0;
+              const outOfStock = p.qty_on_hand !== undefined && toNumber(p.qty_on_hand) <= 0;
               return (
                 <li key={p.id}>
                   <button
@@ -509,20 +506,20 @@ export default function Pos() {
                   >
                     <p className="truncate font-medium">{p.name}</p>
                     <div className="mt-1 flex items-center justify-between text-xs">
-                      <span className="font-semibold text-foreground">{formatMoney(p.sell_price)}</span>
-                      {p.kind === "stock" && (
-                        <span
-                          className={
-                            outOfStock
-                              ? "font-medium text-destructive"
-                              : toNumber(p.qty_on_hand) <= toNumber(p.reorder_level)
-                                ? "font-medium text-amber-600"
-                                : "text-muted-foreground"
-                          }
-                        >
-                          {outOfStock ? "Out of stock" : `${toNumber(p.qty_on_hand)} left`}
-                        </span>
-                      )}
+                      <span className="font-semibold text-foreground">
+                        {formatMoney(p.sell_price)}
+                      </span>
+                      <span
+                        className={
+                          outOfStock
+                            ? "font-medium text-destructive"
+                            : toNumber(p.qty_on_hand) <= toNumber(p.reorder_level)
+                              ? "font-medium text-amber-600"
+                              : "text-muted-foreground"
+                        }
+                      >
+                        {outOfStock ? "Out of stock" : `${toNumber(p.qty_on_hand)} left`}
+                      </span>
                     </div>
                   </button>
                 </li>
@@ -615,7 +612,7 @@ export default function Pos() {
 
         {/* Checkout Sidebar */}
         <aside className="h-fit space-y-4 rounded-2xl border bg-card p-5">
-          {can("customers.view") && (
+          {canViewCustomers && (
             <Field label="Customer">
               <div className="flex gap-2">
                 <NativeSelect
@@ -632,7 +629,7 @@ export default function Pos() {
                       </option>
                     ))}
                 </NativeSelect>
-                {can("customers.manage") && (
+                {can("shop.customer.manage") && (
                   <Button
                     type="button"
                     variant="outline"
@@ -653,8 +650,14 @@ export default function Pos() {
           )}
 
           {/* Discount */}
-          {can("sales.discount") && (
-            <Field label="Discount">
+          {can("shop.discount.apply") && (
+            <Field
+              label={
+                limit("sale_discount_pct")
+                  ? `Discount (up to ${limit("sale_discount_pct")}% without approval)`
+                  : "Discount"
+              }
+            >
               <div className="flex gap-2">
                 <NativeSelect
                   className="w-24"
@@ -714,6 +717,7 @@ export default function Pos() {
               const methodAccounts = (accounts.data ?? []).filter(
                 (a) => a.type === p.method && a.is_active,
               );
+              const showAccountPicker = p.method !== "cash" || methodAccounts.length > 1;
               return (
                 <div key={p.id} className="space-y-2 rounded-xl border bg-muted/20 p-2.5">
                   <div className="flex gap-2">
@@ -737,7 +741,9 @@ export default function Pos() {
                     <Input
                       className="w-32"
                       inputMode="decimal"
-                      placeholder={payments.length === 1 && idx === 0 ? String(total || "") : "Amount"}
+                      placeholder={
+                        payments.length === 1 && idx === 0 ? String(total || "") : "Amount"
+                      }
                       value={p.amount}
                       onChange={(e) =>
                         setPayments((ps) =>
@@ -756,10 +762,12 @@ export default function Pos() {
                       </Button>
                     )}
                   </div>
-                  {p.method !== "cash" && (
+                  {showAccountPicker && (
                     <div className="grid gap-2 sm:grid-cols-2">
                       <NativeSelect
-                        value={p.money_account_id}
+                        value={
+                          p.money_account_id || (p.method === "cash" ? defaultCashAccountId : "")
+                        }
                         onChange={(e) =>
                           setPayments((ps) =>
                             ps.map((x) =>
@@ -775,17 +783,19 @@ export default function Pos() {
                           </option>
                         ))}
                       </NativeSelect>
-                      <Input
-                        placeholder="Ref (optional)"
-                        value={p.reference}
-                        onChange={(e) =>
-                          setPayments((ps) =>
-                            ps.map((x) =>
-                              x.id === p.id ? { ...x, reference: e.target.value } : x,
-                            ),
-                          )
-                        }
-                      />
+                      {p.method !== "cash" && (
+                        <Input
+                          placeholder="Ref (optional)"
+                          value={p.reference}
+                          onChange={(e) =>
+                            setPayments((ps) =>
+                              ps.map((x) =>
+                                x.id === p.id ? { ...x, reference: e.target.value } : x,
+                              ),
+                            )
+                          }
+                        />
+                      )}
                     </div>
                   )}
                 </div>
@@ -871,48 +881,6 @@ export default function Pos() {
       </FormDialog>
 
       <FormDialog
-        open={payingOut}
-        onOpenChange={setPayingOut}
-        title="Pay out cash"
-        busy={payOutCash.isPending}
-        onSubmit={() => payOutCash.mutate(payout)}
-      >
-        <p className="text-sm text-muted-foreground">
-          Move cash from this till to the safe or the bank. It is recorded as a transfer.
-        </p>
-        <Field label="Send to">
-          <NativeSelect
-            required
-            value={payout.to_account_id}
-            onChange={(e) => setPayout((p) => ({ ...p, to_account_id: e.target.value }))}
-          >
-            <option value="">Choose…</option>
-            {accounts.data
-              ?.filter((a) => a.is_active && a.id !== till.data?.money_account_id)
-              .map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-          </NativeSelect>
-        </Field>
-        <Field label="Amount">
-          <Input
-            required
-            inputMode="decimal"
-            value={payout.amount}
-            onChange={(e) => setPayout((p) => ({ ...p, amount: e.target.value }))}
-          />
-        </Field>
-        <Field label="Note">
-          <Input
-            value={payout.note}
-            onChange={(e) => setPayout((p) => ({ ...p, note: e.target.value }))}
-          />
-        </Field>
-      </FormDialog>
-
-      <FormDialog
         open={heldOpen}
         onOpenChange={setHeldOpen}
         title="Held carts"
@@ -948,7 +916,6 @@ export default function Pos() {
       </FormDialog>
 
       {receipt && <ReceiptDialog sale={receipt} onClose={() => setReceipt(null)} />}
-      {closing && till.data && <CloseTill till={till.data} onClose={() => setClosing(false)} />}
     </>
   );
 }
@@ -959,110 +926,6 @@ function Row({ label, value }: { label: string; value: unknown }) {
       <dt className="text-muted-foreground">{label}</dt>
       <dd className="tabular-nums">{formatMoney(value)}</dd>
     </div>
-  );
-}
-
-function OpenTill({ accounts }: { accounts?: MoneyAccount[] }) {
-  const [account, setAccount] = useState("");
-  const [float, setFloat] = useState("0");
-  const open = useWrite<unknown>("POST", "/tills/open", {
-    invalidate: ["/tills"],
-    success: "Till opened",
-  });
-  const cash = (accounts ?? []).filter((a) => a.type === "cash" && a.is_active);
-  return (
-    <div className="mx-auto max-w-md">
-      <PageHeader
-        title="Open your till"
-        description="Count the cash in the drawer, then start selling."
-      />
-      <form
-        className="space-y-4 rounded-2xl border bg-card p-6"
-        onSubmit={(e) => {
-          e.preventDefault();
-          open.mutate({ money_account_id: account, opening_float: float || "0" });
-        }}
-      >
-        <Field label="Cash account *">
-          <NativeSelect required value={account} onChange={(e) => setAccount(e.target.value)}>
-            <option value="">Choose…</option>
-            {cash.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </NativeSelect>
-        </Field>
-        <Field label="Opening float *">
-          <Input
-            required
-            inputMode="decimal"
-            value={float}
-            onChange={(e) => setFloat(e.target.value)}
-          />
-        </Field>
-        <Button type="submit" className="w-full" disabled={open.isPending || !account}>
-          Open till
-        </Button>
-      </form>
-    </div>
-  );
-}
-
-function CloseTill({ till, onClose }: { till: Till; onClose: () => void }) {
-  const [counted, setCounted] = useState("");
-  const [note, setNote] = useState("");
-  const [result, setResult] = useState<Record<string, unknown> | null>(null);
-  const close = useWrite<unknown, Record<string, unknown>>("POST", `/tills/${till.id}/close`, {
-    invalidate: ["/tills", "/money"],
-    onSuccess: (r) => setResult(r),
-  });
-  if (result) {
-    return (
-      <FormDialog
-        open
-        onOpenChange={onClose}
-        title="Till closed"
-        submitLabel="Done"
-        onSubmit={onClose}
-      >
-        <dl className="space-y-1 text-sm">
-          {Object.entries(result)
-            .filter(([, v]) => typeof v !== "object")
-            .map(([k, v]) => (
-              <div key={k} className="flex justify-between">
-                <dt className="capitalize text-muted-foreground">{k.replaceAll("_", " ")}</dt>
-                <dd className="tabular-nums">
-                  {typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v) ? formatMoney(v) : String(v)}
-                </dd>
-              </div>
-            ))}
-        </dl>
-      </FormDialog>
-    );
-  }
-  return (
-    <FormDialog
-      open
-      onOpenChange={(o) => !o && onClose()}
-      title="Close till"
-      description="Count the cash in the drawer and enter the total."
-      submitLabel="Close till"
-      busy={close.isPending}
-      onSubmit={() => close.mutate({ counted_cash: counted, note })}
-    >
-      <Field label="Counted cash *">
-        <Input
-          required
-          inputMode="decimal"
-          value={counted}
-          onChange={(e) => setCounted(e.target.value)}
-        />
-      </Field>
-      <Field label="Note">
-        <Input value={note} onChange={(e) => setNote(e.target.value)} />
-      </Field>
-    </FormDialog>
   );
 }
 
@@ -1081,7 +944,10 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
       <div id="receipt" className="space-y-2 text-sm">
         <ul className="divide-y">
           {sale.items.map((i) => (
-            <li key={`${i.product_id}-${i.serial_number ?? ""}`} className="flex justify-between py-1">
+            <li
+              key={`${i.product_id}-${i.serial_number ?? ""}`}
+              className="flex justify-between py-1"
+            >
               <span>
                 {toNumber(i.qty)} × {i.product_name}
                 {i.serial_number ? ` [SN: ${i.serial_number}]` : ""}

@@ -89,7 +89,7 @@ export default function Clients() {
         title="Clients and leads"
         description={clients.data ? `Clients owe you ${formatMoney(owed)} in total.` : undefined}
         actions={
-          can("clients.manage") && (
+          can("services.client.manage") && (
             <Button onClick={() => setOpen(true)}>
               <Plus size={16} /> New client
             </Button>

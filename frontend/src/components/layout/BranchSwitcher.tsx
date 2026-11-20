@@ -3,23 +3,23 @@ import { useGet } from "@/hooks/useApi";
 import { NativeSelect } from "@/components/shared/kit";
 import type { Branch } from "@/types";
 
-/** Picks the branch sent as X-Branch-Id. Hidden when the user has only one branch. */
+/** Picks the active location sent as X-Branch-Id. Hidden when the business has only one location. */
 export function BranchSwitcher() {
-  const { me, branchId, setBranchId, can } = useAuth();
-  const { data } = useGet<Branch[]>("/branches", undefined, { enabled: can("branches.view") });
-  const allowed = me?.branches ?? [];
-  if (allowed.length <= 1) return null;
-  const names = new Map((data ?? []).map((b) => [b.id, b.name]));
+  const { branchId, setBranchId } = useAuth();
+  const { data } = useGet<Branch[]>("/branches");
+  const active = (data ?? []).filter((b) => b.is_active);
+  if (active.length <= 1) return null;
   return (
     <NativeSelect
-      aria-label="Active branch"
+      aria-label="Active location"
       className="h-9 w-40"
-      value={branchId ?? ""}
+      value={branchId ?? "all"}
       onChange={(e) => setBranchId(e.target.value)}
     >
-      {allowed.map((id) => (
-        <option key={id} value={id}>
-          {names.get(id) ?? id.slice(0, 8)}
+      <option value="all">All locations</option>
+      {active.map((b) => (
+        <option key={b.id} value={b.id}>
+          {b.name}
         </option>
       ))}
     </NativeSelect>

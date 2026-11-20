@@ -223,7 +223,9 @@ function Detail({
     onSuccess: () => setVoiding(false),
   });
   const i = invoice.data;
-  const manage = can("service_billing.manage");
+  const manage = can("services.invoice.manage");
+  const canDraft = manage || can("services.invoice.draft");
+  const canReceive = manage || can("finance.payment.receive");
   const open = i && (i.status === "issued" || i.status === "partial");
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -313,17 +315,19 @@ function Detail({
                   Open project
                 </Button>
               )}
-              {manage && i.status === "draft" && (
-                <>
-                  <Button variant="outline" onClick={() => onEdit(i)}>
-                    Edit
-                  </Button>
-                  <Button onClick={() => issue.mutate(undefined)} disabled={issue.isPending}>
-                    Issue invoice
-                  </Button>
-                </>
+              {canDraft && i.status === "draft" && (
+                <Button variant="outline" onClick={() => onEdit(i)}>
+                  Edit
+                </Button>
               )}
-              {manage && open && <Button onClick={() => setPaying(true)}>Record payment</Button>}
+              {manage && i.status === "draft" && (
+                <Button onClick={() => issue.mutate(undefined)} disabled={issue.isPending}>
+                  Issue invoice
+                </Button>
+              )}
+              {canReceive && open && (
+                <Button onClick={() => setPaying(true)}>Record payment</Button>
+              )}
               {manage && (i.status === "draft" || (open && toNumber(i.paid_total) === 0)) && (
                 <Button
                   variant="ghost"
@@ -360,7 +364,7 @@ function Detail({
 }
 
 export default function ServiceInvoices() {
-  const { can } = useAuth();
+  const { canAny } = useAuth();
   const [params, setParams] = useSearchParams();
   const [status, setStatus] = useState("");
   const [overdue, setOverdue] = useState(false);
@@ -402,7 +406,7 @@ export default function ServiceInvoices() {
           list.data ? `${formatMoney(total)} still to collect on these invoices.` : undefined
         }
         actions={
-          can("service_billing.manage") && (
+          canAny("services.invoice.manage", "services.invoice.draft") && (
             <Button onClick={() => setForm(blank)}>
               <Plus size={16} /> New invoice
             </Button>

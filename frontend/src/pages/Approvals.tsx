@@ -14,8 +14,27 @@ import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDateTime, formatMoney, toNumber } from "@/lib/formatters";
 import type { Approval } from "@/types";
 
+const APPROVAL_PERMISSION: Record<string, string> = {
+  discount: "shop.discount.approve",
+  sale_discount: "shop.discount.approve",
+  refund: "shop.return.approve",
+  sale_return: "shop.return.approve",
+  sale_void: "shop.sale.void",
+  product_price_change: "shop.product.price_approve",
+  service_price_change: "services.price.approve",
+  expense: "finance.expense.approve",
+  payment_void: "finance.payment.void",
+  transaction_correction: "finance.transaction.correct",
+};
+
+const ANY_APPROVAL_PERMS = Object.values(APPROVAL_PERMISSION);
+
 export default function Approvals() {
-  const { can, user } = useAuth();
+  const { can, canAny, user } = useAuth();
+  const canDecideKind = (kind: string) => {
+    const specific = APPROVAL_PERMISSION[kind];
+    return specific ? can(specific) : canAny(...ANY_APPROVAL_PERMS);
+  };
   const [status, setStatus] = useState("pending");
   const { data, isLoading } = useGet<Approval[]>("/approvals", { status });
   const [deciding, setDeciding] = useState<{
@@ -76,8 +95,11 @@ export default function Approvals() {
           { header: "Status", cell: (a) => <StatusBadge value={a.status} /> },
           {
             header: "",
-            cell: (a) =>
-              a.status === "pending" && can("approvals.decide") && a.requested_by !== user?.id ? (
+            cell: (a) => {
+              const isOwn =
+                a.requested_by === user?.id ||
+                (Boolean(user?.membership_id) && a.requested_by === user?.membership_id);
+              return a.status === "pending" && canDecideKind(a.kind) && !isOwn ? (
                 <div className="flex gap-2">
                   <Button size="sm" onClick={() => setDeciding({ approval: a, action: "approve" })}>
                     Approve
@@ -90,9 +112,10 @@ export default function Approvals() {
                     Reject
                   </Button>
                 </div>
-              ) : a.status === "pending" && a.requested_by === user?.id ? (
+              ) : a.status === "pending" && isOwn ? (
                 <span className="text-xs text-muted-foreground">Your request</span>
-              ) : null,
+              ) : null;
+            },
           },
         ]}
       />

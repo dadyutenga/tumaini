@@ -54,7 +54,7 @@ export default function Payroll() {
         title="Payroll"
         description="Calculate, approve and pay salaries for a period."
         actions={
-          can("payroll.prepare") && (
+          can("hr.payroll.manage") && (
             <Button onClick={() => setOpen(true)}>
               <Plus size={16} /> New run
             </Button>

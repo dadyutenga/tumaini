@@ -25,18 +25,14 @@ interface PermCatalogItem {
 interface UserPermOverride {
   permission_key: string;
   allowed: boolean;
-  scope: string;
-  approval_limit: string | null;
+  reason: string;
+  expires_at: string | null;
 }
 
 interface UserPermsRes {
   user_id: string;
   role_slug: string;
-  role_permissions: Array<{
-    permission_key: string;
-    scope: string;
-    approval_limit: string | null;
-  }>;
+  role_permissions: Array<{ permission_key: string }>;
   overrides: UserPermOverride[];
 }
 
@@ -59,17 +55,17 @@ export function UserPermissionsDialog({
   });
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState<
-    Record<string, { mode: Mode; scope: string; approval_limit: string }>
+    Record<string, { mode: Mode; reason: string; expires_at: string }>
   >({});
 
   useEffect(() => {
     if (!open || !data.data || !Array.isArray(data.data.overrides)) return;
-    const next: Record<string, { mode: Mode; scope: string; approval_limit: string }> = {};
+    const next: Record<string, { mode: Mode; reason: string; expires_at: string }> = {};
     for (const ov of data.data.overrides) {
       next[ov.permission_key] = {
         mode: ov.allowed ? "allow" : "revoke",
-        scope: ov.scope || "all",
-        approval_limit: ov.approval_limit ?? "",
+        reason: ov.reason ?? "",
+        expires_at: ov.expires_at ? ov.expires_at.slice(0, 10) : "",
       };
     }
     setDraft(next);
@@ -86,7 +82,7 @@ export function UserPermissionsDialog({
   );
 
   const roleSet = useMemo(
-    () => new Map((data.data?.role_permissions ?? []).map((rp) => [rp.permission_key, rp])),
+    () => new Set((data.data?.role_permissions ?? []).map((rp) => rp.permission_key)),
     [data.data],
   );
 
@@ -116,14 +112,14 @@ export function UserPermissionsDialog({
       overrides.push({
         permission_key,
         allowed: v.mode === "allow",
-        scope: v.scope || "all",
-        approval_limit: v.approval_limit.trim() ? v.approval_limit.trim() : null,
+        reason: v.reason.trim() || "Set by an administrator",
+        expires_at: v.expires_at ? new Date(`${v.expires_at}T23:59:59Z`).toISOString() : null,
       });
     }
     save.mutate({ overrides });
   }
 
-  const isOwner = data.data?.role_slug === "owner";
+  const isLocked = data.data?.role_slug === "admin" || data.data?.role_slug === "owner";
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
@@ -133,14 +129,14 @@ export function UserPermissionsDialog({
             <Shield size={17} /> Custom permissions — {userName}
           </DialogTitle>
           <DialogDescription>
-            Override individual permissions on top of this user&apos;s role. Leave on &ldquo;Role
-            default&rdquo; to inherit automatically.
+            Override individual permissions on top of this user&apos;s role, with an optional reason
+            and expiry date.
           </DialogDescription>
         </DialogHeader>
 
-        {isOwner ? (
+        {isLocked ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            Owner accounts always hold every permission and cannot be overridden.
+            Admin accounts always hold every permission and cannot be overridden.
           </p>
         ) : (
           <>
@@ -163,11 +159,11 @@ export function UserPermissionsDialog({
                   </div>
                   <div className="divide-y">
                     {items.map((p) => {
-                      const roleGrant = roleSet.get(p.key);
+                      const hasRole = roleSet.has(p.key);
                       const cur = draft[p.key] ?? {
                         mode: "default" as Mode,
-                        scope: roleGrant?.scope ?? "all",
-                        approval_limit: roleGrant?.approval_limit ?? "",
+                        reason: "",
+                        expires_at: "",
                       };
                       return (
                         <div
@@ -177,13 +173,16 @@ export function UserPermissionsDialog({
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">
                               <span className="font-mono font-medium">{p.key}</span>
-                              <Badge variant={roleGrant ? "secondary" : "outline"} className="text-[10px]">
-                                Role: {roleGrant ? `Allow (${roleGrant.scope})` : "Deny"}
+                              <Badge
+                                variant={hasRole ? "secondary" : "outline"}
+                                className="text-[10px]"
+                              >
+                                Role: {hasRole ? "Allow" : "Deny"}
                               </Badge>
                             </div>
                             <p className="text-muted-foreground">{p.description}</p>
                           </div>
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             <NativeSelect
                               className="h-7 w-32 text-xs"
                               value={cur.mode}
@@ -198,21 +197,32 @@ export function UserPermissionsDialog({
                               <option value="allow">Allow (override)</option>
                               <option value="revoke">Revoke (override)</option>
                             </NativeSelect>
-                            {cur.mode === "allow" && (
-                              <NativeSelect
-                                className="h-7 w-24 text-xs"
-                                value={cur.scope}
-                                onChange={(e) =>
-                                  setDraft((prev) => ({
-                                    ...prev,
-                                    [p.key]: { ...cur, scope: e.target.value },
-                                  }))
-                                }
-                              >
-                                <option value="all">All</option>
-                                <option value="branch">Branch</option>
-                                <option value="own">Own</option>
-                              </NativeSelect>
+                            {cur.mode !== "default" && (
+                              <>
+                                <Input
+                                  className="h-7 w-36 text-xs"
+                                  placeholder="Reason"
+                                  value={cur.reason}
+                                  onChange={(e) =>
+                                    setDraft((prev) => ({
+                                      ...prev,
+                                      [p.key]: { ...cur, reason: e.target.value },
+                                    }))
+                                  }
+                                />
+                                <Input
+                                  type="date"
+                                  title="Optional expiry date"
+                                  className="h-7 w-32 text-xs"
+                                  value={cur.expires_at}
+                                  onChange={(e) =>
+                                    setDraft((prev) => ({
+                                      ...prev,
+                                      [p.key]: { ...cur, expires_at: e.target.value },
+                                    }))
+                                  }
+                                />
+                              </>
                             )}
                           </div>
                         </div>
@@ -229,7 +239,7 @@ export function UserPermissionsDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          {!isOwner && (
+          {!isLocked && (
             <Button disabled={save.isPending} onClick={onSave}>
               {save.isPending ? "Saving…" : "Save overrides"}
             </Button>

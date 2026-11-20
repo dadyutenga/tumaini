@@ -43,7 +43,7 @@ export default function Settings() {
   const { t } = useI18n();
   const qc = useQueryClient();
   const business = useGet<Business>("/business");
-  const branches = useGet<Branch[]>("/branches", undefined, { enabled: can("branches.view") });
+  const branches = useGet<Branch[]>("/branches");
   const taxes = useGet<Tax[]>("/tax-rates");
   const [form, setForm] = useState<Business | null>(null);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
@@ -82,7 +82,6 @@ export default function Settings() {
 
   const [branch, setBranch] = useState<{
     name: string;
-    code: string;
     address: string;
     phone: string;
   } | null>(null);
@@ -126,7 +125,7 @@ export default function Settings() {
     }
   }
 
-  const manage = can("business.manage");
+  const manage = can("settings.manage");
   const field = (k: keyof Business) => ({
     value: (form?.[k] as string | null) ?? "",
     disabled: !manage,
@@ -140,7 +139,7 @@ export default function Settings() {
       <Tabs defaultValue="business">
         <TabsList className="mb-4 flex flex-wrap">
           <TabsTrigger value="business">Business</TabsTrigger>
-          {can("branches.view") && <TabsTrigger value="branches">Branches</TabsTrigger>}
+          <TabsTrigger value="branches">Locations</TabsTrigger>
           <TabsTrigger value="finance">Finance &amp; Tax</TabsTrigger>
           <TabsTrigger value="documents">Documents</TabsTrigger>
           <TabsTrigger value="notifications">Notifications</TabsTrigger>
@@ -159,7 +158,11 @@ export default function Settings() {
               <div className="flex flex-wrap items-center gap-4 border-b pb-4">
                 <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-xl border bg-muted">
                   {logoUrl ? (
-                    <img src={logoUrl} alt="Business logo" className="h-full w-full object-contain" />
+                    <img
+                      src={logoUrl}
+                      alt="Business logo"
+                      className="h-full w-full object-contain"
+                    />
                   ) : (
                     <span className="text-xs font-bold text-muted-foreground">LOGO</span>
                   )}
@@ -167,7 +170,8 @@ export default function Settings() {
                 <div className="space-y-1">
                   <p className="text-sm font-medium">Business Logo</p>
                   <p className="text-xs text-muted-foreground">
-                    Appears on printed invoices, quotations and thermal receipts (PNG or JPEG, max 2 MB).
+                    Appears on printed invoices, quotations and thermal receipts (PNG or JPEG, max 2
+                    MB).
                   </p>
                   {manage && (
                     <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium shadow-sm hover:bg-accent">
@@ -227,10 +231,10 @@ export default function Settings() {
         </TabsContent>
 
         <TabsContent value="branches">
-          {can("branches.manage") && (
+          {manage && (
             <div className="mb-3 flex justify-end">
-              <Button onClick={() => setBranch({ name: "", code: "", address: "", phone: "" })}>
-                <Plus size={16} /> New branch
+              <Button onClick={() => setBranch({ name: "", address: "", phone: "" })}>
+                <Plus size={16} /> New location
               </Button>
             </div>
           )}
@@ -240,7 +244,7 @@ export default function Settings() {
             rowKey={(b) => b.id}
             columns={[
               {
-                header: "Branch",
+                header: "Location",
                 cell: (b) => (
                   <span className="font-medium">
                     {b.name}
@@ -248,7 +252,7 @@ export default function Settings() {
                   </span>
                 ),
               },
-              { header: "Code", cell: (b) => b.code },
+              { header: "Address", cell: (b) => b.address ?? "-" },
               { header: "Phone", cell: (b) => b.phone ?? "-" },
               {
                 header: "Status",
@@ -304,15 +308,15 @@ export default function Settings() {
       <FormDialog
         open={branch !== null}
         onOpenChange={(o) => !o && setBranch(null)}
-        title="New branch"
+        title="New location"
         busy={addBranch.isPending}
         onSubmit={() => addBranch.mutate(branch)}
       >
         {branch &&
-          (["name", "code", "address", "phone"] as const).map((k) => (
+          (["name", "address", "phone"] as const).map((k) => (
             <Field key={k} label={k[0].toUpperCase() + k.slice(1)}>
               <Input
-                required={k === "name" || k === "code"}
+                required={k === "name"}
                 value={branch[k]}
                 onChange={(e) => setBranch({ ...branch, [k]: e.target.value })}
               />

@@ -19,7 +19,7 @@ import type { ClientDetail as ClientDetailType } from "@/types/services";
 
 export default function ClientDetail() {
   const { id = "" } = useParams();
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const navigate = useNavigate();
   const client = useGet<ClientDetailType>(`/clients/${id}`);
   const [editing, setEditing] = useState(false);
@@ -62,7 +62,7 @@ export default function ClientDetail() {
         actions={
           <>
             <StatusBadge value={c.is_active ? c.status : "inactive"} />
-            {can("clients.manage") && (
+            {can("services.client.manage") && (
               <Button
                 variant="outline"
                 onClick={() => {
@@ -83,12 +83,12 @@ export default function ClientDetail() {
                 Edit
               </Button>
             )}
-            {can("clients.manage") && c.status === "lead" && (
+            {can("services.client.manage") && c.status === "lead" && (
               <Button variant="outline" onClick={() => convert.mutate(undefined)}>
                 Convert to client
               </Button>
             )}
-            {can("service_billing.manage") && (
+            {canAny("services.quotation.manage", "services.quotation.draft") && (
               <Button
                 variant="outline"
                 onClick={() => navigate(`/service-quotations?client=${c.id}`)}
@@ -96,12 +96,12 @@ export default function ClientDetail() {
                 Create quotation
               </Button>
             )}
-            {can("service_billing.view") && (
+            {canAny("services.invoice.manage", "services.invoice.draft", "finance.debt.view") && (
               <PdfButton path={`/clients/${id}/statement`} filename={`statement-${c.name}.pdf`}>
                 Statement
               </PdfButton>
             )}
-            {can("projects.manage") && (
+            {can("services.project.manage") && (
               <Button onClick={() => setStarting(true)}>New project</Button>
             )}
           </>
@@ -230,7 +230,7 @@ export default function ClientDetail() {
           />
         </TabsContent>
       </Tabs>
-      {can("clients.manage") && c.is_active && (
+      {can("services.client.manage") && c.is_active && (
         <div className="mt-8">
           <Button
             variant="ghost"

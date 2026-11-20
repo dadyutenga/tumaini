@@ -66,7 +66,8 @@ export default function Stock() {
     (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
       setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  const showCost = can("products.view_cost");
+  const showCost = can("shop.product.view_cost");
+  const canManage = can("shop.stock.manage");
   const columns = [
     { header: "Product", cell: (r: Level) => <span className="font-medium">{r.name}</span> },
     { header: "SKU", cell: (r: Level) => r.sku },
@@ -82,20 +83,18 @@ export default function Stock() {
     <>
       <PageHeader
         title="Stock"
-        description="Quantities at the active branch."
+        description="Quantities at the active location."
         actions={
-          <>
-            {can("stock.in") && (
+          canManage && (
+            <>
               <Button onClick={() => openDialog("in")}>
                 <ArrowDownToLine size={16} /> Stock in
               </Button>
-            )}
-            {can("stock.out") && (
               <Button variant="outline" onClick={() => openDialog("out")}>
                 <ArrowUpFromLine size={16} /> Stock out
               </Button>
-            )}
-          </>
+            </>
+          )
         }
       />
       <Tabs defaultValue="levels">

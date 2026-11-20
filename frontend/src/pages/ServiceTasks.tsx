@@ -217,7 +217,7 @@ export default function ServiceTasks() {
     invalidate: ["/tasks", "/services"],
     toBody: (b) => ({ status: b.status }),
   });
-  const manage = can("tasks.manage");
+  const manage = can("services.task.manage");
 
   return (
     <>

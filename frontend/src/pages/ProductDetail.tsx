@@ -32,6 +32,7 @@ interface PriceChange {
   id: string;
   old_price: string;
   new_price: string;
+  reason?: string | null;
   changed_at: string;
 }
 
@@ -42,11 +43,9 @@ export default function ProductDetail() {
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const detail = useGet<ProductDetailPayload>(`/products/${id}`);
-  const stockCard = useGet<{ movements?: StockMove[] }>(
-    `/products/${id}/stock-card`,
-    undefined,
-    { enabled: can("stock.view") },
-  );
+  const stockCard = useGet<{ movements?: StockMove[] }>(`/products/${id}/stock-card`, undefined, {
+    enabled: can("shop.stock.view"),
+  });
   const priceHistory = useGet<PriceChange[]>(`/products/${id}/price-history`);
 
   if (detail.isLoading) return <PageLoader />;
@@ -92,7 +91,7 @@ export default function ProductDetail() {
             >
               <Barcode size={14} /> Barcode label
             </Button>
-            {can("sales.create") && pr.is_active && (
+            {can("shop.sale.create") && pr.is_active && (
               <Button size="sm" onClick={() => navigate(`/pos?add=${pr.id}`)}>
                 <ShoppingCart size={14} /> Sell
               </Button>
@@ -116,12 +115,12 @@ export default function ProductDetail() {
             <p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(pr.sell_price)}</p>
           </div>
           <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs text-muted-foreground">Stock across branches</p>
+            <p className="text-xs text-muted-foreground">Stock across locations</p>
             <p className="mt-1 text-xl font-bold">
-              {pr.kind === "service" ? "n/a" : `${formatQty(totalQty)} ${pr.unit}`}
+              {formatQty(totalQty)} {pr.unit}
             </p>
           </div>
-          {unitProfit !== null && (
+          {can("shop.product.view_cost") && unitProfit !== null && (
             <div className="rounded-2xl border bg-card p-4">
               <p className="text-xs text-muted-foreground">Profit per unit</p>
               <p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(unitProfit)}</p>
@@ -142,7 +141,7 @@ export default function ProductDetail() {
 
       <Tabs defaultValue="stock">
         <TabsList>
-          <TabsTrigger value="stock">Stock by branch</TabsTrigger>
+          <TabsTrigger value="stock">Stock by location</TabsTrigger>
           <TabsTrigger value="movements">Stock history</TabsTrigger>
           <TabsTrigger value="prices">Price history</TabsTrigger>
           <TabsTrigger value="history">Audit history</TabsTrigger>
@@ -152,11 +151,11 @@ export default function ProductDetail() {
           <DataGrid
             rows={branchLevels}
             rowKey={(b) => b.branch_id}
-            empty="No branch stock records"
+            empty="No location stock records"
             columns={[
-              { header: "Branch", cell: (b) => <span className="font-medium">{b.branch}</span> },
+              { header: "Location", cell: (b) => <span className="font-medium">{b.branch}</span> },
               { header: "On hand", align: "right", cell: (b) => formatQty(b.qty_on_hand) },
-              ...(can("products.view_cost")
+              ...(can("shop.product.view_cost")
                 ? [
                     {
                       header: "Avg cost",
@@ -196,6 +195,7 @@ export default function ProductDetail() {
               { header: "When", cell: (p) => formatDateTime(p.changed_at) },
               { header: "Old price", align: "right", cell: (p) => formatMoney(p.old_price) },
               { header: "New price", align: "right", cell: (p) => formatMoney(p.new_price) },
+              { header: "Reason", cell: (p) => p.reason || "-" },
             ]}
           />
         </TabsContent>
@@ -206,7 +206,7 @@ export default function ProductDetail() {
       </Tabs>
 
       <FilePreviewDialog
-        fileId={previewOpen ? pr.photo_file ?? null : null}
+        fileId={previewOpen ? (pr.photo_file ?? null) : null}
         fileName={pr.name}
         onClose={() => setPreviewOpen(false)}
       />

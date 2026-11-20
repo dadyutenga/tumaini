@@ -1,13 +1,6 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import {
-  Briefcase,
-  Check,
-  Clock,
-  CreditCard,
-  ShoppingCart,
-  X,
-} from "lucide-react";
+import { Briefcase, Check, Clock, CreditCard, ShoppingCart, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -66,7 +59,13 @@ interface DashboardPayload {
   }[];
   pending_approvals?: {
     count: number;
-    latest: { id: string; kind: string; summary: string; amount?: string | null; created_at: string }[];
+    latest: {
+      id: string;
+      kind: string;
+      summary: string;
+      amount?: string | null;
+      created_at: string;
+    }[];
   };
 }
 
@@ -216,7 +215,8 @@ function QuickJobDialog({
       </Field>
       {selected && (
         <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
-          Catalog price: <strong className="text-foreground">{formatMoney(selected.standard_price)}</strong>{" "}
+          Catalog price:{" "}
+          <strong className="text-foreground">{formatMoney(selected.standard_price)}</strong>{" "}
           (fixed; ask a Manager to change price)
         </p>
       )}
@@ -277,7 +277,6 @@ function StaffHome() {
         title={`${greeting()}, ${user?.name.split(" ")[0] ?? ""}`}
         description="Your sales, assigned jobs, tasks and stock alerts for today."
         actions={
-          can("attendance.clock") &&
           d?.attendance !== null && (
             <Button
               variant={clockedIn ? "outline" : "default"}
@@ -292,12 +291,12 @@ function StaffHome() {
 
       {/* 3 Big Speed-First Action Buttons */}
       <div className="grid gap-3 sm:grid-cols-3">
-        {can("sales.create") && (
+        {can("shop.sale.create") && (
           <Button size="lg" className="h-14 text-base" onClick={() => navigate("/pos")}>
             <ShoppingCart size={20} /> NEW SALE
           </Button>
         )}
-        {(can("projects.manage") || can("design.manage")) && (
+        {(can("services.project.manage") || can("services.design.manage")) && (
           <Button
             size="lg"
             variant="outline"
@@ -307,13 +306,16 @@ function StaffHome() {
             <Briefcase size={20} /> NEW JOB
           </Button>
         )}
-        {(can("customers.view") || can("service_billing.manage")) && (
+        {(can("shop.customer.view_all") ||
+          can("shop.customer.manage") ||
+          can("services.invoice.manage") ||
+          can("finance.payment.receive")) && (
           <Button
             size="lg"
             variant="outline"
             className="h-14 text-base"
             onClick={() =>
-              navigate(can("service_billing.manage") ? "/service-invoices" : "/customers")
+              navigate(can("services.invoice.manage") ? "/service-invoices" : "/customers")
             }
           >
             <CreditCard size={20} /> RECEIVE PAYMENT
@@ -392,7 +394,11 @@ function StaffHome() {
                 <li key={t.id} className="flex items-center justify-between gap-2 py-2.5">
                   <div className="min-w-0">
                     <p className="truncate font-medium">{t.title}</p>
-                    <p className={t.overdue ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
+                    <p
+                      className={
+                        t.overdue ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+                      }
+                    >
                       {t.due_date ? `Due ${formatDate(t.due_date)}` : "No deadline"}
                       {t.project_number ? ` · ${t.project_number}` : ""}
                     </p>
@@ -441,23 +447,27 @@ function StaffHome() {
 
 /** SRS Section 5: Unified Admin & Manager Dashboard. */
 export default function Dashboard() {
-  const { me, can, user } = useAuth();
+  const { me, canAny, user } = useAuth();
   const navigate = useNavigate();
   const isStaffHome =
-    !me?.is_owner &&
-    !can("reports.financial") &&
-    !can("approvals.decide") &&
-    !can("users.view");
+    !me?.is_owner && !canAny("dashboard.business.view", "dashboard.operations.view");
+  const canDecideApprovals = canAny(
+    "shop.discount.approve",
+    "shop.return.approve",
+    "shop.sale.void",
+    "shop.product.price_approve",
+    "services.price.approve",
+    "finance.expense.approve",
+    "finance.payment.void",
+    "finance.transaction.correct",
+  );
 
   const [period, setPeriod] = useState<"today" | "week" | "month" | "custom">("month");
   const [business, setBusiness] = useState<"all" | "shop" | "services">("all");
   const [from, setFrom] = useState(() => `${today().slice(0, 8)}01`);
   const [to, setTo] = useState(() => today());
 
-  const query =
-    period === "custom"
-      ? { period, business, from, to }
-      : { period, business };
+  const query = period === "custom" ? { period, business, from, to } : { period, business };
 
   const dash = useGet<DashboardPayload>("/dashboard", query, { enabled: !isStaffHome });
   const approve = useWrite<{ id: string }>("POST", (b) => `/approvals/${b.id}/approve`, {
@@ -476,8 +486,7 @@ export default function Dashboard() {
   if (dash.isLoading) return <PageLoader />;
   const d = dash.data;
 
-  const owedToUs =
-    toNumber(d?.outstanding?.customers_owe) + toNumber(d?.outstanding?.clients_owe);
+  const owedToUs = toNumber(d?.outstanding?.customers_owe) + toNumber(d?.outstanding?.clients_owe);
   const weOwe =
     toNumber(d?.outstanding?.we_owe_suppliers) + toNumber(d?.outstanding?.we_owe_contractors);
 
@@ -581,10 +590,7 @@ export default function Dashboard() {
               title="Income vs expenses by day"
               description="Click a day to inspect transactions"
             >
-              <IncomeExpenseChart
-                data={chartData}
-                onDayClick={() => navigate("/money")}
-              />
+              <IncomeExpenseChart data={chartData} onDayClick={() => navigate("/money")} />
             </ChartCard>
           </div>
         )}
@@ -780,9 +786,7 @@ export default function Dashboard() {
         {d?.pending_approvals && (
           <section className="rounded-2xl border bg-card p-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold">
-                Approvals ({d.pending_approvals.count})
-              </h2>
+              <h2 className="text-sm font-semibold">Approvals ({d.pending_approvals.count})</h2>
               <Link to="/approvals" className="text-xs text-primary underline">
                 All
               </Link>
@@ -795,9 +799,11 @@ export default function Dashboard() {
                   <li key={a.id} className="space-y-1.5 py-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className="truncate font-medium">{a.summary || label(a.kind)}</span>
-                      {a.amount && <span className="shrink-0 tabular-nums">{formatMoney(a.amount)}</span>}
+                      {a.amount && (
+                        <span className="shrink-0 tabular-nums">{formatMoney(a.amount)}</span>
+                      )}
                     </div>
-                    {can("approvals.decide") && (
+                    {canDecideApprovals && (
                       <div className="flex gap-1.5">
                         <Button
                           size="sm"

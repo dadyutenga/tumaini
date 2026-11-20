@@ -17,23 +17,18 @@ import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { SimpleList } from "@/pages/HrSetup";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
 
-interface Component {
-  id: string;
-  name: string;
-  kind: string;
-  calc: string;
-  value: string | null;
-  is_taxable: boolean;
-  applies_to_all: boolean;
-  is_active: boolean;
-}
 interface Rule {
   id: string;
+  name?: string;
+  basis?: string;
+  calc?: string;
+  percent?: string | null;
+  fixed_amount?: string | null;
+  value?: string | null;
   employee_id: string | null;
-  position_id: string | null;
-  calc: string;
-  value: string;
-  min_target: string | null;
+  employee_name?: string | null;
+  effective_from?: string | null;
+  effective_to?: string | null;
   is_active: boolean;
 }
 interface Adjustment {
@@ -49,133 +44,68 @@ interface Option {
   name: string;
 }
 
-const calcLabel: Record<string, string> = {
-  fixed: "Fixed amount",
-  percent_of_base: "% of base pay",
-  percent_of_gross: "% of gross",
-  bracket: "Brackets",
+const basisLabel: Record<string, string> = {
+  sale_percent: "% of sales",
+  project_fixed: "Fixed per completed project",
   percent_of_sales: "% of sales",
-  fixed_per_sale: "Fixed per sale",
   fixed_per_project: "Fixed per completed project",
 };
 
-function Components() {
-  const list = useGet<Component[]>("/salary-components");
-  const toggle = useWrite<Component, unknown>("PUT", (c) => `/salary-components/${c.id}`, {
-    invalidate: ["/salary-components"],
-    success: "Updated",
-    toBody: (c) => ({ is_active: !c.is_active }),
-  });
-  return (
-    <SimpleList
-      path="/salary-components"
-      title="New component"
-      rows={list.data}
-      loading={list.isLoading}
-      blank={{ name: "", kind: "allowance", calc: "fixed", value: "", is_taxable: true }}
-      columns={[
-        { header: "Name", cell: (c) => <span className="font-medium">{c.name}</span> },
-        { header: "Kind", cell: (c) => c.kind.replaceAll("_", " ") },
-        { header: "How", cell: (c) => calcLabel[c.calc] ?? c.calc },
-        {
-          header: "Value",
-          align: "right",
-          cell: (c) => (c.value ? String(Number(c.value)) : "-"),
-        },
-        {
-          header: "Status",
-          cell: (c) => <StatusBadge value={c.is_active ? "active" : "inactive"} />,
-        },
-        {
-          header: "",
-          cell: (c) => (
-            <Button size="sm" variant="ghost" onClick={() => toggle.mutate(c)}>
-              {c.is_active ? "Turn off" : "Turn on"}
-            </Button>
-          ),
-        },
-      ]}
-      form={(d, set) => (
-        <>
-          <Field label="Name">
-            <Input required value={d.name} onChange={(e) => set({ name: e.target.value })} />
-          </Field>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Kind">
-              <NativeSelect value={d.kind} onChange={(e) => set({ kind: e.target.value })}>
-                <option value="allowance">Allowance (adds to pay)</option>
-                <option value="deduction">Deduction (taken from pay)</option>
-                <option value="employer_contribution">Employer contribution</option>
-              </NativeSelect>
-            </Field>
-            <Field label="How it is worked out">
-              <NativeSelect value={d.calc} onChange={(e) => set({ calc: e.target.value })}>
-                <option value="fixed">Fixed amount</option>
-                <option value="percent_of_base">% of base pay</option>
-                <option value="percent_of_gross">% of gross</option>
-              </NativeSelect>
-            </Field>
-          </div>
-          <Field label={d.calc === "fixed" ? "Amount" : "Percent"}>
-            <Input
-              required
-              inputMode="decimal"
-              value={d.value}
-              onChange={(e) => set({ value: e.target.value })}
-            />
-          </Field>
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={d.is_taxable}
-              onChange={(e) => set({ is_taxable: e.target.checked })}
-            />
-            Counts as taxable pay
-          </label>
-        </>
-      )}
-    />
-  );
-}
-
 function Commissions() {
+  const { can } = useAuth();
   const list = useGet<Rule[]>("/commission-rules");
-  const positions = useGet<Option[]>("/positions");
   const employees = useGet<Option[]>("/employees", { per_page: 100 });
-  const who = (r: Rule) =>
-    r.employee_id
-      ? (employees.data?.find((e) => e.id === r.employee_id)?.name ?? "Employee")
-      : r.position_id
-        ? (positions.data?.find((p) => p.id === r.position_id)?.name ?? "Position")
-        : "-";
   return (
     <SimpleList
       path="/commission-rules"
       title="New commission rule"
       rows={list.data}
       loading={list.isLoading}
+      canCreate={can("hr.compensation.manage")}
       blank={{
-        applies: "position",
-        target_id: "",
-        calc: "percent_of_sales",
+        name: "",
+        employee_id: "",
+        basis: "sale_percent",
         value: "",
-        min_target: "",
+        effective_from: today(),
       }}
       toBody={(d) => ({
-        employee_id: d.applies === "employee" ? d.target_id || undefined : undefined,
-        position_id: d.applies === "position" ? d.target_id || undefined : undefined,
-        calc: d.calc,
-        value: d.value,
-        min_target: d.min_target || undefined,
+        name: d.name.trim() || undefined,
+        employee_id: d.employee_id || undefined,
+        basis: d.basis,
+        percent: d.basis === "sale_percent" ? d.value : undefined,
+        fixed_amount: d.basis === "project_fixed" ? d.value : undefined,
+        effective_from: d.effective_from || undefined,
       })}
       columns={[
-        { header: "Applies to", cell: (r) => <span className="font-medium">{who(r)}</span> },
-        { header: "Method", cell: (r) => calcLabel[r.calc] ?? r.calc },
-        { header: "Value", align: "right", cell: (r) => String(Number(r.value)) },
         {
-          header: "Above sales of",
+          header: "Rule",
+          cell: (r) => <span className="font-medium">{r.name || "Commission"}</span>,
+        },
+        {
+          header: "Applies to",
+          cell: (r) =>
+            r.employee_name ??
+            (r.employee_id
+              ? (employees.data?.find((e) => e.id === r.employee_id)?.name ?? "Employee")
+              : "All eligible staff"),
+        },
+        { header: "Basis", cell: (r) => basisLabel[r.basis ?? r.calc ?? ""] ?? r.basis ?? "-" },
+        {
+          header: "Rate / Amount",
           align: "right",
-          cell: (r) => (r.min_target ? formatMoney(r.min_target) : "-"),
+          cell: (r) =>
+            r.percent != null
+              ? `${Number(r.percent)}%`
+              : r.fixed_amount != null
+                ? formatMoney(r.fixed_amount)
+                : r.value != null
+                  ? String(Number(r.value))
+                  : "-",
+        },
+        {
+          header: "Effective from",
+          cell: (r) => (r.effective_from ? formatDate(r.effective_from) : "-"),
         },
         {
           header: "Status",
@@ -184,40 +114,35 @@ function Commissions() {
       ]}
       form={(d, set) => (
         <>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="Applies to">
-              <NativeSelect
-                value={d.applies}
-                onChange={(e) => set({ applies: e.target.value, target_id: "" })}
-              >
-                <option value="position">A position</option>
-                <option value="employee">One employee</option>
-              </NativeSelect>
-            </Field>
-            <Field label={d.applies === "position" ? "Position" : "Employee"}>
-              <NativeSelect
-                required
-                value={d.target_id}
-                onChange={(e) => set({ target_id: e.target.value })}
-              >
-                <option value="">Choose…</option>
-                {(d.applies === "position" ? positions.data : employees.data)?.map((o) => (
-                  <option key={o.id} value={o.id}>
-                    {o.name}
-                  </option>
-                ))}
-              </NativeSelect>
-            </Field>
-          </div>
+          <Field label="Rule name">
+            <Input
+              required
+              placeholder="e.g. Shop sales commission"
+              value={d.name}
+              onChange={(e) => set({ name: e.target.value })}
+            />
+          </Field>
+          <Field label="Employee (leave blank for all staff)">
+            <NativeSelect
+              value={d.employee_id}
+              onChange={(e) => set({ employee_id: e.target.value })}
+            >
+              <option value="">All eligible staff</option>
+              {employees.data?.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
           <div className="grid grid-cols-3 gap-3">
-            <Field label="Method">
-              <NativeSelect value={d.calc} onChange={(e) => set({ calc: e.target.value })}>
-                <option value="percent_of_sales">% of sales</option>
-                <option value="fixed_per_sale">Fixed per sale</option>
-                <option value="fixed_per_project">Fixed per completed project</option>
+            <Field label="Basis">
+              <NativeSelect value={d.basis} onChange={(e) => set({ basis: e.target.value })}>
+                <option value="sale_percent">% of sales</option>
+                <option value="project_fixed">Fixed per completed project</option>
               </NativeSelect>
             </Field>
-            <Field label="Value">
+            <Field label={d.basis === "sale_percent" ? "Percent (%)" : "Amount"}>
               <Input
                 required
                 inputMode="decimal"
@@ -225,11 +150,11 @@ function Commissions() {
                 onChange={(e) => set({ value: e.target.value })}
               />
             </Field>
-            <Field label="Only above">
+            <Field label="Effective from">
               <Input
-                inputMode="decimal"
-                value={d.min_target}
-                onChange={(e) => set({ min_target: e.target.value })}
+                type="date"
+                value={d.effective_from}
+                onChange={(e) => set({ effective_from: e.target.value })}
               />
             </Field>
           </div>
@@ -240,7 +165,8 @@ function Commissions() {
 }
 
 function Adjustments() {
-  const { can } = useAuth();
+  const { canAny } = useAuth();
+  const canManage = canAny("hr.compensation.manage", "hr.payroll.manage");
   const [page, setPage] = useState(1);
   const list = useGetPage<Adjustment>("/pay-adjustments", { page });
   const employees = useGet<Option[]>("/employees", { per_page: 100 });
@@ -262,7 +188,7 @@ function Adjustments() {
   return (
     <>
       <div className="mb-4 flex justify-end">
-        {can("adjustments.manage") && (
+        {canManage && (
           <Button onClick={() => setOpen(true)}>
             <Plus size={16} /> New adjustment
           </Button>
@@ -284,11 +210,12 @@ function Adjustments() {
           { header: "Amount", align: "right", cell: (a) => formatMoney(a.amount) },
           {
             header: "",
-            cell: (a) => (
-              <Button size="sm" variant="ghost" onClick={() => remove.mutate(a)}>
-                Remove
-              </Button>
-            ),
+            cell: (a) =>
+              canManage && (
+                <Button size="sm" variant="ghost" onClick={() => remove.mutate(a)}>
+                  Remove
+                </Button>
+              ),
           },
         ]}
       />
@@ -354,30 +281,35 @@ function Adjustments() {
 }
 
 export default function PayrollSetup() {
-  const { can } = useAuth();
+  const { canAny } = useAuth();
+  const canCommissions = canAny(
+    "hr.compensation.view",
+    "hr.compensation.manage",
+    "hr.payroll.view",
+  );
+  const canAdjustments = canAny(
+    "hr.compensation.view",
+    "hr.compensation.manage",
+    "hr.payroll.view",
+    "hr.payroll.manage",
+  );
   return (
     <>
       <PageHeader
         title="Payroll setup"
-        description="Allowances, deductions, sales commission and one-off bonuses."
+        description="Commission rules and one-off pay adjustments. Manage employee allowances on each employee profile."
       />
-      <Tabs defaultValue={can("components.manage") ? "components" : "adjustments"}>
+      <Tabs defaultValue={canCommissions ? "commissions" : "adjustments"}>
         <TabsList className="mb-4">
-          {can("components.manage") && <TabsTrigger value="components">Components</TabsTrigger>}
-          {can("components.manage") && <TabsTrigger value="commissions">Commission</TabsTrigger>}
-          {can("adjustments.manage") && <TabsTrigger value="adjustments">Adjustments</TabsTrigger>}
+          {canCommissions && <TabsTrigger value="commissions">Commission rules</TabsTrigger>}
+          {canAdjustments && <TabsTrigger value="adjustments">Pay adjustments</TabsTrigger>}
         </TabsList>
-        {can("components.manage") && (
-          <TabsContent value="components">
-            <Components />
-          </TabsContent>
-        )}
-        {can("components.manage") && (
+        {canCommissions && (
           <TabsContent value="commissions">
             <Commissions />
           </TabsContent>
         )}
-        {can("adjustments.manage") && (
+        {canAdjustments && (
           <TabsContent value="adjustments">
             <Adjustments />
           </TabsContent>

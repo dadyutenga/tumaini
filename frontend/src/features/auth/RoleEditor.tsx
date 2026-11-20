@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Field, FormDialog, NativeSelect } from "@/components/shared/kit";
+import { Field, FormDialog } from "@/components/shared/kit";
 import { useGet, useWrite } from "@/hooks/useApi";
 
 interface PermissionInfo {
@@ -8,22 +8,32 @@ interface PermissionInfo {
   module: string;
   description: string;
   has_limit: boolean;
+  limit_code?: string;
   is_sensitive: boolean;
 }
 interface Grant {
   key: string;
-  scope: string;
   limit: string | null;
 }
 interface RoleDetail {
   id: string;
   name: string;
   slug: string;
+  description?: string | null;
+  rank?: number;
   is_system: boolean;
   permissions: Grant[];
 }
 
-/** Create a role, or edit the permissions of an existing one. `roleId` null means a new role. */
+const LIMIT_LABEL: Record<string, string> = {
+  sale_discount_pct: "Max sale discount %",
+  discount_approve_pct: "Max discount approve %",
+  refund_approve_amount: "Max refund amount",
+  expense_approve_amount: "Max expense amount",
+  price_change_approve_pct: "Max price change %",
+};
+
+/** Create a role, or edit the permissions & authority limits of an existing one. */
 export function RoleEditor({
   roleId,
   open,
@@ -36,17 +46,27 @@ export function RoleEditor({
   const catalogue = useGet<PermissionInfo[]>("/permissions", undefined, { enabled: open });
   const role = useGet<RoleDetail>(`/roles/${roleId}`, undefined, { enabled: open && !!roleId });
   const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [rank, setRank] = useState("30");
   const [grants, setGrants] = useState<Record<string, Grant>>({});
-  const locked = role.data?.slug === "owner";
+  const locked = role.data?.slug === "admin" || role.data?.slug === "owner";
 
   useEffect(() => {
     if (!open) return;
     if (!roleId) {
       setName("");
+      setDescription("");
+      setRank("30");
       setGrants({});
     } else if (role.data) {
       setName(role.data.name);
-      setGrants(Object.fromEntries(role.data.permissions.map((g) => [g.key, g])));
+      setDescription(role.data.description ?? "");
+      setRank(String(role.data.rank ?? 30));
+      setGrants(
+        Object.fromEntries(
+          (role.data.permissions ?? []).map((g) => [g.key, { key: g.key, limit: g.limit ?? null }]),
+        ),
+      );
     }
   }, [open, roleId, role.data]);
 
@@ -60,6 +80,7 @@ export function RoleEditor({
     success: "Role created",
     onSuccess: onClose,
   });
+
   const modules = useMemo(() => {
     const out = new Map<string, PermissionInfo[]>();
     for (const p of catalogue.data ?? []) out.set(p.module, [...(out.get(p.module) ?? []), p]);
@@ -69,15 +90,20 @@ export function RoleEditor({
   const toggle = (key: string, on: boolean) =>
     setGrants((g) => {
       const next = { ...g };
-      if (on) next[key] = { key, scope: "branch", limit: null };
+      if (on) next[key] = { key, limit: null };
       else delete next[key];
       return next;
     });
-  const patch = (key: string, change: Partial<Grant>) =>
-    setGrants((g) => ({ ...g, [key]: { ...g[key], ...change } }));
+  const patch = (key: string, limit: string | null) =>
+    setGrants((g) => ({ ...g, [key]: { ...g[key], limit } }));
 
   const submit = () => {
-    const body = { name, permissions: Object.values(grants) };
+    const body = {
+      name,
+      description,
+      rank: Number(rank) || 30,
+      permissions: Object.values(grants).map(({ key, limit }) => ({ key, limit })),
+    };
     if (roleId) save.mutate(body);
     else create.mutate(body);
   };
@@ -94,15 +120,35 @@ export function RoleEditor({
     >
       {locked && (
         <p className="text-sm text-muted-foreground">
-          The Owner role always has every permission and cannot be changed.
+          The Admin role always has every permission and cannot be changed.
         </p>
       )}
-      <Field label="Role name">
+      <div className="grid gap-3 sm:grid-cols-[1fr_7rem]">
+        <Field label="Role name">
+          <Input
+            required
+            disabled={role.data?.is_system}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </Field>
+        <Field label="Rank (1–100)">
+          <Input
+            type="number"
+            min={1}
+            max={100}
+            disabled={locked || role.data?.is_system}
+            value={rank}
+            onChange={(e) => setRank(e.target.value)}
+          />
+        </Field>
+      </div>
+      <Field label="Description">
         <Input
-          required
-          disabled={role.data?.is_system}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
+          disabled={locked || role.data?.is_system}
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Optional description of what this role covers"
         />
       </Field>
       <div className="max-h-[50vh] space-y-4 overflow-y-auto pr-1">
@@ -123,34 +169,25 @@ export function RoleEditor({
                       />
                       <span>
                         {p.description}
+                        <span className="ml-1.5 font-mono text-[11px] text-muted-foreground">
+                          ({p.key})
+                        </span>
                         {p.is_sensitive && (
-                          <span className="ml-1 text-xs text-destructive">sensitive</span>
+                          <span className="ml-1.5 text-xs text-destructive">sensitive</span>
                         )}
                       </span>
                     </label>
-                    {g && !locked && (
-                      <>
-                        <NativeSelect
-                          aria-label={`Scope for ${p.key}`}
-                          className="h-8 w-28"
-                          value={g.scope}
-                          onChange={(e) => patch(p.key, { scope: e.target.value })}
-                        >
-                          <option value="own">Own</option>
-                          <option value="branch">Branch</option>
-                          <option value="all">All</option>
-                        </NativeSelect>
-                        {p.has_limit && (
-                          <Input
-                            aria-label={`Limit for ${p.key}`}
-                            className="h-8 w-28"
-                            inputMode="decimal"
-                            placeholder="No limit"
-                            value={g.limit ?? ""}
-                            onChange={(e) => patch(p.key, { limit: e.target.value || null })}
-                          />
-                        )}
-                      </>
+                    {g && !locked && p.has_limit && (
+                      <Input
+                        aria-label={`Limit for ${p.key}`}
+                        className="h-8 w-36"
+                        inputMode="decimal"
+                        placeholder={
+                          p.limit_code ? (LIMIT_LABEL[p.limit_code] ?? "No limit") : "No limit"
+                        }
+                        value={g.limit ?? ""}
+                        onChange={(e) => patch(p.key, e.target.value || null)}
+                      />
                     )}
                   </li>
                 );

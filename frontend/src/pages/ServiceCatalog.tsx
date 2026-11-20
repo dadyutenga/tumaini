@@ -80,7 +80,7 @@ function toBody(d: Draft) {
 
 export default function ServiceCatalog() {
   const { can } = useAuth();
-  const manage = can("service_catalog.manage");
+  const manage = can("services.catalog.manage");
   const [category, setCategory] = useState("");
   const [q, setQ] = useState("");
   const list = useGet<CatalogItem[]>("/service-catalog", {

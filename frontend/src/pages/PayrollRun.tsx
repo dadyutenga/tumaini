@@ -52,10 +52,10 @@ interface ManualLineDraft {
 
 export default function PayrollRun() {
   const { id } = useParams();
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const run = useGet<Detail>(`/payroll-runs/${id}`);
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
-    enabled: can("accounts.view"),
+    enabled: canAny("finance.account.view", "hr.payroll.approve"),
   });
   const [paying, setPaying] = useState(false);
   const [account, setAccount] = useState("");
@@ -69,14 +69,16 @@ export default function PayrollRun() {
   const [reversing, setReversing] = useState(false);
   const [reverseReason, setReverseReason] = useState("");
 
-  const refresh = ["/payroll-runs", "/money-accounts", "/transactions", "/dashboard", "/me/payslips"];
+  const refresh = [
+    "/payroll-runs",
+    "/money-accounts",
+    "/transactions",
+    "/dashboard",
+    "/me/payslips",
+  ];
   const calculate = useWrite("POST", `/payroll-runs/${id}/calculate`, {
     invalidate: refresh,
     success: "Payroll calculated",
-  });
-  const submit = useWrite("POST", `/payroll-runs/${id}/submit`, {
-    invalidate: refresh,
-    success: "Submitted for approval",
   });
   const approve = useWrite("POST", `/payroll-runs/${id}/approve`, {
     idempotent: true,
@@ -117,7 +119,11 @@ export default function PayrollRun() {
   const save = (path: string, query: Record<string, string>, name: string) =>
     download(path, query, name).catch((e) => toast.error(errorMessage(e)));
 
-  const canEditLines = ["draft", "calculated"].includes(r.status) && can("payroll.prepare");
+  const hasSlips = (r.payslips?.length ?? 0) > 0;
+  const canManage = can("hr.payroll.manage");
+  const canApprove = can("hr.payroll.approve");
+  const canViewSlips = canAny("hr.payroll.view", "hr.payroll.manage", "hr.payroll.approve");
+  const canEditLines = ["draft", "calculated"].includes(r.status) && canManage;
 
   return (
     <>
@@ -133,26 +139,23 @@ export default function PayrollRun() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <StatusBadge value={r.status} />
-            {["draft", "calculated"].includes(r.status) && can("payroll.prepare") && (
+            {["draft", "calculated"].includes(r.status) && canManage && (
               <Button
                 variant="outline"
                 onClick={() => calculate.mutate({})}
                 disabled={calculate.isPending}
               >
-                {r.status === "draft" ? "Calculate" : "Recalculate"}
+                {hasSlips ? "Recalculate" : "Calculate"}
               </Button>
             )}
-            {r.status === "calculated" && can("payroll.prepare") && (
-              <Button onClick={() => submit.mutate({})} disabled={submit.isPending}>
-                Submit
-              </Button>
-            )}
-            {["calculated", "pending_approval"].includes(r.status) && can("payroll.approve") && (
-              <Button onClick={() => approve.mutate({})} disabled={approve.isPending}>
-                Approve
-              </Button>
-            )}
-            {r.status === "approved" && can("payroll.pay") && (
+            {["draft", "calculated", "pending_approval"].includes(r.status) &&
+              hasSlips &&
+              canApprove && (
+                <Button onClick={() => approve.mutate({})} disabled={approve.isPending}>
+                  Approve
+                </Button>
+              )}
+            {r.status === "approved" && canApprove && (
               <>
                 <Button
                   variant="outline"
@@ -169,7 +172,7 @@ export default function PayrollRun() {
                 <Button onClick={() => setPaying(true)}>Pay salaries</Button>
               </>
             )}
-            {["approved", "paid"].includes(r.status) && can("payroll.reverse") && (
+            {["approved", "paid"].includes(r.status) && (canApprove || canManage) && (
               <Button
                 variant="outline"
                 className="text-destructive hover:text-destructive"
@@ -209,12 +212,14 @@ export default function PayrollRun() {
                     <Pencil size={13} /> Edit lines
                   </Button>
                 )}
-                {can("payslips.view") && (
+                {canViewSlips && (
                   <>
                     <Button
                       size="sm"
                       variant="ghost"
-                      onClick={() => save(`/payslips/${s.id}`, { format: "pdf" }, `${s.number}.pdf`)}
+                      onClick={() =>
+                        save(`/payslips/${s.id}`, { format: "pdf" }, `${s.number}.pdf`)
+                      }
                     >
                       <FileText size={14} /> PDF
                     </Button>
@@ -273,7 +278,8 @@ export default function PayrollRun() {
         }
       >
         <p className="text-xs text-muted-foreground">
-          Replaces manual earning/deduction lines on this payslip and recalculates net pay. Leave rows empty to remove manual lines.
+          Replaces manual earning/deduction lines on this payslip and recalculates net pay. Leave
+          rows empty to remove manual lines.
         </p>
         <div className="space-y-2">
           {manualLines.map((line, idx) => (

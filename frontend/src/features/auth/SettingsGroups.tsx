@@ -33,30 +33,22 @@ const isScalar = (v: unknown): v is Value =>
 
 const RULE_LABELS: Record<string, string> = {
   low_stock: "Low stock alert",
-  approval_request: "Approval requested",
-  approval_decision: "Approval approved / rejected",
-  salary_due: "Salary payday reminder",
-  customer_debt: "Customer overdue debt",
-  customer_credit: "Customer credit limit",
-  supplier_debt: "Supplier bill due",
-  pending_payment: "Pending payment",
-  security: "Security alert",
-  daily_summary: "Owner daily summary",
-  transfer_difference: "Stock transfer variance",
-  till_difference: "Till variance alert",
-  payroll_awaiting_approval: "Payroll awaiting approval",
-  attendance_review: "Attendance needs review",
-  leave_decision: "Leave request decision",
-  export_ready: "Backup export ready",
-  project_completed: "Services: Project completed",
-  design_assigned: "Design: Job assigned",
-  design_feedback: "Design: Client feedback",
-  design_client_decision: "Design: Client approved / rejected",
-  design_print_ready: "Design: Print order ready",
-  renewal_due: "Services: Renewal due",
-  design_deadline: "Design: Job deadline approaching",
-  task_due: "Services: Task due",
+  debt_due: "Customer / supplier debt due",
+  task_overdue: "Services: Task overdue",
   task_assigned: "Services: Task assigned",
+  renewal_due: "Services: Renewal due",
+  salary_due: "Payroll: Salary payday reminder",
+  approval_waiting: "Approval awaiting decision",
+  approval_decided: "Approval approved / rejected",
+  design_brief_assigned: "Design: Job assigned",
+  design_feedback: "Design: Client feedback",
+  design_deadline: "Design: Job deadline approaching",
+  design_approved: "Design: Client approved",
+  print_ready: "Design: Print order ready",
+  account_locked: "Security: Account locked",
+  day_closed: "Finance: Day closed",
+  project_stage_changed: "Services: Project stage changed",
+  payment_received: "Finance: Payment received",
 };
 
 function GroupForm({
@@ -188,11 +180,12 @@ function GroupForm({
 export function PaymentMethodsPanel() {
   const { can } = useAuth();
   const canEdit = can("settings.manage");
-  const methods = useGet<Record<string, { enabled?: boolean; money_account_id?: string | null }>>(
-    "/payment-methods",
-  );
+  const methods =
+    useGet<Record<string, { enabled?: boolean; money_account_id?: string | null }>>(
+      "/payment-methods",
+    );
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
-    enabled: can("accounts.view"),
+    enabled: can("finance.account.view"),
   });
   const [draft, setDraft] = useState<
     Record<string, { enabled: boolean; money_account_id: string }>
@@ -233,7 +226,11 @@ export function PaymentMethodsPanel() {
   const activeAccounts = (accounts.data ?? []).filter((a) => a.is_active);
   const specs: Array<{ key: string; label: string; allowedTypes: string[] | null }> = [
     { key: "cash", label: "Cash", allowedTypes: ["cash", "petty_cash"] },
-    { key: "mobile_money", label: "Mobile money (M-Pesa / Tigo / Airtel)", allowedTypes: ["mobile_money"] },
+    {
+      key: "mobile_money",
+      label: "Mobile money (M-Pesa / Tigo / Airtel)",
+      allowedTypes: ["mobile_money"],
+    },
     { key: "bank", label: "Bank transfer / card", allowedTypes: ["bank"] },
     { key: "credit", label: "Customer credit (pay later)", allowedTypes: null },
   ];
@@ -256,7 +253,8 @@ export function PaymentMethodsPanel() {
       <div>
         <h3 className="font-semibold">Payment Methods &amp; Default Accounts</h3>
         <p className="text-xs text-muted-foreground">
-          Choose which payment methods cashiers can accept and which money account receives each one.
+          Choose which payment methods cashiers can accept and which money account receives each
+          one.
         </p>
       </div>
       <div className="divide-y rounded-xl border">
@@ -436,13 +434,14 @@ export function NotificationsSettingsPanel() {
     },
   );
 
-  const sendTest = useWrite<
-    { channel: string; recipient: string; message: string },
-    unknown
-  >("POST", "/notifications/test", {
-    invalidate: ["/notifications"],
-    success: "Test notification sent!",
-  });
+  const sendTest = useWrite<{ channel: string; recipient: string; message: string }, unknown>(
+    "POST",
+    "/notifications/test",
+    {
+      invalidate: ["/notifications"],
+      success: "Test notification sent!",
+    },
+  );
 
   const flatNotif = Object.fromEntries(
     Object.entries(notifGroup).filter(([, v]) => isScalar(v)),
@@ -457,7 +456,8 @@ export function NotificationsSettingsPanel() {
           <div>
             <h3 className="font-semibold">Alert Channels by Event ({ruleKeys.length})</h3>
             <p className="text-xs text-muted-foreground">
-              Choose which alerts go to In-App, Email, or SMS across Shop, Finance, HR, Services and Design.
+              Choose which alerts go to In-App, Email, or SMS across Shop, Finance, HR, Services and
+              Design.
             </p>
           </div>
           {canEdit && ruleKeys.length > 0 && (
@@ -515,7 +515,8 @@ export function NotificationsSettingsPanel() {
         extraDefaults={{
           supplier_due_days: 3,
           salary_due_days: 3,
-          sms_template_receipt: "Thank you for shopping with us! Receipt {{number}}, Total {{total}}.",
+          sms_template_receipt:
+            "Thank you for shopping with us! Receipt {{number}}, Total {{total}}.",
           sms_template_debt: "Friendly reminder: balance {{balance}} is due. Thank you.",
           sms_template_renewal: "Reminder: your {{service}} renews on {{date}}.",
           whatsapp_template_update: "Hello {{client}}, update on {{project}}: {{message}}",

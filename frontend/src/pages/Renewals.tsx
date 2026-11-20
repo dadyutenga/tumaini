@@ -23,7 +23,7 @@ const blank = { client_id: "", item: "", due_date: "", amount: "", notes: "" };
 
 export default function Renewals() {
   const { can } = useAuth();
-  const manage = can("renewals.manage");
+  const manage = can("services.renewal.manage");
   const [status, setStatus] = useState("pending");
   const [within, setWithin] = useState("");
   const renewals = useGet<Renewal[]>("/renewals", { status, within_days: within, per_page: 100 });

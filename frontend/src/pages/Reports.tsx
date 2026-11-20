@@ -16,40 +16,158 @@ interface Catalogue {
   path: string;
   label: string;
   group: string;
-  permission: string;
+  permission: ("reports.operations.view" | "reports.business.view")[];
   dated?: boolean;
 }
 
+const OPS: Catalogue["permission"] = ["reports.operations.view", "reports.business.view"];
+const BIZ: Catalogue["permission"] = ["reports.business.view"];
+
 const catalogue: Catalogue[] = [
-  { group: "Sales", label: "Sales summary", path: "/reports/sales/summary", permission: "reports.sales", dated: true },
-  { group: "Sales", label: "By product", path: "/reports/sales/by-product", permission: "reports.sales", dated: true },
-  { group: "Sales", label: "By category", path: "/reports/sales/by-category", permission: "reports.sales", dated: true },
-  { group: "Sales", label: "By cashier", path: "/reports/sales/by-cashier", permission: "reports.sales", dated: true },
-  { group: "Sales", label: "By customer", path: "/reports/sales/by-customer", permission: "reports.sales", dated: true },
-  { group: "Sales", label: "By payment method", path: "/reports/sales/by-payment-method", permission: "reports.sales", dated: true },
-  { group: "Sales", label: "Till sessions", path: "/reports/tills", permission: "reports.sales", dated: true },
-  { group: "Profit & Loss", label: "Profit and loss", path: "/reports/profit-loss", permission: "reports.financial", dated: true },
-  { group: "Cash Flow & Finance", label: "Cash flow", path: "/reports/cash-flow", permission: "reports.financial", dated: true },
-  { group: "Cash Flow & Finance", label: "Balance sheet", path: "/reports/balance-sheet", permission: "reports.financial" },
-  { group: "Cash Flow & Finance", label: "Tax", path: "/reports/tax", permission: "reports.financial", dated: true },
-  { group: "Projects & Design", label: "Project profit", path: "/reports/projects", permission: "reports.services", dated: true },
-  { group: "Projects & Design", label: "Design jobs", path: "/reports/design-jobs", permission: "reports.services", dated: true },
-  { group: "Expenses", label: "Expenses", path: "/reports/expenses", permission: "reports.expenses", dated: true },
-  { group: "Stock", label: "Stock on hand", path: "/reports/inventory/on-hand", permission: "reports.inventory" },
-  { group: "Stock", label: "Stock valuation", path: "/reports/inventory/valuation", permission: "reports.inventory" },
-  { group: "Stock", label: "Movements", path: "/reports/inventory/movements", permission: "reports.inventory", dated: true },
-  { group: "Stock", label: "Low stock", path: "/reports/inventory/low-stock", permission: "reports.inventory" },
-  { group: "Stock", label: "Dead stock", path: "/reports/inventory/dead-stock", permission: "reports.inventory" },
-  { group: "Stock", label: "Losses and adjustments", path: "/reports/inventory/losses", permission: "reports.inventory", dated: true },
-  { group: "Stock", label: "Purchases", path: "/reports/purchases", permission: "reports.purchases", dated: true },
-  { group: "Debts", label: "Customer debts", path: "/reports/customer-debt", permission: "reports.debts" },
-  { group: "Debts", label: "Supplier debts", path: "/reports/supplier-debt", permission: "reports.debts" },
-  { group: "Staff & Payroll", label: "Payroll summary", path: "/reports/payroll/summary", permission: "reports.payroll", dated: true },
-  { group: "Staff & Payroll", label: "By department", path: "/reports/payroll/by-department", permission: "reports.payroll", dated: true },
-  { group: "Staff & Payroll", label: "Deductions", path: "/reports/payroll/deductions", permission: "reports.payroll", dated: true },
-  { group: "Staff & Payroll", label: "Staff loans", path: "/reports/payroll/loans", permission: "reports.payroll" },
-  { group: "Staff & Payroll", label: "Staff performance", path: "/reports/staff-performance", permission: "reports.staff", dated: true },
-  { group: "Staff & Payroll", label: "Branch comparison", path: "/reports/branches", permission: "reports.branches", dated: true },
+  {
+    group: "Sales",
+    label: "Sales summary",
+    path: "/reports/sales/summary",
+    permission: OPS,
+    dated: true,
+  },
+  {
+    group: "Sales",
+    label: "By product",
+    path: "/reports/sales/by-product",
+    permission: OPS,
+    dated: true,
+  },
+  {
+    group: "Sales",
+    label: "By category",
+    path: "/reports/sales/by-category",
+    permission: OPS,
+    dated: true,
+  },
+  {
+    group: "Sales",
+    label: "By cashier",
+    path: "/reports/sales/by-cashier",
+    permission: OPS,
+    dated: true,
+  },
+  {
+    group: "Sales",
+    label: "By customer",
+    path: "/reports/sales/by-customer",
+    permission: OPS,
+    dated: true,
+  },
+  {
+    group: "Sales",
+    label: "By payment method",
+    path: "/reports/sales/by-payment-method",
+    permission: OPS,
+    dated: true,
+  },
+  {
+    group: "Profit & Loss",
+    label: "Profit and loss",
+    path: "/reports/profit-loss",
+    permission: BIZ,
+    dated: true,
+  },
+  {
+    group: "Cash Flow & Finance",
+    label: "Cash flow",
+    path: "/reports/cash-flow",
+    permission: BIZ,
+    dated: true,
+  },
+  {
+    group: "Cash Flow & Finance",
+    label: "Balance sheet",
+    path: "/reports/balance-sheet",
+    permission: BIZ,
+  },
+  {
+    group: "Cash Flow & Finance",
+    label: "Tax",
+    path: "/reports/tax",
+    permission: BIZ,
+    dated: true,
+  },
+  {
+    group: "Projects & Design",
+    label: "Project profit",
+    path: "/reports/projects",
+    permission: OPS,
+    dated: true,
+  },
+  {
+    group: "Projects & Design",
+    label: "Design jobs",
+    path: "/reports/design-jobs",
+    permission: OPS,
+    dated: true,
+  },
+  { group: "Expenses", label: "Expenses", path: "/reports/expenses", permission: BIZ, dated: true },
+  { group: "Stock", label: "Stock on hand", path: "/reports/inventory/on-hand", permission: OPS },
+  {
+    group: "Stock",
+    label: "Stock valuation",
+    path: "/reports/inventory/valuation",
+    permission: BIZ,
+  },
+  {
+    group: "Stock",
+    label: "Movements",
+    path: "/reports/inventory/movements",
+    permission: OPS,
+    dated: true,
+  },
+  { group: "Stock", label: "Low stock", path: "/reports/inventory/low-stock", permission: OPS },
+  { group: "Stock", label: "Dead stock", path: "/reports/inventory/dead-stock", permission: OPS },
+  {
+    group: "Stock",
+    label: "Losses and adjustments",
+    path: "/reports/inventory/losses",
+    permission: OPS,
+    dated: true,
+  },
+  { group: "Stock", label: "Purchases", path: "/reports/purchases", permission: OPS, dated: true },
+  { group: "Debts", label: "Customer debts", path: "/reports/customer-debt", permission: OPS },
+  { group: "Debts", label: "Supplier debts", path: "/reports/supplier-debt", permission: OPS },
+  {
+    group: "Staff & Payroll",
+    label: "Payroll summary",
+    path: "/reports/payroll/summary",
+    permission: BIZ,
+    dated: true,
+  },
+  {
+    group: "Staff & Payroll",
+    label: "Deductions",
+    path: "/reports/payroll/deductions",
+    permission: BIZ,
+    dated: true,
+  },
+  {
+    group: "Staff & Payroll",
+    label: "Staff advances & loans",
+    path: "/reports/payroll/loans",
+    permission: BIZ,
+  },
+  {
+    group: "Staff & Payroll",
+    label: "Staff performance",
+    path: "/reports/staff-performance",
+    permission: BIZ,
+    dated: true,
+  },
+  {
+    group: "Staff & Payroll",
+    label: "Location comparison",
+    path: "/reports/branches",
+    permission: BIZ,
+    dated: true,
+  },
 ];
 
 interface Table {
@@ -64,7 +182,13 @@ interface Table {
     shared: { other_income: string; operating_expenses: string };
     total: { income: string; expenses: string; net_profit: string };
   };
-  previous?: { net_profit?: string; income?: string; expenses?: string; from?: string; to?: string };
+  previous?: {
+    net_profit?: string;
+    income?: string;
+    expenses?: string;
+    from?: string;
+    to?: string;
+  };
   change?: { net_profit?: string; net_profit_pct?: string | null };
 }
 
@@ -83,10 +207,10 @@ function cell(key: string, value: unknown) {
 }
 
 export default function Reports() {
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const available = useMemo(() => catalogue.filter((r) => can(r.permission)), [can]);
+  const available = useMemo(() => catalogue.filter((r) => canAny(...r.permission)), [canAny]);
   const selectedPath = params.get("path") ?? "";
   const current = available.find((r) => r.path === selectedPath) ?? null;
 
@@ -116,6 +240,26 @@ export default function Reports() {
     download(current!.path, { ...query, format }, `${current!.label}.${format}`).catch((e) =>
       toast.error(errorMessage(e)),
     );
+
+  const columns = useMemo(() => report.data?.columns ?? [], [report.data?.columns]);
+  const rows = useMemo(() => report.data?.rows ?? [], [report.data?.rows]);
+
+  // Derive a chart automatically from the first label column + first numeric column.
+  const chartSeries = useMemo(() => {
+    if (columns.length < 2 || rows.length === 0) return [];
+    const labelCol = columns[0].key;
+    const numCol = columns.slice(1).find((c) =>
+      rows.some((r) => {
+        const v = r[c.key];
+        return typeof v === "number" || (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v));
+      }),
+    );
+    if (!numCol) return [];
+    return rows.slice(0, 10).map((r) => ({
+      name: String(r[labelCol] ?? "-").slice(0, 18),
+      value: toNumber(r[numCol.key]),
+    }));
+  }, [columns, rows]);
 
   if (available.length === 0) {
     return <PageHeader title="Reports" description="You do not have access to any reports." />;
@@ -157,31 +301,13 @@ export default function Reports() {
     );
   }
 
-  const columns = report.data?.columns ?? [];
-  const rows = report.data?.rows ?? [];
-
-  // Derive a chart automatically from the first label column + first numeric column.
-  const chartSeries = useMemo(() => {
-    if (columns.length < 2 || rows.length === 0) return [];
-    const labelCol = columns[0].key;
-    const numCol = columns.slice(1).find((c) =>
-      rows.some((r) => {
-        const v = r[c.key];
-        return typeof v === "number" || (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v));
-      }),
-    );
-    if (!numCol) return [];
-    return rows.slice(0, 10).map((r) => ({
-      name: String(r[labelCol] ?? "-").slice(0, 18),
-      value: toNumber(r[numCol.key]),
-    }));
-  }, [columns, rows]);
-
   return (
     <div className="space-y-5">
       <PageHeader
         title={current.label}
-        description={report.data?.subtitle ?? "Filter, review, print or export to CSV, Excel or PDF."}
+        description={
+          report.data?.subtitle ?? "Filter, review, print or export to CSV, Excel or PDF."
+        }
         actions={
           <Button variant="outline" size="sm" onClick={closeReport}>
             <ArrowLeft size={14} /> All reports
@@ -241,11 +367,12 @@ export default function Reports() {
           <Button variant="outline" size="sm" onClick={() => window.print()}>
             <Printer size={14} /> Print
           </Button>
-          {["csv", "xlsx", "pdf"].map((f) => (
-            <Button key={f} variant="outline" size="sm" onClick={() => save(f)}>
-              <Download size={14} /> {f.toUpperCase()}
-            </Button>
-          ))}
+          {can("reports.export") &&
+            ["csv", "xlsx", "pdf"].map((f) => (
+              <Button key={f} variant="outline" size="sm" onClick={() => save(f)}>
+                <Download size={14} /> {f.toUpperCase()}
+              </Button>
+            ))}
         </div>
       </div>
 
@@ -253,7 +380,9 @@ export default function Reports() {
       {isPL && report.data?.businesses && (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Shop (Business A)</p>
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Shop (Business A)
+            </p>
             <p className="mt-1 text-xl font-bold tabular-nums">
               {formatMoney(report.data.businesses.shop.profit)}
             </p>
@@ -275,7 +404,9 @@ export default function Reports() {
             </p>
           </div>
           <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Operating expenses</p>
+            <p className="text-xs uppercase tracking-wide text-muted-foreground">
+              Operating expenses
+            </p>
             <p className="mt-1 text-xl font-bold tabular-nums">
               {formatMoney(report.data.businesses.shared.operating_expenses)}
             </p>

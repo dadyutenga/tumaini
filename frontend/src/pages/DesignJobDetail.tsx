@@ -143,7 +143,7 @@ function PrintDialog({ job, onClose }: { job: Job | null; onClose: () => void })
   const contractors = useGet<Contractor[]>(
     "/contractors",
     { per_page: 100 },
-    { enabled: can("contractors.view") },
+    { enabled: can("services.contractor.manage") },
   );
   const [d, setD] = useState({
     contractor_id: "",
@@ -175,7 +175,7 @@ function PrintDialog({ job, onClose }: { job: Job | null; onClose: () => void })
       }
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        {can("contractors.view") && (
+        {can("services.contractor.manage") && (
           <Field label="Printer" className="sm:col-span-2">
             <NativeSelect
               value={d.contractor_id}
@@ -448,8 +448,9 @@ export default function DesignJobDetail() {
         </Link>
       </p>
     );
-  const manage = can("design.manage");
-  const billing = can("service_billing.manage");
+  const manage = can("services.design.manage");
+  const billing = can("services.invoice.manage");
+  const canViewDesign = manage || can("services.design.view_all");
   const next = DESIGN_NEXT[job.status] ?? [];
   const timerHere = dash.data?.timer_job_id === id;
   const latest = job.versions.find((v) => v.kind === "design");
@@ -515,7 +516,8 @@ export default function DesignJobDetail() {
       {job.revisions_over && (
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-400">
           <p>
-            The included revisions are used up. Add an extra charge to the price before more changes.
+            The included revisions are used up. Add an extra charge to the price before more
+            changes.
           </p>
           {manage && (
             <Button size="sm" variant="outline" onClick={() => setCharging(true)}>
@@ -550,7 +552,7 @@ export default function DesignJobDetail() {
         </div>
       )}
 
-      {can("design.view") && (
+      {canViewDesign && (
         <div className="mb-6 flex flex-wrap items-center gap-2">
           {manage &&
             next.map((s) => (
@@ -579,7 +581,7 @@ export default function DesignJobDetail() {
               Create invoice
             </Button>
           )}
-          {can("design.view") &&
+          {canViewDesign &&
             (timerHere ? (
               <Button size="sm" variant="outline" onClick={() => stopTimer.mutate(undefined)}>
                 <Square size={14} /> Stop timer

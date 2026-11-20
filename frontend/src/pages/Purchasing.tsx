@@ -42,19 +42,8 @@ interface Receipt {
   number: string;
   supplier?: string;
   supplier_id?: string;
-  invoice_id?: string | null;
   received_date?: string;
   total_value?: string;
-}
-interface Invoice {
-  id: string;
-  number: string;
-  supplier?: string;
-  status: string;
-  total?: string;
-  balance?: string;
-  invoice_date?: string;
-  due_date?: string;
 }
 
 function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
@@ -91,21 +80,13 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
           }}
         >
           <option value="">All statuses</option>
-          {[
-            "draft",
-            "pending_approval",
-            "approved",
-            "partially_received",
-            "received",
-            "closed",
-            "cancelled",
-          ].map((v) => (
+          {["draft", "ordered", "partially_received", "received", "cancelled"].map((v) => (
             <option key={v} value={v}>
               {v.replaceAll("_", " ")}
             </option>
           ))}
         </NativeSelect>
-        {can("po.create") && (
+        {can("shop.purchase.manage") && (
           <Button onClick={() => setOpen(true)}>
             <Plus size={16} /> New order
           </Button>
@@ -165,13 +146,11 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
                   onChange={(e) => setLine(i, { product_id: e.target.value })}
                 >
                   <option value="">Choose…</option>
-                  {products.data
-                    ?.filter((p) => p.kind === "stock")
-                    .map((p) => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
+                  {products.data?.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
                 </NativeSelect>
               </Field>
               <Field label={i === 0 ? "Qty" : ""}>
@@ -217,12 +196,12 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
 }
 
 function SuppliersTab() {
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const list = useGetPage<Supplier>("/suppliers", { q: q || undefined, page });
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
-    enabled: can("payments.pay"),
+    enabled: canAny("finance.account.view", "finance.payment.make", "finance.payment.receive"),
   });
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState({
@@ -243,7 +222,7 @@ function SuppliersTab() {
   });
   const payment = useWrite<unknown, unknown>("POST", () => `/suppliers/${paying?.id}/payments`, {
     idempotent: true,
-    invalidate: ["/suppliers", "/money", "/purchase-invoices"],
+    invalidate: ["/suppliers", "/money", "/purchase-orders"],
     success: "Payment recorded",
     onSuccess: () => {
       setPaying(null);
@@ -264,7 +243,7 @@ function SuppliersTab() {
             setPage(1);
           }}
         />
-        {can("suppliers.manage") && (
+        {can("shop.supplier.manage") && (
           <Button onClick={() => setOpen(true)}>
             <Plus size={16} /> New supplier
           </Button>
@@ -291,7 +270,7 @@ function SuppliersTab() {
           {
             header: "",
             cell: (s) =>
-              can("payments.pay") &&
+              can("finance.payment.make") &&
               toNumber(s.balance) > 0 && (
                 <Button
                   size="sm"
@@ -390,18 +369,8 @@ function SuppliersTab() {
 }
 
 function ReceiptsTab() {
-  const { can } = useAuth();
   const [page, setPage] = useState(1);
   const list = useGetPage<Receipt>("/goods-receipts", { page });
-  const invoice = useWrite<{ supplier_id: string; receipt_ids: string[] }, unknown>(
-    "POST",
-    "/purchase-invoices",
-    {
-      idempotent: true,
-      invalidate: ["/goods-receipts", "/purchase-invoices", "/suppliers"],
-      success: "Invoice recorded",
-    },
-  );
   return (
     <>
       <DataGrid
@@ -417,49 +386,6 @@ function ReceiptsTab() {
             cell: (r) => (r.received_date ? formatDate(r.received_date) : "-"),
           },
           { header: "Value", align: "right", cell: (r) => formatMoney(r.total_value) },
-          {
-            header: "",
-            cell: (r) =>
-              can("purchase_invoices.manage") && !r.invoice_id && r.supplier_id ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={invoice.isPending}
-                  onClick={() =>
-                    invoice.mutate({ supplier_id: r.supplier_id!, receipt_ids: [r.id] })
-                  }
-                >
-                  Record invoice
-                </Button>
-              ) : r.invoice_id ? (
-                <span className="text-xs text-muted-foreground">Invoiced</span>
-              ) : null,
-          },
-        ]}
-      />
-      <Pager meta={list.data?.meta} onPage={setPage} />
-    </>
-  );
-}
-
-function InvoicesTab() {
-  const [page, setPage] = useState(1);
-  const list = useGetPage<Invoice>("/purchase-invoices", { page });
-  return (
-    <>
-      <DataGrid
-        rows={list.data?.data}
-        loading={list.isLoading}
-        rowKey={(i) => i.id}
-        empty="No supplier invoices yet"
-        columns={[
-          { header: "Number", cell: (i) => <span className="font-medium">{i.number}</span> },
-          { header: "Supplier", cell: (i) => i.supplier ?? "-" },
-          { header: "Date", cell: (i) => (i.invoice_date ? formatDate(i.invoice_date) : "-") },
-          { header: "Due", cell: (i) => (i.due_date ? formatDate(i.due_date) : "-") },
-          { header: "Total", align: "right", cell: (i) => formatMoney(i.total) },
-          { header: "Balance", align: "right", cell: (i) => formatMoney(i.balance) },
-          { header: "Status", cell: (i) => <StatusBadge value={i.status} /> },
         ]}
       />
       <Pager meta={list.data?.meta} onPage={setPage} />
@@ -468,37 +394,42 @@ function InvoicesTab() {
 }
 
 export default function Purchasing() {
-  const { can } = useAuth();
-  const suppliers = useGet<Supplier[]>(
-    "/suppliers",
-    { per_page: 100 },
-    { enabled: can("suppliers.view") },
+  const { can, canAny } = useAuth();
+  const canOrders = can("shop.purchase.manage");
+  const canSuppliers = canAny(
+    "shop.supplier.manage",
+    "shop.purchase.manage",
+    "finance.debt.view",
+    "finance.payment.make",
   );
+  const suppliers = useGet<Supplier[]>("/suppliers", { per_page: 100 }, { enabled: canSuppliers });
   return (
     <>
       <PageHeader
         title="Purchasing"
         description="Suppliers, orders, goods received and what you owe."
       />
-      <Tabs defaultValue="orders">
+      <Tabs defaultValue={canOrders ? "orders" : "suppliers"}>
         <TabsList className="mb-4">
-          <TabsTrigger value="orders">Orders</TabsTrigger>
-          {can("suppliers.view") && <TabsTrigger value="suppliers">Suppliers</TabsTrigger>}
-          <TabsTrigger value="receipts">Receipts</TabsTrigger>
-          <TabsTrigger value="invoices">Invoices</TabsTrigger>
+          {canOrders && <TabsTrigger value="orders">Orders</TabsTrigger>}
+          {canSuppliers && <TabsTrigger value="suppliers">Suppliers</TabsTrigger>}
+          {canOrders && <TabsTrigger value="receipts">Receipts</TabsTrigger>}
         </TabsList>
-        <TabsContent value="orders">
-          <OrdersTab suppliers={suppliers.data ?? []} />
-        </TabsContent>
-        <TabsContent value="suppliers">
-          <SuppliersTab />
-        </TabsContent>
-        <TabsContent value="receipts">
-          <ReceiptsTab />
-        </TabsContent>
-        <TabsContent value="invoices">
-          <InvoicesTab />
-        </TabsContent>
+        {canOrders && (
+          <TabsContent value="orders">
+            <OrdersTab suppliers={suppliers.data ?? []} />
+          </TabsContent>
+        )}
+        {canSuppliers && (
+          <TabsContent value="suppliers">
+            <SuppliersTab />
+          </TabsContent>
+        )}
+        {canOrders && (
+          <TabsContent value="receipts">
+            <ReceiptsTab />
+          </TabsContent>
+        )}
       </Tabs>
     </>
   );

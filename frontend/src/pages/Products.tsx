@@ -27,9 +27,10 @@ interface Draft {
   sku: string;
   barcode: string;
   category_id: string;
-  unit_id: string;
-  kind: "stock" | "service";
+  unit: string;
   sell_price: string;
+  buy_price: string;
+  reason: string;
   reorder_level: string;
   warranty_months: string;
   track_serial: boolean;
@@ -41,9 +42,10 @@ const blank: Draft = {
   sku: "",
   barcode: "",
   category_id: "",
-  unit_id: "",
-  kind: "stock",
+  unit: "pcs",
   sell_price: "",
+  buy_price: "",
+  reason: "",
   reorder_level: "0",
   warranty_months: "0",
   track_serial: false,
@@ -54,10 +56,10 @@ const blank: Draft = {
 export default function Products() {
   const { can } = useAuth();
   const navigate = useNavigate();
-  const manage = can("products.manage");
-  const showCost = can("products.view_cost");
-  const canCategories = can("categories.manage");
-  const canImport = can("products.import");
+  const manage = can("shop.product.manage");
+  const showCost = can("shop.product.view_cost");
+  const canCategories = can("shop.product.manage");
+  const canImport = can("shop.product.manage");
 
   const [q, setQ] = useState("");
   const [catFilter, setCatFilter] = useState("");
@@ -123,15 +125,16 @@ export default function Products() {
     setEditing(product);
     setDraft(
       product === "new"
-        ? { ...blank, unit_id: units.data?.[0]?.id ?? "" }
+        ? { ...blank, unit: units.data?.[0]?.id ?? "pcs" }
         : {
             name: product.name,
             sku: product.sku,
             barcode: product.barcode ?? "",
             category_id: product.category_id ?? "",
-            unit_id: product.unit_id,
-            kind: product.kind,
+            unit: product.unit || "pcs",
             sell_price: product.sell_price,
+            buy_price: product.buy_price ?? "",
+            reason: "",
             reorder_level: product.reorder_level,
             warranty_months: String(product.warranty_months ?? 0),
             track_serial: Boolean(product.track_serial),
@@ -296,7 +299,7 @@ export default function Products() {
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {(data?.data ?? []).map((p) => {
                 const qty = toNumber(p.qty_on_hand);
-                const isLow = p.kind === "stock" && qty <= toNumber(p.reorder_level);
+                const isLow = qty <= toNumber(p.reorder_level);
                 return (
                   <div
                     key={p.id}
@@ -320,26 +323,24 @@ export default function Products() {
                         </p>
                         <p
                           className={`text-xs ${
-                            qty <= 0 && p.kind === "stock"
+                            qty <= 0
                               ? "font-medium text-destructive"
                               : isLow
                                 ? "font-medium text-amber-600"
                                 : "text-muted-foreground"
                           }`}
                         >
-                          {p.kind === "service"
-                            ? "Service item"
-                            : qty <= 0
-                              ? "Out of stock"
-                              : `In stock: ${formatQty(p.qty_on_hand)} ${p.unit}`}
+                          {qty <= 0
+                            ? "Out of stock"
+                            : `In stock: ${formatQty(p.qty_on_hand)} ${p.unit}`}
                         </p>
                       </div>
                     </div>
                     <div className="flex justify-end gap-2">
-                      {can("sales.create") && p.is_active && (
+                      {can("shop.sale.create") && p.is_active && (
                         <Button
                           size="sm"
-                          disabled={p.kind === "stock" && qty <= 0}
+                          disabled={qty <= 0}
                           onClick={() => navigate(`/pos?add=${p.id}`)}
                         >
                           <ShoppingCart size={14} /> Sell
@@ -378,8 +379,7 @@ export default function Products() {
                 {
                   header: "On hand",
                   align: "right",
-                  cell: (p) =>
-                    p.kind === "service" ? "n/a" : `${formatQty(p.qty_on_hand)} ${p.unit}`,
+                  cell: (p) => `${formatQty(p.qty_on_hand)} ${p.unit}`,
                 },
                 {
                   header: "Status",
@@ -390,7 +390,7 @@ export default function Products() {
                   className: "text-right",
                   cell: (p: Product) => (
                     <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
-                      {can("sales.create") && p.is_active && (
+                      {can("shop.sale.create") && p.is_active && (
                         <Button
                           size="sm"
                           variant="outline"
@@ -480,22 +480,24 @@ export default function Products() {
         onOpenChange={(o) => !o && setEditing(null)}
         title={editing === "new" ? "New product" : "Edit product"}
         busy={save.isPending || uploadingPhoto}
-        onSubmit={() =>
-          save.mutate({
+        onSubmit={() => {
+          const payload: Record<string, unknown> = {
             name: draft.name,
             sku: draft.sku,
             barcode: draft.barcode,
             category_id: draft.category_id || null,
-            unit_id: draft.unit_id || null,
-            kind: draft.kind,
+            unit: draft.unit || "pcs",
             sell_price: draft.sell_price,
             reorder_level: draft.reorder_level || "0",
             warranty_months: Number(draft.warranty_months) || 0,
             track_serial: draft.track_serial,
             photo_file: draft.photo_file || null,
             description: draft.description,
-          })
-        }
+          };
+          if (showCost && draft.buy_price !== "") payload.buy_price = draft.buy_price;
+          if (draft.reason.trim()) payload.reason = draft.reason.trim();
+          save.mutate(payload);
+        }}
       >
         <Field label="Name *">
           <Input required value={draft.name} onChange={set("name")} />
@@ -518,7 +520,7 @@ export default function Products() {
             </NativeSelect>
           </Field>
           <Field label="Unit">
-            <NativeSelect value={draft.unit_id} onChange={set("unit_id")}>
+            <NativeSelect value={draft.unit} onChange={set("unit")}>
               {units.data?.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name} ({u.short_name})
@@ -527,10 +529,24 @@ export default function Products() {
             </NativeSelect>
           </Field>
           <Field label="Selling price *">
-            <Input required inputMode="decimal" value={draft.sell_price} onChange={set("sell_price")} />
+            <Input
+              required
+              inputMode="decimal"
+              value={draft.sell_price}
+              onChange={set("sell_price")}
+            />
           </Field>
+          {showCost && (
+            <Field label="Buying price">
+              <Input inputMode="decimal" value={draft.buy_price} onChange={set("buy_price")} />
+            </Field>
+          )}
           <Field label="Minimum stock level">
-            <Input inputMode="decimal" value={draft.reorder_level} onChange={set("reorder_level")} />
+            <Input
+              inputMode="decimal"
+              value={draft.reorder_level}
+              onChange={set("reorder_level")}
+            />
           </Field>
           <Field label="Warranty (months)">
             <Input
@@ -539,13 +555,16 @@ export default function Products() {
               onChange={set("warranty_months")}
             />
           </Field>
-          <Field label="Type">
-            <NativeSelect value={draft.kind} onChange={set("kind")}>
-              <option value="stock">Stocked product</option>
-              <option value="service">Service (no stock)</option>
-            </NativeSelect>
-          </Field>
         </div>
+        {editing !== "new" && editing && draft.sell_price !== editing.sell_price && (
+          <Field label="Reason for price change">
+            <Input
+              value={draft.reason}
+              onChange={set("reason")}
+              placeholder="Optional note recorded in price history"
+            />
+          </Field>
+        )}
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"

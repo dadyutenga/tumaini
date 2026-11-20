@@ -15,7 +15,7 @@ import {
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
-import { formatDate, formatMoney, today } from "@/lib/formatters";
+import { formatMoney, today } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
 
 /** A list with a "new" dialog, shared by the small setup tables. */
@@ -76,18 +76,6 @@ export function SimpleList<Row extends { id: string }, Draft extends object>({
   );
 }
 
-interface Department {
-  id: string;
-  name: string;
-  head_name: string | null;
-  employee_count: number;
-}
-interface Position {
-  id: string;
-  name: string;
-  default_pay: string | null;
-  employee_count: number;
-}
 interface LeaveType {
   id: string;
   name: string;
@@ -95,80 +83,9 @@ interface LeaveType {
   is_paid: boolean;
   is_active: boolean;
 }
-interface Holiday {
-  id: string;
-  day: string;
-  name: string;
-}
-
-function Departments() {
-  const list = useGet<Department[]>("/departments");
-  return (
-    <SimpleList
-      path="/departments"
-      title="New department"
-      rows={list.data}
-      loading={list.isLoading}
-      blank={{ name: "" }}
-      columns={[
-        { header: "Name", cell: (d) => <span className="font-medium">{d.name}</span> },
-        { header: "Head", cell: (d) => d.head_name ?? "-" },
-        { header: "Staff", align: "right", cell: (d) => d.employee_count },
-      ]}
-      form={(d, set) => (
-        <Field label="Name">
-          <Input required value={d.name} onChange={(e) => set({ name: e.target.value })} />
-        </Field>
-      )}
-    />
-  );
-}
-
-function Positions() {
-  const { can } = useAuth();
-  const list = useGet<Position[]>("/positions");
-  return (
-    <SimpleList
-      path="/positions"
-      title="New position"
-      rows={list.data}
-      loading={list.isLoading}
-      blank={{ name: "", default_pay: "" }}
-      toBody={(d) => ({ name: d.name, default_pay: d.default_pay || undefined })}
-      columns={[
-        { header: "Name", cell: (p) => <span className="font-medium">{p.name}</span> },
-        ...(can("employees.view_salary")
-          ? [
-              {
-                header: "Default pay",
-                align: "right" as const,
-                cell: (p: Position) => formatMoney(p.default_pay),
-              },
-            ]
-          : []),
-        { header: "Staff", align: "right", cell: (p) => p.employee_count },
-      ]}
-      form={(d, set) => (
-        <>
-          <Field label="Name">
-            <Input required value={d.name} onChange={(e) => set({ name: e.target.value })} />
-          </Field>
-          {can("employees.view_salary") && (
-            <Field label="Default pay">
-              <Input
-                inputMode="decimal"
-                value={d.default_pay}
-                onChange={(e) => set({ default_pay: e.target.value })}
-              />
-            </Field>
-          )}
-        </>
-      )}
-    />
-  );
-}
 
 function LeaveTypes() {
+  const { can } = useAuth();
   const list = useGet<LeaveType[]>("/leave-types");
   return (
     <SimpleList
@@ -176,6 +93,7 @@ function LeaveTypes() {
       title="New leave type"
       rows={list.data}
       loading={list.isLoading}
+      canCreate={can("hr.employee.manage")}
       blank={{ name: "", days_per_year: "21", is_paid: true }}
       columns={[
         { header: "Name", cell: (l) => <span className="font-medium">{l.name}</span> },
@@ -212,38 +130,6 @@ function LeaveTypes() {
   );
 }
 
-function Holidays() {
-  const list = useGet<Holiday[]>("/holidays");
-  return (
-    <SimpleList
-      path="/holidays"
-      title="New holiday"
-      rows={list.data}
-      loading={list.isLoading}
-      blank={{ day: today(), name: "" }}
-      columns={[
-        { header: "Date", cell: (h) => formatDate(h.day) },
-        { header: "Holiday", cell: (h) => <span className="font-medium">{h.name}</span> },
-      ]}
-      form={(d, set) => (
-        <>
-          <Field label="Date">
-            <Input
-              required
-              type="date"
-              value={d.day}
-              onChange={(e) => set({ day: e.target.value })}
-            />
-          </Field>
-          <Field label="Name">
-            <Input required value={d.name} onChange={(e) => set({ name: e.target.value })} />
-          </Field>
-        </>
-      )}
-    />
-  );
-}
-
 interface Loan {
   id: string;
   number: string;
@@ -253,6 +139,7 @@ interface Loan {
   balance: string;
   monthly_deduction: string;
   status: string;
+  payment_id?: string | null;
 }
 interface EmployeeOption {
   id: string;
@@ -260,12 +147,17 @@ interface EmployeeOption {
 }
 
 function Loans() {
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const [page, setPage] = useState(1);
   const list = useGetPage<Loan>("/loans", { page });
   const employees = useGet<EmployeeOption[]>("/employees", { per_page: 100 });
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
-    enabled: can("accounts.view"),
+    enabled: canAny(
+      "finance.account.view",
+      "finance.payment.receive",
+      "finance.payment.make",
+      "hr.compensation.manage",
+    ),
   });
   const blank = {
     employee_id: "",
@@ -283,7 +175,7 @@ function Loans() {
   const create = useWrite("POST", "/loans", {
     ...done,
     idempotent: true,
-    success: "Loan recorded",
+    success: "Advance / loan recorded",
     onSuccess: () => {
       setOpen(false);
       setDraft(blank);
@@ -303,12 +195,14 @@ function Loans() {
       },
     },
   );
+  const canDisburse = canAny("hr.compensation.manage", "finance.payment.make");
+  const canRepay = canAny("hr.compensation.manage", "finance.payment.receive");
   return (
     <>
       <div className="mb-4 flex justify-end">
-        {can("loans.create") && (
+        {can("hr.compensation.manage") && (
           <Button onClick={() => setOpen(true)}>
-            <Plus size={16} /> New loan
+            <Plus size={16} /> New advance / loan
           </Button>
         )}
       </div>
@@ -328,12 +222,13 @@ function Loans() {
             header: "",
             cell: (l) => (
               <div className="flex gap-2">
-                {l.status === "approved" && can("loans.approve") && (
-                  <Button size="sm" onClick={() => setActing({ loan: l, mode: "disburse" })}>
-                    Disburse
-                  </Button>
-                )}
-                {l.status === "disbursed" && can("payments.receive") && (
+                {((l.status === "active" && !l.payment_id) || l.status === "approved") &&
+                  canDisburse && (
+                    <Button size="sm" onClick={() => setActing({ loan: l, mode: "disburse" })}>
+                      Disburse
+                    </Button>
+                  )}
+                {(l.status === "active" || l.status === "disbursed") && canRepay && (
                   <Button
                     size="sm"
                     variant="outline"
@@ -434,43 +329,23 @@ function Loans() {
 }
 
 export default function HrSetup() {
-  const { can } = useAuth();
-  const setup = can("departments.manage");
+  const { can, canAny } = useAuth();
+  const canLeaveTypes = can("hr.employee.manage");
+  const canLoans = canAny("hr.compensation.view", "hr.compensation.manage", "hr.payroll.view");
   return (
     <>
-      <PageHeader
-        title="HR setup"
-        description="Departments, positions, leave rules, public holidays and staff loans."
-      />
-      <Tabs defaultValue={setup ? "departments" : "loans"}>
+      <PageHeader title="HR setup" description="Leave types and staff advances / loans." />
+      <Tabs defaultValue={canLeaveTypes ? "leave" : "loans"}>
         <TabsList className="mb-4 flex-wrap">
-          {setup && <TabsTrigger value="departments">Departments</TabsTrigger>}
-          {setup && <TabsTrigger value="positions">Positions</TabsTrigger>}
-          {setup && <TabsTrigger value="leave">Leave types</TabsTrigger>}
-          {can("schedules.manage") && <TabsTrigger value="holidays">Holidays</TabsTrigger>}
-          {can("loans.view") && <TabsTrigger value="loans">Loans</TabsTrigger>}
+          {canLeaveTypes && <TabsTrigger value="leave">Leave types</TabsTrigger>}
+          {canLoans && <TabsTrigger value="loans">Advances &amp; loans</TabsTrigger>}
         </TabsList>
-        {setup && (
-          <TabsContent value="departments">
-            <Departments />
-          </TabsContent>
-        )}
-        {setup && (
-          <TabsContent value="positions">
-            <Positions />
-          </TabsContent>
-        )}
-        {setup && (
+        {canLeaveTypes && (
           <TabsContent value="leave">
             <LeaveTypes />
           </TabsContent>
         )}
-        {can("schedules.manage") && (
-          <TabsContent value="holidays">
-            <Holidays />
-          </TabsContent>
-        )}
-        {can("loans.view") && (
+        {canLoans && (
           <TabsContent value="loans">
             <Loans />
           </TabsContent>

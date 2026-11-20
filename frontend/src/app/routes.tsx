@@ -8,7 +8,6 @@ import {
   Contact,
   HandCoins,
   BarChart3,
-  FileText,
   ArrowLeftRight,
   Repeat,
   Settings2,
@@ -55,12 +54,20 @@ export interface AppRoute {
 }
 
 const SERVICES = [
-  "clients.view",
-  "projects.view",
-  "design.view",
-  "tasks.view",
-  "renewals.view",
-  "service_billing.view",
+  "services.client.view_all",
+  "services.client.manage",
+  "services.project.view_all",
+  "services.project.manage",
+  "services.design.view_all",
+  "services.design.manage",
+  "services.task.view_all",
+  "services.task.manage",
+  "services.renewal.manage",
+  "services.invoice.manage",
+  "services.invoice.draft",
+  "services.quotation.manage",
+  "services.quotation.draft",
+  "services.contractor.manage",
 ];
 
 export const routes: AppRoute[] = [
@@ -78,7 +85,7 @@ export const routes: AppRoute[] = [
     icon: ShoppingCart,
     component: lazy(() => import("@/pages/Pos")),
     navigation: true,
-    permission: ["sales.create"],
+    permission: ["shop.sale.create"],
   },
   {
     path: "/sales",
@@ -86,7 +93,7 @@ export const routes: AppRoute[] = [
     icon: ReceiptText,
     component: lazy(() => import("@/pages/Sales")),
     navigation: true,
-    permission: ["sales.view"],
+    permission: ["shop.sale.view_all", "shop.sale.create"],
   },
   {
     path: "/sales/:id",
@@ -94,15 +101,7 @@ export const routes: AppRoute[] = [
     icon: ReceiptText,
     component: lazy(() => import("@/pages/SaleDetail")),
     navigation: false,
-    permission: ["sales.view"],
-  },
-  {
-    path: "/quotations",
-    label: "Quotations",
-    icon: FileText,
-    component: lazy(() => import("@/pages/Quotations")),
-    navigation: true,
-    permission: ["quotations.manage"],
+    permission: ["shop.sale.view_all", "shop.sale.create"],
   },
   {
     path: "/products",
@@ -110,7 +109,7 @@ export const routes: AppRoute[] = [
     icon: Package,
     component: lazy(() => import("@/pages/Products")),
     navigation: true,
-    permission: ["products.view"],
+    permission: ["shop.product.view", "shop.product.manage"],
   },
   {
     path: "/products/:id",
@@ -118,7 +117,7 @@ export const routes: AppRoute[] = [
     icon: Package,
     component: lazy(() => import("@/pages/ProductDetail")),
     navigation: false,
-    permission: ["products.view"],
+    permission: ["shop.product.view", "shop.product.manage"],
   },
   {
     path: "/stock",
@@ -126,7 +125,7 @@ export const routes: AppRoute[] = [
     icon: Warehouse,
     component: lazy(() => import("@/pages/Stock")),
     navigation: true,
-    permission: ["stock.view"],
+    permission: ["shop.stock.view", "shop.stock.manage"],
   },
   {
     path: "/purchasing",
@@ -134,7 +133,7 @@ export const routes: AppRoute[] = [
     icon: Truck,
     component: lazy(() => import("@/pages/Purchasing")),
     navigation: true,
-    permission: ["po.view", "suppliers.view"],
+    permission: ["shop.purchase.manage", "shop.supplier.manage"],
   },
   {
     path: "/purchasing/:id",
@@ -142,7 +141,7 @@ export const routes: AppRoute[] = [
     icon: Truck,
     component: lazy(() => import("@/pages/PurchaseOrderDetail")),
     navigation: false,
-    permission: ["po.view"],
+    permission: ["shop.purchase.manage"],
   },
   {
     path: "/stock-ops",
@@ -150,7 +149,7 @@ export const routes: AppRoute[] = [
     icon: ArrowLeftRight,
     component: lazy(() => import("@/pages/StockOps")),
     navigation: true,
-    permission: ["transfers.view", "stock.adjust", "stock.view"],
+    permission: ["shop.stock.view", "shop.stock.manage"],
   },
   {
     path: "/customers",
@@ -158,7 +157,7 @@ export const routes: AppRoute[] = [
     icon: Users,
     component: lazy(() => import("@/pages/Customers")),
     navigation: true,
-    permission: ["customers.view"],
+    permission: ["shop.customer.view_all", "shop.customer.manage"],
   },
   {
     path: "/customers/:id",
@@ -166,7 +165,7 @@ export const routes: AppRoute[] = [
     icon: Users,
     component: lazy(() => import("@/pages/CustomerDetail")),
     navigation: false,
-    permission: ["customers.view"],
+    permission: ["shop.customer.view_all", "shop.customer.manage"],
   },
   {
     path: "/services",
@@ -183,7 +182,7 @@ export const routes: AppRoute[] = [
     icon: UserRoundPlus,
     component: lazy(() => import("@/pages/Clients")),
     navigation: true,
-    permission: ["clients.view"],
+    permission: ["services.client.view_all", "services.client.manage"],
   },
   {
     path: "/clients/:id",
@@ -191,7 +190,7 @@ export const routes: AppRoute[] = [
     icon: UserRoundPlus,
     component: lazy(() => import("@/pages/ClientDetail")),
     navigation: false,
-    permission: ["clients.view"],
+    permission: ["services.client.view_all", "services.client.manage"],
   },
   {
     path: "/projects",
@@ -199,7 +198,7 @@ export const routes: AppRoute[] = [
     icon: FolderKanban,
     component: lazy(() => import("@/pages/Projects")),
     navigation: true,
-    permission: ["projects.view"],
+    permission: ["services.project.view_all", "services.project.manage"],
   },
   {
     path: "/projects/:id",
@@ -207,7 +206,7 @@ export const routes: AppRoute[] = [
     icon: FolderKanban,
     component: lazy(() => import("@/pages/ProjectDetail")),
     navigation: false,
-    permission: ["projects.view"],
+    permission: ["services.project.view_all", "services.project.manage"],
   },
   {
     path: "/service-catalog",
@@ -215,7 +214,12 @@ export const routes: AppRoute[] = [
     icon: BookOpen,
     component: lazy(() => import("@/pages/ServiceCatalog")),
     navigation: true,
-    permission: ["service_catalog.manage", "service_billing.view", "projects.view", "design.view"],
+    permission: [
+      "services.catalog.manage",
+      "services.quotation.manage",
+      "services.project.view_all",
+      "services.design.view_all",
+    ],
   },
   {
     path: "/service-quotations",
@@ -223,7 +227,7 @@ export const routes: AppRoute[] = [
     icon: FileSpreadsheet,
     component: lazy(() => import("@/pages/ServiceQuotations")),
     navigation: true,
-    permission: ["service_billing.view"],
+    permission: ["services.quotation.manage", "services.quotation.draft"],
   },
   {
     path: "/service-invoices",
@@ -231,7 +235,7 @@ export const routes: AppRoute[] = [
     icon: Receipt,
     component: lazy(() => import("@/pages/ServiceInvoices")),
     navigation: true,
-    permission: ["service_billing.view"],
+    permission: ["services.invoice.manage", "services.invoice.draft"],
   },
   {
     path: "/design-jobs",
@@ -239,7 +243,7 @@ export const routes: AppRoute[] = [
     icon: Palette,
     component: lazy(() => import("@/pages/DesignJobs")),
     navigation: true,
-    permission: ["design.view"],
+    permission: ["services.design.view_all", "services.design.manage"],
   },
   {
     path: "/design-jobs/:id",
@@ -247,7 +251,7 @@ export const routes: AppRoute[] = [
     icon: Palette,
     component: lazy(() => import("@/pages/DesignJobDetail")),
     navigation: false,
-    permission: ["design.view"],
+    permission: ["services.design.view_all", "services.design.manage"],
   },
   {
     path: "/client-documents",
@@ -255,7 +259,11 @@ export const routes: AppRoute[] = [
     icon: Files,
     component: lazy(() => import("@/pages/ClientDocuments")),
     navigation: true,
-    permission: ["clients.view", "projects.view"],
+    permission: [
+      "services.document.manage",
+      "services.client.view_all",
+      "services.project.view_all",
+    ],
   },
   {
     path: "/service-tasks",
@@ -263,7 +271,7 @@ export const routes: AppRoute[] = [
     icon: ClipboardList,
     component: lazy(() => import("@/pages/ServiceTasks")),
     navigation: true,
-    permission: ["tasks.view"],
+    permission: ["services.task.view_all", "services.task.manage"],
   },
   {
     path: "/renewals",
@@ -271,7 +279,7 @@ export const routes: AppRoute[] = [
     icon: BellRing,
     component: lazy(() => import("@/pages/Renewals")),
     navigation: true,
-    permission: ["renewals.view"],
+    permission: ["services.renewal.manage"],
   },
   {
     path: "/contractors",
@@ -279,7 +287,7 @@ export const routes: AppRoute[] = [
     icon: Hammer,
     component: lazy(() => import("@/pages/Contractors")),
     navigation: true,
-    permission: ["contractors.view"],
+    permission: ["services.contractor.manage"],
   },
   {
     path: "/money",
@@ -288,7 +296,7 @@ export const routes: AppRoute[] = [
     icon: Wallet,
     component: lazy(() => import("@/pages/Money")),
     navigation: true,
-    permission: ["accounts.view", "transactions.view"],
+    permission: ["finance.account.view", "finance.transaction.view"],
   },
   {
     path: "/debts",
@@ -296,7 +304,7 @@ export const routes: AppRoute[] = [
     icon: Scale,
     component: lazy(() => import("@/pages/Debts")),
     navigation: true,
-    permission: ["reports.debts", "customers.view", "clients.view", "suppliers.view", "contractors.view"],
+    permission: ["finance.debt.view"],
   },
   {
     path: "/day-closing",
@@ -304,7 +312,7 @@ export const routes: AppRoute[] = [
     icon: CalendarCheck,
     component: lazy(() => import("@/pages/DayClosing")),
     navigation: true,
-    permission: ["tills.open_close", "accounts.view", "transactions.view"],
+    permission: ["finance.day.close", "finance.account.view"],
   },
   {
     path: "/expenses",
@@ -312,7 +320,13 @@ export const routes: AppRoute[] = [
     icon: Banknote,
     component: lazy(() => import("@/pages/Expenses")),
     navigation: true,
-    permission: ["expenses.view", "expenses.create"],
+    permission: [
+      "finance.expense.submit",
+      "finance.expense.enter",
+      "finance.expense.approve",
+      "finance.expense.pay",
+      "finance.transaction.view",
+    ],
   },
   {
     path: "/expense-setup",
@@ -320,7 +334,7 @@ export const routes: AppRoute[] = [
     icon: Repeat,
     component: lazy(() => import("@/pages/ExpenseSetup")),
     navigation: true,
-    permission: ["expense_categories.manage", "recurring_expenses.manage", "petty_cash.manage"],
+    permission: ["finance.expense.enter", "finance.account.manage", "settings.manage"],
   },
   {
     path: "/people",
@@ -329,7 +343,6 @@ export const routes: AppRoute[] = [
     icon: Contact,
     component: lazy(() => import("@/pages/People")),
     navigation: true,
-    permission: ["employees.view", "leave.request", "attendance.clock", "attendance.view"],
   },
   {
     path: "/employees/:id",
@@ -337,7 +350,7 @@ export const routes: AppRoute[] = [
     icon: Contact,
     component: lazy(() => import("@/pages/EmployeeDetail")),
     navigation: false,
-    permission: ["employees.view"],
+    permission: ["hr.employee.view", "hr.employee.manage"],
   },
   {
     path: "/attendance",
@@ -345,7 +358,7 @@ export const routes: AppRoute[] = [
     icon: CalendarClock,
     component: lazy(() => import("@/pages/AttendanceAdmin")),
     navigation: true,
-    permission: ["attendance.view"],
+    permission: ["hr.attendance.manage", "hr.employee.view"],
   },
   {
     path: "/hr-setup",
@@ -353,7 +366,7 @@ export const routes: AppRoute[] = [
     icon: Settings2,
     component: lazy(() => import("@/pages/HrSetup")),
     navigation: true,
-    permission: ["departments.manage", "schedules.manage", "loans.view"],
+    permission: ["hr.employee.manage", "hr.compensation.view", "hr.compensation.manage"],
   },
   {
     path: "/payroll",
@@ -361,7 +374,7 @@ export const routes: AppRoute[] = [
     icon: HandCoins,
     component: lazy(() => import("@/pages/Payroll")),
     navigation: true,
-    permission: ["payroll.view"],
+    permission: ["hr.payroll.view", "hr.payroll.manage", "hr.payroll.approve"],
   },
   {
     path: "/payroll-setup",
@@ -369,7 +382,7 @@ export const routes: AppRoute[] = [
     icon: SlidersHorizontal,
     component: lazy(() => import("@/pages/PayrollSetup")),
     navigation: true,
-    permission: ["components.manage", "adjustments.manage"],
+    permission: ["hr.compensation.view", "hr.compensation.manage", "hr.payroll.manage"],
   },
   {
     path: "/payroll/:id",
@@ -377,7 +390,7 @@ export const routes: AppRoute[] = [
     icon: HandCoins,
     component: lazy(() => import("@/pages/PayrollRun")),
     navigation: false,
-    permission: ["payroll.view"],
+    permission: ["hr.payroll.view", "hr.payroll.manage", "hr.payroll.approve"],
   },
   {
     path: "/reports",
@@ -386,18 +399,7 @@ export const routes: AppRoute[] = [
     icon: BarChart3,
     component: lazy(() => import("@/pages/Reports")),
     navigation: true,
-    permission: [
-      "reports.sales",
-      "reports.financial",
-      "reports.expenses",
-      "reports.inventory",
-      "reports.purchases",
-      "reports.debts",
-      "reports.payroll",
-      "reports.staff",
-      "reports.branches",
-      "reports.services",
-    ],
+    permission: ["reports.business.view", "reports.operations.view"],
   },
   {
     path: "/approvals",
@@ -405,7 +407,16 @@ export const routes: AppRoute[] = [
     icon: BadgeCheck,
     component: lazy(() => import("@/pages/Approvals")),
     navigation: true,
-    permission: ["approvals.view"],
+    permission: [
+      "shop.discount.approve",
+      "shop.return.approve",
+      "shop.sale.void",
+      "shop.product.price_approve",
+      "services.price.approve",
+      "finance.expense.approve",
+      "finance.payment.void",
+      "finance.transaction.correct",
+    ],
   },
   {
     path: "/notifications",
@@ -421,7 +432,7 @@ export const routes: AppRoute[] = [
     icon: UserCog,
     component: lazy(() => import("@/pages/Team")),
     navigation: true,
-    permission: ["users.view", "roles.view"],
+    permission: ["security.user.manage"],
   },
   {
     path: "/audit",
@@ -429,7 +440,7 @@ export const routes: AppRoute[] = [
     icon: ScrollText,
     component: lazy(() => import("@/pages/Audit")),
     navigation: true,
-    permission: ["audit.view"],
+    permission: ["security.audit.view"],
   },
   {
     path: "/login-history",
@@ -437,7 +448,7 @@ export const routes: AppRoute[] = [
     icon: History,
     component: lazy(() => import("@/pages/LoginHistory")),
     navigation: true,
-    permission: ["login_history.view"],
+    permission: ["security.audit.view"],
   },
   {
     path: "/backups",
@@ -445,7 +456,7 @@ export const routes: AppRoute[] = [
     icon: DatabaseBackup,
     component: lazy(() => import("@/pages/Backups")),
     navigation: true,
-    permission: ["backup.manage"],
+    permission: ["security.backup.manage"],
   },
   {
     path: "/settings",
@@ -453,7 +464,7 @@ export const routes: AppRoute[] = [
     icon: Settings,
     component: lazy(() => import("@/pages/Settings")),
     navigation: true,
-    permission: ["settings.view"],
+    permission: ["settings.manage"],
   },
   {
     path: "/my-work",
@@ -462,7 +473,6 @@ export const routes: AppRoute[] = [
     icon: BriefcaseBusiness,
     component: lazy(() => import("@/pages/MyWork")),
     navigation: true,
-    permission: ["payslips.view", "attendance.clock", "leave.request"],
   },
   {
     path: "/profile",

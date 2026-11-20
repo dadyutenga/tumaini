@@ -20,11 +20,11 @@ import { toast } from "sonner";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { download } from "@/lib/api";
 import { formatDate, formatMoney, formatQty, toNumber } from "@/lib/formatters";
-import type { MoneyAccount, Sale, SaleItem, Till } from "@/types";
+import type { MoneyAccount, Sale, SaleItem } from "@/types";
 
 export default function SaleDetail() {
   const { id = "" } = useParams();
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const { data: sale, isLoading, error } = useGet<Sale>(`/sales/${id}`);
   const [returning, setReturning] = useState(false);
   const [voiding, setVoiding] = useState(false);
@@ -33,11 +33,8 @@ export default function SaleDetail() {
   const [reason, setReason] = useState("");
   const [method, setMethod] = useState("cash");
   const [account, setAccount] = useState("");
-  const till = useGet<Till | null>("/tills/current", undefined, {
-    enabled: can("tills.open_close"),
-  });
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
-    enabled: can("accounts.view"),
+    enabled: canAny("finance.account.view", "finance.payment.receive", "shop.sale.create"),
   });
 
   const ret = useWrite<unknown>("POST", `/sales/${id}/returns`, {
@@ -53,7 +50,7 @@ export default function SaleDetail() {
   const voidSale = useWrite<{ reason: string }, unknown>("POST", `/sales/${id}/void`, {
     idempotent: true,
     invalidate: ["/sales", "/products", "/stock", "/money", "/customers"],
-    success: "Sale voided",
+    success: "Sale void submitted",
     onSuccess: () => {
       setVoiding(false);
       setVoidReason("");
@@ -72,6 +69,10 @@ export default function SaleDetail() {
     );
 
   const lines = Object.entries(qtys).filter(([, q]) => toNumber(q) > 0);
+  const cashAccounts = (accounts.data ?? []).filter((a) => a.is_active && a.type === "cash");
+  const resolvedCashAccount = account || cashAccounts[0]?.id || "";
+  const canVoid = canAny("shop.sale.void", "shop.sale.request_void");
+
   return (
     <>
       <PageHeader
@@ -80,22 +81,24 @@ export default function SaleDetail() {
         actions={
           <>
             <StatusBadge value={sale.status} />
-            {can("sales.refund_request") && sale.status === "completed" && (
+            {can("shop.return.create") && sale.status === "completed" && (
               <Button variant="outline" onClick={() => setReturning(true)}>
                 Return items
               </Button>
             )}
-            {can("sales.void") && sale.status === "completed" && (
+            {canVoid && sale.status === "completed" && (
               <Button variant="outline" onClick={() => setVoiding(true)}>
-                Void sale
+                {can("shop.sale.void") ? "Void sale" : "Request void"}
               </Button>
             )}
             <Button
               variant="outline"
               onClick={() =>
-                download(`/sales/${id}/receipt`, { format: "pdf" }, `receipt-${sale.number}.pdf`).catch(
-                  (e) => toast.error(errorMessage(e)),
-                )
+                download(
+                  `/sales/${id}/receipt`,
+                  { format: "pdf" },
+                  `receipt-${sale.number}.pdf`,
+                ).catch((e) => toast.error(errorMessage(e)))
               }
             >
               <Download size={14} /> Receipt PDF
@@ -176,6 +179,8 @@ export default function SaleDetail() {
           ret.mutate({
             reason,
             refund_method: method,
+            money_account_id:
+              method === "cash" && resolvedCashAccount ? resolvedCashAccount : undefined,
             items: lines.map(([sale_item_id, qty]) => ({ sale_item_id, qty })),
           })
         }
@@ -199,25 +204,20 @@ export default function SaleDetail() {
         ))}
         <Field label="Refund as">
           <NativeSelect value={method} onChange={(e) => setMethod(e.target.value)}>
-            <option value="cash">Cash from the till</option>
+            <option value="cash">Cash</option>
             <option value="reduce_debt">Reduce customer's debt</option>
             <option value="customer_credit">Customer credit</option>
           </NativeSelect>
         </Field>
-        {method === "cash" && accounts.data && (
+        {method === "cash" && cashAccounts.length > 0 && (
           <Field label="Refund from account">
-            <NativeSelect
-              value={account || till.data?.money_account_id || ""}
-              onChange={(e) => setAccount(e.target.value)}
-            >
+            <NativeSelect value={resolvedCashAccount} onChange={(e) => setAccount(e.target.value)}>
               <option value="">Choose…</option>
-              {accounts.data
-                .filter((a) => a.is_active && a.type === "cash")
-                .map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
+              {cashAccounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
             </NativeSelect>
           </Field>
         )}

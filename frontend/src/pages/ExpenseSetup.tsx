@@ -20,8 +20,7 @@ import type { MoneyAccount } from "@/types";
 interface Category {
   id: string;
   name: string;
-  ledger_code: string;
-  ledger_name: string;
+  is_project_cost?: boolean;
   is_active: boolean;
 }
 interface Recurring {
@@ -46,18 +45,24 @@ function CategoriesTab() {
   const list = useGet<Category[]>("/expense-categories", { all: true });
   const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
+  const [isProjectCost, setIsProjectCost] = useState(false);
   const create = useWrite("POST", "/expense-categories", {
     invalidate: ["/expense-categories"],
     success: "Category added",
     onSuccess: () => {
       setOpen(false);
       setName("");
+      setIsProjectCost(false);
     },
   });
   const toggle = useWrite<Category, unknown>("PUT", (c) => `/expense-categories/${c.id}`, {
     invalidate: ["/expense-categories"],
     success: "Category updated",
-    toBody: (c) => ({ name: c.name, ledger_code: c.ledger_code, is_active: c.is_active }),
+    toBody: (c) => ({
+      name: c.name,
+      is_project_cost: Boolean(c.is_project_cost),
+      is_active: c.is_active,
+    }),
   });
   return (
     <>
@@ -72,7 +77,7 @@ function CategoriesTab() {
         rowKey={(c) => c.id}
         columns={[
           { header: "Name", cell: (c) => <span className="font-medium">{c.name}</span> },
-          { header: "Ledger account", cell: (c) => `${c.ledger_code} ${c.ledger_name}` },
+          { header: "Project cost", cell: (c) => (c.is_project_cost ? "Yes" : "No") },
           {
             header: "Status",
             cell: (c) => <StatusBadge value={c.is_active ? "active" : "inactive"} />,
@@ -96,11 +101,19 @@ function CategoriesTab() {
         onOpenChange={setOpen}
         title="New expense category"
         busy={create.isPending}
-        onSubmit={() => create.mutate({ name })}
+        onSubmit={() => create.mutate({ name, is_project_cost: isProjectCost })}
       >
         <Field label="Name">
           <Input required value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={isProjectCost}
+            onChange={(e) => setIsProjectCost(e.target.checked)}
+          />
+          Counts as a direct project cost
+        </label>
       </FormDialog>
     </>
   );
@@ -230,6 +243,7 @@ function RecurringTab() {
 }
 
 function PettyTab() {
+  const { can, canAny } = useAuth();
   const list = useGet<Petty[]>("/petty-cash");
   const accounts = useGet<MoneyAccount[]>("/money-accounts");
   const [topUp, setTopUp] = useState<Petty | null>(null);
@@ -263,7 +277,7 @@ function PettyTab() {
         empty="No petty cash accounts. Add one in Money with the type petty cash."
         columns={[
           { header: "Account", cell: (p) => <span className="font-medium">{p.name}</span> },
-          { header: "Branch", cell: (p) => p.branch_name },
+          { header: "Location", cell: (p) => p.branch_name },
           { header: "Custodian", cell: (p) => p.custodian_name ?? "-" },
           {
             header: "Last counted",
@@ -274,12 +288,16 @@ function PettyTab() {
             header: "",
             cell: (p) => (
               <div className="flex gap-2">
-                <Button size="sm" onClick={() => setTopUp(p)}>
-                  Top up
-                </Button>
-                <Button size="sm" variant="outline" onClick={() => setRecon(p)}>
-                  Count
-                </Button>
+                {can("finance.account.manage") && (
+                  <Button size="sm" onClick={() => setTopUp(p)}>
+                    Top up
+                  </Button>
+                )}
+                {canAny("finance.account.manage", "finance.day.close") && (
+                  <Button size="sm" variant="outline" onClick={() => setRecon(p)}>
+                    Count
+                  </Button>
+                )}
               </div>
             ),
           },
@@ -339,31 +357,35 @@ function PettyTab() {
 }
 
 export default function ExpenseSetup() {
-  const { can } = useAuth();
+  const { canAny } = useAuth();
+  const canCategories = canAny("finance.expense.enter", "settings.manage");
+  const canRecurring = canAny(
+    "finance.expense.enter",
+    "finance.expense.approve",
+    "finance.expense.pay",
+  );
+  const canPetty = canAny("finance.account.view", "finance.account.manage", "finance.expense.pay");
+  const firstTab = canCategories ? "categories" : canRecurring ? "recurring" : "petty";
   return (
     <>
       <PageHeader title="Expense setup" description="Categories, repeating bills and petty cash." />
-      <Tabs defaultValue={can("expense_categories.manage") ? "categories" : "recurring"}>
+      <Tabs defaultValue={firstTab}>
         <TabsList className="mb-4">
-          {can("expense_categories.manage") && (
-            <TabsTrigger value="categories">Categories</TabsTrigger>
-          )}
-          {can("recurring_expenses.manage") && (
-            <TabsTrigger value="recurring">Recurring</TabsTrigger>
-          )}
-          {can("petty_cash.manage") && <TabsTrigger value="petty">Petty cash</TabsTrigger>}
+          {canCategories && <TabsTrigger value="categories">Categories</TabsTrigger>}
+          {canRecurring && <TabsTrigger value="recurring">Recurring</TabsTrigger>}
+          {canPetty && <TabsTrigger value="petty">Petty cash</TabsTrigger>}
         </TabsList>
-        {can("expense_categories.manage") && (
+        {canCategories && (
           <TabsContent value="categories">
             <CategoriesTab />
           </TabsContent>
         )}
-        {can("recurring_expenses.manage") && (
+        {canRecurring && (
           <TabsContent value="recurring">
             <RecurringTab />
           </TabsContent>
         )}
-        {can("petty_cash.manage") && (
+        {canPetty && (
           <TabsContent value="petty">
             <PettyTab />
           </TabsContent>

@@ -167,7 +167,10 @@ export default function ClientDocuments() {
   const [adding, setAdding] = useState(false);
   const [view, setView] = useState<"folders" | "table">("folders");
   const [preview, setPreview] = useState<{ id: string; name: string } | null>(null);
-  const manage = can("clients.manage") || can("projects.manage");
+  const manage =
+    can("services.document.manage") ||
+    can("services.client.manage") ||
+    can("services.project.manage");
   const mark = useWrite<{ id: string; status: string }>("PUT", (b) => `/client-documents/${b.id}`, {
     invalidate: ["/client-documents", "/projects", "/clients"],
     success: "Document updated",
@@ -294,9 +297,11 @@ export default function ClientDocuments() {
                                   size="sm"
                                   variant="outline"
                                   onClick={() =>
-                                    download(`/files/${d.file_id}`, {}, d.file_name ?? d.name).catch(
-                                      (e) => toast.error(errorMessage(e)),
-                                    )
+                                    download(
+                                      `/files/${d.file_id}`,
+                                      {},
+                                      d.file_name ?? d.name,
+                                    ).catch((e) => toast.error(errorMessage(e)))
                                   }
                                 >
                                   <Download size={14} /> Download
@@ -350,9 +355,7 @@ export default function ClientDocuments() {
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() =>
-                          setPreview({ id: d.file_id!, name: d.file_name ?? d.name })
-                        }
+                        onClick={() => setPreview({ id: d.file_id!, name: d.file_name ?? d.name })}
                       >
                         <Eye size={14} /> Preview
                       </Button>

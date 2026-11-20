@@ -82,7 +82,12 @@ export function SearchPalette() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="outline" size="sm" className="gap-2 text-muted-foreground" aria-label="Global search">
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-2 text-muted-foreground"
+          aria-label="Global search"
+        >
           <Search size={16} />
           <span className="hidden lg:inline">{t.actions.globalSearchPlaceholder}</span>
           <kbd className="hidden rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium xl:inline">
@@ -162,17 +167,29 @@ export function SearchPalette() {
 }
 
 export function QuickNewMenu({ floating = false }: { floating?: boolean }) {
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const navigate = useNavigate();
   const actions = [
-    { label: "New sale (POS)", to: "/pos", show: can("sales.create") },
-    { label: "New client", to: "/clients", show: can("clients.manage") },
-    { label: "New project", to: "/projects", show: can("projects.manage") },
-    { label: "New design job", to: "/design-jobs", show: can("design.manage") },
-    { label: "Receive payment", to: "/service-invoices", show: can("service_billing.manage") },
-    { label: "Customer payment", to: "/customers", show: can("customers.view") },
-    { label: "New expense", to: "/expenses", show: can("expenses.create") },
-    { label: "New task", to: "/service-tasks", show: can("tasks.manage") },
+    { label: "New sale (POS)", to: "/pos", show: can("shop.sale.create") },
+    { label: "New client", to: "/clients", show: can("services.client.manage") },
+    { label: "New project", to: "/projects", show: can("services.project.manage") },
+    { label: "New design job", to: "/design-jobs", show: can("services.design.manage") },
+    {
+      label: "Receive payment",
+      to: "/service-invoices",
+      show: canAny("services.invoice.manage", "finance.payment.receive"),
+    },
+    {
+      label: "Customer payment",
+      to: "/customers",
+      show: canAny("shop.customer.view_all", "shop.customer.manage", "finance.payment.receive"),
+    },
+    {
+      label: "New expense",
+      to: "/expenses",
+      show: canAny("finance.expense.submit", "finance.expense.enter"),
+    },
+    { label: "New task", to: "/service-tasks", show: can("services.task.manage") },
   ].filter((a) => a.show);
 
   if (actions.length === 0) return null;

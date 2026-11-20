@@ -23,7 +23,7 @@ import {
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
-import { IncomeButton, PaymentsTab, PeriodLock } from "@/pages/MoneyExtras";
+import { PaymentsTab } from "@/pages/MoneyExtras";
 import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { download } from "@/lib/api";
 import { downloadCsv } from "@/lib/csv";
@@ -53,9 +53,20 @@ function AccountIcon({ type }: { type: string }) {
 }
 
 export default function Money() {
-  const { can } = useAuth();
-  const [tab, setTab] = useState("accounts");
-  const accounts = useGet<MoneyAccount[]>("/money-accounts");
+  const { can, canAny } = useAuth();
+  const canTxns = can("finance.transaction.view");
+  const canPayments = canAny("finance.payment.view_all", "finance.payment.receive");
+  const showBalance = can("finance.account.view");
+  const canManage = can("finance.account.manage");
+  const [tab, setTab] = useState(showBalance ? "accounts" : "transactions");
+  const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
+    enabled: canAny(
+      "finance.account.view",
+      "finance.payment.receive",
+      "shop.sale.create",
+      "finance.expense.enter",
+    ),
+  });
 
   const [txAccount, setTxAccount] = useState("");
   const [txFrom, setTxFrom] = useState("");
@@ -72,14 +83,11 @@ export default function Money() {
       q: txSearch.trim() || undefined,
       page: txPage,
     },
-    { enabled: can("transactions.view") },
+    { enabled: canTxns },
   );
 
   const [creating, setCreating] = useState(false);
   const [transferring, setTransferring] = useState(false);
-  const [reconciling, setReconciling] = useState<MoneyAccount | null>(null);
-  const [recActual, setRecActual] = useState("");
-  const [recNote, setRecNote] = useState("");
 
   const [acct, setAcct] = useState({
     name: "",
@@ -121,27 +129,12 @@ export default function Money() {
       });
     },
   });
-  const reconcile = useWrite<{ actual_balance: string; note: string }, unknown>(
-    "POST",
-    () => `/money-accounts/${reconciling?.id}/reconcile`,
-    {
-      idempotent: true,
-      invalidate: ["/money-accounts", "/transactions"],
-      success: "Account reconciled",
-      onSuccess: () => {
-        setReconciling(null);
-        setRecActual("");
-        setRecNote("");
-      },
-    },
-  );
 
-  const showBalance = can("accounts.view_balance");
   const active = accounts.data?.filter((a) => a.is_active) ?? [];
   const totalBalance = (accounts.data ?? []).reduce((sum, a) => sum + Number(a.balance ?? 0), 0);
 
   function openAccountTransactions(id: string) {
-    if (!can("transactions.view")) return;
+    if (!canTxns) return;
     setTxAccount(id);
     setTxPage(1);
     setTab("transactions");
@@ -161,27 +154,23 @@ export default function Money() {
         title="Money"
         description="Cash, bank and mobile money accounts and every movement between them."
         actions={
-          <>
-            {can("transfers_money.create") && (
+          canManage && (
+            <>
               <Button variant="outline" onClick={() => setTransferring(true)}>
                 <ArrowRightLeft size={16} /> Transfer
               </Button>
-            )}
-            <IncomeButton accounts={active} />
-            {can("accounts.manage") && (
               <Button onClick={() => setCreating(true)}>
                 <Plus size={16} /> New account
               </Button>
-            )}
-          </>
+            </>
+          )
         }
       />
-      <PeriodLock />
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
-          <TabsTrigger value="accounts">Accounts</TabsTrigger>
-          {can("transactions.view") && <TabsTrigger value="transactions">Transactions</TabsTrigger>}
-          {can("payments.view") && <TabsTrigger value="payments">Payments</TabsTrigger>}
+          {showBalance && <TabsTrigger value="accounts">Accounts</TabsTrigger>}
+          {canTxns && <TabsTrigger value="transactions">Transactions</TabsTrigger>}
+          {canPayments && <TabsTrigger value="payments">Payments</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="accounts" className="space-y-4">
@@ -231,14 +220,12 @@ export default function Money() {
                       </p>
                     )}
                     {a.account_number && (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        Acc: {a.account_number}
-                      </p>
+                      <p className="mt-1 text-xs text-muted-foreground">Acc: {a.account_number}</p>
                     )}
                   </button>
 
                   <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3">
-                    {can("transactions.view") && (
+                    {canTxns && (
                       <Button
                         size="sm"
                         variant="ghost"
@@ -262,20 +249,6 @@ export default function Money() {
                         }
                       >
                         <FileText size={13} /> Statement PDF
-                      </Button>
-                    )}
-                    {can("accounts.reconcile") && a.is_active && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="ml-auto h-7 px-2 text-xs"
-                        onClick={() => {
-                          setReconciling(a);
-                          setRecActual(String(a.balance ?? "0"));
-                          setRecNote("");
-                        }}
-                      >
-                        Reconcile
                       </Button>
                     )}
                   </div>
@@ -396,7 +369,7 @@ export default function Money() {
           <Pager meta={txns.data?.meta} onPage={setTxPage} />
         </TabsContent>
 
-        {can("payments.view") && (
+        {canPayments && (
           <TabsContent value="payments">
             <PaymentsTab />
           </TabsContent>
@@ -498,36 +471,6 @@ export default function Money() {
           <Input
             value={tr.reference}
             onChange={(e) => setTr((t) => ({ ...t, reference: e.target.value }))}
-          />
-        </Field>
-      </FormDialog>
-
-      <FormDialog
-        open={reconciling !== null}
-        onOpenChange={(o) => !o && setReconciling(null)}
-        title={`Reconcile ${reconciling?.name ?? ""}`}
-        submitLabel="Post adjustment"
-        busy={reconcile.isPending}
-        onSubmit={() => reconcile.mutate({ actual_balance: recActual, note: recNote })}
-      >
-        {reconciling && showBalance && (
-          <p className="text-sm text-muted-foreground">
-            Current system balance: <strong>{formatMoney(reconciling.balance)}</strong>
-          </p>
-        )}
-        <Field label="Actual balance">
-          <Input
-            required
-            inputMode="decimal"
-            value={recActual}
-            onChange={(e) => setRecActual(e.target.value)}
-          />
-        </Field>
-        <Field label="Note / statement reference">
-          <Input
-            value={recNote}
-            onChange={(e) => setRecNote(e.target.value)}
-            placeholder="e.g. Monthly bank statement"
           />
         </Field>
       </FormDialog>

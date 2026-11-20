@@ -38,10 +38,10 @@ export function RecordHistoryTab({
   const audit = useGet<AuditEntry[]>(
     `/audit-logs/entity/${entityType}/${entityId}`,
     { per_page: 50 },
-    { enabled: can("audit.view") && !!entityId },
+    { enabled: can("security.audit.view") && !!entityId },
   );
 
-  if (!can("audit.view")) {
+  if (!can("security.audit.view")) {
     return (
       <p className="rounded-2xl border bg-card p-6 text-sm text-muted-foreground">
         Detailed change history is available to administrators.

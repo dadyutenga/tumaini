@@ -88,7 +88,7 @@ export default function Projects() {
         title="Projects"
         description="Every client job, stage by stage."
         actions={
-          can("projects.manage") && (
+          can("services.project.manage") && (
             <Button onClick={() => setCreating(true)}>
               <Plus size={16} /> New project
             </Button>

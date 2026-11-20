@@ -91,7 +91,7 @@ export default function Customers() {
         title="Customers"
         description={data ? `Customers owe you ${formatMoney(owed)} in total.` : undefined}
         actions={
-          can("customers.manage") && (
+          can("shop.customer.manage") && (
             <Button onClick={() => setOpen(true)}>
               <Plus size={16} /> New customer
             </Button>
@@ -101,7 +101,7 @@ export default function Customers() {
       <Tabs defaultValue="all">
         <TabsList className="mb-4">
           <TabsTrigger value="all">All customers</TabsTrigger>
-          <TabsTrigger value="debts">Who owes</TabsTrigger>
+          {can("finance.debt.view") && <TabsTrigger value="debts">Who owes</TabsTrigger>}
         </TabsList>
         <TabsContent value="all">
           <Input
@@ -137,9 +137,11 @@ export default function Customers() {
             ]}
           />
         </TabsContent>
-        <TabsContent value="debts">
-          <DebtsTab />
-        </TabsContent>
+        {can("finance.debt.view") && (
+          <TabsContent value="debts">
+            <DebtsTab />
+          </TabsContent>
+        )}
       </Tabs>
       <FormDialog
         open={open}
@@ -164,7 +166,7 @@ export default function Customers() {
           <Field label="Address" className="sm:col-span-2">
             <Input value={draft.address} onChange={set("address")} />
           </Field>
-          {can("customers.credit_limit") && (
+          {can("finance.debt.view") && (
             <Field label="Credit limit">
               <Input
                 inputMode="decimal"

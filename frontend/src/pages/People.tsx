@@ -22,6 +22,7 @@ interface Employee {
   employee_no: string;
   name: string;
   phone?: string | null;
+  position?: string | null;
   department_name?: string | null;
   position_name?: string | null;
   branch_name?: string;
@@ -91,13 +92,20 @@ function ClockCard() {
 }
 
 function EmployeesTab() {
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const list = useGetPage<Employee>("/employees", { q: q || undefined, page });
   const [open, setOpen] = useState(false);
-  const blank = { name: "", phone: "", hire_date: today(), pay_type: "monthly", base_pay: "0" };
+  const blank = {
+    name: "",
+    phone: "",
+    position: "",
+    hire_date: today(),
+    pay_type: "monthly",
+    base_pay: "0",
+  };
   const [draft, setDraft] = useState(blank);
   const create = useWrite("POST", "/employees", {
     invalidate: ["/employees"],
@@ -107,6 +115,7 @@ function EmployeesTab() {
       setDraft(blank);
     },
   });
+  const canSeeSalary = canAny("hr.compensation.view", "hr.compensation.manage");
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -120,7 +129,7 @@ function EmployeesTab() {
             setPage(1);
           }}
         />
-        {can("employees.manage") && (
+        {can("hr.employee.manage") && (
           <Button onClick={() => setOpen(true)}>
             <Plus size={16} /> New employee
           </Button>
@@ -135,10 +144,13 @@ function EmployeesTab() {
         columns={[
           { header: "No.", cell: (e) => e.employee_no },
           { header: "Name", cell: (e) => <span className="font-medium">{e.name}</span> },
-          { header: "Position", cell: (e) => e.position_name ?? e.department_name ?? "-" },
-          { header: "Branch", cell: (e) => e.branch_name ?? "-" },
+          {
+            header: "Position",
+            cell: (e) => e.position || e.position_name || e.department_name || "-",
+          },
+          { header: "Location", cell: (e) => e.branch_name ?? "-" },
           { header: "Hired", cell: (e) => (e.hire_date ? formatDate(e.hire_date) : "-") },
-          ...(can("employees.view_salary")
+          ...(canSeeSalary
             ? [
                 {
                   header: "Base pay",
@@ -172,6 +184,12 @@ function EmployeesTab() {
               onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
             />
           </Field>
+          <Field label="Position / job title">
+            <Input
+              value={draft.position}
+              onChange={(e) => setDraft((d) => ({ ...d, position: e.target.value }))}
+            />
+          </Field>
           <Field label="Hire date">
             <Input
               type="date"
@@ -189,7 +207,7 @@ function EmployeesTab() {
               <option value="hourly">Hourly</option>
             </NativeSelect>
           </Field>
-          {can("employees.view_salary") && (
+          {canSeeSalary && (
             <Field label="Base pay">
               <Input
                 inputMode="decimal"
@@ -206,20 +224,19 @@ function EmployeesTab() {
 
 function LeaveTab() {
   const { can, canAny } = useAuth();
-  const approver = can("leave.approve");
-  const [status, setStatus] = useState("pending");
+  const approver = can("hr.leave.approve");
+  const canViewAll = canAny("hr.leave.approve", "hr.employee.view");
+  const [status, setStatus] = useState("requested");
   const [page, setPage] = useState(1);
-  const list = useGetPage<LeaveRequest>(approver ? "/leave-requests" : "/me/leave", {
+  const list = useGetPage<LeaveRequest>(canViewAll ? "/leave-requests" : "/me/leave", {
     status: status || undefined,
     page,
   });
-  const types = useGet<LeaveType[]>("/leave-types", undefined, {
-    enabled: canAny("leave.request", "leave.approve", "departments.manage", "employees.view"),
-  });
+  const types = useGet<LeaveType[]>("/leave-types");
   const employees = useGet<Employee[]>(
     "/employees",
     { per_page: 100 },
-    { enabled: approver && can("employees.view") },
+    { enabled: approver && canAny("hr.employee.view", "hr.employee.manage") },
   );
   const [open, setOpen] = useState(false);
   const blank = {
@@ -257,15 +274,15 @@ function LeaveTab() {
           }}
         >
           <option value="">All</option>
-          {["pending", "approved", "rejected", "cancelled"].map((v) => (
-            <option key={v}>{v}</option>
+          {["requested", "approved", "rejected", "cancelled"].map((v) => (
+            <option key={v} value={v}>
+              {v}
+            </option>
           ))}
         </NativeSelect>
-        {can("leave.request") && (
-          <Button onClick={() => setOpen(true)}>
-            <Plus size={16} /> Request leave
-          </Button>
-        )}
+        <Button onClick={() => setOpen(true)}>
+          <Plus size={16} /> Request leave
+        </Button>
       </div>
       <DataGrid
         rows={list.data?.data}
@@ -284,7 +301,7 @@ function LeaveTab() {
           {
             header: "",
             cell: (l) =>
-              l.status === "pending" && (
+              (l.status === "requested" || l.status === "pending") && (
                 <div className="flex gap-2">
                   {approver && (
                     <>
@@ -419,18 +436,20 @@ function AttendanceTab() {
 }
 
 export default function People() {
-  const { can } = useAuth();
+  const { canAny } = useAuth();
+  const canEmployees = canAny("hr.employee.view", "hr.employee.manage");
+  const canAttendance = canAny("hr.attendance.manage", "hr.employee.view");
   return (
     <>
       <PageHeader title="People" description="Employees, leave and daily attendance." />
-      {can("attendance.clock") && <ClockCard />}
-      <Tabs defaultValue={can("employees.view") ? "employees" : "leave"}>
+      <ClockCard />
+      <Tabs defaultValue={canEmployees ? "employees" : "leave"}>
         <TabsList className="mb-4">
-          {can("employees.view") && <TabsTrigger value="employees">Employees</TabsTrigger>}
+          {canEmployees && <TabsTrigger value="employees">Employees</TabsTrigger>}
           <TabsTrigger value="leave">Leave</TabsTrigger>
-          {can("attendance.view") && <TabsTrigger value="attendance">Today</TabsTrigger>}
+          {canAttendance && <TabsTrigger value="attendance">Today</TabsTrigger>}
         </TabsList>
-        {can("employees.view") && (
+        {canEmployees && (
           <TabsContent value="employees">
             <EmployeesTab />
           </TabsContent>
@@ -438,7 +457,7 @@ export default function People() {
         <TabsContent value="leave">
           <LeaveTab />
         </TabsContent>
-        {can("attendance.view") && (
+        {canAttendance && (
           <TabsContent value="attendance">
             <AttendanceTab />
           </TabsContent>

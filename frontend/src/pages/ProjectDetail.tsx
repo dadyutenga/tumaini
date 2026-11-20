@@ -342,8 +342,8 @@ export default function ProjectDetail() {
         </Link>
       </p>
     );
-  const manage = can("projects.manage");
-  const billing = can("service_billing.manage");
+  const manage = can("services.project.manage");
+  const billing = can("services.invoice.manage");
   const percent = p.stages_total ? (p.stages_done / p.stages_total) * 100 : 0;
 
   async function onFile(file: File | undefined) {
@@ -454,7 +454,7 @@ export default function ProjectDetail() {
                     )}
                   </td>
                   <td className="space-x-2 px-4 py-3 text-right">
-                    {can("design.manage") &&
+                    {can("services.design.manage") &&
                       s.status !== "done" &&
                       /brand|design|logo/i.test(s.name) && (
                         <Button size="sm" variant="outline" onClick={() => setJobsFor(s)}>
@@ -767,7 +767,10 @@ export default function ProjectDetail() {
               empty="No stage updates yet"
               columns={[
                 { header: "When", cell: (e) => formatDateTime(e.created_at) },
-                { header: "Stage", cell: (e) => <span className="font-medium">{e.stage_name}</span> },
+                {
+                  header: "Stage",
+                  cell: (e) => <span className="font-medium">{e.stage_name}</span>,
+                },
                 {
                   header: "Change",
                   cell: (e) =>

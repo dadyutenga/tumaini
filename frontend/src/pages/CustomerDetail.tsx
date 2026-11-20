@@ -33,27 +33,16 @@ interface Statement {
 
 export default function CustomerDetail() {
   const { id = "" } = useParams();
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const customer = useGet<Customer>(`/customers/${id}`);
   const statement = useGet<Statement>(`/customers/${id}/statement`, undefined, {
-    enabled: can("customers.statement"),
+    enabled: can("finance.debt.view"),
   });
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
-    enabled: can("accounts.view"),
+    enabled: canAny("finance.account.view", "finance.payment.receive", "shop.sale.create"),
   });
   const [paying, setPaying] = useState(false);
   const [limiting, setLimiting] = useState(false);
-  const [writingOff, setWritingOff] = useState(false);
-  const [off, setOff] = useState({ amount: "", reason: "" });
-  const writeOff = useWrite<typeof off, unknown>("POST", `/customers/${id}/write-off`, {
-    idempotent: true,
-    invalidate: ["/customers", "/reports", "/money"],
-    success: "Debt written off",
-    onSuccess: () => {
-      setWritingOff(false);
-      setOff({ amount: "", reason: "" });
-    },
-  });
   const [pay, setPay] = useState({
     amount: "",
     method: "cash",
@@ -98,7 +87,7 @@ export default function CustomerDetail() {
         actions={
           <>
             <StatusBadge value={c.is_active ? "active" : "inactive"} />
-            {can("customers.credit_limit") && (
+            {can("finance.debt.view") && (
               <Button
                 variant="outline"
                 onClick={() => {
@@ -112,12 +101,7 @@ export default function CustomerDetail() {
                 Credit limit
               </Button>
             )}
-            {can("customers.write_off") && toNumber(c.balance) > 0 && (
-              <Button variant="outline" onClick={() => setWritingOff(true)}>
-                Write off
-              </Button>
-            )}
-            {can("payments.receive") && (
+            {can("finance.payment.receive") && (
               <Button onClick={() => setPaying(true)} disabled={toNumber(c.balance) <= 0}>
                 Receive payment
               </Button>
@@ -142,7 +126,7 @@ export default function CustomerDetail() {
           <p className="mt-2 text-2xl font-semibold">{c.payment_terms_days} days</p>
         </section>
       </div>
-      {can("customers.statement") && (
+      {can("finance.debt.view") && (
         <>
           <h2 className="mb-3 text-lg font-semibold">Statement</h2>
           <DataGrid
@@ -171,34 +155,6 @@ export default function CustomerDetail() {
         </section>
       )}
 
-      <FormDialog
-        open={writingOff}
-        onOpenChange={setWritingOff}
-        title="Write off bad debt"
-        submitLabel="Write off"
-        busy={writeOff.isPending}
-        onSubmit={() => writeOff.mutate(off)}
-      >
-        <p className="text-sm text-muted-foreground">
-          The oldest unpaid sales are cleared first and the amount is booked as a bad debt expense.
-          Owed now: {formatMoney(c.balance)}.
-        </p>
-        <Field label="Amount to write off">
-          <Input
-            required
-            inputMode="decimal"
-            value={off.amount}
-            onChange={(e) => setOff((o) => ({ ...o, amount: e.target.value }))}
-          />
-        </Field>
-        <Field label="Reason">
-          <Input
-            required
-            value={off.reason}
-            onChange={(e) => setOff((o) => ({ ...o, reason: e.target.value }))}
-          />
-        </Field>
-      </FormDialog>
       <FormDialog
         open={paying}
         onOpenChange={setPaying}

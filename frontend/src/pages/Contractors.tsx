@@ -79,7 +79,7 @@ function Statement({ id, onClose }: { id: string; onClose: () => void }) {
                 >
                   <Download size={14} /> Statement PDF
                 </Button>
-                {can("contractors.manage") && toNumber(s.owed) > 0 && (
+                {can("services.contractor.manage") && toNumber(s.owed) > 0 && (
                   <Button onClick={() => setPaying(true)}>Pay contractor</Button>
                 )}
               </div>
@@ -103,7 +103,7 @@ function Statement({ id, onClose }: { id: string; onClose: () => void }) {
 
 export default function Contractors() {
   const { can } = useAuth();
-  const manage = can("contractors.manage");
+  const manage = can("services.contractor.manage");
   const [q, setQ] = useState("");
   const list = useGet<Contractor[]>("/contractors", { q, all: manage || undefined, per_page: 100 });
   const [open, setOpen] = useState(false);

@@ -42,14 +42,14 @@ const STATUS_OPTIONS = [
   ["approved", "Approved"],
   ["paid", "Paid"],
   ["rejected", "Rejected"],
-  ["reversed", "Reversed"],
+  ["cancelled", "Cancelled"],
 ];
 
 export default function Expenses() {
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const categories = useGet<Category[]>("/expense-categories");
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
-    enabled: can("accounts.view"),
+    enabled: canAny("finance.account.view", "finance.expense.enter", "finance.expense.pay"),
   });
   const [status, setStatus] = useState("");
   const [page, setPage] = useState(1);
@@ -158,7 +158,7 @@ export default function Expenses() {
         title="Expenses"
         description="Record spending with receipt photos. Amounts above your limit go to a manager for approval."
         actions={
-          can("expenses.create") && (
+          canAny("finance.expense.submit", "finance.expense.enter") && (
             <Button onClick={() => setOpen(true)}>
               <Plus size={16} /> New expense
             </Button>
@@ -223,7 +223,7 @@ export default function Expenses() {
             header: "",
             cell: (e) => (
               <div className="flex justify-end gap-1.5">
-                {can("expenses.approve") && e.status === "submitted" && (
+                {can("finance.expense.approve") && e.status === "submitted" && (
                   <>
                     <Button
                       size="sm"
@@ -247,7 +247,7 @@ export default function Expenses() {
                     </Button>
                   </>
                 )}
-                {can("expenses.pay") && e.status === "approved" && (
+                {can("finance.expense.pay") && e.status === "approved" && (
                   <Button size="sm" variant="outline" onClick={() => setPaying(e)}>
                     Pay
                   </Button>

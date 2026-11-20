@@ -31,14 +31,19 @@ export function CostDialog({
   target: { project_id?: string; design_job_id?: string };
   invalidate: string[];
 }) {
-  const { can } = useAuth();
+  const { can, canAny } = useAuth();
   const contractors = useGet<Contractor[]>(
     "/contractors",
     { per_page: 100 },
-    { enabled: can("contractors.view") },
+    { enabled: can("services.contractor.manage") },
   );
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
-    enabled: can("accounts.view"),
+    enabled: canAny(
+      "finance.account.view",
+      "finance.payment.make",
+      "finance.expense.enter",
+      "services.invoice.manage",
+    ),
   });
   const [draft, setDraft] = useState(blank);
   const write = useWrite("POST", "/service-costs", {
@@ -99,7 +104,7 @@ export function CostDialog({
             onChange={(e) => set("description", e.target.value)}
           />
         </Field>
-        {can("contractors.view") && (
+        {can("services.contractor.manage") && (
           <Field label="Contractor (optional)">
             <NativeSelect
               value={draft.contractor_id}

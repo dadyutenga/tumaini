@@ -52,10 +52,6 @@ export default function PurchaseOrderDetail() {
     invalidate: refresh,
     success: "Order cancelled",
   });
-  const close = useWrite("POST", `/purchase-orders/${id}/close`, {
-    invalidate: refresh,
-    success: "Order closed",
-  });
   const receive = useWrite("POST", "/goods-receipts", {
     idempotent: true,
     invalidate: refresh,
@@ -65,7 +61,8 @@ export default function PurchaseOrderDetail() {
 
   if (order.isLoading || !order.data) return <PageLoader />;
   const o = order.data;
-  const receivable = ["approved", "partially_received"].includes(o.status);
+  const manage = can("shop.purchase.manage");
+  const receivable = ["ordered", "approved", "partially_received"].includes(o.status);
 
   return (
     <>
@@ -81,7 +78,7 @@ export default function PurchaseOrderDetail() {
         actions={
           <div className="flex items-center gap-2">
             <StatusBadge value={o.status} />
-            {o.status === "draft" && can("po.create") && (
+            {o.status === "draft" && manage && (
               <>
                 <Button
                   variant="outline"
@@ -95,7 +92,7 @@ export default function PurchaseOrderDetail() {
                 </Button>
               </>
             )}
-            {receivable && can("grn.create") && (
+            {receivable && manage && (
               <Button
                 onClick={() => {
                   setQtys(
@@ -105,11 +102,6 @@ export default function PurchaseOrderDetail() {
                 }}
               >
                 Receive goods
-              </Button>
-            )}
-            {o.status === "partially_received" && can("po.approve") && (
-              <Button variant="outline" onClick={() => close.mutate({})}>
-                Close order
               </Button>
             )}
           </div>

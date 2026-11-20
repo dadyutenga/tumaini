@@ -5,16 +5,17 @@ export type Locale = "en" | "sw";
 export type Decimal = string;
 
 export interface Grant {
-  scope: "all" | "branch" | "own";
-  limit: Decimal | null;
+  scope?: "all" | "branch" | "own";
+  limit?: Decimal | null;
 }
 
 export interface SessionUser {
   id: string;
+  membership_id?: string;
   name: string;
   phone: string | null;
   email: string | null;
-  role_id: string;
+  role_id: string | null;
   role_name: string;
   role_slug: string;
   employee_id: string | null;
@@ -27,17 +28,21 @@ export interface SessionUser {
 export interface Me {
   user: SessionUser;
   permissions: Record<string, Grant>;
+  limits?: Record<string, Decimal>;
   branches: string[];
   is_owner: boolean;
+  tenant_id?: string;
+  business_id?: string;
+  membership_id?: string;
 }
 
 export interface Branch {
   id: string;
   name: string;
-  code: string;
+  code?: string | null;
   address: string | null;
   phone: string | null;
-  manager_id: string | null;
+  manager_id?: string | null;
   is_main: boolean;
   is_active: boolean;
 }
@@ -48,11 +53,12 @@ export interface Product {
   sku: string;
   barcode: string | null;
   category_id: string | null;
-  unit_id: string;
+  unit_id?: string;
   unit: string;
   tax_rate_id: string | null;
-  kind: "stock" | "service";
+  kind?: "stock" | "service";
   sell_price: Decimal;
+  buy_price?: Decimal;
   reorder_level: Decimal;
   is_active: boolean;
   qty_on_hand?: Decimal;
@@ -146,14 +152,6 @@ export interface Sale {
   receipt_footer?: string;
   profit?: Decimal;
   items: SaleItem[];
-}
-
-export interface Till {
-  id: string;
-  money_account_id: string;
-  opening_float: Decimal;
-  opened_at: string;
-  status: "open";
 }
 
 export interface Approval {
