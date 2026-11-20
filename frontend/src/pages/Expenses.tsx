@@ -32,9 +32,11 @@ interface Expense {
   description: string;
   date?: string;
   category_name?: string;
-  payee?: string;
+  submitted_by?: string;
+  requested_by?: string;
+  recurring_id?: string | null;
   submitted_by_name?: string;
-  receipt_file?: string;
+  receipt_file_id?: string | null;
 }
 
 const STATUS_OPTIONS = [
@@ -46,7 +48,7 @@ const STATUS_OPTIONS = [
 ];
 
 export default function Expenses() {
-  const { can, canAny } = useAuth();
+  const { can, canAny, user } = useAuth();
   const categories = useGet<Category[]>("/expense-categories");
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
     enabled: canAny("finance.account.view", "finance.expense.enter", "finance.expense.pay"),
@@ -63,43 +65,36 @@ export default function Expenses() {
   const [uploading, setUploading] = useState(false);
   const [receiptName, setReceiptName] = useState("");
 
-  const [draft, setDraft] = useState({
+  const blankDraft = {
     category_id: "",
     amount: "",
     description: "",
-    payee: "",
     date: today(),
-    receipt_file: "",
-  });
+    receipt_file_id: "",
+  };
+  const [draft, setDraft] = useState(blankDraft);
 
-  const create = useWrite<typeof draft, Expense & { status: string }>("POST", "/expenses", {
-    idempotent: true,
-    success: "Expense submitted",
-    invalidate: ["/expenses", "/dashboard", "/approvals"],
-    onSuccess: (result) => {
-      setOpen(false);
-      setReceiptName("");
-      if (isPendingApproval(result)) {
+  const create = useWrite<Record<string, unknown>, Expense & { status: string }>(
+    "POST",
+    "/expenses",
+    {
+      idempotent: true,
+      success: "Expense submitted",
+      invalidate: ["/expenses", "/dashboard", "/approvals"],
+      onSuccess: (result) => {
+        setOpen(false);
+        setReceiptName("");
         setDraft({
           category_id: "",
           amount: "",
           description: "",
-          payee: "",
           date: today(),
-          receipt_file: "",
+          receipt_file_id: "",
         });
-        return;
-      }
-      setDraft({
-        category_id: "",
-        amount: "",
-        description: "",
-        payee: "",
-        date: today(),
-        receipt_file: "",
-      });
+        if (isPendingApproval(result)) return;
+      },
     },
-  });
+  );
 
   const pay = useWrite<{ money_account_id: string }, unknown>(
     "POST",
@@ -135,12 +130,22 @@ export default function Expenses() {
     },
   );
 
+  const cancel = useWrite<{ id: string }, unknown>(
+    "POST",
+    (vars) => `/expenses/${vars.id}/cancel`,
+    {
+      toBody: () => ({}),
+      success: "Expense cancelled",
+      invalidate: ["/expenses", "/approvals", "/dashboard"],
+    },
+  );
+
   async function onReceiptPicked(file: File | undefined) {
     if (!file) return;
     setUploading(true);
     try {
       const id = await uploadFile(file);
-      setDraft((d) => ({ ...d, receipt_file: id }));
+      setDraft((d) => ({ ...d, receipt_file_id: id }));
       setReceiptName(file.name);
       toast.success("Receipt uploaded");
     } catch (e) {
@@ -156,7 +161,7 @@ export default function Expenses() {
     <>
       <PageHeader
         title="Expenses"
-        description="Record spending with receipt photos. Amounts above your limit go to a manager for approval."
+        description="Record spending with receipt photos. Submitted expenses are approved before payment."
         actions={
           canAny("finance.expense.submit", "finance.expense.enter") && (
             <Button onClick={() => setOpen(true)}>
@@ -194,18 +199,15 @@ export default function Expenses() {
             header: "Description",
             cell: (e) => (
               <div className="flex items-center gap-1.5">
-                <span>
-                  {e.description}
-                  {e.payee && <span className="text-muted-foreground"> · {e.payee}</span>}
-                </span>
-                {e.receipt_file && (
+                <span>{e.description}</span>
+                {e.receipt_file_id && (
                   <button
                     type="button"
                     title="Preview receipt photo"
                     className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs text-primary hover:bg-primary/10"
                     onClick={() =>
                       setPreview({
-                        id: e.receipt_file!,
+                        id: e.receipt_file_id!,
                         name: `Receipt ${e.number ?? e.id}`,
                       })
                     }
@@ -221,39 +223,61 @@ export default function Expenses() {
           { header: "Status", cell: (e) => <StatusBadge value={e.status} /> },
           {
             header: "",
-            cell: (e) => (
-              <div className="flex justify-end gap-1.5">
-                {can("finance.expense.approve") && e.status === "submitted" && (
-                  <>
+            cell: (e) => {
+              const isOwn =
+                (Boolean(user?.id) && e.submitted_by === user?.id) ||
+                (Boolean(user?.membership_id) && e.requested_by === user?.membership_id);
+              const canDecide =
+                can("finance.expense.approve") &&
+                e.status === "submitted" &&
+                (!isOwn || Boolean(e.recurring_id));
+              const canCancel =
+                (e.status === "submitted" || e.status === "approved") &&
+                (isOwn || can("finance.expense.approve"));
+              return (
+                <div className="flex justify-end gap-1.5">
+                  {canDecide && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-emerald-700 hover:text-emerald-800"
+                        disabled={approve.isPending}
+                        onClick={() => approve.mutate({ id: e.id })}
+                      >
+                        <Check size={14} /> Approve
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="text-rose-700 hover:text-rose-800"
+                        onClick={() => {
+                          setRejecting(e);
+                          setRejectNote("");
+                        }}
+                      >
+                        <X size={14} /> Reject
+                      </Button>
+                    </>
+                  )}
+                  {can("finance.expense.pay") && e.status === "approved" && (
+                    <Button size="sm" variant="outline" onClick={() => setPaying(e)}>
+                      Pay
+                    </Button>
+                  )}
+                  {canCancel && (
                     <Button
                       size="sm"
-                      variant="outline"
-                      className="text-emerald-700 hover:text-emerald-800"
-                      disabled={approve.isPending}
-                      onClick={() => approve.mutate({ id: e.id })}
+                      variant="ghost"
+                      disabled={cancel.isPending}
+                      onClick={() => cancel.mutate({ id: e.id })}
                     >
-                      <Check size={14} /> Approve
+                      Cancel
                     </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="text-rose-700 hover:text-rose-800"
-                      onClick={() => {
-                        setRejecting(e);
-                        setRejectNote("");
-                      }}
-                    >
-                      <X size={14} /> Reject
-                    </Button>
-                  </>
-                )}
-                {can("finance.expense.pay") && e.status === "approved" && (
-                  <Button size="sm" variant="outline" onClick={() => setPaying(e)}>
-                    Pay
-                  </Button>
-                )}
-              </div>
-            ),
+                  )}
+                </div>
+              );
+            },
           },
         ]}
       />
@@ -264,7 +288,16 @@ export default function Expenses() {
         onOpenChange={setOpen}
         title="New expense"
         busy={create.isPending || uploading}
-        onSubmit={() => create.mutate(draft)}
+        onSubmit={() => {
+          const payload: Record<string, unknown> = {
+            category_id: draft.category_id,
+            amount: draft.amount,
+            description: draft.description,
+            date: draft.date,
+          };
+          if (draft.receipt_file_id) payload.receipt_file_id = draft.receipt_file_id;
+          create.mutate(payload);
+        }}
       >
         <Field label="Category">
           <NativeSelect
@@ -305,14 +338,8 @@ export default function Expenses() {
             onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
           />
         </Field>
-        <Field label="Paid to">
-          <Input
-            value={draft.payee}
-            onChange={(e) => setDraft((d) => ({ ...d, payee: e.target.value }))}
-          />
-        </Field>
         <Field label="Receipt photo or PDF (optional)">
-          {draft.receipt_file ? (
+          {draft.receipt_file_id ? (
             <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-xs">
               <span className="flex items-center gap-1.5 truncate">
                 <Paperclip size={13} />
@@ -325,7 +352,7 @@ export default function Expenses() {
                   variant="ghost"
                   className="h-6 px-2 text-xs"
                   onClick={() =>
-                    setPreview({ id: draft.receipt_file, name: receiptName || "Receipt" })
+                    setPreview({ id: draft.receipt_file_id, name: receiptName || "Receipt" })
                   }
                 >
                   Preview
@@ -336,7 +363,7 @@ export default function Expenses() {
                   variant="ghost"
                   className="h-6 px-1.5 text-xs text-destructive"
                   onClick={() => {
-                    setDraft((d) => ({ ...d, receipt_file: "" }));
+                    setDraft((d) => ({ ...d, receipt_file_id: "" }));
                     setReceiptName("");
                   }}
                 >

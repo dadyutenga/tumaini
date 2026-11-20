@@ -21,10 +21,13 @@ const APPROVAL_PERMISSION: Record<string, string> = {
   sale_return: "shop.return.approve",
   sale_void: "shop.sale.void",
   product_price_change: "shop.product.price_approve",
+  job_price_change: "services.price.approve",
   service_price_change: "services.price.approve",
+  price_change: "services.price.approve",
   expense: "finance.expense.approve",
   payment_void: "finance.payment.void",
   transaction_correction: "finance.transaction.correct",
+  day_reopen: "finance.day.reopen",
 };
 
 const ANY_APPROVAL_PERMS = Object.values(APPROVAL_PERMISSION);

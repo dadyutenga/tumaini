@@ -95,4 +95,57 @@ describe("Approvals page BMS permission gating", () => {
     expect(screen.getAllByRole("button", { name: "Reject" })).toHaveLength(1);
     expect(screen.getByText("Your request")).toBeInTheDocument();
   });
+
+  it("gates BMS job_price_change and day_reopen approval types with services.price.approve and finance.day.reopen", async () => {
+    authState.perms = new Set(["services.price.approve", "finance.day.reopen"]);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        json({
+          data: [
+            {
+              id: "a4",
+              kind: "job_price_change",
+              subject_type: "service_job",
+              subject_id: "j1",
+              amount: "45000",
+              summary: "Price change on Job #12",
+              status: "pending",
+              requested_by: "u-tech",
+              created_at: "2026-11-20T09:15:00Z",
+            },
+            {
+              id: "a5",
+              kind: "day_reopen",
+              subject_type: "day_closing",
+              subject_id: "dc1",
+              amount: null,
+              summary: "Reopen 2026-11-19",
+              status: "pending",
+              requested_by: "u-manager",
+              created_at: "2026-11-20T09:20:00Z",
+            },
+            {
+              id: "a6",
+              kind: "day_reopen",
+              subject_type: "day_closing",
+              subject_id: "dc2",
+              amount: null,
+              summary: "Own reopen request",
+              status: "pending",
+              requested_by: "u-approver",
+              created_at: "2026-11-20T09:25:00Z",
+            },
+          ],
+        }),
+      ),
+    );
+
+    mount();
+    expect(await screen.findByText("Price change on Job #12")).toBeInTheDocument();
+    expect(screen.getByText("Reopen 2026-11-19")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Approve" })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: "Reject" })).toHaveLength(2);
+    expect(screen.getByText("Your request")).toBeInTheDocument();
+  });
 });

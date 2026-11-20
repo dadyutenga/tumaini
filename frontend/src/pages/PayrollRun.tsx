@@ -172,13 +172,14 @@ export default function PayrollRun() {
                 <Button onClick={() => setPaying(true)}>Pay salaries</Button>
               </>
             )}
-            {["approved", "paid"].includes(r.status) && (canApprove || canManage) && (
+            {["draft", "approved"].includes(r.status) && (canApprove || canManage) && (
               <Button
                 variant="outline"
                 className="text-destructive hover:text-destructive"
                 onClick={() => setReversing(true)}
               >
-                <RotateCcw size={15} /> Reverse payroll
+                <RotateCcw size={15} />{" "}
+                {r.status === "approved" ? "Reopen to draft" : "Cancel draft"}
               </Button>
             )}
           </div>
@@ -218,7 +219,11 @@ export default function PayrollRun() {
                       size="sm"
                       variant="ghost"
                       onClick={() =>
-                        save(`/payslips/${s.id}`, { format: "pdf" }, `${s.number}.pdf`)
+                        save(
+                          `/payslips/${s.id}`,
+                          { format: "pdf" },
+                          `${s.number || s.employee_no}.pdf`,
+                        )
                       }
                     >
                       <FileText size={14} /> PDF
@@ -354,21 +359,22 @@ export default function PayrollRun() {
       <FormDialog
         open={reversing}
         onOpenChange={setReversing}
-        title={`Reverse payroll ${r.number}`}
-        submitLabel="Confirm reversal"
+        title={r.status === "approved" ? `Reopen payroll ${r.number}` : `Cancel draft ${r.number}`}
+        submitLabel={r.status === "approved" ? "Reopen to draft" : "Cancel draft"}
         busy={reverse.isPending}
         onSubmit={() => reverse.mutate({ reason: reverseReason })}
       >
         <p className="text-sm text-muted-foreground">
-          Reversing a payroll run posts mirror journal entries and voids associated salary payments.
+          {r.status === "approved"
+            ? "Reopening moves this unpaid payroll run back to draft so it can be edited and recalculated."
+            : "Cancelling releases any linked pay adjustments and accrued commissions back for future runs."}
         </p>
-        <Field label="Reason for reversal (required)">
+        <Field label="Reason">
           <Textarea
-            required
             rows={3}
             value={reverseReason}
             onChange={(e) => setReverseReason(e.target.value)}
-            placeholder="Explain why this payroll run is being reversed…"
+            placeholder="Optional note explaining why…"
           />
         </Field>
       </FormDialog>

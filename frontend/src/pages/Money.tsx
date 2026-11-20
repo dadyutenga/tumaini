@@ -31,6 +31,7 @@ import { formatDate, formatMoney, today } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
 
 interface Txn {
+  id: string;
   date: string;
   account: string;
   in: string;
@@ -100,7 +101,6 @@ export default function Money() {
     from_account_id: "",
     to_account_id: "",
     amount: "",
-    fee: "0",
     reference: "",
     note: "",
   });
@@ -123,7 +123,6 @@ export default function Money() {
         from_account_id: "",
         to_account_id: "",
         amount: "",
-        fee: "0",
         reference: "",
         note: "",
       });
@@ -338,7 +337,7 @@ export default function Money() {
           <DataGrid
             rows={txns.data?.data}
             loading={txns.isLoading}
-            rowKey={(t) => `${t.date}-${t.account}-${t.type}-${t.description}-${t.in}-${t.out}`}
+            rowKey={(t) => t.id}
             empty="No movements match your filters"
             columns={[
               { header: "Date", cell: (t) => formatDate(t.date) },
@@ -450,29 +449,23 @@ export default function Money() {
             </NativeSelect>
           </Field>
         ))}
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Amount">
-            <Input
-              required
-              inputMode="decimal"
-              value={tr.amount}
-              onChange={(e) => setTr((t) => ({ ...t, amount: e.target.value }))}
-            />
-          </Field>
-          <Field label="Fee">
-            <Input
-              inputMode="decimal"
-              value={tr.fee}
-              onChange={(e) => setTr((t) => ({ ...t, fee: e.target.value }))}
-            />
-          </Field>
-        </div>
+        <Field label="Amount">
+          <Input
+            required
+            inputMode="decimal"
+            value={tr.amount}
+            onChange={(e) => setTr((t) => ({ ...t, amount: e.target.value }))}
+          />
+        </Field>
         <Field label="Reference">
           <Input
             value={tr.reference}
             onChange={(e) => setTr((t) => ({ ...t, reference: e.target.value }))}
           />
         </Field>
+        <p className="text-xs text-muted-foreground">
+          Any bank or mobile-money transfer charge should be recorded separately as an expense.
+        </p>
       </FormDialog>
     </>
   );

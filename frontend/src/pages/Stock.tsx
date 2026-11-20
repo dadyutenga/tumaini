@@ -18,7 +18,7 @@ interface Level {
   value?: string;
 }
 interface LowRow extends Level {
-  suggest_qty?: string;
+  suggested_qty?: string;
 }
 
 type Direction = "in" | "out";
@@ -142,7 +142,11 @@ export default function Stock() {
             empty="Nothing is running low"
             columns={[
               ...columns,
-              { header: "Suggested order", align: "right", cell: (r) => formatQty(r.suggest_qty) },
+              {
+                header: "Suggested order",
+                align: "right",
+                cell: (r) => formatQty(r.suggested_qty),
+              },
             ]}
           />
         </TabsContent>

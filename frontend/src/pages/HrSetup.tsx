@@ -132,9 +132,9 @@ function LeaveTypes() {
 
 interface Loan {
   id: string;
-  number: string;
   employee_name: string;
   kind: string;
+  start_period?: string;
   principal: string;
   balance: string;
   monthly_deduction: string;
@@ -161,6 +161,7 @@ function Loans() {
   });
   const blank = {
     employee_id: "",
+    kind: "loan",
     principal: "",
     monthly_deduction: "",
     start_period: today(),
@@ -180,7 +181,10 @@ function Loans() {
       setOpen(false);
       setDraft(blank);
     },
-    toBody: (d: typeof blank) => ({ ...d, monthly_deduction: d.monthly_deduction || undefined }),
+    toBody: (d: typeof blank) => ({
+      ...d,
+      monthly_deduction: d.kind === "loan" && d.monthly_deduction ? d.monthly_deduction : undefined,
+    }),
   });
   const act = useWrite<unknown, unknown>(
     "POST",
@@ -212,8 +216,11 @@ function Loans() {
         rowKey={(l) => l.id}
         empty="No loans or advances"
         columns={[
-          { header: "Number", cell: (l) => <span className="font-medium">{l.number}</span> },
-          { header: "Employee", cell: (l) => l.employee_name },
+          {
+            header: "Employee",
+            cell: (l) => <span className="font-medium">{l.employee_name}</span>,
+          },
+          { header: "Type", cell: (l) => <span className="capitalize">{l.kind}</span> },
           { header: "Principal", align: "right", cell: (l) => formatMoney(l.principal) },
           { header: "Monthly", align: "right", cell: (l) => formatMoney(l.monthly_deduction) },
           { header: "Balance", align: "right", cell: (l) => formatMoney(l.balance) },
@@ -250,20 +257,31 @@ function Loans() {
         busy={create.isPending}
         onSubmit={() => create.mutate(draft)}
       >
-        <Field label="Employee">
-          <NativeSelect
-            required
-            value={draft.employee_id}
-            onChange={(e) => setDraft((d) => ({ ...d, employee_id: e.target.value }))}
-          >
-            <option value="">Choose…</option>
-            {employees.data?.map((e) => (
-              <option key={e.id} value={e.id}>
-                {e.name}
-              </option>
-            ))}
-          </NativeSelect>
-        </Field>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Employee">
+            <NativeSelect
+              required
+              value={draft.employee_id}
+              onChange={(e) => setDraft((d) => ({ ...d, employee_id: e.target.value }))}
+            >
+              <option value="">Choose…</option>
+              {employees.data?.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+          <Field label="Type">
+            <NativeSelect
+              value={draft.kind}
+              onChange={(e) => setDraft((d) => ({ ...d, kind: e.target.value }))}
+            >
+              <option value="loan">Loan (monthly instalments)</option>
+              <option value="advance">Salary advance (full next run)</option>
+            </NativeSelect>
+          </Field>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Amount">
             <Input
@@ -273,13 +291,16 @@ function Loans() {
               onChange={(e) => setDraft((d) => ({ ...d, principal: e.target.value }))}
             />
           </Field>
-          <Field label="Deducted each month">
-            <Input
-              inputMode="decimal"
-              value={draft.monthly_deduction}
-              onChange={(e) => setDraft((d) => ({ ...d, monthly_deduction: e.target.value }))}
-            />
-          </Field>
+          {draft.kind === "loan" && (
+            <Field label="Deducted each month">
+              <Input
+                inputMode="decimal"
+                placeholder="Defaults to full amount"
+                value={draft.monthly_deduction}
+                onChange={(e) => setDraft((d) => ({ ...d, monthly_deduction: e.target.value }))}
+              />
+            </Field>
+          )}
         </div>
         <Field label="Reason">
           <Input
@@ -291,7 +312,7 @@ function Loans() {
       <FormDialog
         open={acting !== null}
         onOpenChange={(o) => !o && setActing(null)}
-        title={`${acting?.mode === "repay" ? "Repayment for" : "Disburse"} ${acting?.loan.number ?? ""}`}
+        title={`${acting?.mode === "repay" ? "Repayment for" : "Disburse"} ${acting?.loan.employee_name ?? ""}`}
         busy={act.isPending}
         onSubmit={() =>
           act.mutate(

@@ -21,13 +21,16 @@ import type { Customer, MoneyAccount } from "@/types";
 interface Line {
   date: string;
   number: string;
-  kind: string;
-  amount: string;
-  paid: string;
+  type: string;
+  description: string;
+  debit: string;
+  credit: string;
   balance: string;
+  created_at?: string;
 }
 interface Statement {
   lines: Line[];
+  opening_balance?: string;
   closing_balance: string;
 }
 
@@ -49,7 +52,7 @@ export default function CustomerDetail() {
     money_account_id: "",
     reference: "",
   });
-  const [limit, setLimit] = useState({ credit_limit: "", payment_terms_days: "" });
+  const [creditLimit, setCreditLimit] = useState("");
 
   const receive = useWrite<unknown>("POST", `/customers/${id}/payments`, {
     idempotent: true,
@@ -78,6 +81,7 @@ export default function CustomerDetail() {
       </p>
     );
   const typed = (accounts.data ?? []).filter((a) => a.is_active && a.type === pay.method);
+  const availableCredit = Math.max(0, toNumber(c.credit_limit) - toNumber(c.balance));
 
   return (
     <>
@@ -91,10 +95,7 @@ export default function CustomerDetail() {
               <Button
                 variant="outline"
                 onClick={() => {
-                  setLimit({
-                    credit_limit: c.credit_limit,
-                    payment_terms_days: String(c.payment_terms_days),
-                  });
+                  setCreditLimit(c.credit_limit);
                   setLimiting(true);
                 }}
               >
@@ -114,6 +115,7 @@ export default function CustomerDetail() {
           [
             ["Owes", c.balance],
             ["Credit limit", c.credit_limit],
+            ["Available credit", String(availableCredit)],
           ] as const
         ).map(([l, v]) => (
           <section key={l} className="rounded-2xl border bg-card p-5">
@@ -121,10 +123,6 @@ export default function CustomerDetail() {
             <p className="mt-2 text-2xl font-semibold">{formatMoney(v)}</p>
           </section>
         ))}
-        <section className="rounded-2xl border bg-card p-5">
-          <p className="text-sm text-muted-foreground">Payment terms</p>
-          <p className="mt-2 text-2xl font-semibold">{c.payment_terms_days} days</p>
-        </section>
       </div>
       {can("finance.debt.view") && (
         <>
@@ -132,17 +130,31 @@ export default function CustomerDetail() {
           <DataGrid
             rows={statement.data?.lines}
             loading={statement.isLoading}
-            rowKey={(l) => `${l.date}-${l.number}-${l.kind}`}
+            rowKey={(l) =>
+              `${l.date}-${l.created_at ?? ""}-${l.number}-${l.type}-${l.debit}-${l.credit}`
+            }
             empty="No activity yet"
             columns={[
               { header: "Date", cell: (l) => formatDate(l.date) },
-              { header: "Document", cell: (l) => l.number },
+              { header: "Document", cell: (l) => l.number || "-" },
               {
                 header: "Type",
-                cell: (l) => <span className="capitalize">{l.kind.replaceAll("_", " ")}</span>,
+                cell: (l) => (
+                  <span className="capitalize">
+                    {(l.type || l.description || "-").replaceAll("_", " ")}
+                  </span>
+                ),
               },
-              { header: "Amount", align: "right", cell: (l) => formatMoney(l.amount) },
-              { header: "Paid", align: "right", cell: (l) => formatMoney(l.paid) },
+              {
+                header: "Debit",
+                align: "right",
+                cell: (l) => (toNumber(l.debit) > 0 ? formatMoney(l.debit) : "-"),
+              },
+              {
+                header: "Credit",
+                align: "right",
+                cell: (l) => (toNumber(l.credit) > 0 ? formatMoney(l.credit) : "-"),
+              },
               { header: "Balance", align: "right", cell: (l) => formatMoney(l.balance) },
             ]}
           />
@@ -196,8 +208,9 @@ export default function CustomerDetail() {
             ))}
           </NativeSelect>
         </Field>
-        <Field label="Reference">
+        <Field label={pay.method === "cash" ? "Reference (optional)" : "Reference *"}>
           <Input
+            required={pay.method !== "cash"}
             value={pay.reference}
             onChange={(e) => setPay((p) => ({ ...p, reference: e.target.value }))}
           />
@@ -213,8 +226,7 @@ export default function CustomerDetail() {
         busy={setCredit.isPending}
         onSubmit={() =>
           setCredit.mutate({
-            credit_limit: limit.credit_limit,
-            payment_terms_days: Number(limit.payment_terms_days) || 0,
+            credit_limit: creditLimit,
           })
         }
       >
@@ -222,15 +234,8 @@ export default function CustomerDetail() {
           <Input
             required
             inputMode="decimal"
-            value={limit.credit_limit}
-            onChange={(e) => setLimit((l) => ({ ...l, credit_limit: e.target.value }))}
-          />
-        </Field>
-        <Field label="Payment terms (days)">
-          <Input
-            inputMode="numeric"
-            value={limit.payment_terms_days}
-            onChange={(e) => setLimit((l) => ({ ...l, payment_terms_days: e.target.value }))}
+            value={creditLimit}
+            onChange={(e) => setCreditLimit(e.target.value)}
           />
         </Field>
       </FormDialog>

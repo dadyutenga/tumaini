@@ -40,6 +40,7 @@ export interface Branch {
   id: string;
   name: string;
   code?: string | null;
+  kind?: "shop" | "office" | "warehouse" | string;
   address: string | null;
   phone: string | null;
   manager_id?: string | null;
@@ -91,7 +92,7 @@ export interface Customer {
   address: string | null;
   tax_number: string | null;
   credit_limit: Decimal;
-  payment_terms_days: number;
+  payment_terms_days?: number;
   is_walk_in: boolean;
   is_active: boolean;
   balance: Decimal;

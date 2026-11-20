@@ -23,9 +23,10 @@ interface StockMove {
   id: string;
   created_at: string;
   type: string;
-  qty_change: string;
-  balance_after: string;
-  note?: string | null;
+  qty: string;
+  qty_after?: string;
+  balance?: string;
+  source_type?: string | null;
 }
 
 interface PriceChange {
@@ -43,7 +44,7 @@ export default function ProductDetail() {
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const detail = useGet<ProductDetailPayload>(`/products/${id}`);
-  const stockCard = useGet<{ movements?: StockMove[] }>(`/products/${id}/stock-card`, undefined, {
+  const stockCard = useGet<StockMove[]>(`/products/${id}/stock-card`, undefined, {
     enabled: can("shop.stock.view"),
   });
   const priceHistory = useGet<PriceChange[]>(`/products/${id}/price-history`);
@@ -171,16 +172,31 @@ export default function ProductDetail() {
 
         <TabsContent value="movements">
           <DataGrid
-            rows={stockCard.data?.movements ?? []}
+            rows={stockCard.data ?? []}
             loading={stockCard.isLoading}
             rowKey={(m) => m.id}
             empty="No stock movements recorded yet"
             columns={[
               { header: "When", cell: (m) => formatDateTime(m.created_at) },
-              { header: "Type", cell: (m) => m.type },
-              { header: "Change", align: "right", cell: (m) => formatQty(m.qty_change) },
-              { header: "Balance", align: "right", cell: (m) => formatQty(m.balance_after) },
-              { header: "Note", cell: (m) => m.note ?? "-" },
+              {
+                header: "Type",
+                cell: (m) => <span className="capitalize">{m.type.replaceAll("_", " ")}</span>,
+              },
+              { header: "Change", align: "right", cell: (m) => formatQty(m.qty) },
+              {
+                header: "Balance",
+                align: "right",
+                cell: (m) => formatQty(m.qty_after ?? m.balance),
+              },
+              {
+                header: "Source",
+                cell: (m) =>
+                  m.source_type ? (
+                    <span className="capitalize">{m.source_type.replaceAll("_", " ")}</span>
+                  ) : (
+                    "-"
+                  ),
+              },
             ]}
           />
         </TabsContent>

@@ -29,8 +29,6 @@ interface EmployeeDetailData {
   name: string;
   phone?: string | null;
   email?: string | null;
-  national_id?: string | null;
-  address?: string | null;
   position?: string | null;
   department_name?: string | null;
   position_name?: string | null;
@@ -38,12 +36,12 @@ interface EmployeeDetailData {
   status: string;
   hire_date?: string | null;
   terminated_on?: string | null;
-  pay_type?: string;
   base_pay?: string;
-  bank_name?: string | null;
-  bank_account?: string | null;
-  mobile_money_number?: string | null;
+  pay_method?: "cash" | "bank" | "mobile_money" | string | null;
+  pay_account_last4?: string | null;
+  pay_provider?: string | null;
   emergency_contact?: string | null;
+  emergency_contact_phone?: string | null;
   user_id?: string | null;
 }
 
@@ -82,8 +80,8 @@ interface EmpAllowance {
 
 interface LoanRow {
   id: string;
-  number: string;
   kind: string;
+  start_period?: string;
   principal?: string;
   amount?: string;
   balance: string;
@@ -91,12 +89,39 @@ interface LoanRow {
   created_at: string;
 }
 
+interface StatementPayslip {
+  id: string;
+  number: string;
+  period_year: number;
+  period_month: number;
+  run_status: string;
+  gross: string;
+  total_deductions: string;
+  net: string;
+  paid_total: string;
+}
+
+interface StatementPayment {
+  id: string;
+  number: string;
+  method?: string;
+  amount: string;
+  payment_date: string;
+  status: string;
+  reference?: string | null;
+}
+
 interface StatementRes {
-  from: string;
-  to: string;
-  lines?: Array<{ date: string; description: string; amount: string; kind: string }>;
-  total_paid?: string;
-  loan_balance?: string;
+  payslips?: StatementPayslip[];
+  payments?: StatementPayment[];
+  totals?: {
+    gross: string;
+    deductions: string;
+    net: string;
+    paid: string;
+    unpaid: string;
+    loan_balance: string;
+  };
 }
 
 export default function EmployeeDetail() {
@@ -132,19 +157,20 @@ export default function EmployeeDetail() {
   });
 
   const [editing, setEditing] = useState(false);
+  const [updateComp, setUpdateComp] = useState(false);
   const [form, setForm] = useState({
     name: "",
     phone: "",
     email: "",
-    national_id: "",
-    address: "",
     position: "",
-    pay_type: "monthly",
-    base_pay: "0",
-    bank_name: "",
-    bank_account: "",
-    mobile_money_number: "",
     emergency_contact: "",
+    emergency_contact_phone: "",
+    base_pay: "",
+    pay_method: "cash",
+    pay_provider: "",
+    pay_account: "",
+    effective_from: today(),
+    compensation_reason: "",
   });
 
   const [loginOpen, setLoginOpen] = useState(false);
@@ -182,16 +208,17 @@ export default function EmployeeDetail() {
         name: emp.data.name ?? "",
         phone: emp.data.phone ?? "",
         email: emp.data.email ?? "",
-        national_id: emp.data.national_id ?? "",
-        address: emp.data.address ?? "",
         position: emp.data.position ?? emp.data.position_name ?? "",
-        pay_type: emp.data.pay_type ?? "monthly",
-        base_pay: emp.data.base_pay ?? "0",
-        bank_name: emp.data.bank_name ?? "",
-        bank_account: emp.data.bank_account ?? "",
-        mobile_money_number: emp.data.mobile_money_number ?? "",
         emergency_contact: emp.data.emergency_contact ?? "",
+        emergency_contact_phone: emp.data.emergency_contact_phone ?? "",
+        base_pay: emp.data.base_pay ?? "",
+        pay_method: emp.data.pay_method ?? "cash",
+        pay_provider: emp.data.pay_provider ?? "",
+        pay_account: "",
+        effective_from: today(),
+        compensation_reason: "",
       });
+      setUpdateComp(false);
       setLoginForm((l) => ({
         ...l,
         phone: emp.data?.phone ?? "",
@@ -215,7 +242,10 @@ export default function EmployeeDetail() {
   const updateEmp = useWrite<Record<string, unknown>, unknown>("PUT", `/employees/${id}`, {
     invalidate: [`/employees/${id}`, "/employees"],
     success: "Employee updated",
-    onSuccess: () => setEditing(false),
+    onSuccess: () => {
+      setEditing(false);
+      setUpdateComp(false);
+    },
   });
 
   const createLogin = useWrite<typeof loginForm, unknown>("POST", `/employees/${id}/user`, {
@@ -354,14 +384,15 @@ export default function EmployeeDetail() {
                 <span>{e.phone || "-"}</span>
                 <span className="text-muted-foreground">Email</span>
                 <span>{e.email || "-"}</span>
-                <span className="text-muted-foreground">National ID</span>
-                <span>{e.national_id || "-"}</span>
-                <span className="text-muted-foreground">Address</span>
-                <span>{e.address || "-"}</span>
+                <span className="text-muted-foreground">Position</span>
+                <span>{e.position || e.position_name || "-"}</span>
                 <span className="text-muted-foreground">Hire date</span>
                 <span>{e.hire_date ? formatDate(e.hire_date) : "-"}</span>
                 <span className="text-muted-foreground">Emergency contact</span>
-                <span>{e.emergency_contact || "-"}</span>
+                <span>
+                  {[e.emergency_contact, e.emergency_contact_phone].filter(Boolean).join(" · ") ||
+                    "-"}
+                </span>
                 <span className="text-muted-foreground">System login</span>
                 <span>{e.user_id ? "Linked" : "Not linked"}</span>
               </div>
@@ -371,21 +402,21 @@ export default function EmployeeDetail() {
               <div className="space-y-2 rounded-2xl border bg-card p-5 text-sm">
                 <h3 className="font-semibold">Compensation &amp; Payout Details</h3>
                 <div className="grid grid-cols-2 gap-y-2 pt-2">
-                  <span className="text-muted-foreground">Pay type</span>
-                  <span className="capitalize">{e.pay_type || "monthly"}</span>
-                  <span className="text-muted-foreground">Base pay</span>
+                  <span className="text-muted-foreground">Monthly basic salary</span>
                   <span className="font-semibold">{formatMoney(e.base_pay)}</span>
-                  <span className="text-muted-foreground">Bank</span>
-                  <span>{e.bank_name || "-"}</span>
-                  <span className="text-muted-foreground">Bank account</span>
-                  <span>{e.bank_account || "-"}</span>
-                  <span className="text-muted-foreground">Mobile money</span>
-                  <span>{e.mobile_money_number || "-"}</span>
-                  {statement.data?.loan_balance && (
+                  <span className="text-muted-foreground">Pay method</span>
+                  <span className="capitalize">
+                    {(e.pay_method ?? "cash").replaceAll("_", " ")}
+                  </span>
+                  <span className="text-muted-foreground">Payout provider</span>
+                  <span>{e.pay_provider || "-"}</span>
+                  <span className="text-muted-foreground">Payout account</span>
+                  <span>{e.pay_account_last4 ? `**** ${e.pay_account_last4}` : "-"}</span>
+                  {statement.data?.totals?.loan_balance && (
                     <>
                       <span className="text-muted-foreground">Advance balance</span>
                       <span className="font-semibold text-amber-700">
-                        {formatMoney(statement.data.loan_balance)}
+                        {formatMoney(statement.data.totals.loan_balance)}
                       </span>
                     </>
                   )}
@@ -395,22 +426,75 @@ export default function EmployeeDetail() {
           </div>
 
           {canViewStatement && statement.data && (
-            <div className="space-y-2">
-              <h3 className="font-semibold">
-                Employee Statement ({formatDate(statement.data.from)} –{" "}
-                {formatDate(statement.data.to)})
-              </h3>
-              <DataGrid
-                rows={statement.data.lines ?? []}
-                rowKey={(l) => `${l.date}-${l.kind}-${l.description}-${l.amount}`}
-                empty="No statement entries in this period"
-                columns={[
-                  { header: "Date", cell: (l) => formatDate(l.date) },
-                  { header: "Type", cell: (l) => <span className="capitalize">{l.kind}</span> },
-                  { header: "Description", cell: (l) => l.description },
-                  { header: "Amount", align: "right", cell: (l) => formatMoney(l.amount) },
-                ]}
-              />
+            <div className="space-y-4">
+              {statement.data.totals && (
+                <div className="grid gap-3 sm:grid-cols-4">
+                  {(
+                    [
+                      ["Gross", statement.data.totals.gross],
+                      ["Deductions", statement.data.totals.deductions],
+                      ["Net pay", statement.data.totals.net],
+                      ["Paid", statement.data.totals.paid],
+                    ] as const
+                  ).map(([label, val]) => (
+                    <div key={label} className="rounded-xl border bg-card p-3">
+                      <p className="text-xs text-muted-foreground">{label}</p>
+                      <p className="mt-1 text-base font-semibold tabular-nums">
+                        {formatMoney(val)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <h3 className="font-semibold">Payslips</h3>
+                <DataGrid
+                  rows={statement.data.payslips ?? []}
+                  rowKey={(p) => p.id}
+                  empty="No payslips in this period"
+                  columns={[
+                    { header: "Payslip", cell: (p) => p.number || "-" },
+                    {
+                      header: "Period",
+                      cell: (p) => `${p.period_year}-${String(p.period_month).padStart(2, "0")}`,
+                    },
+                    { header: "Gross", align: "right", cell: (p) => formatMoney(p.gross) },
+                    {
+                      header: "Deductions",
+                      align: "right",
+                      cell: (p) => formatMoney(p.total_deductions),
+                    },
+                    { header: "Net", align: "right", cell: (p) => formatMoney(p.net) },
+                    { header: "Status", cell: (p) => <StatusBadge value={p.run_status} /> },
+                  ]}
+                />
+              </div>
+
+              {(statement.data.payments?.length ?? 0) > 0 && (
+                <div className="space-y-2">
+                  <h3 className="font-semibold">Payments</h3>
+                  <DataGrid
+                    rows={statement.data.payments ?? []}
+                    rowKey={(p) => p.id}
+                    columns={[
+                      { header: "Number", cell: (p) => p.number },
+                      { header: "Date", cell: (p) => formatDate(p.payment_date) },
+                      {
+                        header: "Method",
+                        cell: (p) => (
+                          <span className="capitalize">
+                            {(p.method ?? "payment").replaceAll("_", " ")}
+                            {p.reference ? ` · ${p.reference}` : ""}
+                          </span>
+                        ),
+                      },
+                      { header: "Amount", align: "right", cell: (p) => formatMoney(p.amount) },
+                      { header: "Status", cell: (p) => <StatusBadge value={p.status} /> },
+                    ]}
+                  />
+                </div>
+              )}
             </div>
           )}
         </TabsContent>
@@ -574,8 +658,14 @@ export default function EmployeeDetail() {
                 rowKey={(l) => l.id}
                 empty="No loans or advances for this employee"
                 columns={[
-                  { header: "Number", cell: (l) => l.number },
-                  { header: "Kind", cell: (l) => <span className="capitalize">{l.kind}</span> },
+                  {
+                    header: "Type",
+                    cell: (l) => <span className="font-medium capitalize">{l.kind}</span>,
+                  },
+                  {
+                    header: "Issued",
+                    cell: (l) => (l.start_period ? formatDate(l.start_period) : "-"),
+                  },
                   {
                     header: "Amount",
                     align: "right",
@@ -683,16 +773,22 @@ export default function EmployeeDetail() {
             name: form.name,
             phone: form.phone,
             email: form.email,
-            national_id: form.national_id,
-            address: form.address,
             position: form.position,
-            pay_type: form.pay_type,
-            bank_name: form.bank_name,
-            bank_account: form.bank_account,
-            mobile_money_number: form.mobile_money_number,
             emergency_contact: form.emergency_contact,
+            emergency_contact_phone: form.emergency_contact_phone,
           };
-          if (canManageComp) payload.base_pay = form.base_pay;
+          if (canManageComp && updateComp && form.base_pay.trim() !== "") {
+            payload.base_pay = form.base_pay.trim();
+            payload.pay_method = form.pay_method;
+            if (form.pay_method !== "cash") {
+              payload.pay_provider = form.pay_provider;
+              payload.pay_account = form.pay_account;
+            }
+            payload.effective_from = form.effective_from || today();
+            if (form.compensation_reason.trim()) {
+              payload.compensation_reason = form.compensation_reason.trim();
+            }
+          }
           updateEmp.mutate(payload);
         }}
       >
@@ -717,68 +813,95 @@ export default function EmployeeDetail() {
               onChange={(ev) => setForm((f) => ({ ...f, email: ev.target.value }))}
             />
           </Field>
-          <Field label="National ID">
-            <Input
-              value={form.national_id}
-              onChange={(ev) => setForm((f) => ({ ...f, national_id: ev.target.value }))}
-            />
-          </Field>
-          <Field label="Emergency contact">
-            <Input
-              value={form.emergency_contact}
-              onChange={(ev) => setForm((f) => ({ ...f, emergency_contact: ev.target.value }))}
-            />
-          </Field>
           <Field label="Position / job title">
             <Input
               value={form.position}
               onChange={(ev) => setForm((f) => ({ ...f, position: ev.target.value }))}
             />
           </Field>
-          <Field label="Pay type">
-            <NativeSelect
-              value={form.pay_type}
-              onChange={(ev) => setForm((f) => ({ ...f, pay_type: ev.target.value }))}
-            >
-              <option value="monthly">Monthly</option>
-              <option value="daily">Daily</option>
-              <option value="hourly">Hourly</option>
-            </NativeSelect>
-          </Field>
-          {canManageComp && (
-            <Field label="Base pay">
-              <Input
-                inputMode="decimal"
-                value={form.base_pay}
-                onChange={(ev) => setForm((f) => ({ ...f, base_pay: ev.target.value }))}
-              />
-            </Field>
-          )}
-          <Field label="Bank name">
+          <Field label="Emergency contact name">
             <Input
-              value={form.bank_name}
-              onChange={(ev) => setForm((f) => ({ ...f, bank_name: ev.target.value }))}
+              value={form.emergency_contact}
+              onChange={(ev) => setForm((f) => ({ ...f, emergency_contact: ev.target.value }))}
             />
           </Field>
-          <Field label="Bank account">
+          <Field label="Emergency contact phone" className="col-span-2">
             <Input
-              value={form.bank_account}
-              onChange={(ev) => setForm((f) => ({ ...f, bank_account: ev.target.value }))}
+              value={form.emergency_contact_phone}
+              onChange={(ev) =>
+                setForm((f) => ({ ...f, emergency_contact_phone: ev.target.value }))
+              }
             />
           </Field>
         </div>
-        <Field label="Mobile money number">
-          <Input
-            value={form.mobile_money_number}
-            onChange={(ev) => setForm((f) => ({ ...f, mobile_money_number: ev.target.value }))}
-          />
-        </Field>
-        <Field label="Address">
-          <Input
-            value={form.address}
-            onChange={(ev) => setForm((f) => ({ ...f, address: ev.target.value }))}
-          />
-        </Field>
+        {canManageComp && (
+          <div className="space-y-3 rounded-xl border p-3">
+            <label className="flex items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={updateComp}
+                onChange={(ev) => setUpdateComp(ev.target.checked)}
+              />
+              Record a compensation / payout change
+            </label>
+            {updateComp && (
+              <div className="grid grid-cols-2 gap-3">
+                <Field label="Monthly basic salary">
+                  <Input
+                    required
+                    inputMode="decimal"
+                    value={form.base_pay}
+                    onChange={(ev) => setForm((f) => ({ ...f, base_pay: ev.target.value }))}
+                  />
+                </Field>
+                <Field label="Pay method">
+                  <NativeSelect
+                    value={form.pay_method}
+                    onChange={(ev) => setForm((f) => ({ ...f, pay_method: ev.target.value }))}
+                  >
+                    <option value="cash">Cash</option>
+                    <option value="bank">Bank</option>
+                    <option value="mobile_money">Mobile money</option>
+                  </NativeSelect>
+                </Field>
+                {form.pay_method !== "cash" && (
+                  <>
+                    <Field label="Provider (bank / network)">
+                      <Input
+                        value={form.pay_provider}
+                        onChange={(ev) => setForm((f) => ({ ...f, pay_provider: ev.target.value }))}
+                      />
+                    </Field>
+                    <Field label="Account / mobile number *">
+                      <Input
+                        required
+                        value={form.pay_account}
+                        onChange={(ev) => setForm((f) => ({ ...f, pay_account: ev.target.value }))}
+                      />
+                    </Field>
+                  </>
+                )}
+                <Field label="Effective from">
+                  <Input
+                    required
+                    type="date"
+                    value={form.effective_from}
+                    onChange={(ev) => setForm((f) => ({ ...f, effective_from: ev.target.value }))}
+                  />
+                </Field>
+                <Field label="Reason">
+                  <Input
+                    placeholder="e.g. Annual salary review"
+                    value={form.compensation_reason}
+                    onChange={(ev) =>
+                      setForm((f) => ({ ...f, compensation_reason: ev.target.value }))
+                    }
+                  />
+                </Field>
+              </div>
+            )}
+          </div>
+        )}
       </FormDialog>
 
       <FormDialog

@@ -65,7 +65,6 @@ function TransfersTab() {
   const [to, setTo] = useState("");
   const [lines, setLines] = useState([{ product_id: "", qty: "1" }]);
   const [receiving, setReceiving] = useState<TransferDetail | null>(null);
-  const [got, setGot] = useState<Record<string, string>>({});
   const refresh = ["/stock-transfers", "/stock", "/products"];
   const create = useWrite("POST", "/stock-transfers", {
     invalidate: refresh,
@@ -95,7 +94,6 @@ function TransfersTab() {
 
   async function startReceive(t: Transfer) {
     const detail = await api.get<TransferDetail>(`/stock-transfers/${t.id}`);
-    setGot(Object.fromEntries(detail.items.map((i) => [i.product_id, i.qty_sent])));
     setReceiving(detail);
   }
 
@@ -219,29 +217,22 @@ function TransfersTab() {
         open={receiving !== null}
         onOpenChange={(o) => !o && setReceiving(null)}
         title={`Receive ${receiving?.number ?? ""}`}
-        submitLabel="Receive into stock"
+        submitLabel="Receive in full"
         busy={receive.isPending}
-        onSubmit={() =>
-          receive.mutate({
-            items: receiving?.items.map((i) => ({
-              product_id: i.product_id,
-              qty_received: got[i.product_id] ?? "0",
-            })),
-          })
-        }
+        onSubmit={() => receive.mutate({})}
       >
         <p className="text-sm text-muted-foreground">
-          Enter what actually arrived. Any difference is recorded against the transfer.
+          Transfers are received in full. If the physical count differs, receive the transfer and
+          record a stock adjustment afterwards.
         </p>
-        {receiving?.items.map((i) => (
-          <Field key={i.product_id} label={`${i.product_name} (sent ${formatQty(i.qty_sent)})`}>
-            <Input
-              inputMode="decimal"
-              value={got[i.product_id] ?? ""}
-              onChange={(e) => setGot((g) => ({ ...g, [i.product_id]: e.target.value }))}
-            />
-          </Field>
-        ))}
+        <ul className="divide-y rounded-lg border text-sm">
+          {receiving?.items.map((i) => (
+            <li key={i.product_id} className="flex items-center justify-between px-3 py-2">
+              <span className="font-medium">{i.product_name}</span>
+              <span className="tabular-nums text-muted-foreground">{formatQty(i.qty_sent)}</span>
+            </li>
+          ))}
+        </ul>
       </FormDialog>
     </>
   );

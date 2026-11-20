@@ -103,11 +103,10 @@ function EmployeesTab() {
     phone: "",
     position: "",
     hire_date: today(),
-    pay_type: "monthly",
-    base_pay: "0",
+    base_pay: "",
   };
   const [draft, setDraft] = useState(blank);
-  const create = useWrite("POST", "/employees", {
+  const create = useWrite<Record<string, unknown>, unknown>("POST", "/employees", {
     invalidate: ["/employees"],
     success: "Employee added",
     onSuccess: () => {
@@ -116,6 +115,7 @@ function EmployeesTab() {
     },
   });
   const canSeeSalary = canAny("hr.compensation.view", "hr.compensation.manage");
+  const canSetSalary = can("hr.compensation.manage");
   return (
     <>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
@@ -168,7 +168,18 @@ function EmployeesTab() {
         onOpenChange={setOpen}
         title="New employee"
         busy={create.isPending}
-        onSubmit={() => create.mutate(draft)}
+        onSubmit={() => {
+          const payload: Record<string, unknown> = {
+            name: draft.name,
+            phone: draft.phone || undefined,
+            position: draft.position,
+            hire_date: draft.hire_date,
+          };
+          if (canSetSalary && draft.base_pay.trim() !== "") {
+            payload.base_pay = draft.base_pay.trim();
+          }
+          create.mutate(payload);
+        }}
       >
         <Field label="Full name">
           <Input
@@ -197,20 +208,11 @@ function EmployeesTab() {
               onChange={(e) => setDraft((d) => ({ ...d, hire_date: e.target.value }))}
             />
           </Field>
-          <Field label="Pay type">
-            <NativeSelect
-              value={draft.pay_type}
-              onChange={(e) => setDraft((d) => ({ ...d, pay_type: e.target.value }))}
-            >
-              <option value="monthly">Monthly</option>
-              <option value="daily">Daily</option>
-              <option value="hourly">Hourly</option>
-            </NativeSelect>
-          </Field>
-          {canSeeSalary && (
-            <Field label="Base pay">
+          {canSetSalary && (
+            <Field label="Monthly basic salary">
               <Input
                 inputMode="decimal"
+                placeholder="Optional"
                 value={draft.base_pay}
                 onChange={(e) => setDraft((d) => ({ ...d, base_pay: e.target.value }))}
               />
@@ -222,16 +224,29 @@ function EmployeesTab() {
   );
 }
 
+interface MeLeaveRes {
+  requests?: LeaveRequest[];
+}
+
 function LeaveTab() {
-  const { can, canAny } = useAuth();
+  const { can, canAny, user } = useAuth();
   const approver = can("hr.leave.approve");
   const canViewAll = canAny("hr.leave.approve", "hr.employee.view");
   const [status, setStatus] = useState("requested");
   const [page, setPage] = useState(1);
-  const list = useGetPage<LeaveRequest>(canViewAll ? "/leave-requests" : "/me/leave", {
-    status: status || undefined,
-    page,
-  });
+  const allList = useGetPage<LeaveRequest>(
+    "/leave-requests",
+    {
+      status: status || undefined,
+      page,
+    },
+    { enabled: canViewAll },
+  );
+  const myLeave = useGet<MeLeaveRes>("/me/leave", undefined, { enabled: !canViewAll });
+  const rows = canViewAll
+    ? allList.data?.data
+    : (myLeave.data?.requests ?? []).filter((r) => !status || r.status === status);
+  const loading = canViewAll ? allList.isLoading : myLeave.isLoading;
   const types = useGet<LeaveType[]>("/leave-types");
   const employees = useGet<Employee[]>(
     "/employees",
@@ -248,7 +263,7 @@ function LeaveTab() {
   };
   const [draft, setDraft] = useState(blank);
   const refresh = ["/leave-requests", "/me/leave", "/attendance"];
-  const request = useWrite<typeof draft, unknown>("POST", "/leave-requests", {
+  const request = useWrite<Record<string, unknown>, unknown>("POST", "/leave-requests", {
     invalidate: refresh,
     success: "Leave requested",
     onSuccess: () => {
@@ -285,8 +300,8 @@ function LeaveTab() {
         </Button>
       </div>
       <DataGrid
-        rows={list.data?.data}
-        loading={list.isLoading}
+        rows={rows}
+        loading={loading}
         rowKey={(l) => l.id}
         empty="No leave requests"
         columns={[
@@ -300,49 +315,60 @@ function LeaveTab() {
           { header: "Status", cell: (l) => <StatusBadge value={l.status} /> },
           {
             header: "",
-            cell: (l) =>
-              (l.status === "requested" || l.status === "pending") && (
-                <div className="flex gap-2">
-                  {approver && (
-                    <>
-                      <Button
-                        size="sm"
-                        onClick={() => decide.mutate({ id: l.id, action: "approve" })}
-                      >
-                        Approve
-                      </Button>
+            cell: (l) => {
+              const isOwn = Boolean(user?.employee_id) && l.employee_id === user?.employee_id;
+              return (
+                (l.status === "requested" || l.status === "pending") && (
+                  <div className="flex gap-2">
+                    {approver && !isOwn && (
+                      <>
+                        <Button
+                          size="sm"
+                          onClick={() => decide.mutate({ id: l.id, action: "approve" })}
+                        >
+                          Approve
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => decide.mutate({ id: l.id, action: "reject" })}
+                        >
+                          Reject
+                        </Button>
+                      </>
+                    )}
+                    {(isOwn || !approver) && (
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={() => decide.mutate({ id: l.id, action: "reject" })}
+                        onClick={() => decide.mutate({ id: l.id, action: "cancel" })}
                       >
-                        Reject
+                        Cancel
                       </Button>
-                    </>
-                  )}
-                  {!approver && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => decide.mutate({ id: l.id, action: "cancel" })}
-                    >
-                      Cancel
-                    </Button>
-                  )}
-                </div>
-              ),
+                    )}
+                  </div>
+                )
+              );
+            },
           },
         ]}
       />
-      <Pager meta={list.data?.meta} onPage={setPage} />
+      {canViewAll && <Pager meta={allList.data?.meta} onPage={setPage} />}
       <FormDialog
         open={open}
         onOpenChange={setOpen}
         title="Request leave"
         busy={request.isPending}
-        onSubmit={() =>
-          request.mutate({ ...draft, employee_id: draft.employee_id || (undefined as never) })
-        }
+        onSubmit={() => {
+          const payload: Record<string, unknown> = {
+            leave_type_id: draft.leave_type_id,
+            start_date: draft.start_date,
+            end_date: draft.end_date,
+            reason: draft.reason,
+          };
+          if (draft.employee_id) payload.employee_id = draft.employee_id;
+          request.mutate(payload);
+        }}
       >
         {approver && employees.data && (
           <Field label="Employee (leave empty for yourself)">

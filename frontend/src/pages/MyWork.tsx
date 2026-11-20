@@ -24,16 +24,19 @@ interface Day {
 interface Slip {
   id: string;
   number: string;
-  period_start: string;
-  period_end: string;
+  period_year?: number;
+  period_month?: number;
+  period_start?: string;
+  period_end?: string;
   gross: string;
   total_deductions: string;
   net: string;
-  status: string;
+  run_status?: string;
 }
 interface MyLoan {
   id: string;
-  number: string;
+  kind: string;
+  start_period?: string;
   principal: string;
   balance: string;
   monthly_deduction: string;
@@ -42,13 +45,24 @@ interface MyLoan {
 interface MyPayment {
   id: string;
   number: string;
-  kind: string;
+  method?: string;
+  reference?: string | null;
   amount: string;
   payment_date: string;
   status: string;
 }
 
 const hours = (m: number | null) => (m ? `${Math.floor(m / 60)}h ${m % 60}m` : "-");
+
+function formatPeriod(s: Slip) {
+  if (s.period_year && s.period_month) {
+    return `${s.period_year}-${String(s.period_month).padStart(2, "0")}`;
+  }
+  if (s.period_start && s.period_end) {
+    return `${formatDate(s.period_start)} – ${formatDate(s.period_end)}`;
+  }
+  return "-";
+}
 
 function Attendance() {
   const [page, setPage] = useState(1);
@@ -90,10 +104,7 @@ function Payslips() {
         empty="No payslips yet"
         columns={[
           { header: "Payslip", cell: (s) => <span className="font-medium">{s.number}</span> },
-          {
-            header: "Period",
-            cell: (s) => `${formatDate(s.period_start)} – ${formatDate(s.period_end)}`,
-          },
+          { header: "Period", cell: (s) => formatPeriod(s) },
           { header: "Gross", align: "right", cell: (s) => formatMoney(s.gross) },
           { header: "Deductions", align: "right", cell: (s) => formatMoney(s.total_deductions) },
           { header: "Net", align: "right", cell: (s) => formatMoney(s.net) },
@@ -104,8 +115,8 @@ function Payslips() {
                 size="sm"
                 variant="ghost"
                 onClick={() =>
-                  download(`/payslips/${s.id}`, { format: "pdf" }, `${s.number}.pdf`).catch((e) =>
-                    toast.error(errorMessage(e)),
+                  download(`/payslips/${s.id}`, { format: "pdf" }, `${s.number || s.id}.pdf`).catch(
+                    (e) => toast.error(errorMessage(e)),
                   )
                 }
               >
@@ -129,7 +140,14 @@ function Loans() {
       rowKey={(l) => l.id}
       empty="No loans or advances"
       columns={[
-        { header: "Number", cell: (l) => <span className="font-medium">{l.number}</span> },
+        {
+          header: "Type",
+          cell: (l) => <span className="font-medium capitalize">{l.kind}</span>,
+        },
+        {
+          header: "Issued",
+          cell: (l) => (l.start_period ? formatDate(l.start_period) : "-"),
+        },
         { header: "Borrowed", align: "right", cell: (l) => formatMoney(l.principal) },
         { header: "Monthly", align: "right", cell: (l) => formatMoney(l.monthly_deduction) },
         { header: "Balance", align: "right", cell: (l) => formatMoney(l.balance) },
@@ -152,7 +170,15 @@ function Payments() {
         columns={[
           { header: "Number", cell: (p) => <span className="font-medium">{p.number}</span> },
           { header: "Date", cell: (p) => formatDate(p.payment_date) },
-          { header: "Kind", cell: (p) => p.kind.replaceAll("_", " ") },
+          {
+            header: "Method",
+            cell: (p) => (
+              <span className="capitalize">
+                {(p.method ?? "payment").replaceAll("_", " ")}
+                {p.reference ? ` · ${p.reference}` : ""}
+              </span>
+            ),
+          },
           { header: "Amount", align: "right", cell: (p) => formatMoney(p.amount) },
           { header: "Status", cell: (p) => <StatusBadge value={p.status} /> },
         ]}

@@ -70,12 +70,18 @@ export default function DayClosing() {
   const [reopening, setReopening] = useState<{ id: string; date: string } | null>(null);
   const [reopenReason, setReopenReason] = useState("");
 
+  const summaryDate = summary.data?.date;
+  const summaryExpected = summary.data?.expected_cash;
+  const closingCounted = summary.data?.closing?.counted_cash;
+  const closingNote = summary.data?.closing?.note;
+  const closingStatus = summary.data?.closing?.status;
+
   useEffect(() => {
-    if (summary.data) {
-      setCountedCash(summary.data.closing?.counted_cash ?? summary.data.expected_cash ?? "0");
-      setNote(summary.data.closing?.note ?? "");
+    if (summaryDate) {
+      setCountedCash(closingCounted ?? summaryExpected ?? "0");
+      setNote(closingNote ?? "");
     }
-  }, [summary.data?.date, summary.data?.expected_cash, summary.data?.closing?.status]);
+  }, [summaryDate, summaryExpected, closingCounted, closingNote, closingStatus]);
 
   const closeDay = useWrite<{ date: string; counted_cash: string; note: string }, unknown>(
     "POST",
@@ -295,8 +301,15 @@ export default function DayClosing() {
                       </Badge>
                     </div>
                   </div>
-                  <Field label="Closing note (optional)">
+                  <Field
+                    label={
+                      variance !== 0
+                        ? "Closing note (required for variance)"
+                        : "Closing note (optional)"
+                    }
+                  >
                     <Input
+                      required={variance !== 0}
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
                       placeholder="Explain any variance or notes…"
@@ -306,7 +319,10 @@ export default function DayClosing() {
 
                 {can("finance.day.close") ? (
                   <div className="flex justify-end">
-                    <Button onClick={() => setConfirmingClose(true)}>
+                    <Button
+                      disabled={variance !== 0 && !note.trim()}
+                      onClick={() => setConfirmingClose(true)}
+                    >
                       <CheckCircle2 size={16} /> Close Day
                     </Button>
                   </div>
@@ -334,13 +350,17 @@ export default function DayClosing() {
               header: "Date",
               cell: (r) => <span className="font-medium">{formatDate(r.date)}</span>,
             },
-            { header: "Branch", cell: (r) => r.branch_name },
+            { header: "Location", cell: (r) => r.branch_name },
             {
               header: "Payments in",
               align: "right",
-              cell: (r) => formatMoney(r.payments_received),
+              cell: (r) => (r.payments_received != null ? formatMoney(r.payments_received) : "-"),
             },
-            { header: "Expenses", align: "right", cell: (r) => formatMoney(r.expenses_total) },
+            {
+              header: "Expenses",
+              align: "right",
+              cell: (r) => (r.expenses_total != null ? formatMoney(r.expenses_total) : "-"),
+            },
             { header: "Expected cash", align: "right", cell: (r) => formatMoney(r.expected_cash) },
             { header: "Counted cash", align: "right", cell: (r) => formatMoney(r.counted_cash) },
             {

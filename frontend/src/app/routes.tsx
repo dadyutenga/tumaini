@@ -93,7 +93,12 @@ export const routes: AppRoute[] = [
     icon: ReceiptText,
     component: lazy(() => import("@/pages/Sales")),
     navigation: true,
-    permission: ["shop.sale.view_all", "shop.sale.create"],
+    permission: [
+      "shop.sale.view_all",
+      "shop.sale.create",
+      "shop.return.create",
+      "shop.return.approve",
+    ],
   },
   {
     path: "/sales/:id",
@@ -101,7 +106,12 @@ export const routes: AppRoute[] = [
     icon: ReceiptText,
     component: lazy(() => import("@/pages/SaleDetail")),
     navigation: false,
-    permission: ["shop.sale.view_all", "shop.sale.create"],
+    permission: [
+      "shop.sale.view_all",
+      "shop.sale.create",
+      "shop.return.create",
+      "shop.return.approve",
+    ],
   },
   {
     path: "/products",
@@ -133,7 +143,12 @@ export const routes: AppRoute[] = [
     icon: Truck,
     component: lazy(() => import("@/pages/Purchasing")),
     navigation: true,
-    permission: ["shop.purchase.manage", "shop.supplier.manage"],
+    permission: [
+      "shop.purchase.manage",
+      "shop.supplier.manage",
+      "finance.payment.make",
+      "finance.debt.view",
+    ],
   },
   {
     path: "/purchasing/:id",
@@ -312,7 +327,7 @@ export const routes: AppRoute[] = [
     icon: CalendarCheck,
     component: lazy(() => import("@/pages/DayClosing")),
     navigation: true,
-    permission: ["finance.day.close", "finance.account.view"],
+    permission: ["finance.day.close", "finance.day.reopen", "finance.account.view"],
   },
   {
     path: "/expenses",
@@ -416,6 +431,7 @@ export const routes: AppRoute[] = [
       "finance.expense.approve",
       "finance.payment.void",
       "finance.transaction.correct",
+      "finance.day.reopen",
     ],
   },
   {

@@ -28,7 +28,8 @@ interface Recurring {
   description: string;
   category_name: string;
   amount: string;
-  frequency: string;
+  day_of_month?: number;
+  frequency?: string;
   next_run: string | null;
   is_active: boolean;
 }
@@ -127,12 +128,12 @@ function RecurringTab() {
     category_id: "",
     amount: "",
     description: "",
-    frequency: "monthly",
-    start_date: today(),
+    day_of_month: String(Math.min(28, new Date().getDate())),
+    next_run_on: today(),
   };
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(blank);
-  const create = useWrite("POST", "/recurring-expenses", {
+  const create = useWrite<Record<string, unknown>, unknown>("POST", "/recurring-expenses", {
     invalidate: ["/recurring-expenses"],
     success: "Recurring expense saved",
     onSuccess: () => {
@@ -163,7 +164,10 @@ function RecurringTab() {
             cell: (r) => <span className="font-medium">{r.description}</span>,
           },
           { header: "Category", cell: (r) => r.category_name },
-          { header: "Repeats", cell: (r) => r.frequency },
+          {
+            header: "Schedule",
+            cell: (r) => (r.day_of_month ? `Monthly (day ${r.day_of_month})` : "Monthly"),
+          },
           { header: "Next run", cell: (r) => (r.next_run ? formatDate(r.next_run) : "-") },
           { header: "Amount", align: "right", cell: (r) => formatMoney(r.amount) },
           {
@@ -184,9 +188,17 @@ function RecurringTab() {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title="New recurring expense"
+        title="New monthly recurring expense"
         busy={create.isPending}
-        onSubmit={() => create.mutate(draft)}
+        onSubmit={() =>
+          create.mutate({
+            category_id: draft.category_id,
+            amount: draft.amount,
+            description: draft.description,
+            day_of_month: Math.min(28, Math.max(1, Number(draft.day_of_month) || 1)),
+            next_run_on: draft.next_run_on,
+          })
+        }
       >
         <Field label="Category">
           <NativeSelect
@@ -218,22 +230,22 @@ function RecurringTab() {
               onChange={(e) => setDraft((d) => ({ ...d, amount: e.target.value }))}
             />
           </Field>
-          <Field label="Repeats">
-            <NativeSelect
-              value={draft.frequency}
-              onChange={(e) => setDraft((d) => ({ ...d, frequency: e.target.value }))}
-            >
-              <option value="weekly">Weekly</option>
-              <option value="monthly">Monthly</option>
-              <option value="yearly">Yearly</option>
-            </NativeSelect>
+          <Field label="Day of month (1–28)">
+            <Input
+              required
+              type="number"
+              min={1}
+              max={28}
+              value={draft.day_of_month}
+              onChange={(e) => setDraft((d) => ({ ...d, day_of_month: e.target.value }))}
+            />
           </Field>
-          <Field label="Starts">
+          <Field label="First run date">
             <Input
               required
               type="date"
-              value={draft.start_date}
-              onChange={(e) => setDraft((d) => ({ ...d, start_date: e.target.value }))}
+              value={draft.next_run_on}
+              onChange={(e) => setDraft((d) => ({ ...d, next_run_on: e.target.value }))}
             />
           </Field>
         </div>

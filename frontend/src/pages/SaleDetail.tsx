@@ -17,39 +17,95 @@ import { AttachmentsSection } from "@/components/shared/AttachmentsSection";
 import { useAuth } from "@/features/auth/auth";
 import { whatsappUrl } from "@/features/services/helpers";
 import { toast } from "sonner";
-import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
+import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { download } from "@/lib/api";
 import { formatDate, formatMoney, formatQty, toNumber } from "@/lib/formatters";
 import type { MoneyAccount, Sale, SaleItem } from "@/types";
 
+interface SaleReturnRow {
+  id: string;
+  number: string;
+  status: string;
+  resolution: "refund" | "exchange";
+  reason: string;
+  refund_total: string;
+  requested_by?: string;
+  created_at: string;
+}
+
 export default function SaleDetail() {
   const { id = "" } = useParams();
-  const { can, canAny } = useAuth();
+  const { can, canAny, user } = useAuth();
   const { data: sale, isLoading, error } = useGet<Sale>(`/sales/${id}`);
+  const canViewReturns = canAny("shop.sale.view_all", "shop.return.create", "shop.return.approve");
+  const saleReturns = useGetPage<SaleReturnRow>(
+    `/sales/${id}/returns`,
+    { per_page: 50 },
+    { enabled: Boolean(id) && canViewReturns },
+  );
   const [returning, setReturning] = useState(false);
   const [voiding, setVoiding] = useState(false);
   const [voidReason, setVoidReason] = useState("");
   const [qtys, setQtys] = useState<Record<string, string>>({});
+  const [conditions, setConditions] = useState<Record<string, "resellable" | "damaged">>({});
   const [reason, setReason] = useState("");
-  const [method, setMethod] = useState("cash");
+  const [resolution, setResolution] = useState<"refund" | "exchange">("refund");
+  const [completing, setCompleting] = useState<SaleReturnRow | null>(null);
+  const [refundMethod, setRefundMethod] = useState("cash");
   const [account, setAccount] = useState("");
+  const [refundRef, setRefundRef] = useState("");
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
-    enabled: canAny("finance.account.view", "finance.payment.receive", "shop.sale.create"),
+    enabled: canAny(
+      "finance.account.view",
+      "finance.payment.receive",
+      "finance.payment.make",
+      "shop.sale.create",
+      "shop.return.create",
+      "shop.return.approve",
+    ),
   });
 
+  const refresh = ["/sales", "/sale-returns", "/products", "/stock", "/money", "/customers"];
   const ret = useWrite<unknown>("POST", `/sales/${id}/returns`, {
     idempotent: true,
-    invalidate: ["/sales", "/products", "/stock", "/money", "/customers"],
-    success: "Return recorded",
+    invalidate: refresh,
+    success: "Return requested for approval",
     onSuccess: () => {
       setReturning(false);
       setQtys({});
+      setConditions({});
+      setReason("");
     },
   });
 
+  const decideReturn = useWrite<{ id: string; action: "approve" | "reject" | "cancel" }, unknown>(
+    "POST",
+    (b) => `/sale-returns/${b.id}/${b.action}`,
+    {
+      toBody: () => ({}),
+      invalidate: refresh,
+      success: "Return updated",
+    },
+  );
+
+  const completeReturn = useWrite<Record<string, unknown>, unknown>(
+    "POST",
+    () => `/sale-returns/${completing?.id}/complete`,
+    {
+      idempotent: true,
+      invalidate: refresh,
+      success: "Return completed",
+      onSuccess: () => {
+        setCompleting(null);
+        setAccount("");
+        setRefundRef("");
+      },
+    },
+  );
+
   const voidSale = useWrite<{ reason: string }, unknown>("POST", `/sales/${id}/void`, {
     idempotent: true,
-    invalidate: ["/sales", "/products", "/stock", "/money", "/customers"],
+    invalidate: refresh,
     success: "Sale void submitted",
     onSuccess: () => {
       setVoiding(false);
@@ -69,9 +125,11 @@ export default function SaleDetail() {
     );
 
   const lines = Object.entries(qtys).filter(([, q]) => toNumber(q) > 0);
-  const cashAccounts = (accounts.data ?? []).filter((a) => a.is_active && a.type === "cash");
-  const resolvedCashAccount = account || cashAccounts[0]?.id || "";
+  const activeAccounts = (accounts.data ?? []).filter((a) => a.is_active);
   const canVoid = canAny("shop.sale.void", "shop.sale.request_void");
+  const canApproveReturn = can("shop.return.approve");
+  const canManageReturn = canAny("shop.return.create", "shop.return.approve");
+  const returnRows = saleReturns.data?.data ?? [];
 
   return (
     <>
@@ -168,66 +226,218 @@ export default function SaleDetail() {
         )}
       </dl>
 
+      {canViewReturns && returnRows.length > 0 && (
+        <section className="mt-8 space-y-3">
+          <h2 className="text-base font-semibold">Returns</h2>
+          <DataGrid
+            rows={returnRows}
+            loading={saleReturns.isLoading}
+            rowKey={(r) => r.id}
+            columns={[
+              { header: "Return #", cell: (r) => <span className="font-medium">{r.number}</span> },
+              { header: "Date", cell: (r) => formatDate(r.created_at) },
+              {
+                header: "Resolution",
+                cell: (r) => <span className="capitalize">{r.resolution}</span>,
+              },
+              { header: "Reason", cell: (r) => r.reason || "-" },
+              { header: "Refund", align: "right", cell: (r) => formatMoney(r.refund_total) },
+              { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
+              {
+                header: "",
+                cell: (r) => {
+                  const isOwn =
+                    (Boolean(user?.membership_id) && r.requested_by === user?.membership_id) ||
+                    (Boolean(user?.id) && r.requested_by === user?.id);
+                  return (
+                    <div className="flex justify-end gap-1.5">
+                      {r.status === "requested" && canApproveReturn && !isOwn && (
+                        <>
+                          <Button
+                            size="sm"
+                            disabled={decideReturn.isPending}
+                            onClick={() => decideReturn.mutate({ id: r.id, action: "approve" })}
+                          >
+                            Approve
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={decideReturn.isPending}
+                            onClick={() => decideReturn.mutate({ id: r.id, action: "reject" })}
+                          >
+                            Reject
+                          </Button>
+                        </>
+                      )}
+                      {r.status === "approved" && canManageReturn && (
+                        <Button
+                          size="sm"
+                          onClick={() => {
+                            setCompleting(r);
+                            setRefundMethod("cash");
+                            setAccount(activeAccounts.find((a) => a.type === "cash")?.id ?? "");
+                            setRefundRef("");
+                          }}
+                        >
+                          Complete
+                        </Button>
+                      )}
+                      {(r.status === "requested" || r.status === "approved") && canManageReturn && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={decideReturn.isPending}
+                          onClick={() => decideReturn.mutate({ id: r.id, action: "cancel" })}
+                        >
+                          Cancel
+                        </Button>
+                      )}
+                    </div>
+                  );
+                },
+              },
+            ]}
+          />
+        </section>
+      )}
+
       <FormDialog
         open={returning}
         onOpenChange={setReturning}
-        title="Return items"
-        description="Enter the quantity coming back for each line."
+        title="Request item return"
+        description="Enter the quantity coming back. Another staff member with return-approval permission approves it before refund completion."
         busy={ret.isPending}
-        submitLabel="Record return"
+        submitLabel="Submit return request"
         onSubmit={() =>
           ret.mutate({
-            reason,
-            refund_method: method,
-            money_account_id:
-              method === "cash" && resolvedCashAccount ? resolvedCashAccount : undefined,
-            items: lines.map(([sale_item_id, qty]) => ({ sale_item_id, qty })),
+            reason: reason.trim(),
+            resolution,
+            items: lines.map(([sale_item_id, qty]) => {
+              const cond = conditions[sale_item_id] ?? "resellable";
+              return {
+                sale_item_id,
+                qty,
+                condition: cond,
+                restock: cond === "resellable",
+              };
+            }),
           })
         }
       >
-        {sale.items.map((i) => (
-          <div key={i.id} className="flex items-center justify-between gap-3">
-            <span className="text-sm">
-              {i.product_name}{" "}
-              <span className="text-muted-foreground">
-                (max {formatQty(toNumber(i.qty) - toNumber(i.qty_returned))})
+        {sale.items.map((i) => {
+          const itemId = i.id ?? "";
+          const cond = conditions[itemId] ?? "resellable";
+          return (
+            <div key={i.id} className="grid grid-cols-[1fr_6rem_7.5rem] items-center gap-2">
+              <span className="text-sm">
+                {i.product_name}{" "}
+                <span className="text-muted-foreground">
+                  (max {formatQty(toNumber(i.qty) - toNumber(i.qty_returned))})
+                </span>
               </span>
-            </span>
-            <Input
-              aria-label={`Return quantity of ${i.product_name}`}
-              className="w-24"
-              inputMode="decimal"
-              value={i.id ? (qtys[i.id] ?? "") : ""}
-              onChange={(e) => i.id && setQtys((q) => ({ ...q, [i.id!]: e.target.value }))}
-            />
-          </div>
-        ))}
-        <Field label="Refund as">
-          <NativeSelect value={method} onChange={(e) => setMethod(e.target.value)}>
-            <option value="cash">Cash</option>
-            <option value="reduce_debt">Reduce customer's debt</option>
-            <option value="customer_credit">Customer credit</option>
+              <Input
+                aria-label={`Return quantity of ${i.product_name}`}
+                inputMode="decimal"
+                placeholder="0"
+                value={itemId ? (qtys[itemId] ?? "") : ""}
+                onChange={(e) => itemId && setQtys((q) => ({ ...q, [itemId]: e.target.value }))}
+              />
+              <NativeSelect
+                aria-label={`Condition of ${i.product_name}`}
+                value={cond}
+                onChange={(e) =>
+                  itemId &&
+                  setConditions((c) => ({
+                    ...c,
+                    [itemId]: e.target.value as "resellable" | "damaged",
+                  }))
+                }
+              >
+                <option value="resellable">Resellable</option>
+                <option value="damaged">Damaged</option>
+              </NativeSelect>
+            </div>
+          );
+        })}
+        <Field label="Resolution">
+          <NativeSelect
+            value={resolution}
+            onChange={(e) => setResolution(e.target.value as "refund" | "exchange")}
+          >
+            <option value="refund">Refund money</option>
+            <option value="exchange">Exchange</option>
           </NativeSelect>
         </Field>
-        {method === "cash" && cashAccounts.length > 0 && (
-          <Field label="Refund from account">
-            <NativeSelect value={resolvedCashAccount} onChange={(e) => setAccount(e.target.value)}>
-              <option value="">Choose…</option>
-              {cashAccounts.map((a) => (
-                <option key={a.id} value={a.id}>
-                  {a.name}
-                </option>
-              ))}
-            </NativeSelect>
-          </Field>
-        )}
-        <Field label="Reason">
-          <Input required value={reason} onChange={(e) => setReason(e.target.value)} />
+        <Field label="Reason (min 3 characters)">
+          <Input
+            required
+            minLength={3}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
         </Field>
         {lines.length === 0 && (
           <p className="text-xs text-muted-foreground">Enter at least one quantity.</p>
         )}
       </FormDialog>
+
+      <FormDialog
+        open={completing !== null}
+        onOpenChange={(o) => !o && setCompleting(null)}
+        title={`Complete return ${completing?.number ?? ""}`}
+        submitLabel="Complete return"
+        busy={completeReturn.isPending}
+        onSubmit={() => {
+          if (!completing) return;
+          const needsPayout =
+            completing.resolution === "refund" && toNumber(completing.refund_total) > 0;
+          completeReturn.mutate(
+            needsPayout
+              ? {
+                  money_account_id: account,
+                  method: refundMethod,
+                  reference: refundRef.trim() || undefined,
+                }
+              : {},
+          );
+        }}
+      >
+        {completing &&
+        completing.resolution === "refund" &&
+        toNumber(completing.refund_total) > 0 ? (
+          <>
+            <p className="text-sm text-muted-foreground">
+              Refund amount: <strong>{formatMoney(completing.refund_total)}</strong>
+            </p>
+            <Field label="Refund method">
+              <NativeSelect value={refundMethod} onChange={(e) => setRefundMethod(e.target.value)}>
+                <option value="cash">Cash</option>
+                <option value="mobile_money">Mobile money</option>
+                <option value="bank">Bank transfer</option>
+              </NativeSelect>
+            </Field>
+            <Field label="Refund from account">
+              <NativeSelect required value={account} onChange={(e) => setAccount(e.target.value)}>
+                <option value="">Choose…</option>
+                {activeAccounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            </Field>
+            <Field label="Reference (optional)">
+              <Input value={refundRef} onChange={(e) => setRefundRef(e.target.value)} />
+            </Field>
+          </>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            Confirm completion of this exchange return. Eligible resellable items will be restocked.
+          </p>
+        )}
+      </FormDialog>
+
       <FormDialog
         open={voiding}
         onOpenChange={setVoiding}

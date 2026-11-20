@@ -5,7 +5,14 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DataGrid, Field, FormDialog, PageHeader, StatusBadge } from "@/components/shared/kit";
+import {
+  DataGrid,
+  Field,
+  FormDialog,
+  NativeSelect,
+  PageHeader,
+  StatusBadge,
+} from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { useI18n } from "@/features/i18n/i18n";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
@@ -82,12 +89,13 @@ export default function Settings() {
 
   const [branch, setBranch] = useState<{
     name: string;
+    kind: "shop" | "office" | "warehouse";
     address: string;
     phone: string;
   } | null>(null);
   const addBranch = useWrite<unknown, unknown>("POST", "/branches", {
     invalidate: ["/branches"],
-    success: "Branch created",
+    success: "Location created",
     onSuccess: () => setBranch(null),
   });
   const [tax, setTax] = useState<{ name: string; rate: string } | null>(null);
@@ -233,7 +241,7 @@ export default function Settings() {
         <TabsContent value="branches">
           {manage && (
             <div className="mb-3 flex justify-end">
-              <Button onClick={() => setBranch({ name: "", address: "", phone: "" })}>
+              <Button onClick={() => setBranch({ name: "", kind: "shop", address: "", phone: "" })}>
                 <Plus size={16} /> New location
               </Button>
             </div>
@@ -251,6 +259,10 @@ export default function Settings() {
                     {b.is_main && " (main)"}
                   </span>
                 ),
+              },
+              {
+                header: "Type",
+                cell: (b) => <span className="capitalize">{b.kind ?? "shop"}</span>,
               },
               { header: "Address", cell: (b) => b.address ?? "-" },
               { header: "Phone", cell: (b) => b.phone ?? "-" },
@@ -312,16 +324,44 @@ export default function Settings() {
         busy={addBranch.isPending}
         onSubmit={() => addBranch.mutate(branch)}
       >
-        {branch &&
-          (["name", "address", "phone"] as const).map((k) => (
-            <Field key={k} label={k[0].toUpperCase() + k.slice(1)}>
+        {branch && (
+          <>
+            <Field label="Name">
               <Input
-                required={k === "name"}
-                value={branch[k]}
-                onChange={(e) => setBranch({ ...branch, [k]: e.target.value })}
+                required
+                value={branch.name}
+                onChange={(e) => setBranch({ ...branch, name: e.target.value })}
               />
             </Field>
-          ))}
+            <Field label="Location type">
+              <NativeSelect
+                value={branch.kind}
+                onChange={(e) =>
+                  setBranch({
+                    ...branch,
+                    kind: e.target.value as "shop" | "office" | "warehouse",
+                  })
+                }
+              >
+                <option value="shop">Shop (retail)</option>
+                <option value="office">Office (services)</option>
+                <option value="warehouse">Warehouse (stock only)</option>
+              </NativeSelect>
+            </Field>
+            <Field label="Address">
+              <Input
+                value={branch.address}
+                onChange={(e) => setBranch({ ...branch, address: e.target.value })}
+              />
+            </Field>
+            <Field label="Phone">
+              <Input
+                value={branch.phone}
+                onChange={(e) => setBranch({ ...branch, phone: e.target.value })}
+              />
+            </Field>
+          </>
+        )}
       </FormDialog>
       <FormDialog
         open={tax !== null}

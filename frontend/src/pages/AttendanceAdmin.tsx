@@ -62,7 +62,7 @@ const time = (v: string | null) =>
 const timeInput = (v: string | null) =>
   v ? new Date(v).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
 const hours = (m: number | null) => (m ? `${Math.floor(m / 60)}h ${m % 60}m` : "-");
-const statuses = ["present", "late", "absent", "half_day", "leave", "holiday", "day_off"];
+const statuses = ["present", "late", "absent", "half_day", "on_leave", "holiday", "day_off"];
 
 function History({ overtimeOnly }: { overtimeOnly: boolean }) {
   const { can, canAny } = useAuth();
