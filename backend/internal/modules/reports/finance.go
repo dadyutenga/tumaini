@@ -13,9 +13,9 @@ import (
 )
 
 type plResult struct {
-	Lines                                                                   []map[string]any
+	Lines                                                                    []map[string]any
 	Income, Expense, Revenue, COGS, OtherIncome, ServiceIncome, ServiceCosts decimal.Decimal
-	ExpensesByCat                                                           []map[string]any
+	ExpensesByCat                                                            []map[string]any
 }
 
 // pl reads income and expense accounts from journal lines for the range.

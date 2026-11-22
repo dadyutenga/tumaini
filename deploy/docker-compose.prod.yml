@@ -1,0 +1,87 @@
+# Production stack. Lives in /opt/tumaini on the server next to .env (see .env.production.example).
+# Only the API and web containers publish ports, and only on loopback; the host's nginx proxies to them
+# (see deploy/nginx/bms.conf). Postgres is never published.
+# Do not run this by hand: deploy.sh pulls images, backs up, migrates, then starts the stack.
+name: tumaini
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: bms
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d bms"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: applies pending migrations as the superuser (the first one creates roles and
+  # extensions). Started explicitly by deploy.sh, never by `up`.
+  migrate:
+    image: ${IMAGE_PREFIX:?set IMAGE_PREFIX in .env}/api:${TAG:?set TAG}
+    profiles: ["migrate"]
+    restart: "no"
+    command: ["/app/migrate", "up"]
+    environment:
+      MIGRATE_DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/bms?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    image: ${IMAGE_PREFIX}/api:${TAG}
+    restart: unless-stopped
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      HTTP_ADDR: ":8080"
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      DATABASE_URL: postgres://bms_api:${BMS_API_DB_PASSWORD:?set BMS_API_DB_PASSWORD}@postgres:5432/bms?sslmode=disable
+      JOBS_DATABASE_URL: postgres://bms_jobs:${BMS_JOBS_DB_PASSWORD:?set BMS_JOBS_DB_PASSWORD}@postgres:5432/bms?sslmode=disable
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS}
+      COOKIE_SECURE: ${COOKIE_SECURE:-true}
+      COOKIE_DOMAIN: ${COOKIE_DOMAIN:-}
+      # Only the host's nginx (reaching us over the Docker bridge) can talk to the API, and it sets
+      # X-Forwarded-For from the real client address, so trust the Docker ranges.
+      TRUSTED_PROXIES: 172.16.0.0/12
+      STORAGE_PATH: /app/data/files
+      DEFAULT_TIMEZONE: ${DEFAULT_TIMEZONE:-Africa/Dar_es_Salaam}
+      DEFAULT_CURRENCY: ${DEFAULT_CURRENCY:-TZS}
+      ARGON_MEMORY: ${ARGON_MEMORY:-65536}
+      ARGON_TIME: ${ARGON_TIME:-3}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMS_WEBHOOK_URL: ${SMS_WEBHOOK_URL:-}
+      SMS_API_KEY: ${SMS_API_KEY:-}
+      SMS_SENDER_ID: ${SMS_SENDER_ID:-}
+    ports:
+      - "127.0.0.1:${API_PORT:-18500}:8080"
+    volumes:
+      - files:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/readyz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+  web:
+    image: ${IMAGE_PREFIX}/web:${TAG}
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${WEB_PORT:-18501}:80"
+
+volumes:
+  pgdata:
+  files:

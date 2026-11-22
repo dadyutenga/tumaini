@@ -1,9 +1,9 @@
 name: Backend CI
 on:
   push:
-    paths: ["backend/**", "docs/api/**", "docs/spec/API reference.md", "deploy/postgres/**", ".github/workflows/backend-ci.yml"]
+    paths: ["backend/**", "docs/api/**", "docs/spec/API reference.md", "backend/database/**", ".github/workflows/backend-ci.yml"]
   pull_request:
-    paths: ["backend/**", "docs/api/**", "docs/spec/API reference.md", "deploy/postgres/**", ".github/workflows/backend-ci.yml"]
+    paths: ["backend/**", "docs/api/**", "docs/spec/API reference.md", "backend/database/**", ".github/workflows/backend-ci.yml"]
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -12,12 +12,15 @@ jobs:
         image: postgres:16-alpine
         env:
           POSTGRES_PASSWORD: postgres_ci
+          POSTGRES_DB: bms
         ports: ["5433:5432"]
         options: >-
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 3s --health-retries 20
     env:
-      DATABASE_URL: postgres://bms_app:bms_app_dev@127.0.0.1:5433/bms?sslmode=disable
-      MIGRATE_DATABASE_URL: postgres://bms_owner:bms_owner_dev@127.0.0.1:5433/bms?sslmode=disable
+      DATABASE_URL: postgres://bms_api:ci_api@127.0.0.1:5433/bms?sslmode=disable
+      JOBS_DATABASE_URL: postgres://bms_jobs:ci_jobs@127.0.0.1:5433/bms?sslmode=disable
+      # The superuser runs migration 000 (creates roles and extensions); later files run as bms_owner.
+      MIGRATE_DATABASE_URL: postgres://postgres:postgres_ci@127.0.0.1:5433/bms?sslmode=disable
       JWT_SECRET: ci-only-secret-0123456789abcdef0123
     defaults:
       run:
@@ -28,14 +31,16 @@ jobs:
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
-      - name: Create roles and database
-        run: PGPASSWORD=postgres_ci psql -h 127.0.0.1 -p 5433 -U postgres -v ON_ERROR_STOP=1 -f ../deploy/postgres/init.sql
       - run: go mod verify
       - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: go vet ./...
       - run: go build ./...
-      - name: Migrate up, down and up again
-        run: go run ./cmd/migrate up && go run ./cmd/migrate down && go run ./cmd/migrate up
+      - name: Migrate (forward-only) and verify
+        run: go run ./cmd/migrate up && go run ./cmd/migrate verify
+      - name: Give the API and worker roles their passwords
+        run: |
+          PGPASSWORD=postgres_ci psql -h 127.0.0.1 -p 5433 -U postgres -d bms -v ON_ERROR_STOP=1 \
+            -c "ALTER ROLE bms_api LOGIN PASSWORD 'ci_api'" -c "ALTER ROLE bms_jobs LOGIN PASSWORD 'ci_jobs'"
       - name: OpenAPI file is current
         run: go run ./cmd/openapi -check
       - run: go test -race -count=1 -coverpkg=./internal/... -coverprofile=coverage.out ./...
