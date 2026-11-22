@@ -11,12 +11,22 @@ Cloudflare (proxied) -> host nginx :443 -> 127.0.0.1:18501  web  (static fronten
 Everything lives in `/opt/tumaini` (compose file, `.env`, `deploy.sh`, `backup-prod.sh`). The host's nginx and
 certbot (webroot, auto-renewing) terminate TLS; the vhost is `deploy/nginx/bms.conf`.
 
+## Branches and releases
+
+There are two branches. `main` is where work lands; `deploy` is the release line. To release:
+
+```bash
+git checkout deploy && git merge --ff-only main && git push
+```
+
+That push runs the Deploy workflow. Pushes to `main` only run the CI workflows.
+
 ## Pipeline
 
 | Workflow | When | What |
 | --- | --- | --- |
 | `backend-ci.yml`, `frontend-ci.yml` | pull requests and pushes touching those paths | full checks (lint, `go test -race`, ...) |
-| `deploy.yml` | push to `main`, or run it by hand | verify (gofmt, vet, build, migrations on an empty DB, OpenAPI, frontend build and tests) -> build and push `ghcr.io/<repo>/{api,web}:sha-<12>` -> SSH deploy |
+| `deploy.yml` | push to the `deploy` branch, or run it by hand | verify (gofmt, vet, build, migrations on an empty DB, OpenAPI, frontend build and tests) -> build and push `ghcr.io/<repo>/{api,web}:sha-<12>` -> SSH deploy |
 
 The deploy gate is deliberately the fast checks that pass today. The full Go integration suite and frontend lint
 are in the PR workflows; make them green and add them to the `verify-*` jobs to gate deploys on them.
