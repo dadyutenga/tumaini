@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
@@ -18,64 +19,125 @@ type plResult struct {
 	ExpensesByCat                                                            []map[string]any
 }
 
-// pl reads income and expense accounts from journal lines for the range.
-func (s *Service) pl(ctx context.Context, tx pgx.Tx, f Filter) (plResult, error) {
-	q := sqlq.New()
-	q.Add("a.type IN ('income','expense')")
-	if biz := f.Q("business"); biz == "shop" {
-		q.Add("a.code NOT IN ('4300','5200')")
-	} else if biz == "services" {
-		q.Add("a.code IN ('4300','5200')")
-	}
-	f.dates(q, "l.entry_date")
-	f.branch(q, "l.branch_id")
-	lines, err := rows(ctx, tx, `
-		SELECT a.type, a.code, a.name,
-		       SUM(CASE WHEN a.type = 'income' THEN l.credit - l.debit ELSE l.debit - l.credit END) AS amount
-		FROM journal_lines l JOIN ledger_accounts a ON a.id = l.ledger_account_id`+q.Where()+`
-		GROUP BY a.id, a.type, a.code, a.name
-		HAVING SUM(l.debit + l.credit) <> 0
-		ORDER BY a.code`, q.Args...)
-	if err != nil {
-		return plResult{}, err
-	}
-	r := plResult{Lines: lines, ExpensesByCat: []map[string]any{}}
-	for _, ln := range lines {
-		amt := num(ln, "amount")
-		code, _ := ln["code"].(string)
-		if ln["type"] == "income" {
-			r.Income = r.Income.Add(amt)
-			switch code {
-			case "4000", "4010":
-				r.Revenue = r.Revenue.Add(amt)
-			case "4300":
-				r.ServiceIncome = r.ServiceIncome.Add(amt)
-			default:
-				r.OtherIncome = r.OtherIncome.Add(amt)
-			}
-			continue
+// pl builds the accrual-basis Profit & Loss from completed sales, returns, issued invoices,
+// approved/paid expenses, contractor bills, and approved/paid payroll runs.
+func (s *Service) pl(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, f Filter) (plResult, error) {
+	biz := f.Q("business")
+	r := plResult{Lines: []map[string]any{}, ExpensesByCat: []map[string]any{}}
+
+	if biz != "services" {
+		q := sqlq.New()
+		src := linesSQL(q, tenantID, f)
+		st, err := one(ctx, tx, `SELECT ROUND(COALESCE(SUM(l.net), 0), 2) AS net_sales, ROUND(COALESCE(SUM(l.cost), 0), 2) AS cost FROM `+src, q.Args...)
+		if err != nil {
+			return r, err
 		}
-		r.Expense = r.Expense.Add(amt)
-		switch code {
-		case "5000":
-			r.COGS = r.COGS.Add(amt)
-		case "5200":
-			r.ServiceCosts = r.ServiceCosts.Add(amt)
-		default:
-			r.ExpensesByCat = append(r.ExpensesByCat, map[string]any{"code": code, "name": ln["name"], "amount": amt})
+		r.Revenue = num(st, "net_sales")
+		r.COGS = num(st, "cost")
+		if !r.Revenue.IsZero() {
+			r.Lines = append(r.Lines, map[string]any{"code": "4000", "name": "Sales revenue", "type": "income", "amount": r.Revenue})
+		}
+		if !r.COGS.IsZero() {
+			r.Lines = append(r.Lines, map[string]any{"code": "5000", "name": "Cost of goods sold", "type": "expense", "amount": r.COGS})
 		}
 	}
+
+	if biz != "shop" {
+		iq := sqlq.New(tenantID)
+		iq.Add("i.tenant_id = $1 AND i.status IN ('issued','partially_paid','paid')")
+		f.dates(iq, "i.issue_date")
+		iv, err := one(ctx, tx, `SELECT COALESCE(SUM(i.total - i.tax_amount), 0) AS amt FROM app.invoices i`+iq.Where(), iq.Args...)
+		if err != nil {
+			return r, err
+		}
+		r.ServiceIncome = num(iv, "amt")
+		if !r.ServiceIncome.IsZero() {
+			r.Lines = append(r.Lines, map[string]any{"code": "4300", "name": "Service income", "type": "income", "amount": r.ServiceIncome})
+		}
+
+		cbq := sqlq.New(tenantID)
+		cbq.Add("b.tenant_id = $1 AND b.status <> 'void'")
+		f.dates(cbq, "b.bill_date")
+		cb, err := one(ctx, tx, `SELECT COALESCE(SUM(b.amount), 0) AS amt FROM app.contractor_bills b`+cbq.Where(), cbq.Args...)
+		if err != nil {
+			return r, err
+		}
+		peq := sqlq.New(tenantID)
+		peq.Add("e.tenant_id = $1 AND e.status IN ('approved','paid') AND (e.project_id IS NOT NULL OR e.design_job_id IS NOT NULL)")
+		f.dates(peq, "e.expense_date")
+		f.branch(peq, "e.location_id")
+		pe, err := one(ctx, tx, `SELECT COALESCE(SUM(e.amount), 0) AS amt FROM app.expenses e`+peq.Where(), peq.Args...)
+		if err != nil {
+			return r, err
+		}
+		r.ServiceCosts = num(cb, "amt").Add(num(pe, "amt"))
+		if !r.ServiceCosts.IsZero() {
+			r.Lines = append(r.Lines, map[string]any{"code": "5200", "name": "Service direct costs", "type": "expense", "amount": r.ServiceCosts})
+		}
+	}
+
+	if biz != "services" {
+		eq := sqlq.New(tenantID)
+		eq.Add("e.tenant_id = $1 AND e.status IN ('approved','paid') AND e.project_id IS NULL AND e.design_job_id IS NULL")
+		f.dates(eq, "e.expense_date")
+		f.branch(eq, "e.location_id")
+		expCats, err := rows(ctx, tx, `
+			SELECT c.name::text AS name, COALESCE(SUM(e.amount), 0) AS amount
+			FROM app.expenses e
+			JOIN app.expense_categories c ON c.tenant_id = e.tenant_id AND c.id = e.category_id`+eq.Where()+`
+			GROUP BY c.id, c.name HAVING SUM(e.amount) <> 0 ORDER BY amount DESC`, eq.Args...)
+		if err != nil {
+			return r, err
+		}
+		for _, ec := range expCats {
+			amt := num(ec, "amount")
+			r.Expense = r.Expense.Add(amt)
+			r.ExpensesByCat = append(r.ExpensesByCat, map[string]any{"code": "6000", "name": ec["name"], "amount": amt})
+			r.Lines = append(r.Lines, map[string]any{"code": "6000", "name": ec["name"], "type": "expense", "amount": amt})
+		}
+
+		// Include approved/paid payroll runs in operating expenses.
+		pq := sqlq.New(tenantID)
+		pq.Add("pr.tenant_id = $1 AND pr.status IN ('approved','paid')")
+		if f.From != "" {
+			pq.Add("make_date(pr.period_year, pr.period_month, 1) >= date_trunc('month', ?::date)::date", f.From)
+		}
+		if f.To != "" {
+			pq.Add("make_date(pr.period_year, pr.period_month, 1) <= date_trunc('month', ?::date)::date", f.To)
+		}
+		f.branch(pq, "pr.location_id")
+		payRow, err := one(ctx, tx, `
+			SELECT COALESCE(SUM(pl.gross_pay), 0)
+			     + COALESCE((SELECT SUM(psi.employer_amount) FROM app.payroll_statutory_items psi
+			                 JOIN app.payroll_lines pl2 ON pl2.tenant_id = psi.tenant_id AND pl2.id = psi.payroll_line_id
+			                 JOIN app.payroll_runs pr2 ON pr2.tenant_id = pl2.tenant_id AND pr2.id = pl2.payroll_run_id
+			                 WHERE pr2.id = pr.id), 0) AS amt
+			FROM app.payroll_runs pr
+			JOIN app.payroll_lines pl ON pl.tenant_id = pr.tenant_id AND pl.payroll_run_id = pr.id`+pq.Where()+`
+			GROUP BY pr.id`, pq.Args...)
+		if err != nil {
+			return r, err
+		}
+		payAmt := num(payRow, "amt")
+		if !payAmt.IsZero() {
+			r.Expense = r.Expense.Add(payAmt)
+			r.ExpensesByCat = append(r.ExpensesByCat, map[string]any{"code": "6100", "name": "Salaries and payroll", "amount": payAmt})
+			r.Lines = append(r.Lines, map[string]any{"code": "6100", "name": "Salaries and payroll", "type": "expense", "amount": payAmt})
+		}
+	}
+
+	r.Income = r.Revenue.Add(r.ServiceIncome).Add(r.OtherIncome)
+	r.Expense = r.Expense.Add(r.COGS).Add(r.ServiceCosts)
 	return r, nil
 }
 
-// ProfitLoss is FR-REP-05. The fields lines, income, expenses and net_profit
-// are kept for existing clients.
+// ProfitLoss computes P&L with optional previous-period comparison.
 func (s *Service) ProfitLoss(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var cur, prev plResult
 	var prevRange map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		if cur, err = s.pl(ctx, tx, f); err != nil {
+		if cur, err = s.pl(ctx, tx, p.TenantID, f); err != nil {
 			return err
 		}
 		if f.Q("compare") == "previous" {
@@ -84,7 +146,7 @@ func (s *Service) ProfitLoss(ctx context.Context, p *auth.Principal, f Filter) (
 			}
 			pf := f
 			pf.From, pf.To = previousRange(f.From, f.To)
-			if prev, err = s.pl(ctx, tx, pf); err != nil {
+			if prev, err = s.pl(ctx, tx, p.TenantID, pf); err != nil {
 				return err
 			}
 			prevRange = map[string]any{"from": pf.From, "to": pf.To}
@@ -135,13 +197,13 @@ func previousRange(from, to string) (string, string) {
 }
 
 var expenseGroups = map[string]struct{ key, label, join string }{
-	"category": {"e.category_id", "c.name AS category", "JOIN expense_categories c ON c.id = e.category_id"},
-	"branch":   {"e.branch_id", "b.name AS branch", "JOIN branches b ON b.id = e.branch_id"},
-	"payee":    {"COALESCE(NULLIF(e.payee, ''), '-')", "COALESCE(NULLIF(e.payee, ''), '-') AS payee", ""},
+	"category": {"e.category_id", "c.name::text AS category", "JOIN app.expense_categories c ON c.tenant_id = e.tenant_id AND c.id = e.category_id"},
+	"branch":   {"e.location_id", "b.name::text AS branch", "JOIN app.locations b ON b.tenant_id = e.tenant_id AND b.id = e.location_id"},
+	"payee":    {"COALESCE(NULLIF(e.description::text, ''), '-')", "COALESCE(NULLIF(e.description::text, ''), '-') AS payee", ""},
 	"month":    {"date_trunc('month', e.expense_date)::date", "date_trunc('month', e.expense_date)::date AS month", ""},
 }
 
-// Expenses is FR-REP-06: approved and paid expenses grouped.
+// Expenses groups approved and paid expenses.
 func (s *Service) Expenses(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	group := f.Q("group_by")
 	if group == "" {
@@ -153,82 +215,78 @@ func (s *Service) Expenses(ctx context.Context, p *auth.Principal, f Filter) (ex
 	}
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		q.Add("e.status IN ('approved','paid')")
+		q := sqlq.New(p.TenantID)
+		q.Add("e.tenant_id = $1 AND e.status IN ('approved','paid')")
 		f.dates(q, "e.expense_date")
-		f.branch(q, "e.branch_id")
+		f.branch(q, "e.location_id")
 		gb := g.key
 		if group == "category" {
 			gb = "e.category_id, c.name"
 		} else if group == "branch" {
-			gb = "e.branch_id, b.name"
+			gb = "e.location_id, b.name"
 		}
 		var err error
 		list, err = rows(ctx, tx, `
 			SELECT `+g.label+`, COUNT(*) AS count, SUM(e.amount) AS amount,
 			       COALESCE(SUM(e.amount) FILTER (WHERE e.status = 'paid'), 0) AS paid
-			FROM expenses e `+g.join+q.Where()+` GROUP BY `+gb+` ORDER BY amount DESC`, q.Args...)
+			FROM app.expenses e `+g.join+q.Where()+` GROUP BY `+gb+` ORDER BY amount DESC`, q.Args...)
 		return err
 	})
 	return export.Table{Title: "Expenses by " + group, Subtitle: f.subtitle(), Columns: cols(group, "count", "amount", "paid"),
 		Rows: list, Totals: totals(list, "Total", "count", "amount", "paid")}, map[string]any{"group_by": group}, err
 }
 
-// CashFlow is FR-REP-14: per money account opening, in, out and closing, and
-// movements grouped by the kind of document that caused them.
+// CashFlow summarizes inflows and outflows per financial account and by transaction type.
 func (s *Service) CashFlow(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list, byKind []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
+		q := sqlq.New(p.TenantID)
 		from, to := q.Arg(nullDate(f.From)), q.Arg(nullDate(f.To))
-		acc := ""
+		acc := " AND ma.tenant_id = $1"
 		if f.Branches != nil {
-			acc = " AND (ma.branch_id IS NULL OR ma.branch_id = ANY(" + q.Arg(f.Branches) + "))"
+			acc += " AND (ma.location_id IS NULL OR ma.location_id = ANY(" + q.Arg(f.Branches) + "))"
 		}
-		if !p.IsOwner {
-			if _, ok := p.Can("accounts.view_balance"); !ok {
-				acc += " AND ma.type IN ('cash','petty_cash')"
-			}
+		if !p.Has("finance.account.view") {
+			acc += " AND ma.kind IN ('cash','petty_cash')"
 		}
 		var err error
 		list, err = rows(ctx, tx, `
-			SELECT ma.name AS account, ma.type AS account_type,
-			       COALESCE(SUM(l.debit - l.credit) FILTER (WHERE l.entry_date < `+from+`::date), 0) AS opening,
-			       COALESCE(SUM(l.debit) FILTER (WHERE (`+from+`::date IS NULL OR l.entry_date >= `+from+`::date) AND (`+to+`::date IS NULL OR l.entry_date <= `+to+`::date)), 0) AS money_in,
-			       COALESCE(SUM(l.credit) FILTER (WHERE (`+from+`::date IS NULL OR l.entry_date >= `+from+`::date) AND (`+to+`::date IS NULL OR l.entry_date <= `+to+`::date)), 0) AS money_out,
-			       COALESCE(SUM(l.debit - l.credit) FILTER (WHERE `+to+`::date IS NULL OR l.entry_date <= `+to+`::date), 0) AS closing
-			FROM money_accounts ma
-			LEFT JOIN journal_lines l ON l.money_account_id = ma.id
+			SELECT ma.name::text AS account, ma.kind::text AS account_type,
+			       COALESCE(SUM(CASE WHEN t.direction = 'in' THEN t.amount ELSE -t.amount END) FILTER (WHERE t.business_date < `+from+`::date), 0) AS opening,
+			       COALESCE(SUM(t.amount) FILTER (WHERE t.direction = 'in' AND (`+from+`::date IS NULL OR t.business_date >= `+from+`::date) AND (`+to+`::date IS NULL OR t.business_date <= `+to+`::date)), 0) AS money_in,
+			       COALESCE(SUM(t.amount) FILTER (WHERE t.direction = 'out' AND (`+from+`::date IS NULL OR t.business_date >= `+from+`::date) AND (`+to+`::date IS NULL OR t.business_date <= `+to+`::date)), 0) AS money_out,
+			       COALESCE(SUM(CASE WHEN t.direction = 'in' THEN t.amount ELSE -t.amount END) FILTER (WHERE `+to+`::date IS NULL OR t.business_date <= `+to+`::date), 0) AS closing
+			FROM app.financial_accounts ma
+			LEFT JOIN app.financial_transactions t ON t.tenant_id = ma.tenant_id AND t.account_id = ma.id
 			WHERE true`+acc+`
-			GROUP BY ma.id, ma.name, ma.type ORDER BY ma.type, ma.name`, q.Args...)
+			GROUP BY ma.id, ma.name, ma.kind ORDER BY ma.kind, ma.name`, q.Args...)
 		if err != nil {
 			return err
 		}
-		k := sqlq.New()
-		k.Add("l.money_account_id IS NOT NULL")
-		f.dates(k, "l.entry_date")
+		k := sqlq.New(p.TenantID)
+		k.Add("t.tenant_id = $1")
+		f.dates(k, "t.business_date")
 		if f.Branches != nil {
-			k.Add("(ma.branch_id IS NULL OR ma.branch_id = ANY(?))", f.Branches)
+			k.Add("(ma.location_id IS NULL OR ma.location_id = ANY(?))", f.Branches)
 		}
-		if !p.IsOwner {
-			if _, ok := p.Can("accounts.view_balance"); !ok {
-				k.Add("ma.type IN ('cash','petty_cash')")
-			}
+		if !p.Has("finance.account.view") {
+			k.Add("ma.kind IN ('cash','petty_cash')")
 		}
 		byKind, err = rows(ctx, tx, `
-			SELECT e.source_type AS kind, SUM(l.debit) AS money_in, SUM(l.credit) AS money_out, SUM(l.debit - l.credit) AS net
-			FROM journal_lines l
-			JOIN journal_entries e ON e.id = l.entry_id
-			JOIN money_accounts ma ON ma.id = l.money_account_id`+k.Where()+`
-			GROUP BY e.source_type ORDER BY e.source_type`, k.Args...)
+			SELECT t.txn_type::text AS kind,
+			       COALESCE(SUM(t.amount) FILTER (WHERE t.direction = 'in'), 0) AS money_in,
+			       COALESCE(SUM(t.amount) FILTER (WHERE t.direction = 'out'), 0) AS money_out,
+			       COALESCE(SUM(CASE WHEN t.direction = 'in' THEN t.amount ELSE -t.amount END), 0) AS net
+			FROM app.financial_transactions t
+			JOIN app.financial_accounts ma ON ma.tenant_id = t.tenant_id AND ma.id = t.account_id`+k.Where()+`
+			GROUP BY t.txn_type ORDER BY t.txn_type`, k.Args...)
 		return err
 	})
 	return export.Table{Title: "Cash flow", Subtitle: f.subtitle(), Columns: cols("account", "account_type", "opening", "money_in", "money_out", "closing"),
 		Rows: list, Totals: totals(list, "Total", "opening", "money_in", "money_out", "closing")}, map[string]any{"by_kind": byKind}, err
 }
 
-// BalanceSheet is FR-REP-16. It is business-wide: some entries carry no branch,
-// so a branch slice would not balance. Current earnings close income and expense into equity.
+// BalanceSheet produces a management snapshot of cash, receivables, stock, payables, and equity as of a date.
 func (s *Service) BalanceSheet(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	var asOf string
@@ -241,36 +299,93 @@ func (s *Service) BalanceSheet(ctx context.Context, p *auth.Principal, f Filter)
 		if asOf == "" {
 			asOf = f.today
 		}
-		bal, err := rows(ctx, tx, `
-			SELECT a.type, a.code, a.name,
-			       SUM(CASE WHEN a.type IN ('asset','expense') THEN l.debit - l.credit ELSE l.credit - l.debit END) AS amount
-			FROM journal_lines l JOIN ledger_accounts a ON a.id = l.ledger_account_id
-			WHERE l.entry_date <= $1::date
-			GROUP BY a.id, a.type, a.code, a.name
-			HAVING SUM(l.debit - l.credit) <> 0
-			ORDER BY a.code`, asOf)
+		list = []map[string]any{}
+
+		// Cash & financial accounts as of date.
+		cashRows, err := rows(ctx, tx, `
+			SELECT ma.kind::text AS kind, ma.name::text AS name,
+			       COALESCE(SUM(CASE WHEN t.direction = 'in' THEN t.amount ELSE -t.amount END), 0) AS amount
+			FROM app.financial_accounts ma
+			LEFT JOIN app.financial_transactions t ON t.tenant_id = ma.tenant_id AND t.account_id = ma.id AND t.business_date <= $2::date
+			WHERE ma.tenant_id = $1
+			GROUP BY ma.id, ma.kind, ma.name
+			HAVING COALESCE(SUM(CASE WHEN t.direction = 'in' THEN t.amount ELSE -t.amount END), 0) <> 0
+			ORDER BY ma.kind, ma.name`, p.TenantID, asOf)
 		if err != nil {
 			return err
 		}
-		list = []map[string]any{}
-		for _, r := range bal {
-			amt := num(r, "amount")
-			switch r["type"] {
-			case "asset":
-				assets = assets.Add(amt)
-			case "liability":
-				liab = liab.Add(amt)
-			case "equity":
-				equity = equity.Add(amt)
-			case "income":
-				earnings = earnings.Add(amt)
-				continue
-			case "expense":
-				earnings = earnings.Sub(amt)
-				continue
-			}
-			r["section"] = r["type"]
-			list = append(list, r)
+		for _, cr := range cashRows {
+			amt := num(cr, "amount")
+			assets = assets.Add(amt)
+			list = append(list, map[string]any{"section": "asset", "code": "1000", "name": cr["name"], "amount": amt})
+		}
+
+		// Receivables (credit sales + invoices).
+		arRow, err := one(ctx, tx, `
+			SELECT COALESCE((SELECT SUM(balance_due) FROM app.sales WHERE tenant_id = $1 AND status = 'completed' AND business_date <= $2::date AND balance_due > 0), 0)
+			     + COALESCE((SELECT SUM(balance_due) FROM app.invoices WHERE tenant_id = $1 AND status IN ('issued','partially_paid') AND issue_date <= $2::date AND balance_due > 0), 0) AS amt`,
+			p.TenantID, asOf)
+		if err != nil {
+			return err
+		}
+		if ar := num(arRow, "amt"); !ar.IsZero() {
+			assets = assets.Add(ar)
+			list = append(list, map[string]any{"section": "asset", "code": "1100", "name": "Accounts receivable", "amount": ar})
+		}
+
+		// Inventory valuation as of date.
+		invRow, err := one(ctx, tx, `
+			SELECT COALESCE(ROUND(SUM(q.qty * pr.average_cost), 2), 0) AS amt
+			FROM (
+				SELECT product_id, SUM(quantity_delta) AS qty
+				FROM app.stock_movements WHERE tenant_id = $1 AND business_date <= $2::date
+				GROUP BY product_id
+			) q
+			JOIN app.products pr ON pr.tenant_id = $1 AND pr.id = q.product_id`, p.TenantID, asOf)
+		if err != nil {
+			return err
+		}
+		if inv := num(invRow, "amt"); !inv.IsZero() {
+			assets = assets.Add(inv)
+			list = append(list, map[string]any{"section": "asset", "code": "1200", "name": "Inventory", "amount": inv})
+		}
+
+		// Payables (suppliers + contractors).
+		apRow, err := one(ctx, tx, `
+			SELECT COALESCE((SELECT SUM(balance_due) FROM app.purchases WHERE tenant_id = $1 AND status <> 'cancelled' AND order_date <= $2::date AND balance_due > 0), 0)
+			     + COALESCE((SELECT SUM(balance_due) FROM app.contractor_bills WHERE tenant_id = $1 AND status IN ('open','partially_paid') AND bill_date <= $2::date AND balance_due > 0), 0) AS amt`,
+			p.TenantID, asOf)
+		if err != nil {
+			return err
+		}
+		if ap := num(apRow, "amt"); !ap.IsZero() {
+			liab = liab.Add(ap)
+			list = append(list, map[string]any{"section": "liability", "code": "2000", "name": "Accounts payable", "amount": ap})
+		}
+
+		// Unpaid approved payroll.
+		prRow, err := one(ctx, tx, `
+			SELECT COALESCE(SUM(pl.net_pay), 0) AS amt
+			FROM app.payroll_lines pl
+			JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id
+			WHERE r.tenant_id = $1 AND r.status = 'approved' AND make_date(r.period_year, r.period_month, 1) <= $2::date`, p.TenantID, asOf)
+		if err != nil {
+			return err
+		}
+		if prAmt := num(prRow, "amt"); !prAmt.IsZero() {
+			liab = liab.Add(prAmt)
+			list = append(list, map[string]any{"section": "liability", "code": "2200", "name": "Salaries payable", "amount": prAmt})
+		}
+
+		// Current earnings (cumulative P&L up to asOf) & owner capital balancing line.
+		plRes, err := s.pl(ctx, tx, p.TenantID, Filter{To: asOf, Query: map[string]string{}})
+		if err != nil {
+			return err
+		}
+		earnings = plRes.Income.Sub(plRes.Expense)
+		equity = assets.Sub(liab).Sub(earnings)
+		if !equity.IsZero() {
+			list = append(list, map[string]any{"section": "equity", "code": "3000", "name": "Owner equity / opening capital", "amount": equity})
 		}
 		list = append(list, map[string]any{"section": "equity", "code": "", "name": "Current earnings", "amount": earnings})
 		return nil
@@ -284,34 +399,67 @@ func (s *Service) BalanceSheet(ctx context.Context, p *auth.Principal, f Filter)
 		Totals: map[string]any{"name": "Assets / liabilities and equity", "amount": assets}}, extra, err
 }
 
-// Tax is FR-REP-17: output tax on sales net of returns and input tax on
-// purchases net of returns, per month, from the tax ledger accounts.
+// Tax summarizes output tax (sales + invoices - returns) and input tax (purchases) by month.
 func (s *Service) Tax(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		q.Add("a.code IN ('2100','1500','4000','4010')")
-		f.dates(q, "l.entry_date")
-		f.branch(q, "l.branch_id")
+		q := sqlq.New(p.TenantID)
+		sc := "s.tenant_id = $1 AND s.status = 'completed'"
+		rc := "r.tenant_id = $1 AND r.status = 'completed'"
+		ic := "i.tenant_id = $1 AND i.status IN ('issued','partially_paid','paid')"
+		pc := "pu.tenant_id = $1 AND pu.status <> 'cancelled'"
+		if f.From != "" {
+			a := q.Arg(f.From)
+			sc += " AND s.business_date >= " + a + "::date"
+			rc += " AND r.business_date >= " + a + "::date"
+			ic += " AND i.issue_date >= " + a + "::date"
+			pc += " AND pu.order_date >= " + a + "::date"
+		}
+		if f.To != "" {
+			a := q.Arg(f.To)
+			sc += " AND s.business_date <= " + a + "::date"
+			rc += " AND r.business_date <= " + a + "::date"
+			ic += " AND i.issue_date <= " + a + "::date"
+			pc += " AND pu.order_date <= " + a + "::date"
+		}
+		if f.Branches != nil {
+			a := q.Arg(f.Branches)
+			sc += " AND s.location_id = ANY(" + a + ")"
+			rc += " AND r.location_id = ANY(" + a + ")"
+			pc += " AND pu.location_id = ANY(" + a + ")"
+		}
 		var err error
 		list, err = rows(ctx, tx, `
-			SELECT date_trunc('month', l.entry_date)::date AS month,
-			       COALESCE(SUM(l.credit - l.debit) FILTER (WHERE a.code IN ('4000','4010')), 0) AS taxable_sales,
-			       COALESCE(SUM(l.credit - l.debit) FILTER (WHERE a.code = '2100' AND e.source_type IN ('sale','sale_return')), 0) AS output_tax,
-			       COALESCE(SUM(l.debit - l.credit) FILTER (WHERE a.code = '1500'), 0) AS input_tax,
-			       COALESCE(SUM(l.credit - l.debit) FILTER (WHERE a.code = '2100' AND e.source_type IN ('sale','sale_return')), 0)
-			         - COALESCE(SUM(l.debit - l.credit) FILTER (WHERE a.code = '1500'), 0) AS net_tax
-			FROM journal_lines l
-			JOIN ledger_accounts a ON a.id = l.ledger_account_id
-			JOIN journal_entries e ON e.id = l.entry_id`+q.Where()+`
-			GROUP BY 1 ORDER BY 1`, q.Args...)
+			SELECT month,
+			       ROUND(SUM(taxable_sales), 2) AS taxable_sales,
+			       ROUND(SUM(output_tax), 2) AS output_tax,
+			       ROUND(SUM(input_tax), 2) AS input_tax,
+			       ROUND(SUM(output_tax) - SUM(input_tax), 2) AS net_tax
+			FROM (
+				SELECT date_trunc('month', s.business_date)::date AS month, (s.total - s.tax_amount) AS taxable_sales, s.tax_amount AS output_tax, 0::numeric AS input_tax
+				FROM app.sales s WHERE `+sc+`
+				UNION ALL
+				SELECT date_trunc('month', r.business_date)::date,
+				       -(ROUND(sl.line_total * rl.quantity / sl.quantity, 2) - ROUND(sl.tax_amount * rl.quantity / sl.quantity, 2)),
+				       -ROUND(sl.tax_amount * rl.quantity / sl.quantity, 2), 0
+				FROM app.sale_returns r
+				JOIN app.sale_return_lines rl ON rl.tenant_id = r.tenant_id AND rl.sale_return_id = r.id
+				JOIN app.sale_lines sl ON sl.tenant_id = rl.tenant_id AND sl.id = rl.sale_line_id
+				WHERE `+rc+`
+				UNION ALL
+				SELECT date_trunc('month', i.issue_date)::date, (i.total - i.tax_amount), i.tax_amount, 0
+				FROM app.invoices i WHERE `+ic+`
+				UNION ALL
+				SELECT date_trunc('month', pu.order_date)::date, 0, 0, pu.tax_amount
+				FROM app.purchases pu WHERE `+pc+`
+			) x
+			GROUP BY month ORDER BY month`, q.Args...)
 		return err
 	})
 	return export.Table{Title: "Tax report", Subtitle: f.subtitle(), Columns: cols("month", "taxable_sales", "output_tax", "input_tax", "net_tax"),
 		Rows: list, Totals: totals(list, "Total", "taxable_sales", "output_tax", "input_tax", "net_tax")}, nil, err
 }
 
-// nullDate turns an empty date into SQL NULL.
 func nullDate(d string) any {
 	if d == "" {
 		return nil

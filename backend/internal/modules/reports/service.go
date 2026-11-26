@@ -1,6 +1,4 @@
-// Package reports serves read-only reports and the dashboard. Every figure is
-// computed in SQL from the posted records: sale lines (with their cost
-// snapshot), stock movements, payments and journal lines.
+// Package reports serves read-only reports and the dashboard from the approved BMS schema.
 package reports
 
 import (
@@ -32,7 +30,7 @@ func New(database *db.DB, clk clock.Clock) *Service { return &Service{DB: databa
 // Filter is the common input of every report.
 type Filter struct {
 	From, To string      // YYYY-MM-DD, empty means unbounded
-	Branches []uuid.UUID // nil means every branch
+	Branches []uuid.UUID // nil means every location
 	Query    map[string]string
 	tz       string
 	today    string
@@ -40,7 +38,7 @@ type Filter struct {
 
 func (f Filter) Q(key string) string { return f.Query[key] }
 
-// Days returns an integer query parameter with a default and bounds.
+// Int returns an integer query parameter with a default and bounds.
 func (f Filter) Int(key string, def, min, max int) int {
 	n, err := strconv.Atoi(f.Query[key])
 	if err != nil {
@@ -55,7 +53,7 @@ func (f Filter) Int(key string, def, min, max int) int {
 	return n
 }
 
-// branch adds "col = ANY(branches)" when the filter is limited.
+// branch adds "col = ANY(branches)" when the filter is limited to specific locations.
 func (f Filter) branch(q *sqlq.Q, col string) {
 	if f.Branches != nil {
 		q.Add(col+" = ANY(?)", f.Branches)
@@ -80,8 +78,8 @@ func (f Filter) subtitle() string {
 	return "All dates"
 }
 
-// tx runs fn in a read transaction for the caller's business, with the
-// business timezone and business date loaded into f.
+// tx runs fn in a read-only actor transaction for the caller's tenant, with the
+// tenant timezone and business date loaded into f.
 func (s *Service) tx(ctx context.Context, p *auth.Principal, f *Filter, fn func(ctx context.Context, tx pgx.Tx) error) error {
 	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		f.tz = setting.String(ctx, tx, "system.timezone", "Africa/Dar_es_Salaam")
@@ -93,7 +91,6 @@ func (s *Service) tx(ctx context.Context, p *auth.Principal, f *Filter, fn func(
 		if _, err := tx.Exec(ctx, `SET TRANSACTION READ ONLY`); err != nil {
 			return err
 		}
-		// Local to this transaction: timestamptz::date gives the business-local date.
 		if _, err := tx.Exec(ctx, `SELECT set_config('TimeZone', $1, true)`, f.tz); err != nil {
 			return err
 		}
@@ -162,6 +159,8 @@ func num(m map[string]any, key string) decimal.Decimal {
 		return decimal.NewFromInt(v)
 	case int32:
 		return decimal.NewFromInt(int64(v))
+	case int16:
+		return decimal.NewFromInt(int64(v))
 	}
 	return decimal.Zero
 }
@@ -190,45 +189,47 @@ func pct(part, whole decimal.Decimal) any {
 	return money.Money(part.Div(whole).Mul(decimal.NewFromInt(100)))
 }
 
-// linesSQL is the sale-line ledger used by every sales report: sale lines dated
-// on the sale's business date, and completed return lines dated on the return,
-// with quantities and money negated. cost is the snapshot at sale time; a
-// return line only reduces cost when the goods went back to stock.
-func linesSQL(q *sqlq.Q, f Filter) string {
-	tz := q.Arg(f.tz)
-	retDate := "(r.completed_at AT TIME ZONE " + tz + ")::date"
-	sc := "s.kind='sale' AND s.status IN ('completed','partially_refunded','refunded')"
-	rc := "r.status='completed'"
+// linesSQL is the sale-line ledger used by every sales report: completed sale lines dated
+// on business_date, and completed return lines dated on r.business_date with quantities
+// and money negated. Cost reduces only when returned goods were restocked.
+func linesSQL(q *sqlq.Q, tenantID uuid.UUID, f Filter) string {
+	t := q.Arg(tenantID)
+	sc := "s.tenant_id = " + t + " AND s.status = 'completed'"
+	rc := "r.tenant_id = " + t + " AND r.status = 'completed'"
 	if f.From != "" {
 		a := q.Arg(f.From)
 		sc += " AND s.business_date >= " + a + "::date"
-		rc += " AND " + retDate + " >= " + a + "::date"
+		rc += " AND r.business_date >= " + a + "::date"
 	}
 	if f.To != "" {
 		a := q.Arg(f.To)
 		sc += " AND s.business_date <= " + a + "::date"
-		rc += " AND " + retDate + " <= " + a + "::date"
+		rc += " AND r.business_date <= " + a + "::date"
 	}
 	if f.Branches != nil {
 		a := q.Arg(f.Branches)
-		sc += " AND s.branch_id = ANY(" + a + ")"
-		rc += " AND r.branch_id = ANY(" + a + ")"
+		sc += " AND s.location_id = ANY(" + a + ")"
+		rc += " AND r.location_id = ANY(" + a + ")"
 	}
 	return `(
-		SELECT s.id AS sale_id, s.business_date AS d, s.branch_id, si.product_id, s.customer_id, s.cashier_id, s.employee_id,
-		       si.qty, si.qty * si.unit_price AS gross, si.discount AS disc, si.tax_amount AS tax, si.line_total AS total,
-		       si.line_total - si.tax_amount AS net, si.qty * si.unit_cost AS cost, 0::numeric AS ret
-		FROM sales s JOIN sale_items si ON si.sale_id = s.id
+		SELECT s.id AS sale_id, s.business_date AS d, s.location_id AS branch_id, sl.product_id, s.customer_id, s.sold_by,
+		       sl.quantity AS qty, sl.quantity * sl.unit_price AS gross, sl.line_discount AS disc, sl.tax_amount AS tax,
+		       sl.line_total AS total, sl.line_total - sl.tax_amount AS net, sl.quantity * COALESCE(sl.unit_cost, 0) AS cost, 0::numeric AS ret
+		FROM app.sales s
+		JOIN app.sale_lines sl ON sl.tenant_id = s.tenant_id AND sl.sale_id = s.id
 		WHERE ` + sc + `
 		UNION ALL
-		SELECT s.id, ` + retDate + `, r.branch_id, si.product_id, s.customer_id, s.cashier_id, s.employee_id,
-		       -ri.qty, 0, 0, -ROUND(si.tax_amount * ri.qty / si.qty, 2), -ri.amount,
-		       -(ri.amount - ROUND(si.tax_amount * ri.qty / si.qty, 2)),
-		       -(CASE WHEN ri.restock THEN ri.qty * ri.unit_cost ELSE 0 END), ri.amount
-		FROM sale_returns r
-		JOIN sale_return_items ri ON ri.return_id = r.id
-		JOIN sale_items si ON si.id = ri.sale_item_id
-		JOIN sales s ON s.id = r.sale_id
+		SELECT s.id, r.business_date, r.location_id, sl.product_id, s.customer_id, s.sold_by,
+		       -rl.quantity, 0, 0,
+		       -ROUND(sl.tax_amount * rl.quantity / sl.quantity, 2),
+		       -ROUND(sl.line_total * rl.quantity / sl.quantity, 2),
+		       -(ROUND(sl.line_total * rl.quantity / sl.quantity, 2) - ROUND(sl.tax_amount * rl.quantity / sl.quantity, 2)),
+		       -(CASE WHEN rl.restock THEN rl.quantity * COALESCE(sl.unit_cost, 0) ELSE 0 END),
+		       ROUND(sl.line_total * rl.quantity / sl.quantity, 2)
+		FROM app.sale_returns r
+		JOIN app.sale_return_lines rl ON rl.tenant_id = r.tenant_id AND rl.sale_return_id = r.id
+		JOIN app.sale_lines sl ON sl.tenant_id = rl.tenant_id AND sl.id = rl.sale_line_id
+		JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id
 		WHERE ` + rc + `
 	) l`
 }
@@ -236,26 +237,19 @@ func linesSQL(q *sqlq.Q, f Filter) string {
 // saleAgg is the common aggregate column list over linesSQL.
 const saleAgg = `
 	COUNT(DISTINCT l.sale_id) FILTER (WHERE l.ret = 0) AS sales_count,
-	ROUND(SUM(l.qty), 3) AS qty,
-	ROUND(SUM(l.gross), 2) AS gross_sales,
-	ROUND(SUM(l.disc), 2) AS discounts,
-	ROUND(SUM(l.ret), 2) AS returns,
-	ROUND(SUM(l.tax), 2) AS tax,
-	ROUND(SUM(l.total), 2) AS total,
-	ROUND(SUM(l.net), 2) AS net_sales,
-	ROUND(SUM(l.cost), 2) AS cost,
-	ROUND(SUM(l.net) - SUM(l.cost), 2) AS gross_profit`
+	ROUND(COALESCE(SUM(l.qty), 0), 3) AS qty,
+	ROUND(COALESCE(SUM(l.gross), 0), 2) AS gross_sales,
+	ROUND(COALESCE(SUM(l.disc), 0), 2) AS discounts,
+	ROUND(COALESCE(SUM(l.ret), 0), 2) AS returns,
+	ROUND(COALESCE(SUM(l.tax), 0), 2) AS tax,
+	ROUND(COALESCE(SUM(l.total), 0), 2) AS total,
+	ROUND(COALESCE(SUM(l.net), 0), 2) AS net_sales,
+	ROUND(COALESCE(SUM(l.cost), 0), 2) AS cost,
+	ROUND(COALESCE(SUM(l.net), 0) - COALESCE(SUM(l.cost), 0), 2) AS gross_profit`
 
 // canCost reports whether cost and profit may be shown to the caller.
 func canCost(p *auth.Principal) bool {
-	if p.IsOwner {
-		return true
-	}
-	if _, ok := p.Can("products.view_cost"); ok {
-		return true
-	}
-	_, ok := p.Can("dashboard.view_profit")
-	return ok
+	return p.Has("shop.product.view_cost") || p.Has("dashboard.business.view") || p.Has("reports.business.view")
 }
 
 // stripCost removes cost and profit columns when the caller may not see them.

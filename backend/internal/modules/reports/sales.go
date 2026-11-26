@@ -54,7 +54,7 @@ func cols(keys ...string) []export.Col {
 
 func badQuery(msg string) error { return httpx.BadRequest("invalid_query", msg) }
 
-// SalesSummary is FR-REP-01: totals per day, week or month.
+// SalesSummary is totals per day, week or month.
 func (s *Service) SalesSummary(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	group := f.Q("group_by")
 	if group == "" {
@@ -67,7 +67,7 @@ func (s *Service) SalesSummary(ctx context.Context, p *auth.Principal, f Filter)
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		g := q.Arg(group)
-		src := linesSQL(q, f)
+		src := linesSQL(q, p.TenantID, f)
 		var err error
 		list, err = rows(ctx, tx, `SELECT date_trunc(`+g+`, l.d)::date AS period,`+saleAgg+` FROM `+src+` GROUP BY 1 ORDER BY 1`, q.Args...)
 		return err
@@ -84,10 +84,10 @@ var breakdowns = map[string]struct {
 	title, key, label, join string
 	extra                   []string
 }{
-	"product":  {"Sales by product", "l.product_id", "pr.name AS product, pr.sku", "JOIN products pr ON pr.id = l.product_id", []string{"product", "sku"}},
-	"category": {"Sales by category", "pr.category_id", "COALESCE(c.name, 'Uncategorised') AS category", "JOIN products pr ON pr.id = l.product_id LEFT JOIN categories c ON c.id = pr.category_id", []string{"category"}},
-	"cashier":  {"Sales by cashier", "l.cashier_id", "u.name AS cashier", "JOIN users u ON u.id = l.cashier_id", []string{"cashier"}},
-	"customer": {"Sales by customer", "l.customer_id", "COALESCE(cu.name, 'Walk-in') AS customer", "LEFT JOIN customers cu ON cu.id = l.customer_id", []string{"customer"}},
+	"product":  {"Sales by product", "l.product_id", "pr.name::text AS product, pr.sku", "JOIN app.products pr ON pr.id = l.product_id", []string{"product", "sku"}},
+	"category": {"Sales by category", "pr.category_id", "COALESCE(c.name::text, 'Uncategorised') AS category", "JOIN app.products pr ON pr.id = l.product_id LEFT JOIN app.product_categories c ON c.id = pr.category_id", []string{"category"}},
+	"cashier":  {"Sales by cashier", "m.user_id", "u.full_name::text AS cashier", "JOIN app.memberships m ON m.id = l.sold_by JOIN iam.users u ON u.id = m.user_id", []string{"cashier"}},
+	"customer": {"Sales by customer", "l.customer_id", "COALESCE(cu.full_name::text, 'Walk-in') AS customer", "LEFT JOIN app.customers cu ON cu.id = l.customer_id", []string{"customer"}},
 }
 
 var breakdownSort = map[string]string{
@@ -95,8 +95,7 @@ var breakdownSort = map[string]string{
 	"margin": "margin", "count": "sales_count", "sales_count": "sales_count", "total": "total",
 }
 
-// Breakdown is FR-REP-02 and FR-REP-03 for product, category, cashier and customer.
-// sort=-net_sales lists top sellers; sort=net_sales lists slow sellers.
+// Breakdown lists sales grouped by product, category, cashier, or customer.
 func (s *Service) Breakdown(ctx context.Context, p *auth.Principal, f Filter, by string) (export.Table, map[string]any, error) {
 	b := breakdowns[by]
 	order := httpx.Sort(f.Q("sort"), breakdownSort, "net_sales DESC")
@@ -107,7 +106,7 @@ func (s *Service) Breakdown(ctx context.Context, p *auth.Principal, f Filter, by
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
-		src := linesSQL(q, f)
+		src := linesSQL(q, p.TenantID, f)
 		where := ""
 		if by == "category" {
 			if id := f.Q("category_id"); id != "" {
@@ -138,73 +137,62 @@ func groupCols(by string) string {
 	case "category":
 		return "c.name"
 	case "cashier":
-		return "u.name"
+		return "u.full_name"
 	default:
-		return "cu.name"
+		return "cu.full_name"
 	}
 }
 
-// ByPaymentMethod is FR-REP-03 for payment methods: sale receipts less refunds.
+// ByPaymentMethod reports customer receipts less refunds by payment method.
 func (s *Service) ByPaymentMethod(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
-		q.Add("pay.status = 'posted'")
-		q.Add("pay.kind IN ('sale','customer_payment','sale_refund')")
-		f.dates(q, "pay.payment_date")
-		f.branch(q, "pay.branch_id")
+		t := q.Arg(p.TenantID)
+		rc := "pr.tenant_id = " + t + " AND pr.status = 'posted'"
+		mc := "pm.tenant_id = " + t + " AND pm.status = 'posted' AND pm.customer_id IS NOT NULL"
+		if f.From != "" {
+			a := q.Arg(f.From)
+			rc += " AND pr.business_date >= " + a + "::date"
+			mc += " AND pm.business_date >= " + a + "::date"
+		}
+		if f.To != "" {
+			a := q.Arg(f.To)
+			rc += " AND pr.business_date <= " + a + "::date"
+			mc += " AND pm.business_date <= " + a + "::date"
+		}
+		if f.Branches != nil {
+			a := q.Arg(f.Branches)
+			rc += " AND pr.location_id = ANY(" + a + ")"
+			mc += " AND pm.location_id = ANY(" + a + ")"
+		}
 		var err error
 		list, err = rows(ctx, tx, `
-			SELECT pay.method,
-			       COUNT(*) FILTER (WHERE pay.direction = 'in') AS payments,
-			       COALESCE(SUM(pay.amount) FILTER (WHERE pay.direction = 'in'), 0) AS amount_in,
-			       COALESCE(SUM(pay.amount) FILTER (WHERE pay.direction = 'out'), 0) AS refunds,
-			       COALESCE(SUM(CASE WHEN pay.direction = 'in' THEN pay.amount ELSE -pay.amount END), 0) AS net
-			FROM payments pay`+q.Where()+` GROUP BY pay.method ORDER BY net DESC`, q.Args...)
+			SELECT method,
+			       COUNT(*) FILTER (WHERE dir = 'in') AS payments,
+			       COALESCE(SUM(amount) FILTER (WHERE dir = 'in'), 0) AS amount_in,
+			       COALESCE(SUM(amount) FILTER (WHERE dir = 'out'), 0) AS refunds,
+			       COALESCE(SUM(CASE WHEN dir = 'in' THEN amount ELSE -amount END), 0) AS net
+			FROM (
+				SELECT CASE WHEN pr.method = 'bank_transfer' THEN 'bank' ELSE pr.method::text END AS method, 'in'::text AS dir, pr.amount
+				FROM app.payments_received pr WHERE `+rc+`
+				UNION ALL
+				SELECT CASE WHEN pm.method = 'bank_transfer' THEN 'bank' ELSE pm.method::text END AS method, 'out'::text AS dir, pm.amount
+				FROM app.payments_made pm WHERE `+mc+`
+			) x
+			GROUP BY method ORDER BY net DESC`, q.Args...)
 		return err
 	})
 	return export.Table{Title: "Sales by payment method", Subtitle: f.subtitle(), Columns: cols("method", "payments", "amount_in", "refunds", "net"),
 		Rows: list, Totals: totals(list, "Total", "payments", "amount_in", "refunds", "net")}, nil, err
 }
 
-// Tills is FR-REP-04: one row per till session.
-func (s *Service) Tills(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
-	var list []map[string]any
-	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		var hasPayout bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name='money_transfers' AND column_name='till_session_id')`).Scan(&hasPayout); err != nil {
-			return err
-		}
-		payouts := "0::numeric"
-		if hasPayout {
-			payouts = "COALESCE((SELECT SUM(mt.amount + mt.fee) FROM money_transfers mt WHERE mt.till_session_id = t.id), 0)"
-		}
-		q := sqlq.New()
-		if f.From != "" || f.To != "" {
-			tz := q.Arg(f.tz)
-			f.dates(q, "(t.opened_at AT TIME ZONE "+tz+")::date")
-		}
-		f.branch(q, "t.branch_id")
-		var err error
-		list, err = rows(ctx, tx, `
-			SELECT t.id, u.name AS cashier, b.name AS branch, t.status, t.opened_at, t.closed_at, t.opening_float,
-			       COALESCE(c.cash_sales, 0) AS cash_sales, COALESCE(c.cash_in_other, 0) AS cash_in_other,
-			       COALESCE(c.refunds, 0) AS refunds, `+payouts+` AS pay_outs,
-			       COALESCE(t.expected_cash, t.opening_float + COALESCE(c.cash_sales, 0) + COALESCE(c.cash_in_other, 0) - COALESCE(c.refunds, 0) - COALESCE(c.cash_out_other, 0) - `+payouts+`) AS expected_cash,
-			       t.counted_cash, t.difference
-			FROM till_sessions t
-			JOIN users u ON u.id = t.cashier_id
-			JOIN branches b ON b.id = t.branch_id
-			LEFT JOIN LATERAL (
-				SELECT SUM(amount) FILTER (WHERE direction = 'in' AND kind = 'sale') AS cash_sales,
-				       SUM(amount) FILTER (WHERE direction = 'in' AND kind <> 'sale') AS cash_in_other,
-				       SUM(amount) FILTER (WHERE direction = 'out' AND kind = 'sale_refund') AS refunds,
-				       SUM(amount) FILTER (WHERE direction = 'out' AND kind <> 'sale_refund') AS cash_out_other
-				FROM payments WHERE till_session_id = t.id AND method = 'cash' AND status = 'posted'
-			) c ON true`+q.Where()+` ORDER BY t.opened_at DESC`, q.Args...)
-		return err
-	})
-	return export.Table{Title: "Till sessions", Subtitle: f.subtitle(),
+// Tills returns an empty report because till sessions are replaced by day closings in the approved BMS schema.
+func (s *Service) Tills(_ context.Context, _ *auth.Principal, f Filter) (export.Table, map[string]any, error) {
+	return export.Table{
+		Title: "Till sessions", Subtitle: f.subtitle(),
 		Columns: cols("cashier", "branch", "status", "opened_at", "closed_at", "opening_float", "cash_sales", "refunds", "pay_outs", "expected_cash", "counted_cash", "difference"),
-		Rows:    list, Totals: totals(list, "Total", "opening_float", "cash_sales", "refunds", "pay_outs", "difference")}, nil, err
+		Rows:    []map[string]any{},
+		Totals:  map[string]any{"label": "Total"},
+	}, nil, nil
 }

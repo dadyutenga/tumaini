@@ -13,8 +13,7 @@ import (
 )
 
 // periodRange returns the current and previous ranges for today, week
-// (Monday to today) or month (first of month to today). The previous range
-// has the same length and ends the day before the current one starts.
+// (Monday to today) or month (first of month to today).
 func periodRange(period, today string) (from, to, pFrom, pTo string, ok bool) {
 	t, err := time.Parse("2006-01-02", today)
 	if err != nil {
@@ -37,21 +36,16 @@ func periodRange(period, today string) (from, to, pFrom, pTo string, ok bool) {
 	return from, to, pFrom, pTo, true
 }
 
-func has(p *auth.Principal, keys ...string) bool {
-	if p.IsOwner {
-		return true
-	}
+func hasAny(p *auth.Principal, keys ...string) bool {
 	for _, k := range keys {
-		if _, ok := p.Can(k); ok {
+		if p.Has(k) {
 			return true
 		}
 	}
 	return false
 }
 
-// Dashboard is FR-DSH-01..10. Each card is present only when the caller holds
-// the permission behind it; cost and profit need dashboard.view_profit or
-// products.view_cost, bank and mobile balances need accounts.view_balance.
+// Dashboard assembles permission-scoped business & operations cards from the approved BMS schema.
 func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (map[string]any, error) {
 	out := map[string]any{}
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
@@ -87,20 +81,19 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 		prev.From, prev.To = pFrom, pTo
 		profit := canCost(p)
 
-		if biz != "services" && has(p, "sales.view", "reports.sales") {
-			c, err := salesTotals(ctx, tx, cur)
+		if biz != "services" && hasAny(p, "dashboard.business.view", "dashboard.operations.view", "shop.sale.view_all", "reports.operations.view") {
+			c, err := salesTotals(ctx, tx, p.TenantID, cur)
 			if err != nil {
 				return err
 			}
-			pv, err := salesTotals(ctx, tx, prev)
+			pv, err := salesTotals(ctx, tx, p.TenantID, prev)
 			if err != nil {
 				return err
 			}
-			card := map[string]any{
+			out["sales"] = map[string]any{
 				"total": num(c, "total"), "count": num(c, "sales_count"), "previous_total": num(pv, "total"),
 				"change_pct": pct(num(c, "total").Sub(num(pv, "total")), num(pv, "total")),
 			}
-			out["sales"] = card
 			if profit {
 				gp := num(c, "net_sales").Sub(num(c, "cost"))
 				out["gross_profit"] = map[string]any{"amount": gp, "previous": num(pv, "net_sales").Sub(num(pv, "cost"))}
@@ -109,7 +102,7 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 			tf := f
 			tf.From, tf.To = trendFrom.AddDate(0, 0, -29).Format("2006-01-02"), f.today
 			q := sqlq.New()
-			src := linesSQL(q, tf)
+			src := linesSQL(q, p.TenantID, tf)
 			trend, err := rows(ctx, tx, `
 				SELECT gs.day::date AS date, COALESCE(x.total, 0) AS total
 				FROM generate_series(`+q.Arg(tf.From)+`::date, `+q.Arg(tf.To)+`::date, interval '1 day') AS gs(day)
@@ -119,45 +112,49 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 				return err
 			}
 			out["sales_trend"] = trend
+
 			q = sqlq.New()
-			src = linesSQL(q, cur)
+			src = linesSQL(q, p.TenantID, cur)
 			top, err := rows(ctx, tx, `
-				SELECT l.product_id, pr.name AS product, ROUND(SUM(l.qty), 3) AS qty, ROUND(SUM(l.total), 2) AS total
-				FROM `+src+` JOIN products pr ON pr.id = l.product_id
+				SELECT l.product_id, pr.name::text AS product, ROUND(SUM(l.qty), 3) AS qty, ROUND(SUM(l.total), 2) AS total
+				FROM `+src+` JOIN app.products pr ON pr.tenant_id = `+q.Arg(p.TenantID)+` AND pr.id = l.product_id
 				GROUP BY l.product_id, pr.name ORDER BY total DESC LIMIT 5`, q.Args...)
 			if err != nil {
 				return err
 			}
 			out["top_products"] = top
+
 			q = sqlq.New()
-			src = linesSQL(q, cur)
+			src = linesSQL(q, p.TenantID, cur)
 			byBranch, err := rows(ctx, tx, `
-				SELECT l.branch_id, b.name AS branch, ROUND(SUM(l.total), 2) AS total, COUNT(DISTINCT l.sale_id) FILTER (WHERE l.ret = 0) AS sales_count
-				FROM `+src+` JOIN branches b ON b.id = l.branch_id GROUP BY l.branch_id, b.name ORDER BY total DESC`, q.Args...)
+				SELECT l.branch_id, b.name::text AS branch, ROUND(SUM(l.total), 2) AS total, COUNT(DISTINCT l.sale_id) FILTER (WHERE l.ret = 0) AS sales_count
+				FROM `+src+` JOIN app.locations b ON b.tenant_id = `+q.Arg(p.TenantID)+` AND b.id = l.branch_id
+				GROUP BY l.branch_id, b.name ORDER BY total DESC`, q.Args...)
 			if err != nil {
 				return err
 			}
 			out["sales_by_branch"] = byBranch
-			q = sqlq.New()
-			q.Add("pay.status = 'posted' AND pay.kind IN ('sale','sale_refund')")
-			cur.dates(q, "pay.payment_date")
-			cur.branch(q, "pay.branch_id")
+
+			q = sqlq.New(p.TenantID)
+			q.Add("pr.tenant_id = $1 AND pr.status = 'posted'")
+			cur.dates(q, "pr.business_date")
+			cur.branch(q, "pr.location_id")
 			byMethod, err := rows(ctx, tx, `
-				SELECT pay.method, SUM(CASE WHEN pay.direction = 'in' THEN pay.amount ELSE -pay.amount END) AS total
-				FROM payments pay`+q.Where()+` GROUP BY pay.method ORDER BY total DESC`, q.Args...)
+				SELECT CASE WHEN pr.method = 'bank_transfer' THEN 'bank' ELSE pr.method::text END AS method,
+				       COALESCE(SUM(pr.amount), 0) AS total
+				FROM app.payments_received pr`+q.Where()+` GROUP BY 1 ORDER BY total DESC`, q.Args...)
 			if err != nil {
 				return err
 			}
 			out["sales_by_payment_method"] = byMethod
 		}
 
-		if biz != "shop" && has(p, "service_billing.view", "projects.view", "reports.services", "reports.financial") {
+		if biz != "shop" && hasAny(p, "dashboard.business.view", "dashboard.operations.view", "services.invoice.manage", "services.project.view_all", "reports.business.view") {
 			svcInc := func(rng Filter) (decimal.Decimal, error) {
-				q := sqlq.New()
-				q.Add("a.code = '4300'")
-				rng.dates(q, "l.entry_date")
-				rng.branch(q, "l.branch_id")
-				v, err := one(ctx, tx, `SELECT COALESCE(SUM(l.credit - l.debit), 0) AS v FROM journal_lines l JOIN ledger_accounts a ON a.id = l.ledger_account_id`+q.Where(), q.Args...)
+				q := sqlq.New(p.TenantID)
+				q.Add("i.tenant_id = $1 AND i.status IN ('issued','partially_paid','paid')")
+				rng.dates(q, "i.issue_date")
+				v, err := one(ctx, tx, `SELECT COALESCE(SUM(i.total - i.tax_amount), 0) AS v FROM app.invoices i`+q.Where(), q.Args...)
 				return num(v, "v"), err
 			}
 			si, err := svcInc(cur)
@@ -171,24 +168,24 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 			out["service_income"] = map[string]any{"total": si, "previous_total": psi, "change_pct": pct(si.Sub(psi), psi)}
 		}
 
-		if has(p, "expenses.view", "reports.expenses") {
-			e, err := expenseTotal(ctx, tx, cur)
+		if hasAny(p, "dashboard.business.view", "reports.business.view", "finance.expense.approve", "finance.expense.enter") {
+			e, err := expenseTotal(ctx, tx, p.TenantID, cur)
 			if err != nil {
 				return err
 			}
-			pe, err := expenseTotal(ctx, tx, prev)
+			pe, err := expenseTotal(ctx, tx, p.TenantID, prev)
 			if err != nil {
 				return err
 			}
 			out["expenses"] = map[string]any{"total": e, "previous_total": pe, "change_pct": pct(e.Sub(pe), pe)}
 		}
 
-		if profit && has(p, "reports.financial", "dashboard.view_profit") {
-			r, err := s.pl(ctx, tx, cur)
+		if profit && hasAny(p, "dashboard.business.view", "reports.business.view") {
+			r, err := s.pl(ctx, tx, p.TenantID, cur)
 			if err != nil {
 				return err
 			}
-			pr, err := s.pl(ctx, tx, prev)
+			pr, err := s.pl(ctx, tx, p.TenantID, prev)
 			if err != nil {
 				return err
 			}
@@ -208,35 +205,35 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 			}
 		}
 
-		// Daily income vs expenses series for the SRS Section 5 line chart.
-		if has(p, "sales.view", "expenses.view", "reports.financial", "reports.sales") {
+		// Daily income vs expenses line chart (at least 14 days).
+		if hasAny(p, "dashboard.business.view", "dashboard.operations.view", "reports.business.view") {
 			tEnd, _ := time.Parse("2006-01-02", to)
 			tStart, _ := time.Parse("2006-01-02", from)
 			if tEnd.Sub(tStart) < 13*24*time.Hour {
 				tStart = tEnd.AddDate(0, 0, -13)
 			}
-			q := sqlq.New()
-			q.Add("a.type IN ('income','expense')")
-			if biz == "shop" {
-				q.Add("a.code NOT IN ('4300','5200')")
-			} else if biz == "services" {
-				q.Add("a.code IN ('4300','5200')")
+			dFrom, dTo := tStart.Format("2006-01-02"), tEnd.Format("2006-01-02")
+			q := sqlq.New(p.TenantID, dFrom, dTo)
+			branchCond := ""
+			if f.Branches != nil {
+				branchCond = " AND location_id = ANY(" + q.Arg(f.Branches) + ")"
 			}
-			f.branch(q, "l.branch_id")
-			q.Add("l.entry_date >= ?::date", tStart.Format("2006-01-02"))
-			q.Add("l.entry_date <= ?::date", tEnd.Format("2006-01-02"))
 			ie, err := rows(ctx, tx, `
 				SELECT gs.day::date AS date,
 				       COALESCE(x.income, 0) AS income,
 				       COALESCE(x.expenses, 0) AS expenses
-				FROM generate_series(`+q.Arg(tStart.Format("2006-01-02"))+`::date, `+q.Arg(tEnd.Format("2006-01-02"))+`::date, interval '1 day') AS gs(day)
+				FROM generate_series($2::date, $3::date, interval '1 day') AS gs(day)
 				LEFT JOIN (
-					SELECT l.entry_date,
-					       ROUND(SUM(CASE WHEN a.type = 'income' THEN l.credit - l.debit ELSE 0 END), 2) AS income,
-					       ROUND(SUM(CASE WHEN a.type = 'expense' THEN l.debit - l.credit ELSE 0 END), 2) AS expenses
-					FROM journal_lines l JOIN ledger_accounts a ON a.id = l.ledger_account_id`+q.Where()+`
-					GROUP BY l.entry_date
-				) x ON x.entry_date = gs.day::date
+					SELECT d, ROUND(SUM(inc), 2) AS income, ROUND(SUM(exp), 2) AS expenses FROM (
+						SELECT business_date AS d, total AS inc, 0::numeric AS exp FROM app.sales WHERE tenant_id = $1 AND status = 'completed' AND business_date BETWEEN $2::date AND $3::date`+branchCond+`
+						UNION ALL
+						SELECT issue_date, total, 0 FROM app.invoices WHERE tenant_id = $1 AND status IN ('issued','partially_paid','paid') AND issue_date BETWEEN $2::date AND $3::date
+						UNION ALL
+						SELECT expense_date, 0, amount FROM app.expenses WHERE tenant_id = $1 AND status IN ('approved','paid') AND expense_date BETWEEN $2::date AND $3::date`+branchCond+`
+						UNION ALL
+						SELECT bill_date, 0, amount FROM app.contractor_bills WHERE tenant_id = $1 AND status <> 'void' AND bill_date BETWEEN $2::date AND $3::date
+					) u GROUP BY d
+				) x ON x.d = gs.day::date
 				ORDER BY 1`, q.Args...)
 			if err != nil {
 				return err
@@ -244,47 +241,47 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 			out["income_vs_expenses"] = ie
 		}
 
-		if has(p, "accounts.view") {
-			balances := p.IsOwner || has(p, "accounts.view_balance")
-			q := sqlq.New()
-			q.Add("ma.is_active")
+		if hasAny(p, "finance.account.view", "dashboard.business.view") {
+			q := sqlq.New(p.TenantID)
+			q.Add("ma.tenant_id = $1 AND ma.status = 'active'")
 			if f.Branches != nil {
-				q.Add("(ma.branch_id IS NULL OR ma.branch_id = ANY(?))", f.Branches)
-			}
-			if !balances {
-				q.Add("ma.type IN ('cash','petty_cash')")
+				q.Add("(ma.location_id IS NULL OR ma.location_id = ANY(?))", f.Branches)
 			}
 			accs, err := rows(ctx, tx, `
-				SELECT ma.id, ma.name, ma.type, COALESCE((SELECT SUM(debit - credit) FROM journal_lines jl WHERE jl.money_account_id = ma.id), 0) AS balance
-				FROM money_accounts ma`+q.Where()+` ORDER BY ma.type, ma.name`, q.Args...)
+				SELECT ma.id, ma.name::text AS name, ma.kind::text AS type, ma.current_balance AS balance
+				FROM app.financial_accounts ma`+q.Where()+` ORDER BY ma.kind, ma.name`, q.Args...)
 			if err != nil {
 				return err
 			}
-			out["cash"] = map[string]any{"total": totals(accs, "", "balance")["balance"], "accounts": accs, "includes_bank_and_mobile": balances}
+			out["cash"] = map[string]any{"total": totals(accs, "", "balance")["balance"], "accounts": accs, "includes_bank_and_mobile": true}
 		}
 
-		if has(p, "stock.view", "reports.inventory") {
-			q := sqlq.New()
-			q.Add("pr.kind = 'stock'")
-			f.branch(q, "sl.branch_id")
+		if hasAny(p, "shop.stock.view", "reports.operations.view", "dashboard.operations.view", "dashboard.business.view") {
+			q := sqlq.New(p.TenantID)
+			q.Add("sl.tenant_id = $1")
+			f.branch(q, "sl.location_id")
 			st, err := one(ctx, tx, `
-				SELECT ROUND(COALESCE(SUM(sl.qty_on_hand * sl.avg_cost), 0), 2) AS value,
-				       COUNT(*) FILTER (WHERE pr.is_active AND pr.reorder_level > 0 AND sl.qty_on_hand <= pr.reorder_level) AS low_stock_count
-				FROM stock_levels sl JOIN products pr ON pr.id = sl.product_id`+q.Where(), q.Args...)
+				SELECT ROUND(COALESCE(SUM(sl.quantity_on_hand * pr.average_cost), 0), 2) AS value,
+				       COUNT(*) FILTER (WHERE pr.status = 'active' AND COALESCE(pr.min_stock_level, ts.low_stock_default) > 0 AND sl.quantity_on_hand <= COALESCE(pr.min_stock_level, ts.low_stock_default)) AS low_stock_count
+				FROM app.stock_balances sl
+				JOIN app.products pr ON pr.tenant_id = sl.tenant_id AND pr.id = sl.product_id
+				JOIN app.tenant_settings ts ON ts.tenant_id = sl.tenant_id`+q.Where(), q.Args...)
 			if err != nil {
 				return err
 			}
 			card := map[string]any{"low_stock_count": num(st, "low_stock_count")}
-			if profit || has(p, "valuation.view") {
+			if profit {
 				card["value"] = num(st, "value")
 			}
-			lq := sqlq.New()
-			lq.Add("pr.kind = 'stock' AND pr.is_active AND pr.reorder_level > 0 AND sl.qty_on_hand <= pr.reorder_level")
-			f.branch(lq, "sl.branch_id")
+			lq := sqlq.New(p.TenantID)
+			lq.Add("sl.tenant_id = $1 AND pr.status = 'active' AND COALESCE(pr.min_stock_level, ts.low_stock_default) > 0 AND sl.quantity_on_hand <= COALESCE(pr.min_stock_level, ts.low_stock_default)")
+			f.branch(lq, "sl.location_id")
 			lowList, err := rows(ctx, tx, `
-				SELECT pr.id, pr.name, sl.qty_on_hand, pr.reorder_level
-				FROM stock_levels sl JOIN products pr ON pr.id = sl.product_id`+lq.Where()+`
-				ORDER BY sl.qty_on_hand ASC LIMIT 6`, lq.Args...)
+				SELECT pr.id, pr.name::text AS name, sl.quantity_on_hand AS qty_on_hand, COALESCE(pr.min_stock_level, ts.low_stock_default) AS reorder_level
+				FROM app.stock_balances sl
+				JOIN app.products pr ON pr.tenant_id = sl.tenant_id AND pr.id = sl.product_id
+				JOIN app.tenant_settings ts ON ts.tenant_id = sl.tenant_id`+lq.Where()+`
+				ORDER BY sl.quantity_on_hand ASC LIMIT 6`, lq.Args...)
 			if err != nil {
 				return err
 			}
@@ -293,47 +290,48 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 		}
 
 		outstanding := map[string]any{}
-		if has(p, "customers.view", "reports.debts") {
-			q := sqlq.New()
-			q.Add("s.kind = 'sale' AND s.status IN ('completed','partially_refunded') AND s.balance > 0")
-			f.branch(q, "s.branch_id")
-			v, err := one(ctx, tx, `SELECT COALESCE(SUM(s.balance), 0) AS v FROM sales s`+q.Where(), q.Args...)
+		if hasAny(p, "finance.debt.view", "shop.customer.view_all", "dashboard.business.view", "dashboard.operations.view") {
+			q := sqlq.New(p.TenantID)
+			q.Add("s.tenant_id = $1 AND s.status = 'completed' AND s.balance_due > 0")
+			f.branch(q, "s.location_id")
+			v, err := one(ctx, tx, `SELECT COALESCE(SUM(s.balance_due), 0) AS v FROM app.sales s`+q.Where(), q.Args...)
 			if err != nil {
 				return err
 			}
 			outstanding["customers_owe"] = num(v, "v")
 		}
-		if has(p, "service_billing.view", "clients.view", "reports.debts") {
-			v, err := one(ctx, tx, `SELECT COALESCE(SUM(balance), 0) AS v FROM svc_invoices WHERE status IN ('issued','partial') AND balance > 0`)
+		if hasAny(p, "finance.debt.view", "services.invoice.manage", "services.client.view_all", "dashboard.business.view", "dashboard.operations.view") {
+			v, err := one(ctx, tx, `SELECT COALESCE(SUM(balance_due), 0) AS v FROM app.invoices WHERE tenant_id = $1 AND status IN ('issued','partially_paid') AND balance_due > 0`, p.TenantID)
 			if err != nil {
 				return err
 			}
 			outstanding["clients_owe"] = num(v, "v")
 		}
-		if has(p, "suppliers.view", "reports.debts") {
-			q := sqlq.New()
-			q.Add("i.status = 'posted' AND i.balance > 0")
-			f.branch(q, "i.branch_id")
-			v, err := one(ctx, tx, `SELECT COALESCE(SUM(i.balance), 0) AS v FROM purchase_invoices i`+q.Where(), q.Args...)
+		if hasAny(p, "finance.debt.view", "shop.supplier.manage", "dashboard.business.view", "dashboard.operations.view") {
+			q := sqlq.New(p.TenantID)
+			q.Add("pu.tenant_id = $1 AND pu.status <> 'cancelled' AND pu.balance_due > 0")
+			f.branch(q, "pu.location_id")
+			v, err := one(ctx, tx, `SELECT COALESCE(SUM(pu.balance_due), 0) AS v FROM app.purchases pu`+q.Where(), q.Args...)
 			if err != nil {
 				return err
 			}
 			outstanding["we_owe_suppliers"] = num(v, "v")
 		}
-		if has(p, "contractors.view", "service_billing.view", "reports.debts") {
-			v, err := one(ctx, tx, `SELECT COALESCE(SUM(amount - settled), 0) AS v FROM svc_costs WHERE status = 'owed' AND amount > settled`)
+		if hasAny(p, "finance.debt.view", "services.contractor.manage", "dashboard.business.view", "dashboard.operations.view") {
+			v, err := one(ctx, tx, `SELECT COALESCE(SUM(balance_due), 0) AS v FROM app.contractor_bills WHERE tenant_id = $1 AND status IN ('open','partially_paid') AND balance_due > 0`, p.TenantID)
 			if err != nil {
 				return err
 			}
 			outstanding["we_owe_contractors"] = num(v, "v")
 		}
-		if has(p, "payroll.view", "reports.payroll") {
-			q := sqlq.New()
-			q.Add("ps.status IN ('approved','partially_paid') AND r.status IN ('approved','paid')")
-			if f.Branches != nil {
-				q.Add("(r.branch_id IS NULL OR r.branch_id = ANY(?))", f.Branches)
-			}
-			v, err := one(ctx, tx, `SELECT COALESCE(SUM(ps.net - ps.paid_total), 0) AS v FROM payslips ps JOIN payroll_runs r ON r.id = ps.run_id`+q.Where(), q.Args...)
+		if hasAny(p, "hr.payroll.view", "dashboard.business.view") {
+			q := sqlq.New(p.TenantID)
+			q.Add("r.tenant_id = $1 AND r.status = 'approved'")
+			f.branch(q, "r.location_id")
+			v, err := one(ctx, tx, `
+				SELECT COALESCE(SUM(pl.net_pay), 0) AS v
+				FROM app.payroll_lines pl
+				JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id`+q.Where(), q.Args...)
 			if err != nil {
 				return err
 			}
@@ -343,73 +341,70 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 			out["outstanding"] = outstanding
 		}
 
-		// Services operational widgets for unified SRS Dashboard (projects by stage, overdue tasks, renewals due).
-		if has(p, "projects.view") {
+		if hasAny(p, "services.project.view_all", "services.project.manage") {
 			stages, err := rows(ctx, tx, `
-				SELECT st.name AS stage, count(*) AS count,
-				       count(*) FILTER (WHERE st.status = 'stuck' OR (st.deadline IS NOT NULL AND st.deadline < $1::date)) AS late
-				FROM svc_projects pr
+				SELECT st.name::text AS stage, count(*) AS count,
+				       count(*) FILTER (WHERE st.status = 'stuck' OR (st.deadline IS NOT NULL AND st.deadline < $2::date)) AS late
+				FROM app.projects pr
 				JOIN LATERAL (
-					SELECT name, status, deadline FROM svc_project_stages
-					WHERE project_id = pr.id AND status <> 'done'
-					ORDER BY position LIMIT 1
+					SELECT name, status, deadline FROM app.project_stages
+					WHERE tenant_id = pr.tenant_id AND project_id = pr.id AND status <> 'done'
+					ORDER BY seq LIMIT 1
 				) st ON true
-				WHERE pr.status = 'in_progress'
-				GROUP BY st.name ORDER BY count DESC, st.name`, f.today)
+				WHERE pr.tenant_id = $1 AND pr.status IN ('not_started','in_progress')
+				GROUP BY st.name ORDER BY count DESC, st.name`, p.TenantID, f.today)
 			if err != nil {
 				return err
 			}
 			out["projects_by_stage"] = stages
 		}
-		if has(p, "tasks.view") {
+		if hasAny(p, "services.task.view_all", "services.task.manage") {
 			tasks, err := rows(ctx, tx, `
-				SELECT t.id, t.title, t.due_date, t.status, u.name AS assignee_name, pr.number AS project_number
-				FROM svc_tasks t
-				LEFT JOIN users u ON u.id = t.assignee_id
-				LEFT JOIN svc_projects pr ON pr.id = t.project_id
-				WHERE t.status IN ('todo','in_progress') AND t.due_date IS NOT NULL AND t.due_date < $1::date
-				ORDER BY t.due_date ASC LIMIT 6`, f.today)
+				SELECT t.id, t.title::text AS title, t.due_at::date AS due_date,
+				       CASE WHEN t.status = 'open' THEN 'todo' ELSE t.status::text END AS status,
+				       au.full_name::text AS assignee_name, pr.project_no AS project_number
+				FROM app.tasks t
+				LEFT JOIN app.memberships am ON am.tenant_id = t.tenant_id AND am.id = t.assignee_id
+				LEFT JOIN iam.users au ON au.id = am.user_id
+				LEFT JOIN app.projects pr ON pr.tenant_id = t.tenant_id AND pr.id = t.project_id
+				WHERE t.tenant_id = $1 AND t.status IN ('open','in_progress') AND t.due_at IS NOT NULL AND t.due_at::date < $2::date
+				ORDER BY t.due_at ASC LIMIT 6`, p.TenantID, f.today)
 			if err != nil {
 				return err
 			}
 			out["overdue_tasks"] = tasks
 		}
-		if has(p, "renewals.view") {
+		if p.Has("services.renewal.manage") {
 			rens, err := rows(ctx, tx, `
-				SELECT r.id, r.item, r.due_date, (r.due_date - $1::date) AS days_left, c.name AS client_name
-				FROM svc_renewals r JOIN svc_clients c ON c.id = r.client_id
-				WHERE r.status = 'pending' AND r.due_date <= ($1::date + 30)
-				ORDER BY r.due_date ASC LIMIT 6`, f.today)
+				SELECT r.id, r.description::text AS item, r.due_date, (r.due_date - $2::date) AS days_left, c.full_name::text AS client_name
+				FROM app.renewals r JOIN app.customers c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id
+				WHERE r.tenant_id = $1 AND r.status = 'upcoming' AND r.due_date <= ($2::date + 30)
+				ORDER BY r.due_date ASC LIMIT 6`, p.TenantID, f.today)
 			if err != nil {
 				return err
 			}
 			out["renewals_due"] = rens
 		}
 
-		if has(p, "approvals.view") {
-			q := sqlq.New()
-			q.Add("status = 'pending'")
-			if f.Branches != nil {
-				q.Add("(branch_id IS NULL OR branch_id = ANY(?))", f.Branches)
-			}
-			list, err := rows(ctx, tx, `SELECT id, kind, summary, amount, created_at FROM approval_requests`+q.Where()+` ORDER BY created_at DESC LIMIT 5`, q.Args...)
+		if hasAny(p, "shop.discount.approve", "shop.return.approve", "shop.sale.void", "shop.product.price_approve", "services.price.approve", "finance.expense.approve", "finance.payment.void", "finance.transaction.correct", "finance.day.reopen", "hr.leave.approve") {
+			list, err := rows(ctx, tx, `
+				SELECT id, kind, COALESCE(reason, kind) AS summary, amount, requested_at AS created_at, source
+				FROM app.v_pending_approvals WHERE tenant_id = $1
+				ORDER BY requested_at DESC LIMIT 5`, p.TenantID)
 			if err != nil {
 				return err
 			}
 			var n int64
-			if err := tx.QueryRow(ctx, `SELECT count(*) FROM approval_requests`+q.Where(), q.Args...).Scan(&n); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.v_pending_approvals WHERE tenant_id = $1`, p.TenantID).Scan(&n); err != nil {
 				return err
 			}
 			out["pending_approvals"] = map[string]any{"count": n, "latest": list}
 		}
-		if has(p, "audit.view") {
-			q := sqlq.New()
-			if f.Branches != nil {
-				q.Add("(a.branch_id IS NULL OR a.branch_id = ANY(?))", f.Branches)
-			}
+		if p.Has("security.audit.view") {
 			list, err := rows(ctx, tx, `
-				SELECT a.id, a.action, a.entity_type, a.entity_id, a.created_at, u.name AS user_name
-				FROM audit_logs a LEFT JOIN users u ON u.id = a.user_id`+q.Where()+` ORDER BY a.created_at DESC LIMIT 10`, q.Args...)
+				SELECT a.id, a.action, a.entity_table AS entity_type, a.entity_id, a.occurred_at AS created_at, u.full_name::text AS user_name
+				FROM audit.audit_log a LEFT JOIN iam.users u ON u.id = a.actor_user_id
+				WHERE a.tenant_id = $1 ORDER BY a.occurred_at DESC LIMIT 10`, p.TenantID)
 			if err != nil {
 				return err
 			}
@@ -420,113 +415,101 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 	return out, err
 }
 
-func salesTotals(ctx context.Context, tx pgx.Tx, f Filter) (map[string]any, error) {
+func salesTotals(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, f Filter) (map[string]any, error) {
 	q := sqlq.New()
-	src := linesSQL(q, f)
+	src := linesSQL(q, tenantID, f)
 	return one(ctx, tx, `SELECT `+saleAgg+` FROM `+src, q.Args...)
 }
 
-func expenseTotal(ctx context.Context, tx pgx.Tx, f Filter) (decimal.Decimal, error) {
-	q := sqlq.New()
-	q.Add("e.status IN ('approved','paid')")
+func expenseTotal(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, f Filter) (decimal.Decimal, error) {
+	q := sqlq.New(tenantID)
+	q.Add("e.tenant_id = $1 AND e.status IN ('approved','paid')")
 	f.dates(q, "e.expense_date")
-	f.branch(q, "e.branch_id")
-	v, err := one(ctx, tx, `SELECT COALESCE(SUM(e.amount), 0) AS v FROM expenses e`+q.Where(), q.Args...)
+	f.branch(q, "e.location_id")
+	v, err := one(ctx, tx, `SELECT COALESCE(SUM(e.amount), 0) AS v FROM app.expenses e`+q.Where(), q.Args...)
 	return num(v, "v"), err
 }
 
-// Me is FR-DSH-09 for a cashier: own sales today, own till and clock status.
+// Me returns the personal home summary for a staff member or cashier.
 func (s *Service) Me(ctx context.Context, p *auth.Principal) (map[string]any, error) {
 	out := map[string]any{}
 	f := Filter{}
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		out["business_date"] = f.today
 		sales, err := one(ctx, tx, `
-			SELECT count(*) AS count, COALESCE(SUM(total), 0) AS total, COALESCE(SUM(balance), 0) AS on_credit
-			FROM sales WHERE cashier_id = $1 AND business_date = $2::date AND kind = 'sale'
-			  AND status IN ('completed','partially_refunded','refunded')`, p.UserID, f.today)
+			SELECT count(*) AS count, COALESCE(SUM(total), 0) AS total, COALESCE(SUM(balance_due), 0) AS on_credit
+			FROM app.sales WHERE tenant_id = $1 AND sold_by = $2 AND business_date = $3::date AND status = 'completed'`,
+			p.TenantID, p.MembershipID, f.today)
 		if err != nil {
 			return err
 		}
 		out["sales_today"] = sales
-		till, err := rows(ctx, tx, `
-			SELECT t.id, t.status, t.opened_at, t.opening_float, ma.name AS account,
-			       t.opening_float + COALESCE((SELECT SUM(CASE WHEN direction = 'in' THEN amount ELSE -amount END)
-			         FROM payments WHERE till_session_id = t.id AND method = 'cash' AND status = 'posted'), 0) AS expected_cash
-			FROM till_sessions t JOIN money_accounts ma ON ma.id = t.money_account_id
-			WHERE t.cashier_id = $1 AND t.status = 'open'`, p.UserID)
-		if err != nil {
-			return err
-		}
-		if len(till) > 0 {
-			out["till"] = till[0]
-		} else {
-			out["till"] = nil
-		}
+		out["till"] = nil
 		out["attendance"] = nil
 		if p.EmployeeID != nil {
 			day, err := rows(ctx, tx, `
-				SELECT day, status, first_in, last_out, late_minutes, worked_minutes
-				FROM attendance_days WHERE employee_id = $1 AND day = $2::date`, *p.EmployeeID, f.today)
+				SELECT work_date AS day, status::text AS status, clock_in_at AS first_in, clock_out_at AS last_out,
+				       minutes_late AS late_minutes,
+				       CASE WHEN clock_in_at IS NOT NULL AND clock_out_at IS NOT NULL
+				            THEN GREATEST(0, ROUND(EXTRACT(EPOCH FROM (clock_out_at - clock_in_at)) / 60)::int) ELSE 0 END AS worked_minutes
+				FROM app.attendance_records WHERE tenant_id = $1 AND employee_id = $2 AND work_date = $3::date`, p.TenantID, *p.EmployeeID, f.today)
 			if err != nil {
 				return err
 			}
-			clockedIn := false
-			if err := tx.QueryRow(ctx, `
-				SELECT COALESCE((SELECT type = 'in' FROM attendance_events WHERE employee_id = $1 ORDER BY at DESC LIMIT 1), false)`, *p.EmployeeID).Scan(&clockedIn); err != nil {
-				return err
-			}
+			clockedIn := len(day) > 0 && day[0]["first_in"] != nil && day[0]["last_out"] == nil
 			att := map[string]any{"clocked_in": clockedIn}
 			if len(day) > 0 {
 				att["today"] = day[0]
 			}
 			out["attendance"] = att
-			// Commission earned this month (from posted/approved payslips or live commission estimate).
+
 			mStart := f.today[:8] + "01"
 			var comm decimal.Decimal
 			_ = tx.QueryRow(ctx, `
-				SELECT COALESCE(SUM(pl.amount), 0)
-				FROM payslip_lines pl
-				JOIN payslips ps ON ps.id = pl.payslip_id
-				JOIN payroll_runs r ON r.id = ps.run_id
-				WHERE ps.employee_id = $1 AND pl.kind = 'commission' AND r.period_start >= $2::date AND r.status <> 'cancelled'`,
-				*p.EmployeeID, mStart).Scan(&comm)
+				SELECT COALESCE(SUM(amount), 0) FROM app.commission_entries
+				WHERE tenant_id = $1 AND employee_id = $2 AND earned_on >= $3::date AND status <> 'reversed'`,
+				p.TenantID, *p.EmployeeID, mStart).Scan(&comm)
 			out["commission_month"] = comm
 		}
-		// Staff assigned jobs (projects + design jobs), tasks and low-stock products (SRS Section 2A).
 		myJobs, err := rows(ctx, tx, `
 			SELECT * FROM (
-				SELECT j.id, 'design_job' AS kind, j.title, c.name AS client_name, j.deadline AS due_date, j.status
-				FROM design_jobs j JOIN svc_clients c ON c.id = j.client_id
-				WHERE (j.designer_id = $1 OR j.created_by = $1) AND j.status NOT IN ('delivered','cancelled')
+				SELECT j.id, 'design_job' AS kind, j.title::text AS title, c.full_name::text AS client_name, j.deadline AS due_date, j.status::text AS status
+				FROM app.design_jobs j JOIN app.customers c ON c.tenant_id = j.tenant_id AND c.id = j.customer_id
+				WHERE j.tenant_id = $1 AND (j.designer_id = $2 OR j.created_by = $2) AND j.status NOT IN ('delivered','cancelled')
 				UNION ALL
-				SELECT pr.id, 'project' AS kind, pr.name AS title, c.name AS client_name,
-				       (SELECT MIN(deadline) FROM svc_project_stages st WHERE st.project_id = pr.id AND st.status <> 'done') AS due_date,
-				       pr.status
-				FROM svc_projects pr JOIN svc_clients c ON c.id = pr.client_id
-				WHERE (pr.owner_id = $1 OR pr.created_by = $1 OR EXISTS (SELECT 1 FROM svc_project_stages st WHERE st.project_id = pr.id AND st.owner_id = $1))
-				  AND pr.status IN ('in_progress','on_hold')
-			) x ORDER BY due_date ASC NULLS LAST LIMIT 10`, p.UserID)
+				SELECT pr.id, 'project' AS kind, pr.title::text AS title, c.full_name::text AS client_name,
+				       (SELECT MIN(deadline) FROM app.project_stages st WHERE st.tenant_id = pr.tenant_id AND st.project_id = pr.id AND st.status <> 'done') AS due_date,
+				       pr.status::text AS status
+				FROM app.projects pr JOIN app.customers c ON c.tenant_id = pr.tenant_id AND c.id = pr.customer_id
+				WHERE pr.tenant_id = $1
+				  AND (pr.owner_id = $2 OR pr.created_by = $2 OR EXISTS (SELECT 1 FROM app.project_stages st WHERE st.tenant_id = pr.tenant_id AND st.project_id = pr.id AND st.owner_id = $2))
+				  AND pr.status IN ('not_started','in_progress','on_hold')
+			) x ORDER BY due_date ASC NULLS LAST LIMIT 10`, p.TenantID, p.MembershipID)
 		if err != nil {
 			return err
 		}
 		out["my_jobs"] = myJobs
 		myTasks, err := rows(ctx, tx, `
-			SELECT t.id, t.title, t.due_date, t.status, (t.due_date IS NOT NULL AND t.due_date < $2::date) AS overdue,
-			       pr.number AS project_number
-			FROM svc_tasks t LEFT JOIN svc_projects pr ON pr.id = t.project_id
-			WHERE t.assignee_id = $1 AND t.status IN ('todo','in_progress')
-			ORDER BY t.due_date ASC NULLS LAST LIMIT 10`, p.UserID, f.today)
+			SELECT t.id, t.title::text AS title, t.due_at::date AS due_date,
+			       CASE WHEN t.status = 'open' THEN 'todo' ELSE t.status::text END AS status,
+			       (t.due_at IS NOT NULL AND t.due_at::date < $3::date) AS overdue,
+			       pr.project_no AS project_number
+			FROM app.tasks t LEFT JOIN app.projects pr ON pr.tenant_id = t.tenant_id AND pr.id = t.project_id
+			WHERE t.tenant_id = $1 AND t.assignee_id = $2 AND t.status IN ('open','in_progress')
+			ORDER BY t.due_at ASC NULLS LAST LIMIT 10`, p.TenantID, p.MembershipID, f.today)
 		if err != nil {
 			return err
 		}
 		out["my_tasks"] = myTasks
 		if p.BranchID != nil {
 			low, err := rows(ctx, tx, `
-				SELECT pr.id, pr.name, sl.qty_on_hand, pr.reorder_level
-				FROM stock_levels sl JOIN products pr ON pr.id = sl.product_id
-				WHERE sl.branch_id = $1 AND pr.kind = 'stock' AND pr.is_active AND pr.reorder_level > 0 AND sl.qty_on_hand <= pr.reorder_level
-				ORDER BY sl.qty_on_hand ASC LIMIT 8`, *p.BranchID)
+				SELECT pr.id, pr.name::text AS name, sl.quantity_on_hand AS qty_on_hand, COALESCE(pr.min_stock_level, ts.low_stock_default) AS reorder_level
+				FROM app.stock_balances sl
+				JOIN app.products pr ON pr.tenant_id = sl.tenant_id AND pr.id = sl.product_id
+				JOIN app.tenant_settings ts ON ts.tenant_id = sl.tenant_id
+				WHERE sl.tenant_id = $1 AND sl.location_id = $2 AND pr.status = 'active'
+				  AND COALESCE(pr.min_stock_level, ts.low_stock_default) > 0 AND sl.quantity_on_hand <= COALESCE(pr.min_stock_level, ts.low_stock_default)
+				ORDER BY sl.quantity_on_hand ASC LIMIT 8`, p.TenantID, *p.BranchID)
 			if err != nil {
 				return err
 			}
@@ -538,5 +521,3 @@ func (s *Service) Me(ctx context.Context, p *auth.Principal) (map[string]any, er
 	})
 	return out, err
 }
-
-var _ = uuid.Nil

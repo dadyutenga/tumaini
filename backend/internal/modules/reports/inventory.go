@@ -19,25 +19,28 @@ func optUUID(f Filter, key string) *uuid.UUID {
 	return &id
 }
 
-// OnHand is FR-REP-07 stock on hand. Cost columns need the cost permission.
+// OnHand lists current stock per product and location. Cost columns require cost permission.
 func (s *Service) OnHand(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		q.Add("pr.kind = 'stock'")
-		f.branch(q, "sl.branch_id")
+		q := sqlq.New(p.TenantID)
+		q.Add("sl.tenant_id = $1")
+		f.branch(q, "sl.location_id")
 		if c := optUUID(f, "category_id"); c != nil {
 			q.Add("pr.category_id = ?", *c)
 		}
 		q.If(f.Q("q") != "", "(pr.name ILIKE '%' || ? || '%' OR pr.sku ILIKE '%' || ? || '%')", f.Q("q"), f.Q("q"))
 		var err error
 		list, err = rows(ctx, tx, `
-			SELECT pr.id AS product_id, pr.name AS product, pr.sku, COALESCE(c.name, 'Uncategorised') AS category, b.name AS branch,
-			       sl.qty_on_hand, pr.reorder_level, ROUND(sl.avg_cost, 4) AS avg_cost, ROUND(sl.qty_on_hand * sl.avg_cost, 2) AS value
-			FROM stock_levels sl
-			JOIN products pr ON pr.id = sl.product_id
-			JOIN branches b ON b.id = sl.branch_id
-			LEFT JOIN categories c ON c.id = pr.category_id`+q.Where()+`
+			SELECT pr.id AS product_id, pr.name::text AS product, pr.sku, COALESCE(c.name::text, 'Uncategorised') AS category,
+			       b.name::text AS branch, sl.quantity_on_hand AS qty_on_hand,
+			       COALESCE(pr.min_stock_level, ts.low_stock_default) AS reorder_level,
+			       ROUND(pr.average_cost, 4) AS avg_cost, ROUND(sl.quantity_on_hand * pr.average_cost, 2) AS value
+			FROM app.stock_balances sl
+			JOIN app.products pr ON pr.tenant_id = sl.tenant_id AND pr.id = sl.product_id
+			JOIN app.locations b ON b.tenant_id = sl.tenant_id AND b.id = sl.location_id
+			JOIN app.tenant_settings ts ON ts.tenant_id = sl.tenant_id
+			LEFT JOIN app.product_categories c ON c.tenant_id = pr.tenant_id AND c.id = pr.category_id`+q.Where()+`
 			ORDER BY pr.name, b.name`, q.Args...)
 		return err
 	})
@@ -49,14 +52,12 @@ func (s *Service) OnHand(ctx context.Context, p *auth.Principal, f Filter) (expo
 }
 
 var valuationGroups = map[string]struct{ sel, group string }{
-	"product":  {"pr.name AS product, pr.sku, COALESCE(c.name, 'Uncategorised') AS category, SUM(v.qty) AS qty_on_hand, CASE WHEN SUM(v.qty) = 0 THEN 0 ELSE ROUND(SUM(v.qty * v.avg) / SUM(v.qty), 4) END AS avg_cost", "pr.id, pr.name, pr.sku, c.name"},
-	"category": {"COALESCE(c.name, 'Uncategorised') AS category, SUM(v.qty) AS qty_on_hand", "c.name"},
-	"branch":   {"b.name AS branch, SUM(v.qty) AS qty_on_hand", "b.id, b.name"},
+	"product":  {"pr.name::text AS product, pr.sku, COALESCE(c.name::text, 'Uncategorised') AS category, SUM(v.qty) AS qty_on_hand, CASE WHEN SUM(v.qty) = 0 THEN 0 ELSE ROUND(SUM(v.qty * pr.average_cost) / SUM(v.qty), 4) END AS avg_cost", "pr.id, pr.name, pr.sku, c.name"},
+	"category": {"COALESCE(c.name::text, 'Uncategorised') AS category, SUM(v.qty) AS qty_on_hand", "c.name"},
+	"branch":   {"b.name::text AS branch, SUM(v.qty) AS qty_on_hand", "b.id, b.name"},
 }
 
-// Valuation is FR-INV-28: quantity, average cost and value now or at a past
-// date. For a past date the last movement on or before that day gives the
-// quantity and average cost after it.
+// Valuation computes stock quantity, average cost, and value today or as of a past date.
 func (s *Service) Valuation(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	group := f.Q("group_by")
 	if group == "" {
@@ -69,26 +70,25 @@ func (s *Service) Valuation(ctx context.Context, p *auth.Principal, f Filter) (e
 	asOf := f.Q("as_of")
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
+		q := sqlq.New(p.TenantID)
 		var src string
 		if asOf == "" {
-			src = `(SELECT sl.branch_id, sl.product_id, sl.qty_on_hand AS qty, sl.avg_cost AS avg FROM stock_levels sl` + branchWhere(q, f, "sl.branch_id") + `)`
+			src = `(SELECT sl.location_id AS branch_id, sl.product_id, sl.quantity_on_hand AS qty FROM app.stock_balances sl WHERE sl.tenant_id = $1` + branchAnd(q, f, "sl.location_id") + `)`
 		} else {
-			tz := q.Arg(f.tz)
 			day := q.Arg(asOf)
-			src = `(SELECT DISTINCT ON (m.branch_id, m.product_id) m.branch_id, m.product_id, m.qty_after AS qty, m.avg_cost_after AS avg
-				FROM stock_movements m WHERE (m.created_at AT TIME ZONE ` + tz + `)::date <= ` + day + `::date` + branchAnd(q, f, "m.branch_id") + `
-				ORDER BY m.branch_id, m.product_id, m.created_at DESC, m.id DESC)`
+			src = `(SELECT m.location_id AS branch_id, m.product_id, SUM(m.quantity_delta) AS qty
+				FROM app.stock_movements m WHERE m.tenant_id = $1 AND m.business_date <= ` + day + `::date` + branchAnd(q, f, "m.location_id") + `
+				GROUP BY m.location_id, m.product_id)`
 		}
 		var err error
 		list, err = rows(ctx, tx, `
-			SELECT `+g.sel+`, ROUND(SUM(v.qty * v.avg), 2) AS value
+			SELECT `+g.sel+`, ROUND(SUM(v.qty * pr.average_cost), 2) AS value
 			FROM `+src+` v
-			JOIN products pr ON pr.id = v.product_id AND pr.kind = 'stock'
-			JOIN branches b ON b.id = v.branch_id
-			LEFT JOIN categories c ON c.id = pr.category_id
+			JOIN app.products pr ON pr.tenant_id = $1 AND pr.id = v.product_id
+			JOIN app.locations b ON b.tenant_id = $1 AND b.id = v.branch_id
+			LEFT JOIN app.product_categories c ON c.tenant_id = pr.tenant_id AND c.id = pr.category_id
 			GROUP BY `+g.group+`
-			HAVING SUM(v.qty) <> 0 OR SUM(v.qty * v.avg) <> 0
+			HAVING SUM(v.qty) <> 0 OR SUM(v.qty * pr.average_cost) <> 0
 			ORDER BY value DESC`, q.Args...)
 		return err
 	})
@@ -105,13 +105,6 @@ func (s *Service) Valuation(ctx context.Context, p *auth.Principal, f Filter) (e
 		Totals: totals(list, "Total", "qty_on_hand", "value")}, map[string]any{"as_of": asOf, "group_by": group}, err
 }
 
-func branchWhere(q *sqlq.Q, f Filter, col string) string {
-	if f.Branches == nil {
-		return ""
-	}
-	return " WHERE " + col + " = ANY(" + q.Arg(f.Branches) + ")"
-}
-
 func branchAnd(q *sqlq.Q, f Filter, col string) string {
 	if f.Branches == nil {
 		return ""
@@ -119,39 +112,64 @@ func branchAnd(q *sqlq.Q, f Filter, col string) string {
 	return " AND " + col + " = ANY(" + q.Arg(f.Branches) + ")"
 }
 
-var movementTypes = map[string]bool{"opening": true, "stock_in": true, "stock_out": true, "purchase": true, "purchase_return": true,
-	"sale": true, "sale_return": true, "transfer_out": true, "transfer_in": true, "adjustment": true}
+var movementTypeMap = map[string]string{
+	"purchase_receipt": "purchase_receipt",
+	"purchase":         "purchase_receipt",
+	"sale":             "sale",
+	"sale_void":        "sale_void",
+	"sale_return":      "sale_return",
+	"adjustment":       "adjustment",
+	"opening":          "adjustment",
+	"stock_in":         "adjustment",
+	"stock_out":        "adjustment",
+	"transfer_out":     "transfer_out",
+	"transfer_in":      "transfer_in",
+}
 
-// Movements is FR-REP-07 movement history, paginated with page and per_page.
+// Movements returns paginated stock movement history from app.stock_movements.
 func (s *Service) Movements(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	typ := f.Q("type")
-	if typ != "" && !movementTypes[typ] {
-		return export.Table{}, nil, badQuery("type is not a known movement type")
+	mappedTyp := ""
+	if typ != "" {
+		var ok bool
+		if mappedTyp, ok = movementTypeMap[typ]; !ok {
+			return export.Table{}, nil, badQuery("type is not a known movement type")
+		}
 	}
 	page := f.Int("page", 1, 1, 1000000)
 	per := f.Int("per_page", 100, 1, 1000)
 	var list []map[string]any
 	var total int64
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		f.dates(q, "m.created_at::date")
-		f.branch(q, "m.branch_id")
-		q.If(typ != "", "m.type = ?", typ)
+		q := sqlq.New(p.TenantID)
+		q.Add("m.tenant_id = $1")
+		f.dates(q, "m.business_date")
+		f.branch(q, "m.location_id")
+		q.If(mappedTyp != "", "m.movement_type = ?::app.stock_movement_type", mappedTyp)
 		if id := optUUID(f, "product_id"); id != nil {
 			q.Add("m.product_id = ?", *id)
 		}
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM stock_movements m`+q.Where(), q.Args...).Scan(&total); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.stock_movements m`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		var err error
 		list, err = rows(ctx, tx, `
-			SELECT m.created_at::date AS date, m.created_at, pr.name AS product, pr.sku, b.name AS branch, m.type,
-			       m.qty, ROUND(m.unit_cost, 4) AS unit_cost, ROUND(m.qty * m.unit_cost, 2) AS value, m.qty_after,
-			       m.source_type AS source, m.source_id
-			FROM stock_movements m
-			JOIN products pr ON pr.id = m.product_id
-			JOIN branches b ON b.id = m.branch_id`+q.Where()+`
-			ORDER BY m.created_at DESC, m.id`+q.Page(per, (page-1)*per), q.Args...)
+			SELECT m.business_date AS date, m.occurred_at AS created_at, pr.name::text AS product, pr.sku, b.name::text AS branch,
+			       m.movement_type::text AS type, m.quantity_delta AS qty,
+			       ROUND(COALESCE(m.unit_cost, pr.average_cost), 4) AS unit_cost,
+			       ROUND(m.quantity_delta * COALESCE(m.unit_cost, pr.average_cost), 2) AS value,
+			       COALESCE(sb.quantity_on_hand, 0) AS qty_after,
+			       CASE WHEN m.sale_line_id IS NOT NULL THEN 'sale'
+			            WHEN m.sale_return_line_id IS NOT NULL THEN 'sale_return'
+			            WHEN m.goods_receipt_line_id IS NOT NULL THEN 'goods_receipt'
+			            WHEN m.stock_adjustment_line_id IS NOT NULL THEN 'stock_adjustment'
+			            ELSE 'stock_transfer' END AS source,
+			       COALESCE(m.sale_line_id, m.sale_return_line_id, m.goods_receipt_line_id, m.stock_adjustment_line_id, m.stock_transfer_line_id) AS source_id
+			FROM app.stock_movements m
+			JOIN app.products pr ON pr.tenant_id = m.tenant_id AND pr.id = m.product_id
+			JOIN app.locations b ON b.tenant_id = m.tenant_id AND b.id = m.location_id
+			LEFT JOIN app.stock_balances sb ON sb.tenant_id = m.tenant_id AND sb.location_id = m.location_id AND sb.product_id = m.product_id`+q.Where()+`
+			ORDER BY m.occurred_at DESC, m.id`+q.Page(per, (page-1)*per), q.Args...)
 		return err
 	})
 	keys := stripCost(p, []string{"date", "product", "sku", "branch", "type", "qty", "unit_cost", "value", "qty_after", "source"})
@@ -162,27 +180,29 @@ func (s *Service) Movements(ctx context.Context, p *auth.Principal, f Filter) (e
 		map[string]any{"meta": map[string]any{"page": page, "per_page": per, "total": total}}, err
 }
 
-// LowStock is FR-INV-26: products at or below reorder level with a suggested order.
+// LowStock lists active products at or below their minimum stock level.
 func (s *Service) LowStock(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		q.Add("pr.kind = 'stock' AND pr.is_active AND pr.reorder_level > 0 AND sl.qty_on_hand <= pr.reorder_level")
-		f.branch(q, "sl.branch_id")
+		q := sqlq.New(p.TenantID)
+		q.Add("sl.tenant_id = $1 AND pr.status = 'active' AND COALESCE(pr.min_stock_level, ts.low_stock_default) > 0 AND sl.quantity_on_hand <= COALESCE(pr.min_stock_level, ts.low_stock_default)")
+		f.branch(q, "sl.location_id")
 		var err error
 		list, err = rows(ctx, tx, `
-			SELECT pr.id AS product_id, pr.name AS product, pr.sku, b.name AS branch, sl.qty_on_hand, pr.reorder_level,
-			       GREATEST(pr.reorder_level * 2 - sl.qty_on_hand, 0) AS suggested_qty
-			FROM stock_levels sl
-			JOIN products pr ON pr.id = sl.product_id
-			JOIN branches b ON b.id = sl.branch_id`+q.Where()+`
-			ORDER BY sl.qty_on_hand - pr.reorder_level, pr.name`, q.Args...)
+			SELECT pr.id AS product_id, pr.name::text AS product, pr.sku, b.name::text AS branch,
+			       sl.quantity_on_hand AS qty_on_hand, COALESCE(pr.min_stock_level, ts.low_stock_default) AS reorder_level,
+			       GREATEST(COALESCE(pr.min_stock_level, ts.low_stock_default) * 2 - sl.quantity_on_hand, 0) AS suggested_qty
+			FROM app.stock_balances sl
+			JOIN app.products pr ON pr.tenant_id = sl.tenant_id AND pr.id = sl.product_id
+			JOIN app.locations b ON b.tenant_id = sl.tenant_id AND b.id = sl.location_id
+			JOIN app.tenant_settings ts ON ts.tenant_id = sl.tenant_id`+q.Where()+`
+			ORDER BY sl.quantity_on_hand - COALESCE(pr.min_stock_level, ts.low_stock_default), pr.name`, q.Args...)
 		return err
 	})
 	return export.Table{Title: "Low stock", Columns: cols("product", "sku", "branch", "qty_on_hand", "reorder_level", "suggested_qty"), Rows: list}, nil, err
 }
 
-// DeadStock lists products with stock and no sale in the last N days (days, default 90).
+// DeadStock lists products with stock on hand and no sale for at least N days (default 90).
 func (s *Service) DeadStock(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	days := f.Int("days", 90, 1, 3650)
 	var list []map[string]any
@@ -191,23 +211,25 @@ func (s *Service) DeadStock(ctx context.Context, p *auth.Principal, f Filter) (e
 		if ref == "" {
 			ref = f.today
 		}
-		q := sqlq.New()
+		q := sqlq.New(p.TenantID)
 		r := q.Arg(ref)
 		d := q.Arg(days)
-		q.Add("pr.kind = 'stock' AND sl.qty_on_hand > 0")
-		f.branch(q, "sl.branch_id")
+		q.Add("sl.tenant_id = $1 AND sl.quantity_on_hand > 0")
+		f.branch(q, "sl.location_id")
 		var err error
 		list, err = rows(ctx, tx, `
 			SELECT * FROM (
-				SELECT pr.name AS product, pr.sku, b.name AS branch, sl.qty_on_hand, ROUND(sl.qty_on_hand * sl.avg_cost, 2) AS value,
+				SELECT pr.name::text AS product, pr.sku, b.name::text AS branch,
+				       sl.quantity_on_hand AS qty_on_hand, ROUND(sl.quantity_on_hand * pr.average_cost, 2) AS value,
 				       ls.last_sold, (`+r+`::date - COALESCE(ls.last_sold, pr.created_at::date)) AS days_idle
-				FROM stock_levels sl
-				JOIN products pr ON pr.id = sl.product_id
-				JOIN branches b ON b.id = sl.branch_id
+				FROM app.stock_balances sl
+				JOIN app.products pr ON pr.tenant_id = sl.tenant_id AND pr.id = sl.product_id
+				JOIN app.locations b ON b.tenant_id = sl.tenant_id AND b.id = sl.location_id
 				LEFT JOIN LATERAL (
-					SELECT max(s.business_date) AS last_sold FROM sale_items si JOIN sales s ON s.id = si.sale_id
-					WHERE si.product_id = sl.product_id AND s.branch_id = sl.branch_id AND s.kind = 'sale'
-					  AND s.status IN ('completed','partially_refunded','refunded')
+					SELECT max(s.business_date) AS last_sold
+					FROM app.sale_lines si
+					JOIN app.sales s ON s.tenant_id = si.tenant_id AND s.id = si.sale_id
+					WHERE si.tenant_id = sl.tenant_id AND si.product_id = sl.product_id AND s.location_id = sl.location_id AND s.status = 'completed'
 				) ls ON true`+q.Where()+`
 			) x WHERE x.days_idle >= `+d+` ORDER BY x.days_idle DESC, x.product`, q.Args...)
 		return err
@@ -220,98 +242,42 @@ func (s *Service) DeadStock(ctx context.Context, p *auth.Principal, f Filter) (e
 		Totals: totals(list, "Total", stripCost(p, []string{"qty_on_hand", "value"})...)}, map[string]any{"days": days}, err
 }
 
-// Expiring lists receipt lines whose expiry date falls within the next N days, or has passed (FR-INV-32).
-// Expiry is recorded per receipt, not per batch of stock on hand, so qty_received is what arrived with
-// that receipt, and qty_on_hand is the product's total in that branch today.
-func (s *Service) Expiring(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
+// Expiring returns an empty report because batch/expiry tracking is not part of the approved BMS schema.
+func (s *Service) Expiring(_ context.Context, _ *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	days := f.Int("days", 30, 0, 3650)
-	var list []map[string]any
-	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		ref := f.To
-		if ref == "" {
-			ref = f.today
-		}
-		q := sqlq.New()
-		r := q.Arg(ref)
-		d := q.Arg(days)
-		q.Add("x.expiry_date <= " + r + "::date + " + d + "::int")
-		f.branch(q, "x.branch_id")
-		var err error
-		list, err = rows(ctx, tx, `
-			SELECT x.source, x.number, pr.name AS product, pr.sku, b.name AS branch, x.batch_no,
-			       x.expiry_date::text AS expiry_date, (x.expiry_date - `+r+`::date) AS days_left,
-			       x.qty_received, COALESCE(sl.qty_on_hand, 0) AS qty_on_hand
-			FROM (
-				SELECT 'stock_entry' AS source, e.number, e.branch_id, i.product_id, i.batch_no, i.expiry_date, i.qty AS qty_received
-				FROM stock_entry_items i JOIN stock_entries e ON e.id = i.entry_id
-				WHERE e.direction = 'in' AND i.expiry_date IS NOT NULL
-				UNION ALL
-				SELECT 'goods_receipt', g.number, g.branch_id, gi.product_id, gi.batch_no, gi.expiry_date, gi.qty_received
-				FROM goods_receipt_items gi JOIN goods_receipts g ON g.id = gi.receipt_id
-				WHERE gi.expiry_date IS NOT NULL
-			) x
-			JOIN products pr ON pr.id = x.product_id
-			JOIN branches b ON b.id = x.branch_id
-			LEFT JOIN stock_levels sl ON sl.product_id = x.product_id AND sl.branch_id = x.branch_id`+q.Where()+`
-			ORDER BY x.expiry_date, pr.name`, q.Args...)
-		return err
-	})
-	return export.Table{Title: "Expiring stock", Subtitle: "Receipt lines expiring within the chosen number of days, or already expired",
+	return export.Table{
+		Title: "Expiring stock", Subtitle: "Batch expiry tracking is not enabled in this schema",
 		Columns: cols("source", "number", "product", "sku", "branch", "batch_no", "expiry_date", "days_left", "qty_received", "qty_on_hand"),
-		Rows:    list}, map[string]any{"days": days}, err
+		Rows:    []map[string]any{},
+	}, map[string]any{"days": days}, nil
 }
 
-// Losses lists stock out, downward adjustments and transfer shortfalls with their cost.
+// Losses lists downward stock adjustments with their reason and cost value.
 func (s *Service) Losses(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		tz := q.Arg(f.tz)
-		mq := "(m.type = 'stock_out' OR (m.type = 'adjustment' AND m.qty < 0))"
-		if f.From != "" {
-			mq += " AND (m.created_at AT TIME ZONE " + tz + ")::date >= " + q.Arg(f.From) + "::date"
-		}
-		if f.To != "" {
-			mq += " AND (m.created_at AT TIME ZONE " + tz + ")::date <= " + q.Arg(f.To) + "::date"
-		}
-		tq := "t.status = 'received_with_difference' AND ti.qty_received < ti.qty_sent"
-		if f.From != "" {
-			tq += " AND (t.received_at AT TIME ZONE " + tz + ")::date >= " + q.Arg(f.From) + "::date"
-		}
-		if f.To != "" {
-			tq += " AND (t.received_at AT TIME ZONE " + tz + ")::date <= " + q.Arg(f.To) + "::date"
-		}
-		if f.Branches != nil {
-			b := q.Arg(f.Branches)
-			mq += " AND m.branch_id = ANY(" + b + ")"
-			tq += " AND t.to_branch_id = ANY(" + b + ")"
-		}
+		q := sqlq.New(p.TenantID)
+		q.Add("m.tenant_id = $1 AND m.movement_type = 'adjustment' AND m.quantity_delta < 0")
+		f.dates(q, "m.business_date")
+		f.branch(q, "m.location_id")
 		var err error
 		list, err = rows(ctx, tx, `
-			SELECT x.date, x.reason, pr.name AS product, pr.sku, b.name AS branch, x.qty, ROUND(x.value, 2) AS value
-			FROM (
-				SELECT (m.created_at AT TIME ZONE `+tz+`)::date AS date,
-				       CASE WHEN m.type = 'stock_out' THEN COALESCE(se.reason, 'stock_out') ELSE 'adjustment' END AS reason,
-				       m.product_id, m.branch_id, -m.qty AS qty, -m.qty * m.unit_cost AS value
-				FROM stock_movements m
-				LEFT JOIN stock_entries se ON se.id = m.source_id AND m.source_type = 'stock_entry'
-				WHERE `+mq+`
-				UNION ALL
-				SELECT (t.received_at AT TIME ZONE `+tz+`)::date, 'transfer_loss', ti.product_id, t.to_branch_id,
-				       ti.qty_sent - ti.qty_received, (ti.qty_sent - ti.qty_received) * ti.unit_cost
-				FROM stock_transfer_items ti JOIN stock_transfers t ON t.id = ti.transfer_id
-				WHERE `+tq+`
-			) x
-			JOIN products pr ON pr.id = x.product_id
-			JOIN branches b ON b.id = x.branch_id
-			ORDER BY x.date DESC, pr.name`, q.Args...)
+			SELECT m.business_date AS date, COALESCE(sa.reason::text, 'adjustment') AS reason,
+			       pr.name::text AS product, pr.sku, b.name::text AS branch,
+			       -m.quantity_delta AS qty, ROUND(-m.quantity_delta * COALESCE(m.unit_cost, pr.average_cost), 2) AS value
+			FROM app.stock_movements m
+			JOIN app.products pr ON pr.tenant_id = m.tenant_id AND pr.id = m.product_id
+			JOIN app.locations b ON b.tenant_id = m.tenant_id AND b.id = m.location_id
+			LEFT JOIN app.stock_adjustment_lines sal ON sal.tenant_id = m.tenant_id AND sal.id = m.stock_adjustment_line_id
+			LEFT JOIN app.stock_adjustments sa ON sa.tenant_id = sal.tenant_id AND sa.id = sal.stock_adjustment_id`+q.Where()+`
+			ORDER BY m.business_date DESC, pr.name`, q.Args...)
 		return err
 	})
 	return export.Table{Title: "Stock losses", Subtitle: f.subtitle(), Columns: cols("date", "reason", "product", "sku", "branch", "qty", "value"),
 		Rows: list, Totals: totals(list, "Total", "qty", "value")}, nil, err
 }
 
-// Purchases is FR-REP-08: ordered against received and invoiced.
+// Purchases compares ordered against received quantities and values by supplier, product, or month.
 func (s *Service) Purchases(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	group := f.Q("group_by")
 	if group == "" {
@@ -322,7 +288,7 @@ func (s *Service) Purchases(ctx context.Context, p *auth.Principal, f Filter) (e
 	}
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
+		q := sqlq.New(p.TenantID)
 		cond := func(dateCol, branchCol string) string {
 			c := ""
 			if f.From != "" {
@@ -336,30 +302,34 @@ func (s *Service) Purchases(ctx context.Context, p *auth.Principal, f Filter) (e
 			}
 			return c
 		}
-		// One row per source line: ordered (PO items), received (GRN items), invoiced (invoices).
 		src := `
-			SELECT po.supplier_id, pi.product_id, date_trunc('month', po.order_date)::date AS month,
-			       pi.qty_ordered AS oq, pi.line_total AS ov, 0::numeric AS rq, 0::numeric AS rv, 0::numeric AS iv
-			FROM purchase_order_items pi JOIN purchase_orders po ON po.id = pi.po_id
-			WHERE po.status NOT IN ('draft','cancelled','pending_approval')` + cond("po.order_date", "po.branch_id") + `
+			SELECT po.supplier_id, pl.product_id, date_trunc('month', po.order_date)::date AS month,
+			       pl.quantity_ordered AS oq, pl.line_total AS ov, 0::numeric AS rq, 0::numeric AS rv, 0::numeric AS iv
+			FROM app.purchase_lines pl
+			JOIN app.purchases po ON po.tenant_id = pl.tenant_id AND po.id = pl.purchase_id
+			WHERE po.tenant_id = $1 AND po.status NOT IN ('draft','cancelled')` + cond("po.order_date", "po.location_id") + `
 			UNION ALL
-			SELECT g.supplier_id, gi.product_id, date_trunc('month', g.received_date)::date, 0, 0, gi.qty_received, gi.qty_received * gi.unit_cost, 0
-			FROM goods_receipt_items gi JOIN goods_receipts g ON g.id = gi.receipt_id
-			WHERE true` + cond("g.received_date", "g.branch_id")
+			SELECT po.supplier_id, pl.product_id, date_trunc('month', gr.business_date)::date, 0, 0, grl.quantity, grl.quantity * grl.unit_cost, 0
+			FROM app.goods_receipt_lines grl
+			JOIN app.goods_receipts gr ON gr.tenant_id = grl.tenant_id AND gr.id = grl.goods_receipt_id
+			JOIN app.purchase_lines pl ON pl.tenant_id = grl.tenant_id AND pl.id = grl.purchase_line_id
+			JOIN app.purchases po ON po.tenant_id = gr.tenant_id AND po.id = gr.purchase_id
+			WHERE gr.tenant_id = $1` + cond("gr.business_date", "gr.location_id")
 		if group != "product" {
 			src += `
 			UNION ALL
-			SELECT i.supplier_id, NULL, date_trunc('month', i.invoice_date)::date, 0, 0, 0, 0, i.total
-			FROM purchase_invoices i WHERE i.status = 'posted'` + cond("i.invoice_date", "i.branch_id")
+			SELECT po.supplier_id, NULL::uuid, date_trunc('month', po.order_date)::date, 0, 0, 0, 0, po.total
+			FROM app.purchases po
+			WHERE po.tenant_id = $1 AND po.status IN ('ordered','partially_received','received')` + cond("po.order_date", "po.location_id")
 		}
 		sel := map[string]string{
-			"supplier": "sp.name AS supplier",
-			"product":  "pr.name AS product, pr.sku",
+			"supplier": "sp.name::text AS supplier",
+			"product":  "pr.name::text AS product, pr.sku",
 			"month":    "x.month",
 		}[group]
 		join := map[string]string{
-			"supplier": "JOIN suppliers sp ON sp.id = x.supplier_id",
-			"product":  "JOIN products pr ON pr.id = x.product_id",
+			"supplier": "JOIN app.suppliers sp ON sp.tenant_id = $1 AND sp.id = x.supplier_id",
+			"product":  "JOIN app.products pr ON pr.tenant_id = $1 AND pr.id = x.product_id",
 			"month":    "",
 		}[group]
 		gb := map[string]string{"supplier": "sp.id, sp.name", "product": "pr.id, pr.name, pr.sku", "month": "x.month"}[group]
@@ -380,8 +350,7 @@ func (s *Service) Purchases(ctx context.Context, p *auth.Principal, f Filter) (e
 		Totals: totals(list, "Total", "ordered_value", "received_value", "invoiced")}, map[string]any{"group_by": group}, err
 }
 
-// CustomerDebt is FR-REP-09: unpaid sale balances per customer in age buckets
-// counted from the due date (or sale date) to the as-of date.
+// CustomerDebt ages unpaid completed sales and issued invoices per customer.
 func (s *Service) CustomerDebt(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	asOf := ""
@@ -390,23 +359,32 @@ func (s *Service) CustomerDebt(ctx context.Context, p *auth.Principal, f Filter)
 		if asOf == "" {
 			asOf = f.today
 		}
-		q := sqlq.New()
+		q := sqlq.New(p.TenantID)
 		d := q.Arg(asOf)
-		q.Add("s.balance > 0 AND s.kind = 'sale' AND s.status IN ('completed','partially_refunded')")
-		f.branch(q, "s.branch_id")
+		sc := "s.tenant_id = $1 AND s.balance_due > 0 AND s.status = 'completed'"
+		if f.Branches != nil {
+			sc += " AND s.location_id = ANY(" + q.Arg(f.Branches) + ")"
+		}
 		var err error
 		list, err = rows(ctx, tx, aged(`
-			SELECT c.id, c.name AS customer, c.phone, c.credit_limit,
+			SELECT c.id, c.full_name::text AS customer, c.phone::text AS phone, COALESCE(c.credit_limit, 0) AS credit_limit,
 			       `+d+`::date - COALESCE(s.due_date, s.business_date) AS age,
-			       `+d+`::date > COALESCE(s.due_date, s.business_date) AS is_overdue, s.balance AS amt
-			FROM sales s JOIN customers c ON c.id = s.customer_id`+q.Where(), "id, customer, phone, credit_limit", "customer"), q.Args...)
+			       `+d+`::date > COALESCE(s.due_date, s.business_date) AS is_overdue, s.balance_due AS amt
+			FROM app.sales s JOIN app.customers c ON c.tenant_id = s.tenant_id AND c.id = s.customer_id
+			WHERE `+sc+`
+			UNION ALL
+			SELECT c.id, c.full_name::text, c.phone::text, COALESCE(c.credit_limit, 0),
+			       `+d+`::date - i.due_date, `+d+`::date > i.due_date, i.balance_due
+			FROM app.invoices i JOIN app.customers c ON c.tenant_id = i.tenant_id AND c.id = i.customer_id
+			WHERE i.tenant_id = $1 AND i.balance_due > 0 AND i.status IN ('issued','partially_paid')`,
+			"id, customer, phone, credit_limit", "customer"), q.Args...)
 		return err
 	})
 	return export.Table{Title: "Customer debt", Subtitle: "As of " + asOf, Columns: cols("customer", "phone", "credit_limit", "invoices", "current", "d31_60", "d61_90", "over_90", "overdue", "balance"),
 		Rows: list, Totals: totals(list, "Total", "invoices", "current", "d31_60", "d61_90", "over_90", "overdue", "balance")}, map[string]any{"as_of": asOf}, err
 }
 
-// SupplierDebt is FR-REP-10: unpaid purchase invoices per supplier by age.
+// SupplierDebt ages unpaid purchase balances per supplier.
 func (s *Service) SupplierDebt(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	asOf := ""
@@ -415,16 +393,16 @@ func (s *Service) SupplierDebt(ctx context.Context, p *auth.Principal, f Filter)
 		if asOf == "" {
 			asOf = f.today
 		}
-		q := sqlq.New()
+		q := sqlq.New(p.TenantID)
 		d := q.Arg(asOf)
-		q.Add("i.balance > 0 AND i.status = 'posted'")
-		f.branch(q, "i.branch_id")
+		q.Add("pu.tenant_id = $1 AND pu.balance_due > 0 AND pu.status <> 'cancelled'")
+		f.branch(q, "pu.location_id")
 		var err error
 		list, err = rows(ctx, tx, aged(`
-			SELECT sp.id, sp.name AS supplier, sp.phone,
-			       `+d+`::date - i.invoice_date AS age,
-			       `+d+`::date > COALESCE(i.due_date, i.invoice_date) AS is_overdue, i.balance AS amt
-			FROM purchase_invoices i JOIN suppliers sp ON sp.id = i.supplier_id`+q.Where(), "id, supplier, phone", "supplier"), q.Args...)
+			SELECT sp.id, sp.name::text AS supplier, sp.phone::text AS phone,
+			       `+d+`::date - pu.order_date AS age,
+			       `+d+`::date > COALESCE(pu.due_date, pu.order_date) AS is_overdue, pu.balance_due AS amt
+			FROM app.purchases pu JOIN app.suppliers sp ON sp.tenant_id = pu.tenant_id AND sp.id = pu.supplier_id`+q.Where(), "id, supplier, phone", "supplier"), q.Args...)
 		return err
 	})
 	return export.Table{Title: "Supplier debt", Subtitle: "As of " + asOf, Columns: cols("supplier", "phone", "invoices", "current", "d31_60", "d61_90", "over_90", "overdue", "balance"),
