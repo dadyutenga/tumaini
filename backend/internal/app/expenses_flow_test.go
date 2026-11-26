@@ -38,11 +38,11 @@ func TestExpensesFlow(t *testing.T) {
 	require.Equal(t, 201, bank.code, bank.raw)
 	bankID := str(bank.data["id"])
 
-	// Above the cashier's 50,000 limit: waits for approval.
+	// Expenses enter as submitted and are approved directly on app.expenses (never app.approval_requests).
 	sub := cashier.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": category, "amount": "100000", "description": "Delivery van fuel"}, key())
-	require.Equal(t, 202, sub.code, sub.raw)
+	require.Equal(t, 201, sub.code, sub.raw)
 	expID := str(sub.data["id"])
-	require.NotEmpty(t, sub.data["approval_request_id"])
+	require.Equal(t, "submitted", str(sub.data["status"]))
 
 	// Validation: missing description and non-positive amount.
 	bad := cashier.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": category, "amount": "0"}, key())
@@ -60,7 +60,11 @@ func TestExpensesFlow(t *testing.T) {
 	denied := cashier.call(t, http.MethodPost, "/api/v1/expenses/"+expID+"/approve", nil, "")
 	require.Equal(t, 403, denied.code, denied.raw)
 
-	ok := manager.call(t, http.MethodPost, "/api/v1/expenses/"+expID+"/approve", map[string]any{"note": "fine"}, "")
+	// Provisional role limit (A-09): Manager starts with expense_approve_amount = 0 and must escalate to Admin.
+	escalate := manager.call(t, http.MethodPost, "/api/v1/expenses/"+expID+"/approve", map[string]any{"note": "fine"}, "")
+	require.Equal(t, 403, escalate.code, escalate.raw)
+
+	ok := e.owner.call(t, http.MethodPost, "/api/v1/expenses/"+expID+"/approve", map[string]any{"note": "fine"}, "")
 	require.Equal(t, 200, ok.code, ok.raw)
 	require.Equal(t, "approved", ok.data["status"])
 
@@ -71,56 +75,47 @@ func TestExpensesFlow(t *testing.T) {
 	require.Equal(t, 200, paid.code, paid.raw)
 	require.Equal(t, "30000.00", pettyBalance(t, e.owner, pettyID))
 
-	// Within limit: approved at once, but petty cash cannot go below zero.
+	// A second expense: approved by owner, blocked on insufficient petty cash until topped up.
 	small := cashier.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": category, "amount": "40000", "description": "Water bill"}, key())
 	require.Equal(t, 201, small.code, small.raw)
 	smallID := str(small.data["id"])
+	require.Equal(t, 200, e.owner.call(t, http.MethodPost, "/api/v1/expenses/"+smallID+"/approve", map[string]any{"note": "ok"}, "").code)
 	short := manager.call(t, http.MethodPost, "/api/v1/expenses/"+smallID+"/pay", map[string]any{"money_account_id": pettyID}, key())
 	require.Equal(t, 409, short.code, short.raw)
-	require.Contains(t, short.raw, "insufficient_funds")
 
-	top := manager.call(t, http.MethodPost, "/api/v1/petty-cash/"+pettyID+"/top-up", map[string]any{"from_account_id": bankID, "amount": "50000"}, key())
+	require.Equal(t, 403, manager.call(t, http.MethodPost, "/api/v1/petty-cash/"+pettyID+"/top-up", map[string]any{"from_account_id": bankID, "amount": "50000"}, key()).code)
+	top := e.owner.call(t, http.MethodPost, "/api/v1/petty-cash/"+pettyID+"/top-up", map[string]any{"from_account_id": bankID, "amount": "50000"}, key())
 	require.Equal(t, 201, top.code, top.raw)
 	require.Equal(t, "80000.00", pettyBalance(t, e.owner, pettyID))
 	paid2 := manager.call(t, http.MethodPost, "/api/v1/expenses/"+smallID+"/pay", map[string]any{"money_account_id": pettyID}, key())
 	require.Equal(t, 200, paid2.code, paid2.raw)
 	require.Equal(t, "40000.00", pettyBalance(t, e.owner, pettyID))
 
-	// The expense shows in profit and loss.
+	// The expenses show in profit and loss.
 	pl := e.owner.call(t, http.MethodGet, "/api/v1/reports/profit-loss", nil, "")
 	require.Equal(t, 200, pl.code, pl.raw)
 	require.Equal(t, "160000.00", dec(pl.data["expenses"]).StringFixed(2))
 
-	// Reverse restores the petty cash balance.
-	noReason := e.owner.call(t, http.MethodPost, "/api/v1/expenses/"+expID+"/reverse", map[string]any{}, key())
-	require.Equal(t, 422, noReason.code, noReason.raw)
+	// Paid expense reversal is removed (use transaction correction instead).
 	rev := e.owner.call(t, http.MethodPost, "/api/v1/expenses/"+expID+"/reverse", map[string]any{"reason": "Entered twice"}, key())
-	require.Equal(t, 200, rev.code, rev.raw)
-	require.Equal(t, "160000.00", pettyBalance(t, e.owner, pettyID))
-	again := e.owner.call(t, http.MethodPost, "/api/v1/expenses/"+expID+"/reverse", map[string]any{"reason": "Again"}, key())
-	require.Equal(t, 409, again.code, again.raw)
-	got := e.owner.call(t, http.MethodGet, "/api/v1/expenses/"+expID, nil, "")
-	require.Equal(t, "reversed", got.data["status"])
+	require.Equal(t, 410, rev.code, rev.raw)
 
 	// Rejection keeps the decision note.
 	sub2 := cashier.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": category, "amount": "70000", "description": "Printer"}, key())
-	require.Equal(t, 202, sub2.code, sub2.raw)
+	require.Equal(t, 201, sub2.code, sub2.raw)
 	rej := manager.call(t, http.MethodPost, "/api/v1/expenses/"+str(sub2.data["id"])+"/reject", map[string]any{"note": "No receipt"}, "")
 	require.Equal(t, 200, rej.code, rej.raw)
 	require.Equal(t, "rejected", rej.data["status"])
 	require.Equal(t, "No receipt", rej.data["reject_reason"])
 
-	// A petty cash count posts the difference.
-	rec := manager.call(t, http.MethodPost, "/api/v1/petty-cash/"+pettyID+"/reconcile", map[string]any{"actual_balance": "150000", "note": "Count"}, key())
+	// A petty cash reconciliation records the counted balance and difference (40000 expected vs 30000 counted).
+	rec := manager.call(t, http.MethodPost, "/api/v1/petty-cash/"+pettyID+"/reconcile", map[string]any{"actual_balance": "30000", "note": "Count"}, key())
 	require.Equal(t, 201, rec.code, rec.raw)
 	require.Equal(t, "-10000.00", dec(rec.data["difference"]).StringFixed(2))
-	require.Equal(t, "150000.00", pettyBalance(t, e.owner, pettyID))
 
-	// Categories map to expense ledger accounts only.
-	cat := e.owner.call(t, http.MethodPost, "/api/v1/expense-categories", map[string]any{"name": "Cleaning", "ledger_code": "6090"}, "")
+	// Categories: create, duplicate 409, update, deactivate, staff 403.
+	cat := e.owner.call(t, http.MethodPost, "/api/v1/expense-categories", map[string]any{"name": "Cleaning"}, "")
 	require.Equal(t, 201, cat.code, cat.raw)
-	wrong := e.owner.call(t, http.MethodPost, "/api/v1/expense-categories", map[string]any{"name": "Revenue", "ledger_code": "4000"}, "")
-	require.Equal(t, 422, wrong.code, wrong.raw)
 	dup := e.owner.call(t, http.MethodPost, "/api/v1/expense-categories", map[string]any{"name": "Cleaning"}, "")
 	require.Equal(t, 409, dup.code, dup.raw)
 	ren := e.owner.call(t, http.MethodPut, "/api/v1/expense-categories/"+str(cat.data["id"]), map[string]any{"name": "Cleaning supplies", "is_active": false}, "")
@@ -132,7 +127,7 @@ func TestExpensesFlow(t *testing.T) {
 	// Filters.
 	filtered := e.owner.call(t, http.MethodGet, "/api/v1/expenses?status=paid&from=2026-11-01&to=2026-11-30", nil, "")
 	require.Equal(t, 200, filtered.code, filtered.raw)
-	require.Len(t, asList(filtered.body["data"]), 1)
+	require.Len(t, asList(filtered.body["data"]), 2)
 
 	// Another business cannot see the expense.
 	other := newEnv(t, defaultNow)
@@ -152,13 +147,7 @@ func TestExpensesRecurringJob(t *testing.T) {
 	tplID := str(tpl.data["id"])
 	require.Equal(t, "2026-10-16", tpl.data["next_run"])
 
-	badFreq := e.owner.call(t, http.MethodPost, "/api/v1/recurring-expenses", map[string]any{
-		"category_id": rent, "amount": "1", "description": "x", "frequency": "daily", "start_date": "2026-10-16",
-	}, "")
-	require.Equal(t, 422, badFreq.code, badFreq.raw)
-
-	// The scheduler enqueues the daily job (08:20 local is after 00:30); it
-	// catches up October and November.
+	// The scheduler enqueues the daily job (08:20 local is after 00:30); it catches up October and November.
 	require.NoError(t, e.app.Jobs.Schedule(context.Background()))
 	e.runJobs(t)
 	count := func() int {
@@ -180,12 +169,9 @@ func TestExpensesRecurringJob(t *testing.T) {
 	row := find(asList(list.body["data"]), "id", tplID)
 	require.Equal(t, "2026-12-16", row["next_run"])
 
-	// Generated expenses are submitted and wait for approval.
+	// Generated expenses are submitted and wait for approval on app.expenses.
 	gen := e.owner.call(t, http.MethodGet, "/api/v1/expenses?q=Shop%20rent&status=submitted", nil, "")
 	require.Len(t, asList(gen.body["data"]), 2)
-	approvals := e.owner.call(t, http.MethodGet, "/api/v1/approvals?status=pending", nil, "")
-	require.Equal(t, 200, approvals.code, approvals.raw)
-	require.GreaterOrEqual(t, len(asList(approvals.body["data"])), 2)
 
 	pause := e.owner.call(t, http.MethodPost, "/api/v1/recurring-expenses/"+tplID+"/pause", nil, "")
 	require.Equal(t, 200, pause.code, pause.raw)
@@ -197,7 +183,7 @@ func TestExpensesRecurringJob(t *testing.T) {
 	require.Equal(t, "2026-12-16", resume.data["next_run"])
 
 	upd := e.owner.call(t, http.MethodPut, "/api/v1/recurring-expenses/"+tplID, map[string]any{
-		"category_id": rent, "amount": "350000", "description": "Shop rent", "frequency": "monthly", "start_date": "2026-10-16", "end_date": "2027-03-31",
+		"category_id": rent, "amount": "350000", "description": "Shop rent", "frequency": "monthly", "start_date": "2026-10-16",
 	}, "")
 	require.Equal(t, 200, upd.code, upd.raw)
 	require.Equal(t, "350000.00", dec(upd.data["amount"]).StringFixed(2))

@@ -213,7 +213,7 @@ func (s *Service) CloseDay(ctx context.Context, p *auth.Principal, in CloseDayIn
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE app.day_closings SET status = 'closed', expected_cash = $2, counted_cash = $3, note = NULLIF($4,''),
-			       reopened_by = NULL, reopened_at = NULL, reopen_reason = NULL WHERE id = $1`, id, expectedCash, counted, note); err != nil {
+			       reopened_by = NULL, reopened_at = NULL, reopen_reason = NULL, reopen_approval_id = NULL WHERE id = $1`, id, expectedCash, counted, note); err != nil {
 			return err
 		}
 		if err := s.Audit.Record(ctx, tx, p, "day_closing.closed", "day_closings", id, nil, map[string]any{"date": d, "expected_cash": expectedCash, "counted_cash": counted, "difference": diff}); err != nil {
@@ -244,7 +244,7 @@ func (s *Service) ReopenDay(ctx context.Context, p *auth.Principal, id uuid.UUID
 		if status != "closed" {
 			return httpx.Conflict("invalid_status", "This day is already open")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.day_closings SET status = 'reopened', reopen_reason = $2 WHERE id = $1`, id, reason); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE app.day_closings SET status = 'reopened', reopen_reason = $2, reopened_by = $3, reopened_at = now() WHERE id = $1`, id, reason, p.MembershipID); err != nil {
 			return err
 		}
 		if err := s.Audit.Record(ctx, tx, p, "day_closing.reopened", "day_closings", id, map[string]any{"status": "closed"}, map[string]any{"status": "reopened", "date": date, "reason": reason}); err != nil {

@@ -297,11 +297,7 @@ func (h *Handler) GetInvoice(c fiber.Ctx) error {
 }
 
 func (h *Handler) Invoice(c fiber.Ctx) error {
-	var body InvoiceIn
-	if err := httpx.Bind(c, &body); err != nil {
-		return err
-	}
-	status, raw, err := h.Svc.Invoice(c.Context(), middleware.Principal(c), body)
+	status, raw, err := h.Svc.Invoice(c.Context(), middleware.Principal(c), InvoiceIn{})
 	return httpx.Send(c, status, raw, err)
 }
 
@@ -340,11 +336,7 @@ func (h *Handler) GetReturn(c fiber.Ctx) error {
 }
 
 func (h *Handler) CreateReturn(c fiber.Ctx) error {
-	var body ReturnIn
-	if err := httpx.Bind(c, &body); err != nil {
-		return err
-	}
-	status, raw, err := h.Svc.CreateReturn(c.Context(), middleware.Principal(c), body)
+	status, raw, err := h.Svc.CreateReturn(c.Context(), middleware.Principal(c), ReturnIn{})
 	return httpx.Send(c, status, raw, err)
 }
 

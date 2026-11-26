@@ -270,7 +270,7 @@ func (s *Service) DebtReminders(ctx context.Context, tenantID uuid.UUID, _ json.
 				SELECT c.id, SUM(s.balance_due) AS bal
 				FROM app.customers c
 				JOIN app.sales s ON s.tenant_id = c.tenant_id AND s.customer_id = c.id
-				WHERE c.credit_limit IS NOT NULL AND c.credit_limit > 0 AND NOT c.is_walk_in
+				WHERE c.credit_limit IS NOT NULL AND c.credit_limit > 0
 				  AND s.status = 'completed' AND s.balance_due > 0
 				GROUP BY c.id, c.credit_limit
 				HAVING SUM(s.balance_due) >= c.credit_limit * 0.9
@@ -344,7 +344,9 @@ func (s *Service) OwnerDailySummary(ctx context.Context, tenantID uuid.UUID, raw
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM app.stock_balances sb
 			JOIN app.products p ON p.tenant_id = sb.tenant_id AND p.id = sb.product_id
-			WHERE p.status = 'active' AND p.track_inventory AND p.reorder_level > 0 AND sb.quantity_on_hand <= p.reorder_level`).Scan(&low); err != nil {
+			JOIN app.tenant_settings ts ON ts.tenant_id = p.tenant_id
+			WHERE p.status = 'active' AND COALESCE(p.min_stock_level, ts.low_stock_default) > 0
+			  AND sb.quantity_on_hand <= COALESCE(p.min_stock_level, ts.low_stock_default)`).Scan(&low); err != nil {
 			return err
 		}
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.v_pending_approvals`).Scan(&pending); err != nil {
@@ -412,7 +414,7 @@ func (s *Service) StockRebuildCheck(ctx context.Context, tenantID uuid.UUID, _ j
 func (s *Service) SessionCleanup(ctx context.Context, tenantID uuid.UUID, _ json.RawMessage) error {
 	return s.DB.InJobsTx(ctx, db.Actor{TenantID: tenantID}, func(ctx context.Context, tx pgx.Tx) error {
 		now := s.Clock.Now()
-		if _, err := tx.Exec(ctx, `DELETE FROM iam.sessions WHERE expires_at < $1`, now); err != nil {
+		if _, err := tx.Exec(ctx, `DELETE FROM iam.sessions WHERE absolute_expires_at < $1`, now); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `DELETE FROM app.idempotency_keys WHERE expires_at < $1`, now); err != nil {

@@ -18,10 +18,11 @@ import (
 
 // env is one registered business on a fresh app instance, for flow tests.
 type env struct {
-	app    *app.App
-	owner  *client
-	branch string
-	phone  string
+	app      *app.App
+	owner    *client
+	tenantID uuid.UUID
+	branch   string
+	phone    string
 }
 
 // defaultNow is a Monday morning in Dar es Salaam (05:20 UTC is 08:20 local).
@@ -78,7 +79,7 @@ func newEnvWithClock(t *testing.T, clk clock.Clock) *env {
 	}, "")
 	require.Equal(t, 201, reg.code, reg.raw)
 	c.token, c.branch = str(reg.data["access_token"]), str(reg.data["branch_id"])
-	return &env{app: a, owner: c, branch: c.branch, phone: phone}
+	return &env{app: a, owner: c, tenantID: uuid.MustParse(str(reg.data["tenant_id"])), branch: c.branch, phone: phone}
 }
 
 // roleID returns the id of a role by slug: owner, manager or staff.
@@ -134,7 +135,7 @@ func (e *env) product(t *testing.T, name, price, qty, cost string) string {
 // runJobs processes every queued background job synchronously.
 func (e *env) runJobs(t *testing.T) {
 	t.Helper()
-	require.NoError(t, e.app.Jobs.RunPending(context.Background()))
+	require.NoError(t, e.app.Jobs.RunPendingForTenant(context.Background(), e.tenantID))
 }
 
 // key returns a fresh idempotency key.

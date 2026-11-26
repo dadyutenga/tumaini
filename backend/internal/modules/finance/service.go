@@ -124,9 +124,13 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 			return err
 		}
 		var branch *string
-		_ = tx.QueryRow(ctx, `SELECT name::text FROM app.locations WHERE tenant_id = $1 AND id = $2`, p.TenantID, a.BranchID).Scan(&branch)
+		if a.BranchID != nil {
+			_ = tx.QueryRow(ctx, `SELECT name::text FROM app.locations WHERE tenant_id = $1 AND id = $2`, p.TenantID, *a.BranchID).Scan(&branch)
+		}
 		var last *string
-		_ = tx.QueryRow(ctx, `SELECT max(business_date)::text FROM app.petty_cash_reconciliations WHERE tenant_id = $1 AND account_id = $2`, p.TenantID, id).Scan(&last)
+		if err := tx.QueryRow(ctx, `SELECT max(period_end)::text FROM app.petty_cash_reconciliations WHERE tenant_id = $1 AND account_id = $2`, p.TenantID, id).Scan(&last); err != nil {
+			return err
+		}
 		out = map[string]any{"id": a.ID, "name": a.Name, "type": a.Type, "branch_id": a.BranchID, "branch_name": branch,
 			"provider": a.Provider, "account_number": a.AccountNumber, "custodian_id": nil, "custodian_name": nil,
 			"ledger_code": "", "allow_overdraft": a.AllowOverdraft, "show_on_invoices": a.ShowOnInvoices, "is_active": a.IsActive,
@@ -408,13 +412,38 @@ func (s *Service) Transfer(ctx context.Context, p *auth.Principal, in TransferIn
 			}
 			return err
 		}
+		var fromBal decimal.Decimal
+		var allowNeg, fromActive bool
+		var fromLoc *uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			SELECT current_balance, allow_negative, status = 'active', location_id
+			FROM app.financial_accounts WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+			p.TenantID, in.FromAccountID).Scan(&fromBal, &allowNeg, &fromActive, &fromLoc); err != nil {
+			return httpx.NotFound("not_found", "Money account not found")
+		}
+		if !fromActive {
+			return httpx.Conflict("inactive_account", "The source account is inactive")
+		}
+		amt := money.Money(in.Amount)
+		if !allowNeg && fromBal.LessThan(amt) {
+			return httpx.Conflict("insufficient_funds", "Not enough balance in the source account")
+		}
+		var toActive bool
+		var toLoc *uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			SELECT status = 'active', location_id
+			FROM app.financial_accounts WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+			p.TenantID, in.ToAccountID).Scan(&toActive, &toLoc); err != nil {
+			return httpx.NotFound("not_found", "Destination money account not found")
+		}
+		if !toActive {
+			return httpx.Conflict("inactive_account", "The destination account is inactive")
+		}
 		var loc *uuid.UUID
 		if err := tx.QueryRow(ctx, `
-			SELECT coalesce((SELECT location_id FROM app.financial_accounts WHERE tenant_id = $1 AND id = $2),
-			                (SELECT location_id FROM app.financial_accounts WHERE tenant_id = $1 AND id = $3),
-			                $4::uuid, (SELECT id FROM app.locations WHERE tenant_id = $1 AND is_default))`,
-			p.TenantID, in.FromAccountID, in.ToAccountID, p.BranchID).Scan(&loc); err != nil || loc == nil {
-			return httpx.NotFound("not_found", "Money account not found")
+			SELECT coalesce($2::uuid, $3::uuid, $4::uuid, (SELECT id FROM app.locations WHERE tenant_id = $1 AND is_default))`,
+			p.TenantID, fromLoc, toLoc, p.BranchID).Scan(&loc); err != nil || loc == nil {
+			return httpx.NotFound("not_found", "Location not found")
 		}
 		date := in.Date
 		if date == "" {

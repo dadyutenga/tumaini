@@ -461,7 +461,7 @@ func (s *Service) Statement(ctx context.Context, p *auth.Principal, id uuid.UUID
 			  FROM app.sales s WHERE s.tenant_id = $1 AND s.customer_id = $2 AND s.status = 'completed'
 			UNION ALL
 			SELECT pr.business_date, pr.created_at, 'payment', pr.receipt_no, 'Payment received', 0, pr.amount
-			  FROM app.payments_received pr WHERE pr.tenant_id = $1 AND pr.customer_id = $2 AND pr.status = 'posted' AND pr.purpose <> 'sale'
+			  FROM app.payments_received pr WHERE pr.tenant_id = $1 AND pr.customer_id = $2 AND pr.status = 'posted'
 			UNION ALL
 			SELECT pm.business_date, pm.created_at, 'refund', pm.payment_no, 'Refund paid', pm.amount, 0
 			  FROM app.payments_made pm WHERE pm.tenant_id = $1 AND pm.customer_id = $2 AND pm.status = 'posted'

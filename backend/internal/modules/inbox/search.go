@@ -75,7 +75,7 @@ func (s *Service) GlobalSearch(ctx context.Context, p *auth.Principal, q string)
 			if err := collect("customer", "/customers/", `
 				SELECT id, name, COALESCE(phone, '')
 				FROM app.customers
-				WHERE status = 'active' AND NOT is_walk_in AND client_status IS NULL AND (name ILIKE $1 OR phone ILIKE $1)
+				WHERE status = 'active' AND client_status IS NULL AND (name ILIKE $1 OR phone ILIKE $1)
 				ORDER BY name LIMIT 6`, pat); err != nil {
 				return err
 			}

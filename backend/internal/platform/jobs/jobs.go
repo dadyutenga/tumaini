@@ -146,7 +146,21 @@ func (c *Client) Schedule(ctx context.Context) error {
 // jobs synchronously.
 func (c *Client) RunPending(ctx context.Context) error {
 	for i := 0; i < 1000; i++ {
-		ok, err := c.one(ctx)
+		ok, err := c.one(ctx, nil)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return nil
+		}
+	}
+	return nil
+}
+
+// RunPendingForTenant processes queued jobs for one tenant until none are ready.
+func (c *Client) RunPendingForTenant(ctx context.Context, tenantID uuid.UUID) error {
+	for i := 0; i < 1000; i++ {
+		ok, err := c.one(ctx, &tenantID)
 		if err != nil {
 			return err
 		}
@@ -193,7 +207,7 @@ func (c *Client) Run(ctx context.Context) {
 
 func (c *Client) drain(ctx context.Context) {
 	for i := 0; i < 20; i++ {
-		ok, err := c.one(ctx)
+		ok, err := c.one(ctx, nil)
 		if err != nil {
 			slog.Error("job", "err", err)
 			return
@@ -204,7 +218,7 @@ func (c *Client) drain(ctx context.Context) {
 	}
 }
 
-func (c *Client) one(ctx context.Context) (bool, error) {
+func (c *Client) one(ctx context.Context, tenantID *uuid.UUID) (bool, error) {
 	tx, err := c.pool.Begin(ctx)
 	if err != nil {
 		return false, err
@@ -217,11 +231,11 @@ func (c *Client) one(ctx context.Context) (bool, error) {
 	err = tx.QueryRow(ctx, `
 		SELECT id, tenant_id, kind, payload, attempts, max_attempts
 		FROM app.job_queue
-		WHERE status = 'queued' AND run_at <= now()
+		WHERE status = 'queued' AND run_at <= now() AND ($1::uuid IS NULL OR tenant_id = $1)
 		ORDER BY run_at
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
-	`).Scan(&id, &businessID, &kind, &payload, &attempts, &maxAttempts)
+	`, tenantID).Scan(&id, &businessID, &kind, &payload, &attempts, &maxAttempts)
 	if err != nil {
 		return false, nil
 	}

@@ -164,12 +164,13 @@ func (s *Service) createTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, in
 	if totalDisc.IsPositive() && !p.Has("shop.discount.apply") {
 		return 0, nil, httpx.Forbidden("permission_denied", "You cannot give a discount")
 	}
+	grossTotal := tot.Subtotal.Add(tot.LineDiscount)
 	pct := money.Zero
-	if tot.Subtotal.IsPositive() && tot.Discount.IsPositive() {
-		pct = tot.Discount.Mul(decimal.NewFromInt(100)).Div(tot.Subtotal).Round(2)
+	if grossTotal.IsPositive() && totalDisc.IsPositive() {
+		pct = totalDisc.Mul(decimal.NewFromInt(100)).Div(grossTotal).Round(2)
 	}
 	needsDiscount := false
-	if tot.Discount.IsPositive() {
+	if totalDisc.IsPositive() {
 		if lim, capped := p.Limits["sale_discount_pct"]; capped && pct.GreaterThan(lim) {
 			needsDiscount = true
 		}
@@ -225,7 +226,7 @@ func (s *Service) createTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, in
 		summary := "Sale needs approval for a discount of " + pct.StringFixed(2) + "%"
 		reqID, err := s.Approval.Request(ctx, tx, p, approval.Input{
 			BranchID: p.BranchID, Kind: "sale_discount", SubjectType: "sale", SubjectID: saleID,
-			Amount:  decimal.NullDecimal{Decimal: tot.Discount, Valid: true},
+			Amount:  decimal.NullDecimal{Decimal: totalDisc, Valid: true},
 			Percent: decimal.NullDecimal{Decimal: pct, Valid: true},
 			Summary: summary,
 		})
