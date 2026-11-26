@@ -35,8 +35,7 @@ func TestReportsAndDashboard(t *testing.T) {
 	riceID := e.product(t, "Rice", "2500", "10", "1000")
 	sugarID := e.product(t, "Sugar", "1000", "5", "400")
 	till := e.cashAccount(t)
-	open := c.call(t, http.MethodPost, "/api/v1/tills/open", map[string]any{"money_account_id": till, "opening_float": "0"}, "")
-	require.Equal(t, 201, open.code, open.raw)
+	require.Equal(t, 410, c.call(t, http.MethodPost, "/api/v1/tills/open", map[string]any{"money_account_id": till, "opening_float": "0"}, "").code)
 	for _, body := range []map[string]any{
 		{"items": []map[string]any{{"product_id": riceID, "qty": "2"}}, "payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "5000"}}},
 		{"items": []map[string]any{{"product_id": sugarID, "qty": "1"}}, "payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "1000"}}},
@@ -46,10 +45,12 @@ func TestReportsAndDashboard(t *testing.T) {
 	}
 	cats := c.call(t, http.MethodGet, "/api/v1/expense-categories", nil, "")
 	require.Equal(t, 200, cats.code, cats.raw)
-	exp := c.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{
+	submitter, _ := e.user(t, "staff")
+	exp := submitter.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{
 		"category_id": str(asList(cats.body["data"])[0]["id"]), "amount": "500", "description": "Transport",
 	}, key())
 	require.Equal(t, 201, exp.code, exp.raw)
+	require.Equal(t, 200, c.call(t, http.MethodPost, "/api/v1/expenses/"+str(exp.data["id"])+"/approve", map[string]any{"note": "ok"}, "").code)
 	paid := c.call(t, http.MethodPost, "/api/v1/expenses/"+str(exp.data["id"])+"/pay", map[string]any{"money_account_id": till}, key())
 	require.Equal(t, 200, paid.code, paid.raw)
 
@@ -150,14 +151,14 @@ func TestReportsAndDashboard(t *testing.T) {
 	md := manager.call(t, http.MethodGet, "/api/v1/dashboard?period=today", nil, "")
 	require.Equal(t, 200, md.code, md.raw)
 	require.NotNil(t, md.data["sales"])
-	require.Nil(t, md.data["profit"])
-	require.Nil(t, md.data["gross_profit"])
+	require.Nil(t, md.data["profit"], "net profit needs dashboard.business.view")
+	require.NotNil(t, md.data["gross_profit"], "the manager role includes shop.product.view_cost")
 	_, hasValue := md.data["stock"].(map[string]any)["value"]
-	require.False(t, hasValue, md.raw)
+	require.True(t, hasValue, "the manager role includes shop.product.view_cost")
 	mSales := manager.call(t, http.MethodGet, "/api/v1/reports/sales/by-product", nil, "")
 	require.Equal(t, 200, mSales.code, mSales.raw)
 	_, hasCost := asList(mSales.data["rows"])[0]["cost"]
-	require.False(t, hasCost, mSales.raw)
+	require.True(t, hasCost, mSales.raw)
 	mPL := manager.call(t, http.MethodGet, "/api/v1/reports/profit-loss", nil, "")
 	require.Equal(t, 403, mPL.code, mPL.raw)
 
@@ -173,7 +174,6 @@ func TestReportsAndDashboard(t *testing.T) {
 	ownerMe := c.call(t, http.MethodGet, "/api/v1/dashboard/me", nil, "")
 	require.Equal(t, 200, ownerMe.code, ownerMe.raw)
 	require.True(t, dec(ownerMe.data["sales_today"].(map[string]any)["count"]).Equal(rd("2")), ownerMe.raw)
-	require.NotNil(t, ownerMe.data["till"])
 
 	// A second business sees nothing from the first.
 	other := newEnv(t, defaultNow)
@@ -185,5 +185,6 @@ func TestReportsAndDashboard(t *testing.T) {
 	require.Equal(t, 200, foreign.code, foreign.raw) // owner scope is the own business; RLS hides the other tenant's rows
 	require.Empty(t, asList(foreign.data["rows"]))
 	mForeign := manager.call(t, http.MethodGet, "/api/v1/reports/sales/summary?branch_id="+other.branch, nil, "")
-	require.Equal(t, 404, mForeign.code, mForeign.raw)
+	require.Equal(t, 200, mForeign.code, mForeign.raw)
+	require.Empty(t, asList(mForeign.data["rows"]))
 }

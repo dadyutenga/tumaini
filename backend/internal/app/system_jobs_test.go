@@ -24,21 +24,26 @@ func TestScheduledSystemJobs(t *testing.T) {
 	o := e.owner
 	ctx := context.Background()
 
-	// An approved expense that nobody has paid yet, and a sale so the summary has figures.
+	// An approved expense that nobody has paid yet. The submitter and the approver must differ.
+	staff, _ := e.user(t, "staff")
 	cats := o.call(t, http.MethodGet, "/api/v1/expense-categories", nil, "")
-	exp := o.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": asList(cats.body["data"])[0]["id"], "amount": "5000", "description": "Cleaning"}, key())
+	exp := staff.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": asList(cats.body["data"])[0]["id"], "amount": "5000", "description": "Cleaning"}, key())
 	require.Equal(t, 201, exp.code, exp.raw)
+	require.Equal(t, 200, o.call(t, http.MethodPost, "/api/v1/expenses/"+str(exp.data["id"])+"/approve", map[string]any{"note": "ok"}, "").code)
 
 	require.NoError(t, e.app.Jobs.Schedule(ctx))
-	var queued int
-	require.NoError(t, e.app.DB.Pool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE kind IN ('debt_reminders','owner_daily_summary','ledger_balance_check','stock_rebuild_check','session_cleanup')`).Scan(&queued))
+	jobCount := func() int {
+		t.Helper()
+		var n int
+		require.NoError(t, e.app.DB.Jobs.QueryRow(ctx, `SELECT count(*) FROM app.job_queue WHERE tenant_id = $1 AND kind IN ('debt_reminders','owner_daily_summary','ledger_balance_check','stock_rebuild_check','session_cleanup')`, e.tenantID).Scan(&n))
+		return n
+	}
+	queued := jobCount()
 	require.GreaterOrEqual(t, queued, 5)
 
 	// Scheduling again the same day adds nothing: the marks make it idempotent.
 	require.NoError(t, e.app.Jobs.Schedule(ctx))
-	var again int
-	require.NoError(t, e.app.DB.Pool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE kind IN ('debt_reminders','owner_daily_summary','ledger_balance_check','stock_rebuild_check','session_cleanup')`).Scan(&again))
-	require.Equal(t, queued, again)
+	require.Equal(t, queued, jobCount())
 
 	e.runJobs(t)
 	got := titles(t, o)
@@ -48,7 +53,7 @@ func TestScheduledSystemJobs(t *testing.T) {
 	require.NotContains(t, got, "Stock check failed")
 
 	var failed int
-	require.NoError(t, e.app.DB.Pool.QueryRow(ctx, `SELECT count(*) FROM jobs WHERE status='failed' OR last_error IS NOT NULL`).Scan(&failed))
+	require.NoError(t, e.app.DB.Jobs.QueryRow(ctx, `SELECT count(*) FROM app.job_queue WHERE tenant_id = $1 AND (status='failed' OR last_error IS NOT NULL)`, e.tenantID).Scan(&failed))
 	require.Zero(t, failed)
 
 	// Another business gets its own jobs and sees none of this business's alerts.

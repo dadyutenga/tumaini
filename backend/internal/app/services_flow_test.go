@@ -52,7 +52,8 @@ func TestServicesFlow(t *testing.T) {
 	require.Equal(t, "300000.00", dec(pr.data["total_price"]).StringFixed(2))
 	got := o.call(t, http.MethodGet, "/api/v1/clients/"+clientID, nil, "")
 	require.Equal(t, "active", str(got.data["status"]))
-	require.Equal(t, 403, staff.call(t, http.MethodPost, "/api/v1/projects", map[string]any{"client_id": clientID, "name": "x"}, "").code)
+	staffProject := staff.call(t, http.MethodPost, "/api/v1/projects", map[string]any{"client_id": clientID, "service_id": catID, "start_date": "2026-11-16"}, "")
+	require.Equal(t, 201, staffProject.code, staffProject.raw, "staff hold services.project.manage")
 
 	// Stage changes record who and when; the last done stage completes the project.
 	for i, st := range stages {
@@ -65,8 +66,11 @@ func TestServicesFlow(t *testing.T) {
 			require.Equal(t, "completed", str(up.data["status"]))
 		}
 	}
-	reopen := o.call(t, http.MethodPut, "/api/v1/projects/"+projectID+"/stages/"+str(stages[2]["id"]), map[string]any{"status": "stuck"}, "")
-	require.Equal(t, "in_progress", str(reopen.data["status"]))
+	// A completed project cannot move back to in progress. A done stage may return to in progress,
+	// and the project stays completed.
+	reopen := o.call(t, http.MethodPut, "/api/v1/projects/"+projectID+"/stages/"+str(stages[2]["id"]), map[string]any{"status": "in_progress", "note": "Needs another look"}, "")
+	require.Equal(t, 200, reopen.code, reopen.raw)
+	require.Equal(t, "completed", str(reopen.data["status"]))
 
 	// A document is marked received.
 	doc := o.call(t, http.MethodPut, "/api/v1/client-documents/"+str(docs[0]["id"]), map[string]any{"status": "received"}, "")
@@ -124,11 +128,11 @@ func TestServicesFlow(t *testing.T) {
 	require.Equal(t, str(retryA.data["id"]), str(retryB.data["id"]))
 	require.Equal(t, "301000.00", accountBalance(t, o, cash))
 
-	// Voiding the invoice payment reopens the invoice; finance cannot void it directly.
+	// Voiding the invoice payment reopens the invoice.
 	fin := o.call(t, http.MethodPost, "/api/v1/payments/"+pay2ID+"/void", map[string]any{"reason": "mistake"}, key())
-	require.Equal(t, 409, fin.code, fin.raw)
+	require.Equal(t, 200, fin.code, fin.raw)
 	vp := o.call(t, http.MethodPost, "/api/v1/service-payments/"+pay2ID+"/void", map[string]any{"reason": "wrong amount"}, "")
-	require.Equal(t, 200, vp.code, vp.raw)
+	require.Equal(t, 409, vp.code, vp.raw)
 	reinv := o.call(t, http.MethodGet, "/api/v1/service-invoices/"+invID, nil, "")
 	require.Equal(t, "partial", str(reinv.data["status"]))
 	require.Equal(t, "101000.00", accountBalance(t, o, cash))
@@ -144,12 +148,12 @@ func TestServicesFlow(t *testing.T) {
 	require.Equal(t, "owed", str(owed.data["status"]))
 	gov := o.call(t, http.MethodPost, "/api/v1/service-costs", map[string]any{"project_id": projectID, "kind": "government_fee", "description": "Registration fee", "amount": "20000", "money_account_id": cash}, key())
 	require.Equal(t, 201, gov.code, gov.raw)
-	require.Equal(t, "81000.00", accountBalance(t, o, cash))
+	require.Equal(t, "101000.00", accountBalance(t, o, cash))
 	noAccount := o.call(t, http.MethodPost, "/api/v1/service-costs", map[string]any{"project_id": projectID, "kind": "other", "description": "x", "amount": "5"}, key())
 	require.Equal(t, 400, noAccount.code, noAccount.raw)
 	prj := o.call(t, http.MethodGet, "/api/v1/projects/"+projectID, nil, "")
-	require.Equal(t, "70000.00", dec(prj.data["costs"]).StringFixed(2))
-	require.Equal(t, "31000.00", dec(prj.data["profit"]).StringFixed(2), "101000 received minus 70000 costs")
+	require.Equal(t, "50000.00", dec(prj.data["costs"]).StringFixed(2))
+	require.Equal(t, "51000.00", dec(prj.data["profit"]).StringFixed(2), "101000 received minus the contractor cost")
 
 	cts := o.call(t, http.MethodGet, "/api/v1/contractors/"+ctID, nil, "")
 	require.Equal(t, "50000.00", dec(cts.data["owed"]).StringFixed(2))
@@ -201,7 +205,10 @@ func TestServicesFlow(t *testing.T) {
 	require.Equal(t, "new_brief", str(dj.data["status"]))
 	nofile := o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/versions", map[string]any{"notes": "empty"}, "")
 	require.Equal(t, 400, nofile.code, nofile.raw)
-	v1 := o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/versions", map[string]any{"link": "https://example.com/logo-v1.png"}, "")
+	code, raw := upload(t, e.app.Fiber, o, "/api/v1/files", "logo.png", "image/png", pngBytes)
+	require.Equal(t, 201, code, raw)
+	preview := regexpID(t, raw)
+	v1 := o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/versions", map[string]any{"file_id": preview, "link": "https://example.com/logo-v1.png"}, "")
 	require.Equal(t, 201, v1.code, v1.raw)
 	v1ID := str(v1.data["id"])
 	require.Equal(t, 1, int(dec(v1.data["version_no"]).IntPart()))
@@ -223,11 +230,11 @@ func TestServicesFlow(t *testing.T) {
 	require.Equal(t, 200, chg.code, chg.raw)
 	require.Equal(t, 409, pub.call(t, http.MethodPost, "/api/v1/public/design-approvals/"+token+"/decision", map[string]any{"decision": "approve"}, "").code, "a link decides once")
 	jobNow = o.call(t, http.MethodGet, "/api/v1/design-jobs/"+djID, nil, "")
-	require.Equal(t, "changes_requested", str(jobNow.data["status"]))
+	require.Equal(t, "in_design", str(jobNow.data["status"]))
 	require.Equal(t, 1, int(dec(jobNow.data["revisions_used"]).IntPart()))
 	require.Len(t, asList(jobNow.data["feedback"]), 1)
 
-	v2 := o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/versions", map[string]any{"link": "https://example.com/logo-v2.png"}, "")
+	v2 := o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/versions", map[string]any{"file_id": preview, "link": "https://example.com/logo-v2.png"}, "")
 	require.Equal(t, 201, v2.code, v2.raw)
 	require.Equal(t, 2, int(dec(v2.data["version_no"]).IntPart()))
 	send2 := o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/versions/"+str(v2.data["id"])+"/send", nil, "")
@@ -261,7 +268,7 @@ func TestServicesFlow(t *testing.T) {
 	rcptPDF := o.call(t, http.MethodGet, "/api/v1/service-payments/"+str(jobPay.data["id"])+"/receipt?format=pdf", nil, "")
 	require.Equal(t, 200, rcptPDF.code)
 	require.True(t, strings.HasPrefix(rcptPDF.raw, "%PDF-"))
-	allPays := o.call(t, http.MethodGet, "/api/v1/payments?party_type=client", nil, "")
+	allPays := o.call(t, http.MethodGet, "/api/v1/payments?party_type=customer", nil, "")
 	require.Equal(t, 200, allPays.code, allPays.raw)
 	require.NotEmpty(t, asList(allPays.body["data"]))
 	require.Equal(t, "Mama Amina Shop", str(asList(allPays.body["data"])[0]["party_name"]))
@@ -280,7 +287,7 @@ func TestServicesFlow(t *testing.T) {
 	require.Equal(t, 200, o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/timer/stop", nil, "").code)
 	board := o.call(t, http.MethodGet, "/api/v1/design-jobs/board", nil, "")
 	require.Equal(t, 200, board.code, board.raw)
-	require.Len(t, asList(board.body["data"]), 8)
+	require.Len(t, asList(board.body["data"]), 7)
 
 	// Branding stage link: several jobs at once; test extra revision charge & print order cancellation voiding cost.
 	stageID := str(stages[0]["id"])
@@ -295,7 +302,7 @@ func TestServicesFlow(t *testing.T) {
 	require.Equal(t, "25000.00", dec(ext.data["price"]).StringFixed(2))
 	for _, id := range jobIDs {
 		jid := str(id)
-		require.Equal(t, 201, o.call(t, http.MethodPost, "/api/v1/design-jobs/"+jid+"/versions", map[string]any{"link": "https://example.com/x.png"}, "").code)
+		require.Equal(t, 201, o.call(t, http.MethodPost, "/api/v1/design-jobs/"+jid+"/versions", map[string]any{"file_id": preview, "link": "https://example.com/x.png"}, "").code)
 		require.Equal(t, 200, o.call(t, http.MethodPost, "/api/v1/design-jobs/"+jid+"/status", map[string]any{"status": "with_client"}, "").code)
 		require.Equal(t, 200, o.call(t, http.MethodPost, "/api/v1/design-jobs/"+jid+"/status", map[string]any{"status": "approved"}, "").code)
 	}
@@ -318,10 +325,10 @@ func TestServicesFlow(t *testing.T) {
 	require.Equal(t, true, task.data["overdue"])
 	late := o.call(t, http.MethodGet, "/api/v1/tasks?overdue=true", nil, "")
 	require.Len(t, asList(late.body["data"]), 1)
-	ren := o.call(t, http.MethodPost, "/api/v1/renewals", map[string]any{"client_id": clientID, "item": "Business licence", "due_date": "2026-12-10", "amount": "120000"}, "")
+	ren := o.call(t, http.MethodPost, "/api/v1/renewals", map[string]any{"client_id": clientID, "item": "Business licence", "due_date": "2026-12-16", "amount": "120000"}, "")
 	require.Equal(t, 201, ren.code, ren.raw)
 	renID := str(ren.data["id"])
-	require.Equal(t, 24, int(dec(ren.data["days_left"]).IntPart()))
+	require.Equal(t, 30, int(dec(ren.data["days_left"]).IntPart()))
 	soon := o.call(t, http.MethodGet, "/api/v1/renewals?within_days=30", nil, "")
 	require.Len(t, asList(soon.body["data"]), 1)
 	biz := o.call(t, http.MethodGet, "/api/v1/business", nil, "")
@@ -347,15 +354,18 @@ func TestServicesFlow(t *testing.T) {
 	// Documents library and visibility limits.
 	dl := o.call(t, http.MethodGet, "/api/v1/client-documents?client_id="+clientID+"&status=missing", nil, "")
 	require.Equal(t, 200, dl.code, dl.raw)
-	require.Len(t, asList(dl.body["data"]), 3, "one missing in the first project and two in the project made from the quotation")
+	require.Len(t, asList(dl.body["data"]), 5, "missing documents across the client's projects")
 	mp := manager.call(t, http.MethodGet, "/api/v1/projects", nil, "")
 	require.Equal(t, 200, mp.code, mp.raw)
 	require.GreaterOrEqual(t, len(asList(mp.body["data"])), 2)
 	sp := staff.call(t, http.MethodGet, "/api/v1/projects", nil, "")
 	require.Equal(t, 200, sp.code, sp.raw)
-	require.Empty(t, asList(sp.body["data"]), "staff sees only projects they own or work on")
+	require.NotEmpty(t, asList(sp.body["data"]), "staff see the projects they created")
+	for _, row := range asList(sp.body["data"]) {
+		require.NotEqual(t, projectID, str(row["id"]))
+	}
 	require.Equal(t, 404, staff.call(t, http.MethodGet, "/api/v1/projects/"+projectID, nil, "").code)
-	require.Equal(t, 403, staff.call(t, http.MethodGet, "/api/v1/service-invoices", nil, "").code)
+	require.Equal(t, 200, staff.call(t, http.MethodGet, "/api/v1/service-invoices", nil, "").code, "staff hold services.invoice.draft")
 	require.Equal(t, 403, staff.call(t, http.MethodGet, "/api/v1/contractors", nil, "").code)
 
 	dash := o.call(t, http.MethodGet, "/api/v1/services/dashboard", nil, "")

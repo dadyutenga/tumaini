@@ -910,7 +910,9 @@ func (s *Service) PublicApproval(ctx context.Context, token string) (map[string]
 		if err != nil {
 			return err
 		}
-		_, _ = tx.Exec(ctx, `UPDATE app.design_approval_links SET first_opened_at = COALESCE(first_opened_at, now()) WHERE tenant_id = $1 AND id = $2`, pt.tenantID, pt.linkID)
+		if _, err := tx.Exec(ctx, `UPDATE app.design_approval_links SET first_opened_at = COALESCE(first_opened_at, now()) WHERE tenant_id = $1 AND id = $2 AND decision IS NULL`, pt.tenantID, pt.linkID); err != nil {
+			return err
+		}
 		out, err = one(ctx, tx, "Design", `
 			SELECT j.title::text AS title,
 			       CASE WHEN j.job_type = 'social_media_post' THEN 'social_media' ELSE j.job_type::text END AS job_type,
