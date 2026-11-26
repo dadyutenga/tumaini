@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
@@ -101,28 +102,38 @@ function TransfersTab() {
 
   return (
     <>
-      <div className="mb-4 flex justify-end">
-        {manage && (
-          <Button onClick={() => setOpen(true)}>
-            <Plus size={16} /> New transfer
+      {manage && (
+        <FilterBar className="justify-end">
+          <Button size="sm" onClick={() => setOpen(true)}>
+            <Plus size={14} /> New transfer
           </Button>
-        )}
-      </div>
+        </FilterBar>
+      )}
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(t) => t.id}
         empty="No transfers yet"
         columns={[
-          { header: "Number", cell: (t) => <span className="font-medium">{t.number}</span> },
+          {
+            header: "Number",
+            sortValue: (t) => t.number,
+            cell: (t) => <span className="od-mono font-medium">{t.number}</span>,
+          },
           { header: "From", cell: (t) => t.from_branch },
           { header: "To", cell: (t) => t.to_branch },
-          { header: "Created", cell: (t) => formatDateTime(t.created_at) },
+          {
+            header: "Created",
+            cell: (t) => (
+              <span className="text-[var(--od-ink-secondary)]">{formatDateTime(t.created_at)}</span>
+            ),
+          },
           { header: "Status", cell: (t) => <StatusBadge value={t.status} /> },
           {
             header: "",
+            className: "text-right",
             cell: (t) => (
-              <div className="flex gap-2">
+              <div className="flex justify-end gap-1.5">
                 {t.status === "draft" && manage && (
                   <Button size="sm" onClick={() => act.mutate({ id: t.id, action: "dispatch" })}>
                     Dispatch
@@ -148,6 +159,7 @@ function TransfersTab() {
         ]}
       />
       <Pager meta={list.data?.meta} onPage={setPage} />
+
       <FormDialog
         open={open}
         onOpenChange={setOpen}
@@ -170,49 +182,52 @@ function TransfersTab() {
               ))}
           </NativeSelect>
         </Field>
-        {lines.map((l, i) => (
-          <div key={i} className="grid grid-cols-[1fr_6rem_2rem] items-end gap-2">
-            <Field label={i === 0 ? "Product" : ""}>
-              <NativeSelect
-                value={l.product_id}
-                onChange={(e) => setLine(i, { product_id: e.target.value })}
+        <div className="space-y-2">
+          {lines.map((l, i) => (
+            <div key={i} className="grid grid-cols-[1fr_6rem_2.25rem] items-end gap-2">
+              <Field label={i === 0 ? "Product" : ""}>
+                <NativeSelect
+                  value={l.product_id}
+                  onChange={(e) => setLine(i, { product_id: e.target.value })}
+                >
+                  <option value="">Choose…</option>
+                  {products.data?.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <Field label={i === 0 ? "Qty" : ""}>
+                <Input
+                  inputMode="decimal"
+                  value={l.qty}
+                  onChange={(e) => setLine(i, { qty: e.target.value })}
+                />
+              </Field>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Remove line"
+                disabled={lines.length === 1}
+                onClick={() => setLines((all) => all.filter((_, n) => n !== i))}
               >
-                <option value="">Choose…</option>
-                {products.data?.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </NativeSelect>
-            </Field>
-            <Field label={i === 0 ? "Qty" : ""}>
-              <Input
-                inputMode="decimal"
-                value={l.qty}
-                onChange={(e) => setLine(i, { qty: e.target.value })}
-              />
-            </Field>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Remove line"
-              disabled={lines.length === 1}
-              onClick={() => setLines((all) => all.filter((_, n) => n !== i))}
-            >
-              <Trash2 size={16} />
-            </Button>
-          </div>
-        ))}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setLines((all) => [...all, { product_id: "", qty: "1" }])}
-        >
-          Add line
-        </Button>
+                <Trash2 size={15} />
+              </Button>
+            </div>
+          ))}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setLines((all) => [...all, { product_id: "", qty: "1" }])}
+          >
+            <Plus size={13} /> Add line
+          </Button>
+        </div>
       </FormDialog>
+
       <FormDialog
         open={receiving !== null}
         onOpenChange={(o) => !o && setReceiving(null)}
@@ -221,15 +236,17 @@ function TransfersTab() {
         busy={receive.isPending}
         onSubmit={() => receive.mutate({})}
       >
-        <p className="text-sm text-muted-foreground">
+        <p className="text-[13px] text-[var(--od-ink-secondary)]">
           Transfers are received in full. If the physical count differs, receive the transfer and
           record a stock adjustment afterwards.
         </p>
-        <ul className="divide-y rounded-lg border text-sm">
+        <ul className="divide-y divide-[var(--od-border)] rounded-[var(--od-radius-md,12px)] border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] text-[13px]">
           {receiving?.items.map((i) => (
-            <li key={i.product_id} className="flex items-center justify-between px-3 py-2">
-              <span className="font-medium">{i.product_name}</span>
-              <span className="tabular-nums text-muted-foreground">{formatQty(i.qty_sent)}</span>
+            <li key={i.product_id} className="flex items-center justify-between px-3.5 py-2.5">
+              <span className="font-medium text-[var(--od-ink)]">{i.product_name}</span>
+              <span className="od-tabular font-semibold text-[var(--od-ink-secondary)]">
+                {formatQty(i.qty_sent)}
+              </span>
             </li>
           ))}
         </ul>
@@ -285,39 +302,56 @@ function CountsTab() {
 
   return (
     <>
-      <div className="mb-4 flex flex-wrap justify-end gap-2">
-        {manage && (
-          <>
-            <Button
-              variant="outline"
-              disabled={sheet.isPending}
-              onClick={() => sheet.mutate({ reason: "Stock take" })}
-            >
-              Start a stock take
-            </Button>
-            <Button onClick={() => setOpen(true)}>
-              <Plus size={16} /> New adjustment
-            </Button>
-          </>
-        )}
-      </div>
+      {manage && (
+        <FilterBar className="justify-end">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={sheet.isPending}
+            onClick={() => sheet.mutate({ reason: "Stock take" })}
+          >
+            Start a stock take
+          </Button>
+          <Button size="sm" onClick={() => setOpen(true)}>
+            <Plus size={14} /> New adjustment
+          </Button>
+        </FilterBar>
+      )}
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(a) => a.id}
         empty="No adjustments yet"
         columns={[
-          { header: "Number", cell: (a) => <span className="font-medium">{a.number}</span> },
+          {
+            header: "Number",
+            sortValue: (a) => a.number,
+            cell: (a) => <span className="od-mono font-medium">{a.number}</span>,
+          },
           {
             header: "Reason",
             cell: (a) => (a.is_stock_take ? `Stock take · ${a.reason}` : a.reason),
           },
-          { header: "Created", cell: (a) => formatDateTime(a.created_at) },
+          {
+            header: "Created",
+            cell: (a) => (
+              <span className="text-[var(--od-ink-secondary)]">{formatDateTime(a.created_at)}</span>
+            ),
+          },
           {
             header: "Value",
             align: "right",
+            sortValue: (a) => toNumber(a.total_value),
             cell: (a) => (
-              <span className={toNumber(a.total_value) < 0 ? "text-destructive" : ""}>
+              <span
+                className={
+                  toNumber(a.total_value) < 0
+                    ? "font-semibold text-[var(--od-bad)]"
+                    : toNumber(a.total_value) > 0
+                      ? "font-semibold text-[var(--od-good)]"
+                      : undefined
+                }
+              >
                 {formatMoney(a.total_value)}
               </span>
             ),
@@ -325,10 +359,11 @@ function CountsTab() {
           { header: "Status", cell: (a) => <StatusBadge value={a.status} /> },
           {
             header: "",
+            className: "text-right",
             cell: (a) =>
               a.status === "draft" &&
               manage && (
-                <div className="flex gap-2">
+                <div className="flex justify-end gap-1.5">
                   <Button size="sm" variant="outline" onClick={() => void edit(a)}>
                     Counts
                   </Button>
@@ -348,6 +383,7 @@ function CountsTab() {
         ]}
       />
       <Pager meta={list.data?.meta} onPage={setPage} />
+
       <FormDialog
         open={open}
         onOpenChange={setOpen}
@@ -359,49 +395,52 @@ function CountsTab() {
         <Field label="Reason">
           <Input required value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
-        {lines.map((l, i) => (
-          <div key={i} className="grid grid-cols-[1fr_7rem_2rem] items-end gap-2">
-            <Field label={i === 0 ? "Product" : ""}>
-              <NativeSelect
-                value={l.product_id}
-                onChange={(e) => setLine(i, { product_id: e.target.value })}
+        <div className="space-y-2">
+          {lines.map((l, i) => (
+            <div key={i} className="grid grid-cols-[1fr_7rem_2.25rem] items-end gap-2">
+              <Field label={i === 0 ? "Product" : ""}>
+                <NativeSelect
+                  value={l.product_id}
+                  onChange={(e) => setLine(i, { product_id: e.target.value })}
+                >
+                  <option value="">Choose…</option>
+                  {products.data?.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <Field label={i === 0 ? "Counted qty" : ""}>
+                <Input
+                  inputMode="decimal"
+                  value={l.qty_counted}
+                  onChange={(e) => setLine(i, { qty_counted: e.target.value })}
+                />
+              </Field>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Remove line"
+                disabled={lines.length === 1}
+                onClick={() => setLines((all) => all.filter((_, n) => n !== i))}
               >
-                <option value="">Choose…</option>
-                {products.data?.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </NativeSelect>
-            </Field>
-            <Field label={i === 0 ? "Counted qty" : ""}>
-              <Input
-                inputMode="decimal"
-                value={l.qty_counted}
-                onChange={(e) => setLine(i, { qty_counted: e.target.value })}
-              />
-            </Field>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label="Remove line"
-              disabled={lines.length === 1}
-              onClick={() => setLines((all) => all.filter((_, n) => n !== i))}
-            >
-              <Trash2 size={16} />
-            </Button>
-          </div>
-        ))}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => setLines((all) => [...all, { product_id: "", qty_counted: "0" }])}
-        >
-          Add line
-        </Button>
+                <Trash2 size={15} />
+              </Button>
+            </div>
+          ))}
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => setLines((all) => [...all, { product_id: "", qty_counted: "0" }])}
+          >
+            <Plus size={13} /> Add line
+          </Button>
+        </div>
       </FormDialog>
+
       <FormDialog
         open={editing !== null}
         onOpenChange={(o) => !o && setEditing(null)}
@@ -444,14 +483,41 @@ function MovementsTab() {
         rowKey={(m) => m.id}
         empty="No stock movements yet"
         columns={[
-          { header: "When", cell: (m) => formatDateTime(m.created_at) },
-          { header: "Product", cell: (m) => m.product_name },
-          { header: "Type", cell: (m) => (m.type ?? "-").replaceAll("_", " ") },
-          { header: "Qty", align: "right", cell: (m) => formatQty(m.qty) },
+          {
+            header: "When",
+            cell: (m) => (
+              <span className="text-[var(--od-ink-secondary)]">{formatDateTime(m.created_at)}</span>
+            ),
+          },
+          { header: "Product", cell: (m) => <span className="font-medium">{m.product_name}</span> },
+          {
+            header: "Type",
+            cell: (m) => <span className="capitalize">{(m.type ?? "—").replaceAll("_", " ")}</span>,
+          },
+          {
+            header: "Qty",
+            align: "right",
+            cell: (m) => {
+              const n = toNumber(m.qty);
+              return (
+                <span
+                  className={
+                    n > 0
+                      ? "font-semibold text-[var(--od-good)]"
+                      : n < 0
+                        ? "font-semibold text-[var(--od-bad)]"
+                        : undefined
+                  }
+                >
+                  {n > 0 ? `+${formatQty(m.qty)}` : formatQty(m.qty)}
+                </span>
+              );
+            },
+          },
           {
             header: "After",
             align: "right",
-            cell: (m) => (m.qty_after ? formatQty(m.qty_after) : "-"),
+            cell: (m) => (m.qty_after ? formatQty(m.qty_after) : "—"),
           },
         ]}
       />
@@ -464,13 +530,13 @@ export default function StockOps() {
   const { canAny } = useAuth();
   const canView = canAny("shop.stock.view", "shop.stock.manage");
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Transfers and counts"
-        description="Move stock between locations, count what is on the shelf and correct differences."
+        description="Move stock between locations, count shelf inventory and reconcile differences."
       />
       <Tabs defaultValue="transfers">
-        <TabsList className="mb-4">
+        <TabsList>
           {canView && <TabsTrigger value="transfers">Transfers</TabsTrigger>}
           <TabsTrigger value="counts">Counts and adjustments</TabsTrigger>
           <TabsTrigger value="movements">Movements</TabsTrigger>
@@ -487,6 +553,6 @@ export default function StockOps() {
           <MovementsTab />
         </TabsContent>
       </Tabs>
-    </>
+    </div>
   );
 }
