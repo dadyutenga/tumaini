@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
@@ -80,7 +82,9 @@ function Commissions() {
       columns={[
         {
           header: "Rule",
-          cell: (r) => <span className="font-medium">{r.name || "Commission"}</span>,
+          cell: (r) => (
+            <span className="font-medium text-[var(--od-ink)]">{r.name || "Commission"}</span>
+          ),
         },
         {
           header: "Applies to",
@@ -90,18 +94,28 @@ function Commissions() {
               ? (employees.data?.find((e) => e.id === r.employee_id)?.name ?? "Employee")
               : "All eligible staff"),
         },
-        { header: "Basis", cell: (r) => basisLabel[r.basis ?? r.calc ?? ""] ?? r.basis ?? "-" },
+        {
+          header: "Basis",
+          cell: (r) => (
+            <Badge variant="secondary">
+              {basisLabel[r.basis ?? r.calc ?? ""] ?? r.basis ?? "-"}
+            </Badge>
+          ),
+        },
         {
           header: "Rate / Amount",
           align: "right",
-          cell: (r) =>
-            r.percent != null
-              ? `${Number(r.percent)}%`
-              : r.fixed_amount != null
-                ? formatMoney(r.fixed_amount)
-                : r.value != null
-                  ? String(Number(r.value))
-                  : "-",
+          cell: (r) => (
+            <span className="od-tabular font-semibold text-[var(--od-ink)]">
+              {r.percent != null
+                ? `${Number(r.percent)}%`
+                : r.fixed_amount != null
+                  ? formatMoney(r.fixed_amount)
+                  : r.value != null
+                    ? String(Number(r.value))
+                    : "-"}
+            </span>
+          ),
         },
         {
           header: "Effective from",
@@ -135,7 +149,7 @@ function Commissions() {
               ))}
             </NativeSelect>
           </Field>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Field label="Basis">
               <NativeSelect value={d.basis} onChange={(e) => set({ basis: e.target.value })}>
                 <option value="sale_percent">% of sales</option>
@@ -146,6 +160,7 @@ function Commissions() {
               <Input
                 required
                 inputMode="decimal"
+                className="od-tabular"
                 value={d.value}
                 onChange={(e) => set({ value: e.target.value })}
               />
@@ -186,14 +201,14 @@ function Adjustments() {
     success: "Adjustment removed",
   });
   return (
-    <>
-      <div className="mb-4 flex justify-end">
-        {canManage && (
+    <div className="space-y-4">
+      {canManage && (
+        <FilterBar className="justify-end">
           <Button onClick={() => setOpen(true)}>
             <Plus size={16} /> New adjustment
           </Button>
-        )}
-      </div>
+        </FilterBar>
+      )}
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
@@ -202,19 +217,41 @@ function Adjustments() {
         columns={[
           {
             header: "Employee",
-            cell: (a) => <span className="font-medium">{a.employee_name}</span>,
+            cell: (a) => (
+              <span className="font-medium text-[var(--od-ink)]">{a.employee_name}</span>
+            ),
           },
           { header: "Period", cell: (a) => formatDate(a.period) },
           { header: "Kind", cell: (a) => <StatusBadge value={a.kind} /> },
           { header: "Reason", cell: (a) => a.reason },
-          { header: "Amount", align: "right", cell: (a) => formatMoney(a.amount) },
+          {
+            header: "Amount",
+            align: "right",
+            cell: (a) => (
+              <span
+                className={`od-tabular font-semibold ${
+                  a.kind === "deduction" ? "text-[var(--od-bad)]" : "text-[var(--od-good)]"
+                }`}
+              >
+                {a.kind === "deduction" ? "−" : "+"}
+                {formatMoney(a.amount)}
+              </span>
+            ),
+          },
           {
             header: "",
             cell: (a) =>
               canManage && (
-                <Button size="sm" variant="ghost" onClick={() => remove.mutate(a)}>
-                  Remove
-                </Button>
+                <div className="flex justify-end">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
+                    onClick={() => remove.mutate(a)}
+                  >
+                    Remove
+                  </Button>
+                </div>
               ),
           },
         ]}
@@ -241,7 +278,7 @@ function Adjustments() {
             ))}
           </NativeSelect>
         </Field>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Field label="Kind">
             <NativeSelect
               value={draft.kind}
@@ -255,6 +292,7 @@ function Adjustments() {
             <Input
               required
               inputMode="decimal"
+              className="od-tabular"
               value={draft.amount}
               onChange={(e) => setDraft((d) => ({ ...d, amount: e.target.value }))}
             />
@@ -276,7 +314,7 @@ function Adjustments() {
           />
         </Field>
       </FormDialog>
-    </>
+    </div>
   );
 }
 
@@ -294,7 +332,7 @@ export default function PayrollSetup() {
     "hr.payroll.manage",
   );
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Payroll setup"
         description="Commission rules and one-off pay adjustments. Manage employee allowances on each employee profile."
@@ -315,6 +353,6 @@ export default function PayrollSetup() {
           </TabsContent>
         )}
       </Tabs>
-    </>
+    </div>
   );
 }

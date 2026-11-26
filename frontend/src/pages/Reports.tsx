@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, BarChart3, Download, Printer } from "lucide-react";
+import { ArrowLeft, BarChart3, ChevronRight, Download, Printer } from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { BarChartView, LineChartView } from "@/components/shared/Charts";
-import { ChartCard } from "@/components/shared/Display";
-import { DataGrid, Field, NativeSelect, PageHeader } from "@/components/shared/kit";
+import { ChartCard, StatCard } from "@/components/shared/Display";
+import { DataGrid, Field, NativeSelect, PageHeader, SegmentedChips } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { errorMessage, useGet } from "@/hooks/useApi";
 import { download } from "@/lib/api";
@@ -427,54 +428,82 @@ export default function Reports() {
   // SRS Section 10: Reports Home with grouped cards.
   if (!current) {
     return (
-      <>
+      <div className="space-y-6">
         <PageHeader
           title="Reports"
           description="Choose a report category to analyze sales, profit & loss, projects, stock, debts and staff."
         />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {groups.map((g) => (
-            <section key={g} className="rounded-2xl border bg-card p-5">
-              <h2 className="mb-3 flex items-center gap-2 font-semibold">
-                <BarChart3 size={16} className="text-primary" /> {g}
-              </h2>
-              <ul className="space-y-1">
-                {available
-                  .filter((r) => r.group === g)
-                  .map((r) => (
+          {groups.map((g) => {
+            const items = available.filter((r) => r.group === g);
+            return (
+              <section key={g} className="od-card p-5">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="od-card-title flex items-center gap-2 text-[var(--od-ink)]">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--od-border)] bg-[var(--od-surface-subtle)] text-[var(--od-ink-secondary)]">
+                      <BarChart3 size={14} />
+                    </span>
+                    {g}
+                  </h2>
+                  <Badge variant="secondary" className="od-tabular text-[11px]">
+                    {items.length}
+                  </Badge>
+                </div>
+                <ul className="space-y-0.5">
+                  {items.map((r) => (
                     <li key={r.path}>
                       <button
                         type="button"
                         onClick={() => openReport(r.path)}
-                        className="w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-muted hover:text-primary"
+                        className="group flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-[var(--od-ink-secondary)] transition hover:bg-[var(--od-surface-subtle)] hover:text-[var(--od-ink)]"
                       >
-                        {r.label}
+                        <span>{r.label}</span>
+                        <ChevronRight
+                          size={14}
+                          className="text-[var(--od-ink-muted)] opacity-0 transition group-hover:opacity-100"
+                        />
                       </button>
                     </li>
                   ))}
-              </ul>
-            </section>
-          ))}
+                </ul>
+              </section>
+            );
+          })}
         </div>
-      </>
+      </div>
     );
   }
 
+  const netPct = report.data?.change?.net_profit_pct
+    ? toNumber(report.data.change.net_profit_pct)
+    : null;
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <PageHeader
         title={current.label}
         description={
           report.data?.subtitle ?? "Filter, review, print or export to CSV, Excel or PDF."
         }
         actions={
-          <Button variant="outline" size="sm" onClick={closeReport}>
-            <ArrowLeft size={14} /> All reports
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={closeReport}>
+              <ArrowLeft size={14} /> All reports
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => window.print()}>
+              <Printer size={14} /> Print
+            </Button>
+            {can("reports.export") &&
+              ["csv", "xlsx", "pdf"].map((f) => (
+                <Button key={f} variant="outline" size="sm" onClick={() => save(f)}>
+                  <Download size={14} /> {f.toUpperCase()}
+                </Button>
+              ))}
+          </div>
         }
       />
 
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="od-card flex flex-wrap items-end gap-3 p-4">
         <Field label="Report" className="min-w-[14rem]">
           <NativeSelect value={current.path} onChange={(e) => openReport(e.target.value)}>
             {groups.map((g) => (
@@ -502,17 +531,20 @@ export default function Reports() {
         )}
         {isPL && (
           <>
-            <Field label="Business">
-              <NativeSelect
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-[var(--od-ink-secondary)]">Business</span>
+              <SegmentedChips
+                ariaLabel="Filter business"
                 value={business}
-                onChange={(e) => setBusiness(e.target.value as typeof business)}
-              >
-                <option value="all">Both businesses</option>
-                <option value="shop">Shop (Business A)</option>
-                <option value="services">Services (Business B)</option>
-              </NativeSelect>
-            </Field>
-            <label className="flex h-9 items-center gap-2 text-sm">
+                onChange={(v) => setBusiness(v as typeof business)}
+                options={[
+                  { value: "all", label: "Both" },
+                  { value: "shop", label: "Shop (A)" },
+                  { value: "services", label: "Services (B)" },
+                ]}
+              />
+            </div>
+            <label className="flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3 text-sm text-[var(--od-ink)]">
               <input
                 type="checkbox"
                 checked={compare}
@@ -522,71 +554,48 @@ export default function Reports() {
             </label>
           </>
         )}
-        <div className="ml-auto flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => window.print()}>
-            <Printer size={14} /> Print
-          </Button>
-          {can("reports.export") &&
-            ["csv", "xlsx", "pdf"].map((f) => (
-              <Button key={f} variant="outline" size="sm" onClick={() => save(f)}>
-                <Download size={14} /> {f.toUpperCase()}
-              </Button>
-            ))}
-        </div>
       </div>
 
       {/* SRS Section 10: Business A vs Business B vs Total P&L summary cards */}
       {isPL && report.data?.businesses && (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Shop (Business A)
-            </p>
-            <p className="mt-1 text-xl font-bold tabular-nums">
-              {formatMoney(report.data.businesses.shop.profit)}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Sales {formatMoney(report.data.businesses.shop.income)} · COGS{" "}
-              {formatMoney(report.data.businesses.shop.cost_of_goods)}
-            </p>
-          </div>
-          <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Services (Business B)
-            </p>
-            <p className="mt-1 text-xl font-bold tabular-nums">
-              {formatMoney(report.data.businesses.services.profit)}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Income {formatMoney(report.data.businesses.services.income)} · Costs{" "}
-              {formatMoney(report.data.businesses.services.direct_costs)}
-            </p>
-          </div>
-          <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Operating expenses
-            </p>
-            <p className="mt-1 text-xl font-bold tabular-nums">
-              {formatMoney(report.data.businesses.shared.operating_expenses)}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Other income {formatMoney(report.data.businesses.shared.other_income)}
-            </p>
-          </div>
-          <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Net profit</p>
-            <p className="mt-1 text-xl font-bold tabular-nums">
-              {formatMoney(report.data.businesses.total.net_profit)}
-            </p>
-            {report.data.previous && (
-              <p className="mt-1 text-xs text-muted-foreground">
-                Previous: {formatMoney(report.data.previous.net_profit)}
-                {report.data.change?.net_profit_pct
-                  ? ` (${toNumber(report.data.change.net_profit_pct) > 0 ? "+" : ""}${toNumber(report.data.change.net_profit_pct).toFixed(1)}%)`
-                  : ""}
-              </p>
-            )}
-          </div>
+          <StatCard
+            label="Shop (Business A)"
+            value={formatMoney(report.data.businesses.shop.profit)}
+            trend={`Sales ${formatMoney(report.data.businesses.shop.income)} · COGS ${formatMoney(report.data.businesses.shop.cost_of_goods)}`}
+            tone={toNumber(report.data.businesses.shop.profit) >= 0 ? "good" : "bad"}
+          />
+          <StatCard
+            label="Services (Business B)"
+            value={formatMoney(report.data.businesses.services.profit)}
+            trend={`Income ${formatMoney(report.data.businesses.services.income)} · Costs ${formatMoney(report.data.businesses.services.direct_costs)}`}
+            tone={toNumber(report.data.businesses.services.profit) >= 0 ? "good" : "bad"}
+          />
+          <StatCard
+            label="Operating expenses"
+            value={formatMoney(report.data.businesses.shared.operating_expenses)}
+            trend={`Other income ${formatMoney(report.data.businesses.shared.other_income)}`}
+          />
+          <StatCard
+            label="Net profit"
+            value={formatMoney(report.data.businesses.total.net_profit)}
+            trend={
+              report.data.previous
+                ? `Previous: ${formatMoney(report.data.previous.net_profit)}${
+                    netPct !== null ? ` (${netPct > 0 ? "+" : ""}${netPct.toFixed(1)}%)` : ""
+                  }`
+                : undefined
+            }
+            tone={
+              netPct !== null
+                ? netPct >= 0
+                  ? "good"
+                  : "bad"
+                : toNumber(report.data.businesses.total.net_profit) >= 0
+                  ? "good"
+                  : "bad"
+            }
+          />
         </div>
       )}
 
@@ -600,7 +609,9 @@ export default function Reports() {
             )}
           </ChartCard>
         ) : (
-          <p className="text-sm text-muted-foreground">No amounts to chart for this period.</p>
+          <div className="od-card p-4 text-sm text-[var(--od-ink-muted)]">
+            No amounts to chart for this period.
+          </div>
         ))}
 
       <DataGrid
@@ -624,7 +635,15 @@ export default function Reports() {
           align: i === 0 ? undefined : ("right" as const),
           cell: (r: Record<string, unknown>) => {
             const value = i === 0 && r.__total ? (r.label ?? "Total") : cell(c.key, r[c.key]);
-            return r.__total ? <strong>{value as string}</strong> : (value as string);
+            return r.__total ? (
+              <strong className="od-tabular font-semibold text-[var(--od-ink)]">
+                {value as string}
+              </strong>
+            ) : (
+              <span className={i === 0 ? "text-[var(--od-ink)]" : "od-tabular"}>
+                {value as string}
+              </span>
+            );
           },
         }))}
       />
