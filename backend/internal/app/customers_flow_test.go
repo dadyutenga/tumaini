@@ -107,13 +107,18 @@ func TestCustomersAccountsAgedDebtAndWriteOff(t *testing.T) {
 	wo := o.call(t, http.MethodPost, "/api/v1/customers/"+aID+"/write-off", map[string]any{"amount": "5000", "reason": "Customer disappeared"}, key())
 	require.Equal(t, 410, wo.code, wo.raw)
 
-	// Search and pagination of the list, with balances (view_all sees all; staff sees only own registered).
+	// Search and pagination of the list, with balances:
+	// default staff sees shared business customers, while denying view_all restricts to own registered.
 	found := o.call(t, http.MethodGet, "/api/v1/customers?q=baraka", nil, "")
 	require.Equal(t, 200, found.code, found.raw)
 	require.Len(t, asList(found.body["data"]), 1)
 	require.NotNil(t, found.body["meta"])
-	staff2, _ := e.user(t, "staff")
-	require.Empty(t, asList(staff2.call(t, http.MethodGet, "/api/v1/customers?q=baraka", nil, "").body["data"]), "staff without view_all sees only customers they registered")
+	staff2, staff2ID := e.user(t, "staff")
+	require.Len(t, asList(staff2.call(t, http.MethodGet, "/api/v1/customers?q=baraka", nil, "").body["data"]), 1, "default staff sees customers entered by admin")
+	require.Equal(t, 200, o.call(t, http.MethodPut, "/api/v1/users/"+staff2ID+"/permissions", map[string]any{
+		"overrides": []map[string]any{{"permission_key": "shop.customer.view_all", "allowed": false, "scope": "all"}},
+	}, "").code)
+	require.Empty(t, asList(staff2.call(t, http.MethodGet, "/api/v1/customers?q=baraka", nil, "").body["data"]), "staff with view_all denied sees only customers they registered")
 
 	// A customer without a balance can be deactivated and drops out of sales.
 	require.Equal(t, 200, o.call(t, http.MethodPost, "/api/v1/customers/"+str(s1.data["id"])+"/deactivate", nil, "").code)
