@@ -115,7 +115,6 @@ describe("Services screens", () => {
       "in_design",
       "internal_review",
       "with_client",
-      "changes_requested",
       "approved",
       "printing",
       "delivered",
@@ -137,7 +136,7 @@ describe("Services screens", () => {
     serve({ "/design-jobs/board": { body: { data: columns } } });
     mount("/design-jobs", "/design-jobs", <DesignJobs />);
     expect(await screen.findByText("Logo for Mama Amina")).toBeInTheDocument();
-    expect(screen.getByText("Changes requested")).toBeInTheDocument();
+    expect(screen.getByText("With client")).toBeInTheDocument();
     expect(screen.getByText("Delivered")).toBeInTheDocument();
     expect(screen.getByText("Rev 0/3")).toBeInTheDocument();
   });

@@ -328,7 +328,6 @@ export const DESIGN_STATUSES = [
   "in_design",
   "internal_review",
   "with_client",
-  "changes_requested",
   "approved",
   "printing",
   "delivered",
@@ -339,8 +338,7 @@ export const DESIGN_NEXT: Record<string, DesignStatus[]> = {
   new_brief: ["in_design", "cancelled"],
   in_design: ["internal_review", "with_client", "cancelled"],
   internal_review: ["in_design", "with_client", "cancelled"],
-  with_client: ["in_design", "changes_requested", "approved", "cancelled"],
-  changes_requested: ["in_design", "cancelled"],
+  with_client: ["in_design", "approved", "cancelled"],
   approved: ["printing", "delivered"],
   printing: ["delivered"],
 };

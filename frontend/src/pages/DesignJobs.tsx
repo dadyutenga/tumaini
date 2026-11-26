@@ -430,7 +430,7 @@ export default function DesignJobs() {
     return d !== null && d <= 0 && !["delivered", "cancelled"].includes(j.status);
   }).length;
   const myWithClient = myJobs.filter((j) => j.status === "with_client").length;
-  const myChanges = myJobs.filter((j) => j.status === "changes_requested").length;
+  const myInDesign = myJobs.filter((j) => j.status === "in_design").length;
 
   return (
     <>
@@ -472,10 +472,8 @@ export default function DesignJobs() {
             <p className="text-xl font-semibold">{myWithClient}</p>
           </div>
           <div className="rounded-xl border bg-card px-4 py-3 text-sm">
-            <p className="text-xs text-muted-foreground">Changes requested</p>
-            <p className={cn("text-xl font-semibold", myChanges > 0 && "text-destructive")}>
-              {myChanges}
-            </p>
+            <p className="text-xs text-muted-foreground">In design</p>
+            <p className="text-xl font-semibold">{myInDesign}</p>
           </div>
         </div>
       )}

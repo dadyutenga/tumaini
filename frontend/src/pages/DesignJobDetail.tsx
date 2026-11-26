@@ -476,9 +476,7 @@ export default function DesignJobDetail() {
             )}
             {manage &&
               latest &&
-              ["in_design", "internal_review", "with_client", "changes_requested"].includes(
-                job.status,
-              ) && (
+              ["in_design", "internal_review", "with_client"].includes(job.status) && (
                 <Button
                   onClick={() => send.mutate({ versionId: latest.id })}
                   disabled={send.isPending}
