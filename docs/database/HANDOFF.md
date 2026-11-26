@@ -20,6 +20,7 @@ All Go backend modules have been ported to the approved BMS schema, legacy kerne
 - `8383f42` — Added migration `190_notifications_link_path_fix.sql`, fixed notifications/identity/catalog/org bugs, and passed **Batch 1** integration tests (`acceptance_test.go`, `identity_flow_test.go`, `org_flow_test.go`, `users_test.go`).
 - `46b3c07` — Added migration `200_stock_avg_cost_on_positive_adjustment.sql`, fixed stock avg cost / `StockCard` / `SaveCategory`, and passed **Batch 2a** integration tests (`batch_expiry_test.go`, `catalog_flow_test.go`, `customers_flow_test.go`, `inventory_flow_test.go`, `invoice_numbers_test.go`).
 - `b69543f` — Added migration `210_day_closings_admin_reopen.sql`, fixed finance/customers/purchasing/sales/system/jobs bugs, and passed **Batch 2b** integration tests (`finance_flow_test.go`, `expenses_flow_test.go`, `purchasing_flow_test.go`, `sales_flow_test.go`).
+- Batch 3 — Rewrote HR, attendance and payroll integration tests for the approved schema and passed them. Migrations `220`–`240`: leave cancellation may delete system attendance rows, payroll approvers can read runs and payslips, and a cash advance repayment is applied by `app.apply_advance_cash_repayment`. Phone validation, a completed attendance day, and terminating an employee (membership `deactivated_at`, session `revoked_reason`) were fixed in the same step.
 
 ---
 
@@ -28,14 +29,7 @@ All Go backend modules have been ported to the approved BMS schema, legacy kerne
 ### Step A — Finish Remaining Backend Integration Tests (`backend/internal/app/`)
 Run against the Docker PostgreSQL instance (`deploy/docker-compose.yml` service `postgres` on `127.0.0.1:5433`, env in `backend/.env`). Rewrite tests to match the approved BMS schema and fix any real backend bugs uncovered along the way:
 
-1. **Batch 3 — HR, Attendance & Payroll** (commit & push once green):
-   - `hr_flow_test.go`
-   - `hr_master_test.go`
-   - `employee_documents_test.go`
-   - `attendance_network_test.go`
-   - `loan_void_flow_test.go`
-   - `payroll_flow_test.go`
-   - `payroll_async_test.go`
+1. **Batch 3 — HR, Attendance & Payroll** — done and pushed.
 2. **Batch 4 — Services, Reports, Inbox, System, Audit, Recovery & Files** (commit & push once green):
    - `services_flow_test.go`
    - `reports_flow_test.go`
@@ -75,7 +69,7 @@ Frontend was aligned before `services`, `reports`, `inbox`, and `system` were po
 ---
 
 ## 3. Environment & Gotchas
-- **Database**: Docker Postgres (`deploy/docker-compose.yml` service `postgres` on `127.0.0.1:5433`), credentials in `backend/.env`. Run `go run ./cmd/migrate up` after adding any additive SQL file in `backend/database/migrations/` (forward-only, atomic, checksummed — next number is `220_*.sql`).
+- **Database**: Docker Postgres (`deploy/docker-compose.yml` service `postgres` on `127.0.0.1:5433`), credentials in `backend/.env`. Run `go run ./cmd/migrate up` after adding any additive SQL file in `backend/database/migrations/` (forward-only, atomic, checksummed — next number is `250_*.sql`).
 - **`TestLoadDefaults` in `internal/config`**: Fails if `LISTEN_ADDR=:8081` is exported from `backend/.env`; run `env -u LISTEN_ADDR go test ./internal/config`.
 - **OpenAPI YAML fragments**: Always append cleanly rather than editing generic YAML blocks to avoid duplicate matches.
 - **Keep `main` pushed**: User explicitly asked to push to `origin/main` after every implementation step.

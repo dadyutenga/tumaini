@@ -25,13 +25,14 @@ func TestPayrollLargeRunCalculatesInBackground(t *testing.T) {
 	require.Equal(t, 202, calc.code, calc.raw)
 	before := o.call(t, http.MethodGet, "/api/v1/payroll-runs/"+runID, nil, "")
 	require.Equal(t, "draft", str(before.data["status"]), "nothing happens until the job runs")
+	require.Empty(t, asList(before.data["payslips"]))
 
 	e.runJobs(t)
 	after := o.call(t, http.MethodGet, "/api/v1/payroll-runs/"+runID, nil, "")
 	require.Equal(t, 200, after.code, after.raw)
-	require.Equal(t, "calculated", str(after.data["status"]), after.raw)
+	require.Equal(t, "draft", str(after.data["status"]), "a calculated run stays draft until it is approved")
 	require.Len(t, asList(after.data["payslips"]), 201)
-	require.Equal(t, "2010000.00", str(after.data["gross_total"]))
+	require.True(t, dec(after.data["gross_total"]).Equal(dec("2010000")))
 }
 
 func uuidShort(i int) string {

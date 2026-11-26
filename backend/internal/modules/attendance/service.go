@@ -107,6 +107,12 @@ func (s *Service) ClockIn(ctx context.Context, p *auth.Principal, employeeID *uu
 		}
 		loc := s.loc(ctx, tx)
 		day := now.In(loc).Format(hrkit.DateFmt)
+		var closed bool
+		if err := tx.QueryRow(ctx, `
+			SELECT clock_out_at IS NOT NULL FROM app.attendance_records
+			WHERE tenant_id = $1 AND employee_id = $2 AND work_date = $3::date`, p.TenantID, e.ID, day).Scan(&closed); err == nil && closed {
+			return httpx.Conflict("already_clocked_out", "This day already has a clock-out. One attendance record is kept per day")
+		}
 		if err := hrkit.PayrollLocked(ctx, tx, e.ID, day); err != nil {
 			return err
 		}

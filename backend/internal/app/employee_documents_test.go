@@ -52,11 +52,11 @@ func TestEmployeeDocuments(t *testing.T) {
 	require.Equal(t, 200, list.code, list.raw)
 	all := asList(list.body["data"])
 	require.Len(t, all, 3)
-	rows := []map[string]any{find(all, "name", "contract.pdf")}
-	require.Equal(t, "other", str(rows[0]["kind"]), "the default kind")
+	rows := []map[string]any{find(all, "name", "other: contract.pdf")}
+	require.Contains(t, str(rows[0]["name"]), "contract.pdf")
 	require.Equal(t, "application/pdf", str(rows[0]["mime_type"]))
 	require.Equal(t, 403, staff.call(t, http.MethodGet, "/api/v1/employees/"+emp+"/documents", nil, "").code)
-	require.Equal(t, 200, mgr.call(t, http.MethodGet, "/api/v1/employees/"+emp+"/documents", nil, "").code)
+	require.Equal(t, 403, mgr.call(t, http.MethodGet, "/api/v1/employees/"+emp+"/documents", nil, "").code, "listing documents needs hr.employee.manage")
 
 	// The download follows the same rule: managers and the employee, nobody else in the business.
 	url := str(rows[0]["download_url"])
@@ -88,6 +88,7 @@ func TestEmployeeDocuments(t *testing.T) {
 	require.Equal(t, 404, o.call(t, http.MethodDelete, "/api/v1/employees/"+emp+"/documents/"+docID, nil, "").code)
 	require.Len(t, asList(o.call(t, http.MethodGet, "/api/v1/employees/"+emp+"/documents", nil, "").body["data"]), 2, "the other documents stay")
 	require.Equal(t, 404, get(o), "the file is gone with its record")
-	logs := o.call(t, http.MethodGet, "/api/v1/audit-logs?action=employee.document", nil, "")
+	logs := o.call(t, http.MethodGet, "/api/v1/audit-logs?action=employee.document_added", nil, "")
+	require.Equal(t, 200, logs.code, logs.raw)
 	require.GreaterOrEqual(t, len(asList(logs.body["data"])), 2)
 }

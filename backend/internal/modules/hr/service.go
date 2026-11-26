@@ -243,11 +243,11 @@ func (s *Service) CreateEmployee(ctx context.Context, p *auth.Principal, in Empl
 	}
 	ph, err := phone.Optional(deref(in.Phone))
 	if err != nil {
-		return nil, err
+		return nil, httpx.BadRequest("invalid_phone", err.Error())
 	}
 	eph, err := phone.Optional(deref(in.EmergencyContactPhone))
 	if err != nil {
-		return nil, err
+		return nil, httpx.BadRequest("invalid_phone", err.Error())
 	}
 	loc := in.BranchID
 	if loc == nil {
@@ -322,14 +322,14 @@ func (s *Service) UpdateEmployee(ctx context.Context, p *auth.Principal, id uuid
 	if in.Phone != nil {
 		var err error
 		if ph, err = phone.Optional(*in.Phone); err != nil {
-			return nil, err
+			return nil, httpx.BadRequest("invalid_phone", err.Error())
 		}
 	}
 	var eph string
 	if in.EmergencyContactPhone != nil {
 		var err error
 		if eph, err = phone.Optional(*in.EmergencyContactPhone); err != nil {
-			return nil, err
+			return nil, httpx.BadRequest("invalid_phone", err.Error())
 		}
 	}
 	var out map[string]any
@@ -419,10 +419,10 @@ func (s *Service) Terminate(ctx context.Context, p *auth.Principal, id uuid.UUID
 				   AND (SELECT count(*) FROM app.membership_roles mr JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id JOIN app.memberships m ON m.tenant_id = mr.tenant_id AND m.id = mr.membership_id WHERE mr.tenant_id = $1 AND r.code = 'admin' AND m.status = 'active') <= 1`,
 				p.TenantID, *mid).Scan(&isOnlyAdmin)
 			if !isOnlyAdmin {
-				if _, err := tx.Exec(ctx, `UPDATE app.memberships SET status = 'revoked' WHERE tenant_id = $1 AND id = $2 AND status IN ('active','suspended','invited')`, p.TenantID, *mid); err != nil {
+				if _, err := tx.Exec(ctx, `UPDATE app.memberships SET status = 'revoked', deactivated_at = now() WHERE tenant_id = $1 AND id = $2 AND status IN ('active','suspended','invited')`, p.TenantID, *mid); err != nil {
 					return err
 				}
-				if _, err := tx.Exec(ctx, `UPDATE iam.sessions SET revoked_at = now() WHERE membership_id = $1 AND revoked_at IS NULL`, *mid); err != nil {
+				if _, err := tx.Exec(ctx, `UPDATE iam.sessions SET revoked_at = now(), revoked_reason = 'membership_revoked' WHERE membership_id = $1 AND revoked_at IS NULL`, *mid); err != nil {
 					return err
 				}
 			}
@@ -486,7 +486,7 @@ func (s *Service) CreateLogin(ctx context.Context, p *auth.Principal, id uuid.UU
 		}
 		ph, err := phone.Optional(rawPhone)
 		if err != nil {
-			return err
+			return httpx.BadRequest("invalid_phone", err.Error())
 		}
 		if err := identity.GuardAssignRole(ctx, tx, p, in.RoleID); err != nil {
 			return err

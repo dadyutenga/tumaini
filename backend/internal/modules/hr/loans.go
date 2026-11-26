@@ -295,18 +295,8 @@ func (s *Service) Repay(ctx context.Context, p *auth.Principal, loanID uuid.UUID
 		if ref := strings.TrimSpace(in.Reference); ref != "" {
 			desc += " (" + ref + ")"
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.financial_transactions
-				(tenant_id, account_id, direction, amount, txn_type, business_unit_id, location_id, business_date, description)
-			VALUES ($1,$2,'in',$3,'other_payment',(SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $4),$4,$5::date,$6)`,
-			p.TenantID, in.MoneyAccountID, amount, locID, date, desc); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.employee_advances
-			SET amount_repaid = amount_repaid + $3,
-			    status = CASE WHEN amount_repaid + $3 = principal THEN 'settled'::app.advance_status ELSE status END
-			WHERE tenant_id = $1 AND id = $2`, p.TenantID, loanID, amount); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT app.apply_advance_cash_repayment($1,$2,$3,$4,$5::date,$6)`,
+			loanID, amount, in.MoneyAccountID, locID, date, desc); err != nil {
 			return err
 		}
 		out, err := s.loadLoan(ctx, tx, p.TenantID, loanID, false)

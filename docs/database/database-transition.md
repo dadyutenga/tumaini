@@ -55,7 +55,7 @@ Legend: [x] done (compiles; not yet integration-tested), [~] partly done, [ ] no
 - [x] Inbox (approvals list, notifications), system (exports, backups)
 - [x] Delete the old `kernel/ledger`, `kernel/stock`, `kernel/chart` and the old `payments` helpers once nothing uses them
 - [x] Rename `Principal.BusinessID` to `TenantID` everywhere, remove the alias
-- [~] Rewrite the integration tests against the new schema (Batches 1, 2a, 2b passing: identity/org/users/acceptance, catalog/inventory/customers/batch/invoice-numbers, finance/expenses/purchasing/sales; remaining: HR/attendance/payroll, services/reports/inbox/system/audit/recovery/files, OpenAPI contract — see `docs/database/HANDOFF.md`)
+- [~] Rewrite the integration tests against the new schema (Batches 1, 2a, 2b, 3 passing: identity/org/users/acceptance, catalog/inventory/customers/batch/invoice-numbers, finance/expenses/purchasing/sales, HR/attendance/payroll; remaining: services/reports/inbox/system/audit/recovery/files, OpenAPI contract — see `docs/database/HANDOFF.md`)
 - [~] Update the web client (permission codes, role editor, user form, removed features — aligned for first 12 ported modules in `ecefcb3`/`85d914a`; re-audit services/reports/inbox/system after backend tests finish)
 - [ ] OpenAPI
 - [ ] Legacy data migration tool, mapping and reconciliation
