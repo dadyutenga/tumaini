@@ -6,7 +6,15 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
+import { Link } from "react-router-dom";
+import {
+  ArrowDown,
+  ArrowLeft,
+  ArrowUp,
+  ArrowUpDown,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -18,6 +26,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { EmptyState, PageLoader } from "@/components/shared/Display";
 import { cn } from "@/lib/utils";
 import type { Meta } from "@/lib/api";
@@ -26,19 +42,153 @@ export function PageHeader({
   title,
   description,
   actions,
+  backTo,
+  backLabel,
+  badge,
 }: {
   title: string;
   description?: string;
   actions?: ReactNode;
+  backTo?: string;
+  backLabel?: string;
+  badge?: ReactNode;
 }) {
   return (
-    <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-      <div>
-        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-        {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
+    <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0">
+        {backTo && (
+          <Link
+            to={backTo}
+            className="mb-2 inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--od-ink-muted)] transition-colors hover:text-[var(--od-ink)]"
+          >
+            <ArrowLeft size={13} />
+            <span>{backLabel ?? "Back"}</span>
+          </Link>
+        )}
+        <div className="flex flex-wrap items-center gap-2.5">
+          <h1 className="od-page-title text-[var(--od-ink)]">{title}</h1>
+          {badge}
+        </div>
+        {description && (
+          <p className="mt-1.5 text-[13px] leading-[1.45] text-[var(--od-ink-secondary)]">
+            {description}
+          </p>
+        )}
       </div>
-      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+      {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
     </div>
+  );
+}
+
+/** OpenDashboards card container with optional header and action slot. */
+export function SectionCard({
+  title,
+  subtitle,
+  actions,
+  children,
+  className,
+  flush,
+}: {
+  title?: string;
+  subtitle?: string;
+  actions?: ReactNode;
+  children: ReactNode;
+  className?: string;
+  flush?: boolean;
+}) {
+  return (
+    <section className={cn(flush ? "od-card-flush overflow-hidden" : "od-card", className)}>
+      {(title || actions) && (
+        <div
+          className={cn(
+            "flex flex-wrap items-start justify-between gap-3",
+            flush && "border-b border-[var(--od-border)] px-6 py-4",
+          )}
+        >
+          <div className="min-w-0">
+            {title && <h2 className="od-card-title text-[var(--od-ink)]">{title}</h2>}
+            {subtitle && <p className="od-card-subtitle">{subtitle}</p>}
+          </div>
+          {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+        </div>
+      )}
+      {children}
+    </section>
+  );
+}
+
+/** OpenDashboards segmented filter chips (.od-chips / .od-chip). */
+export function SegmentedChips<T extends string>({
+  options,
+  value,
+  onChange,
+  ariaLabel = "Filter",
+  className,
+}: {
+  options: { value: T; label: string; count?: number }[];
+  value: T;
+  onChange: (value: T) => void;
+  ariaLabel?: string;
+  className?: string;
+}) {
+  return (
+    <div role="radiogroup" aria-label={ariaLabel} className={cn("od-chips flex-wrap", className)}>
+      {options.map((opt) => {
+        const selected = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={selected}
+            onClick={() => onChange(opt.value)}
+            className="od-chip inline-flex items-center gap-1.5 font-medium"
+          >
+            <span>{opt.label}</span>
+            {opt.count !== undefined && (
+              <span className="od-tabular text-[11px] opacity-65">{opt.count}</span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Consistent horizontal toolbar for search, filters, and secondary controls above a table or list. */
+export function FilterBar({ children, className }: { children: ReactNode; className?: string }) {
+  return (
+    <div className={cn("mb-4 flex flex-wrap items-center gap-2.5", className)}>{children}</div>
+  );
+}
+
+/** Structured metadata key-value strip for detail views. */
+export function MetaGrid({
+  items,
+  className,
+}: {
+  items: { label: string; value: ReactNode; mono?: boolean }[];
+  className?: string;
+}) {
+  return (
+    <dl className={cn("grid gap-4 sm:grid-cols-2 lg:grid-cols-4", className)}>
+      {items.map((item) => (
+        <div
+          key={item.label}
+          className="rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-4 py-3"
+        >
+          <dt className="od-kpi-label">{item.label}</dt>
+          <dd
+            className={cn(
+              "mt-1 text-[14px] font-semibold text-[var(--od-ink)]",
+              item.mono && "od-mono",
+            )}
+          >
+            {item.value}
+          </dd>
+        </div>
+      ))}
+    </dl>
   );
 }
 
@@ -47,7 +197,7 @@ export const NativeSelect = forwardRef<HTMLSelectElement, ComponentProps<"select
     <select
       ref={ref}
       className={cn(
-        "flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50",
+        "flex h-9 w-full rounded-[var(--od-app-radius,10px)] border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-3 py-1 text-sm text-[var(--od-ink)] shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors focus-visible:border-[var(--od-ink-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50",
         className,
       )}
       {...props}
@@ -59,74 +209,112 @@ NativeSelect.displayName = "NativeSelect";
 export function Field({
   label,
   error,
+  hint,
   children,
   className,
 }: {
   label: string;
   error?: string;
+  hint?: string;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <div className={cn("space-y-1.5", className)}>
-      <Label>{label}</Label>
+      <Label className="text-[12px] font-medium text-[var(--od-ink-secondary)]">{label}</Label>
       {children}
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {hint && !error && <p className="text-[11px] text-[var(--od-ink-muted)]">{hint}</p>}
+      {error && <p className="text-[12px] font-medium text-[var(--od-bad)]">{error}</p>}
     </div>
   );
 }
 
-const STATUS_TONE: Record<string, string> = {
-  completed: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  paid: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  closed: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  reopened: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  approved: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  active: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  open: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  pending: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  submitted: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  partial: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  rejected: "bg-red-500/15 text-red-700 dark:text-red-400",
-  voided: "bg-red-500/15 text-red-700 dark:text-red-400",
-  cancelled: "bg-red-500/15 text-red-700 dark:text-red-400",
-  inactive: "bg-muted text-muted-foreground",
-  // Services: green for finished work, yellow for work underway, blue for waiting on someone,
-  // red for late or blocked, grey for drafts.
-  done: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  delivered: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  printing: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  renewed: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  received: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  posted: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
-  in_progress: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  in_design: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  internal_review: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  on_hold: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  urgent: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  with_client: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  sent: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  issued: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  lead: "bg-sky-500/15 text-sky-700 dark:text-sky-400",
-  owed: "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-  stuck: "bg-red-500/15 text-red-700 dark:text-red-400",
-  overdue: "bg-red-500/15 text-red-700 dark:text-red-400",
-  missing: "bg-red-500/15 text-red-700 dark:text-red-400",
-  changes_requested: "bg-red-500/15 text-red-700 dark:text-red-400",
-  void: "bg-red-500/15 text-red-700 dark:text-red-400",
-  draft: "bg-muted text-muted-foreground",
-  new_brief: "bg-muted text-muted-foreground",
-  not_started: "bg-muted text-muted-foreground",
-  todo: "bg-muted text-muted-foreground",
+type Tone = "good" | "warning" | "info" | "bad" | "neutral";
+
+const STATUS_TONE_KEY: Record<string, Tone> = {
+  completed: "good",
+  paid: "good",
+  closed: "good",
+  approved: "good",
+  active: "good",
+  done: "good",
+  delivered: "good",
+  printing: "good",
+  renewed: "good",
+  received: "good",
+  posted: "good",
+  present: "good",
+  converted: "good",
+  success: "good",
+  ok: "good",
+
+  reopened: "warning",
+  pending: "warning",
+  submitted: "warning",
+  partial: "warning",
+  in_progress: "warning",
+  in_design: "warning",
+  internal_review: "warning",
+  on_hold: "warning",
+  urgent: "warning",
+  owed: "warning",
+  late: "warning",
+  half_day: "warning",
+  low: "warning",
+
+  open: "info",
+  with_client: "info",
+  sent: "info",
+  issued: "info",
+  lead: "info",
+  leave: "info",
+  in_transit: "info",
+  scheduled: "info",
+
+  rejected: "bad",
+  voided: "bad",
+  cancelled: "bad",
+  stuck: "bad",
+  overdue: "bad",
+  missing: "bad",
+  changes_requested: "bad",
+  void: "bad",
+  absent: "bad",
+  failed: "bad",
+  expired: "bad",
+
+  inactive: "neutral",
+  draft: "neutral",
+  new_brief: "neutral",
+  not_started: "neutral",
+  todo: "neutral",
+};
+
+const TONE_CLASS: Record<Tone, string> = {
+  good: "bg-[color-mix(in_srgb,var(--od-good-mark)_12%,transparent)] text-[var(--od-good)]",
+  warning: "bg-[var(--od-warning-soft)] text-[var(--od-warning)]",
+  info: "bg-[color-mix(in_srgb,var(--od-info)_12%,transparent)] text-[var(--od-info)]",
+  bad: "bg-[color-mix(in_srgb,var(--od-bad-mark)_12%,transparent)] text-[var(--od-bad)]",
+  neutral: "bg-[var(--od-neutral-soft)] text-[var(--od-ink-secondary)]",
+};
+
+const DOT_CLASS: Record<Tone, string> = {
+  good: "bg-[var(--od-good-mark)]",
+  warning: "bg-[var(--od-warning-mark)]",
+  info: "bg-[var(--od-info)]",
+  bad: "bg-[var(--od-bad-mark)]",
+  neutral: "bg-[var(--od-muted-mark)]",
 };
 
 export function StatusBadge({ value }: { value: string }) {
+  const tone: Tone = STATUS_TONE_KEY[value.toLowerCase()] ?? "neutral";
   return (
     <Badge
       variant="outline"
-      className={cn("border-transparent capitalize", STATUS_TONE[value.toLowerCase()])}
+      className={cn("border-transparent font-medium capitalize", TONE_CLASS[tone])}
     >
-      {value.replaceAll("_", " ")}
+      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", DOT_CLASS[tone])} aria-hidden />
+      <span>{value.replaceAll("_", " ")}</span>
     </Badge>
   );
 }
@@ -145,6 +333,7 @@ export function DataGrid<T>({
   columns,
   loading,
   empty = "Nothing here yet",
+  emptyDescription,
   onRowClick,
   rowKey,
   totals,
@@ -153,6 +342,7 @@ export function DataGrid<T>({
   columns: Col<T>[];
   loading?: boolean;
   empty?: string;
+  emptyDescription?: string;
   onRowClick?: (row: T) => void;
   rowKey: (row: T) => string;
   /** Optional footer cells aligned 1:1 with columns to show a bold totals row. */
@@ -178,10 +368,10 @@ export function DataGrid<T>({
 
   if (loading && !rows) return <PageLoader />;
   return (
-    <div className="overflow-x-auto rounded-2xl border bg-card">
+    <div className="od-card-flush overflow-hidden">
       <Table>
         <TableHeader>
-          <TableRow>
+          <TableRow className="bg-[var(--od-surface-subtle)]/70 hover:bg-[var(--od-surface-subtle)]/70">
             {columns.map((c) => {
               const active = sort?.header === c.header;
               return (
@@ -200,7 +390,8 @@ export function DataGrid<T>({
                         )
                       }
                       className={cn(
-                        "inline-flex items-center gap-1 hover:text-foreground",
+                        "inline-flex cursor-pointer items-center gap-1 transition-colors hover:text-[var(--od-ink)]",
+                        active && "text-[var(--od-ink)]",
                         c.align === "right" && "ml-auto",
                       )}
                     >
@@ -233,7 +424,7 @@ export function DataGrid<T>({
               {columns.map((c) => (
                 <TableCell
                   key={c.header}
-                  className={cn(c.align === "right" && "text-right tabular-nums", c.className)}
+                  className={cn(c.align === "right" && "od-tabular text-right", c.className)}
                 >
                   {c.cell(row)}
                 </TableCell>
@@ -242,12 +433,12 @@ export function DataGrid<T>({
           ))}
         </TableBody>
         {totals && sortedRows && sortedRows.length > 0 && (
-          <tfoot className="border-t bg-muted/40 font-semibold">
-            <TableRow>
+          <tfoot className="border-t border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] font-semibold">
+            <TableRow className="hover:bg-transparent">
               {columns.map((c, idx) => (
                 <TableCell
                   key={c.header || idx}
-                  className={cn(c.align === "right" && "text-right tabular-nums", c.className)}
+                  className={cn(c.align === "right" && "od-tabular text-right", c.className)}
                 >
                   {totals[idx] ?? ""}
                 </TableCell>
@@ -256,7 +447,7 @@ export function DataGrid<T>({
           </tfoot>
         )}
       </Table>
-      {rows?.length === 0 && <EmptyState title={empty} />}
+      {rows?.length === 0 && <EmptyState title={empty} description={emptyDescription} />}
     </div>
   );
 }
@@ -278,40 +469,33 @@ export function Pager({ meta, onPage }: { meta?: Meta; onPage: (page: number) =>
   if (!meta || meta.total <= meta.per_page) return null;
   const last = Math.ceil(meta.total / meta.per_page);
   return (
-    <div className="mt-3 flex items-center justify-end gap-2 text-sm text-muted-foreground">
-      <span>
+    <div className="mt-4 flex items-center justify-between gap-2 text-[12px] text-[var(--od-ink-muted)]">
+      <span className="od-tabular">
         Page {meta.page} of {last} · {meta.total} total
       </span>
-      <Button
-        variant="outline"
-        size="icon"
-        aria-label="Previous page"
-        disabled={meta.page <= 1}
-        onClick={() => onPage(meta.page - 1)}
-      >
-        <ChevronLeft size={16} />
-      </Button>
-      <Button
-        variant="outline"
-        size="icon"
-        aria-label="Next page"
-        disabled={meta.page >= last}
-        onClick={() => onPage(meta.page + 1)}
-      >
-        <ChevronRight size={16} />
-      </Button>
+      <div className="flex items-center gap-1.5">
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="Previous page"
+          disabled={meta.page <= 1}
+          onClick={() => onPage(meta.page - 1)}
+        >
+          <ChevronLeft size={15} />
+        </Button>
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="Next page"
+          disabled={meta.page >= last}
+          onClick={() => onPage(meta.page + 1)}
+        >
+          <ChevronRight size={15} />
+        </Button>
+      </div>
     </div>
   );
 }
-
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 /** Modal with a title, body and a submit button. */
 export function FormDialog({

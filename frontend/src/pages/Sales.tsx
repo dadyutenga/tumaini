@@ -1,16 +1,19 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download } from "lucide-react";
+import { Download, Search, ShoppingCart } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { StatCard } from "@/components/shared/Display";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
   Pager,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
@@ -103,6 +106,9 @@ export default function Sales() {
 
   const rows = sales.data?.data ?? [];
   const activeAccounts = (accounts.data ?? []).filter((a) => a.is_active);
+  const pageTotal = rows.reduce((s, r) => s + toNumber(r.total), 0);
+  const pagePaid = rows.reduce((s, r) => s + toNumber(r.paid_total), 0);
+  const pageBalance = rows.reduce((s, r) => s + toNumber(r.balance), 0);
 
   function exportCsv() {
     downloadCsv("sales-history.csv", [
@@ -121,53 +127,90 @@ export default function Sales() {
   }
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Sales & returns"
         description="Sales history, receipts and returns at the active location."
         actions={
-          rows.length > 0 && (
-            <Button variant="outline" size="sm" onClick={exportCsv}>
-              <Download size={14} /> Export CSV
-            </Button>
-          )
+          <>
+            {rows.length > 0 && (
+              <Button variant="outline" size="sm" onClick={exportCsv}>
+                <Download size={14} /> Export CSV
+              </Button>
+            )}
+            {can("shop.sale.create") && (
+              <Button size="sm" onClick={() => navigate("/pos")}>
+                <ShoppingCart size={14} /> New sale
+              </Button>
+            )}
+          </>
         }
       />
 
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="Matching sales"
+          value={sales.data?.meta?.total ?? rows.length}
+          trend={`Showing ${rows.length} on page`}
+        />
+        <StatCard label="Page total" value={formatMoney(pageTotal)} />
+        <StatCard
+          label="Collected"
+          value={formatMoney(pagePaid)}
+          tone={pagePaid > 0 ? "good" : "neutral"}
+        />
+        <StatCard
+          label="Outstanding balance"
+          value={formatMoney(pageBalance)}
+          tone={pageBalance > 0 ? "bad" : "neutral"}
+        />
+      </div>
+
       <Tabs defaultValue="sales">
-        <TabsList className="mb-4">
+        <TabsList>
           <TabsTrigger value="sales">Sales history</TabsTrigger>
           {canViewReturns && <TabsTrigger value="returns">Returns</TabsTrigger>}
         </TabsList>
 
-        <TabsContent value="sales">
-          <div className="mb-4 flex flex-wrap items-end gap-3">
-            <Field label="Search">
-              <Input
-                placeholder="Receipt #, customer or phone…"
-                value={q}
-                onChange={(e) => {
-                  setQ(e.target.value);
-                  setPage(1);
-                }}
-              />
-            </Field>
-            <Field label="Status">
-              <NativeSelect
+        <TabsContent value="sales" className="space-y-4">
+          <FilterBar className="justify-between">
+            <div className="flex flex-1 flex-wrap items-center gap-2.5">
+              <div className="relative min-w-[220px] flex-1 sm:max-w-xs">
+                <Search
+                  size={15}
+                  className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
+                />
+                <Input
+                  aria-label="Search sales"
+                  className="pl-9"
+                  placeholder="Receipt #, customer or phone…"
+                  value={q}
+                  onChange={(e) => {
+                    setQ(e.target.value);
+                    setPage(1);
+                  }}
+                />
+              </div>
+              <SegmentedChips
+                ariaLabel="Sale status"
                 value={status}
-                onChange={(e) => {
-                  setStatus(e.target.value);
+                onChange={(v) => {
+                  setStatus(v);
                   setPage(1);
                 }}
-              >
-                <option value="">All statuses</option>
-                <option value="completed">Completed</option>
-                <option value="pending_approval">Waiting approval</option>
-                <option value="voided">Voided</option>
-              </NativeSelect>
-            </Field>
-            <Field label="Payment">
+                options={[
+                  { value: "", label: "All" },
+                  { value: "completed", label: "Completed" },
+                  { value: "pending_approval", label: "Pending" },
+                  { value: "voided", label: "Voided" },
+                ]}
+              />
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
               <NativeSelect
+                aria-label="Payment method"
+                className="w-36"
                 value={method}
                 onChange={(e) => {
                   setMethod(e.target.value);
@@ -179,28 +222,29 @@ export default function Sales() {
                 <option value="mobile_money">Mobile money</option>
                 <option value="bank">Bank</option>
               </NativeSelect>
-            </Field>
-            <Field label="From">
               <Input
                 type="date"
+                aria-label="From date"
+                className="w-36"
                 value={from}
                 onChange={(e) => {
                   setFrom(e.target.value);
                   setPage(1);
                 }}
               />
-            </Field>
-            <Field label="To">
               <Input
                 type="date"
+                aria-label="To date"
+                className="w-36"
                 value={to}
                 onChange={(e) => {
                   setTo(e.target.value);
                   setPage(1);
                 }}
               />
-            </Field>
-          </div>
+            </div>
+          </FilterBar>
+
           <DataGrid
             rows={rows}
             loading={sales.isLoading}
@@ -208,14 +252,58 @@ export default function Sales() {
             empty="No sales match these filters"
             onRowClick={(s) => navigate(`/sales/${s.id}`)}
             columns={[
-              { header: "Receipt", cell: (s) => <span className="font-medium">{s.number}</span> },
-              { header: "Date", cell: (s) => formatDate(s.business_date) },
-              { header: "Customer", cell: (s) => s.customer_name ?? "Walk-in" },
-              { header: "Cashier", cell: (s) => s.cashier_name ?? "-" },
+              {
+                header: "Receipt",
+                sortValue: (s) => s.number,
+                cell: (s) => <span className="od-mono font-medium">{s.number}</span>,
+              },
+              {
+                header: "Date",
+                sortValue: (s) => s.business_date,
+                cell: (s) => (
+                  <span className="text-[var(--od-ink-secondary)]">
+                    {formatDate(s.business_date)}
+                  </span>
+                ),
+              },
+              {
+                header: "Customer",
+                sortValue: (s) => s.customer_name ?? "Walk-in",
+                cell: (s) => s.customer_name ?? "Walk-in",
+              },
+              {
+                header: "Cashier",
+                cell: (s) => (
+                  <span className="text-[var(--od-ink-secondary)]">{s.cashier_name ?? "—"}</span>
+                ),
+              },
               { header: "Status", cell: (s) => <StatusBadge value={s.status} /> },
-              { header: "Total", align: "right", cell: (s) => formatMoney(s.total) },
-              { header: "Paid", align: "right", cell: (s) => formatMoney(s.paid_total) },
-              { header: "Balance", align: "right", cell: (s) => formatMoney(s.balance) },
+              {
+                header: "Total",
+                align: "right",
+                sortValue: (s) => toNumber(s.total),
+                cell: (s) => <span className="font-medium">{formatMoney(s.total)}</span>,
+              },
+              {
+                header: "Paid",
+                align: "right",
+                sortValue: (s) => toNumber(s.paid_total),
+                cell: (s) => formatMoney(s.paid_total),
+              },
+              {
+                header: "Balance",
+                align: "right",
+                sortValue: (s) => toNumber(s.balance),
+                cell: (s) => (
+                  <span
+                    className={
+                      toNumber(s.balance) > 0 ? "font-semibold text-[var(--od-bad)]" : undefined
+                    }
+                  >
+                    {formatMoney(s.balance)}
+                  </span>
+                ),
+              },
             ]}
           />
           <Pager meta={sales.data?.meta} onPage={setPage} />
@@ -229,16 +317,28 @@ export default function Sales() {
             empty="No returns recorded yet"
             onRowClick={(r) => navigate(`/sales/${r.sale_id}`)}
             columns={[
-              { header: "Return #", cell: (r) => <span className="font-medium">{r.number}</span> },
-              { header: "Sale #", cell: (r) => r.sale_number },
+              {
+                header: "Return #",
+                cell: (r) => <span className="od-mono font-medium">{r.number}</span>,
+              },
+              {
+                header: "Sale #",
+                cell: (r) => (
+                  <span className="od-mono text-[var(--od-ink-secondary)]">{r.sale_number}</span>
+                ),
+              },
               { header: "Date", cell: (r) => formatDate(r.created_at) },
-              { header: "Reason", cell: (r) => r.reason || "-" },
+              { header: "Reason", cell: (r) => r.reason || "—" },
               {
                 header: "Resolution",
                 cell: (r) => <span className="capitalize">{r.resolution}</span>,
               },
               { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
-              { header: "Refund", align: "right", cell: (r) => formatMoney(r.refund_total) },
+              {
+                header: "Refund",
+                align: "right",
+                cell: (r) => <span className="font-medium">{formatMoney(r.refund_total)}</span>,
+              },
               {
                 header: "",
                 cell: (r) => {
@@ -324,8 +424,11 @@ export default function Sales() {
         completing.resolution === "refund" &&
         toNumber(completing.refund_total) > 0 ? (
           <>
-            <p className="text-sm text-muted-foreground">
-              Refund amount: <strong>{formatMoney(completing.refund_total)}</strong>
+            <p className="rounded-[var(--od-radius-sm,8px)] bg-[var(--od-surface-subtle)] px-3 py-2 text-[13px] text-[var(--od-ink-secondary)]">
+              Refund amount:{" "}
+              <strong className="od-tabular text-[var(--od-ink)]">
+                {formatMoney(completing.refund_total)}
+              </strong>
             </p>
             <Field label="Refund method">
               <NativeSelect value={refundMethod} onChange={(e) => setRefundMethod(e.target.value)}>
@@ -349,11 +452,11 @@ export default function Sales() {
             </Field>
           </>
         ) : (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-[13px] text-[var(--od-ink-secondary)]">
             Confirm completion of this exchange return. Eligible resellable items will be restocked.
           </p>
         )}
       </FormDialog>
-    </>
+    </div>
   );
 }

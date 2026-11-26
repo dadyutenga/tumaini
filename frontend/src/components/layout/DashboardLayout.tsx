@@ -1,7 +1,7 @@
 import { APP_NAME } from "@/lib/constants";
 import { useMemo, useState } from "react";
 import { Link, NavLink, Outlet, matchPath, useLocation } from "react-router-dom";
-import { ChevronDown, ChevronRight, Menu, PanelLeftClose } from "lucide-react";
+import { ChevronDown, ChevronRight, Menu, PanelLeft, PanelLeftClose } from "lucide-react";
 import { routes, type AppRoute } from "@/app/routes";
 import { useVisibleRoutes } from "@/app/useVisibleRoutes";
 import { BranchSwitcher } from "@/components/layout/BranchSwitcher";
@@ -32,6 +32,7 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
+import { cn } from "@/lib/utils";
 
 function Navigation({
   compact = false,
@@ -60,45 +61,52 @@ function Navigation({
   }, [visible]);
 
   return (
-    <nav aria-label="Main navigation" className="space-y-1 pb-6">
+    <nav aria-label="Main navigation" className="space-y-0.5 pb-6">
       {sections.map((sec, idx) => {
         const isCollapsed = sec.name ? Boolean(collapsed[sec.name]) : false;
         return (
-          <div key={sec.name ?? `root-${idx}`}>
+          <div key={sec.name ?? `root-${idx}`} className={idx > 0 && !compact ? "pt-3" : undefined}>
             {sec.name && !compact && (
               <button
                 type="button"
                 onClick={() => setCollapsed((c) => ({ ...c, [sec.name!]: !c[sec.name!] }))}
-                className="mt-4 flex w-full items-center justify-between px-3 pb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground/80 hover:text-foreground"
+                className="mb-1 flex w-full items-center justify-between rounded-md px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--od-ink-muted)] transition-colors hover:text-[var(--od-ink)]"
               >
                 <span>{groupLabel(sec.name)}</span>
-                {isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}
+                {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
               </button>
             )}
-            {sec.name && compact && <div className="my-2 border-t" />}
-            {(!isCollapsed || compact) &&
-              sec.items.map(({ path, label, icon: Icon }) => {
-                const display = routeLabel(path, label);
-                return (
-                  <NavLink
-                    key={path}
-                    end={path === "/"}
-                    onClick={onNavigate}
-                    to={path}
-                    title={compact ? display : undefined}
-                    className={({ isActive }) =>
-                      `flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
-                        isActive
-                          ? "bg-primary/12 font-semibold text-primary ring-1 ring-primary/15"
-                          : "font-medium text-muted-foreground hover:bg-muted/80 hover:text-foreground"
-                      }`
-                    }
-                  >
-                    <Icon size={18} className="shrink-0" />
-                    {!compact && <span className="truncate">{display}</span>}
-                  </NavLink>
-                );
-              })}
+            {sec.name && compact && (
+              <div className="mx-2 my-2 border-t border-[var(--od-border-strong)]" />
+            )}
+            {(!isCollapsed || compact) && (
+              <div className="space-y-0.5">
+                {sec.items.map(({ path, label, icon: Icon }) => {
+                  const display = routeLabel(path, label);
+                  return (
+                    <NavLink
+                      key={path}
+                      end={path === "/"}
+                      onClick={onNavigate}
+                      to={path}
+                      title={compact ? display : undefined}
+                      className={({ isActive }) =>
+                        cn(
+                          "group flex items-center gap-2.5 rounded-[var(--od-app-radius,10px)] px-2.5 py-1.5 text-[13px] transition-colors",
+                          compact && "justify-center px-0",
+                          isActive
+                            ? "bg-[var(--od-surface)] font-semibold text-[var(--od-ink)] shadow-[0_0_0_1px_var(--od-border-strong),0_1px_2px_rgba(0,0,0,0.03)]"
+                            : "font-medium text-[var(--od-ink-secondary)] hover:bg-[var(--od-surface-subtle)] hover:text-[var(--od-ink)]",
+                        )
+                      }
+                    >
+                      <Icon size={16} className="shrink-0 opacity-80 group-hover:opacity-100" />
+                      {!compact && <span className="truncate">{display}</span>}
+                    </NavLink>
+                  );
+                })}
+              </div>
+            )}
           </div>
         );
       })}
@@ -127,25 +135,41 @@ export default function DashboardLayout() {
   const title = currentRoute ? routeLabel(currentRoute.path, currentRoute.label) : "Page";
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen bg-[var(--od-page)] text-[var(--od-ink)]">
       {/* Desktop Collapsible Scrollable Sidebar */}
       <aside
-        className={`fixed inset-y-0 left-0 z-20 hidden overflow-y-auto border-r bg-card p-4 transition-all md:block ${
-          compact ? "w-20" : "w-64"
-        }`}
+        className={cn(
+          "scrollbar-thin fixed inset-y-0 left-0 z-20 hidden overflow-y-auto border-r border-[var(--od-app-border)] bg-[var(--od-app-sidebar)] px-3 py-3.5 transition-[width] duration-200 md:block",
+          compact ? "w-[68px]" : "w-60",
+        )}
       >
-        <Link to="/" className="mb-6 flex h-10 items-center gap-3 px-2 font-bold">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-primary to-primary/80 text-xs font-black text-primary-foreground shadow-sm shadow-primary/25">
+        <Link
+          to="/"
+          className={cn(
+            "mb-4 flex h-9 items-center gap-2.5 rounded-[var(--od-app-radius,10px)] px-2 transition-colors hover:bg-[var(--od-surface-subtle)]",
+            compact && "justify-center px-0",
+          )}
+        >
+          <span className="od-wordmark grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[var(--od-app-primary)] text-[11px] font-bold text-[var(--od-app-primary-foreground)]">
             {initials}
           </span>
-          {!compact && <span className="truncate text-base tracking-tight">{brand}</span>}
+          {!compact && (
+            <span className="od-wordmark truncate text-[15px] font-semibold text-[var(--od-ink)]">
+              {brand}
+            </span>
+          )}
         </Link>
         <Navigation compact={compact} />
       </aside>
 
       {/* Main Content Area */}
-      <div className={compact ? "md:pl-20" : "md:pl-64"}>
-        <header className="sticky top-0 z-10 flex h-16 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur-md sm:px-8">
+      <div
+        className={cn(
+          "flex min-h-screen flex-col transition-[padding] duration-200",
+          compact ? "md:pl-[68px]" : "md:pl-60",
+        )}
+      >
+        <header className="sticky top-0 z-10 flex h-14 items-center gap-2.5 border-b border-[var(--od-app-border)] bg-[var(--od-page)]/90 px-4 backdrop-blur-md sm:px-6 lg:px-8">
           {/* Mobile Sheet Drawer */}
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
@@ -155,11 +179,19 @@ export default function DashboardLayout() {
                 className="md:hidden"
                 aria-label="Open navigation"
               >
-                <Menu />
+                <Menu size={18} />
               </Button>
             </SheetTrigger>
-            <SheetContent side="left" className="overflow-y-auto">
-              <SheetTitle className="mb-4">{brand}</SheetTitle>
+            <SheetContent
+              side="left"
+              className="w-72 overflow-y-auto bg-[var(--od-app-sidebar)] px-3 py-4"
+            >
+              <SheetTitle className="od-wordmark mb-4 flex items-center gap-2.5 px-2 text-[15px] font-semibold">
+                <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[var(--od-app-primary)] text-[11px] font-bold text-[var(--od-app-primary-foreground)]">
+                  {initials}
+                </span>
+                <span className="truncate">{brand}</span>
+              </SheetTitle>
               <SheetDescription className="sr-only">Choose a page to navigate to.</SheetDescription>
               <Navigation onNavigate={() => setOpen(false)} />
             </SheetContent>
@@ -174,28 +206,35 @@ export default function DashboardLayout() {
             aria-expanded={!compact}
             onClick={() => setCompact(!compact)}
           >
-            <PanelLeftClose />
+            {compact ? <PanelLeft size={17} /> : <PanelLeftClose size={17} />}
           </Button>
 
           {/* Breadcrumbs */}
           <div className="hidden sm:block">
             <Breadcrumb>
-              <BreadcrumbList>
+              <BreadcrumbList className="text-[13px]">
                 <BreadcrumbItem>
                   <BreadcrumbLink asChild>
-                    <Link to="/">{t.nav.home}</Link>
+                    <Link
+                      to="/"
+                      className="text-[var(--od-ink-muted)] transition-colors hover:text-[var(--od-ink)]"
+                    >
+                      {t.nav.home}
+                    </Link>
                   </BreadcrumbLink>
                 </BreadcrumbItem>
                 <BreadcrumbSeparator />
                 <BreadcrumbItem>
-                  <BreadcrumbPage>{title}</BreadcrumbPage>
+                  <BreadcrumbPage className="font-medium text-[var(--od-ink)]">
+                    {title}
+                  </BreadcrumbPage>
                 </BreadcrumbItem>
               </BreadcrumbList>
             </Breadcrumb>
           </div>
 
           {/* Topbar Actions */}
-          <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
+          <div className="ml-auto flex items-center gap-1.5">
             <SearchPalette />
             <QuickNewMenu />
             <BranchSwitcher />
@@ -206,14 +245,19 @@ export default function DashboardLayout() {
           </div>
         </header>
 
-        <main className="mx-auto max-w-7xl p-4 sm:p-8">
+        <main className="mx-auto w-full max-w-[1360px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
           <Outlet />
         </main>
 
-        <footer className="border-t px-8 py-6 text-xs text-muted-foreground">{brand}</footer>
+        <footer className="border-t border-[var(--od-border)] px-4 py-4 text-[12px] text-[var(--od-ink-muted)] sm:px-6 lg:px-8">
+          <div className="mx-auto flex max-w-[1360px] items-center justify-between">
+            <span className="od-wordmark font-medium text-[var(--od-ink-secondary)]">{brand}</span>
+            <span>Business Management System</span>
+          </div>
+        </footer>
       </div>
 
-      {/* Mobile Floating + New Button (SRS Section 3) */}
+      {/* Mobile Floating + New Button */}
       <QuickNewMenu floating />
     </div>
   );
