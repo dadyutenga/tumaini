@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import {
   Pager,
   StatusBadge,
 } from "@/components/shared/kit";
+import { StatCard } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
 import { useGetPage, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney } from "@/lib/formatters";
@@ -48,8 +49,17 @@ export default function Payroll() {
       navigate(`/payroll/${r.id}`);
     },
   });
+
+  const rows = useMemo(() => list.data?.data ?? [], [list.data?.data]);
+  const totals = useMemo(() => {
+    const gross = rows.reduce((s, r) => s + Number(r.gross_total || 0), 0);
+    const net = rows.reduce((s, r) => s + Number(r.net_total || 0), 0);
+    const paid = rows.reduce((s, r) => s + Number(r.paid_total || 0), 0);
+    return { gross, net, paid };
+  }, [rows]);
+
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Payroll"
         description="Calculate, approve and pay salaries for a period."
@@ -61,6 +71,19 @@ export default function Payroll() {
           )
         }
       />
+
+      {rows.length > 0 && (
+        <div className="grid gap-4 sm:grid-cols-3">
+          <StatCard label="Gross (this page)" value={formatMoney(totals.gross)} />
+          <StatCard label="Net payable" value={formatMoney(totals.net)} />
+          <StatCard
+            label="Paid"
+            value={formatMoney(totals.paid)}
+            tone={totals.paid >= totals.net && totals.net > 0 ? "good" : "neutral"}
+          />
+        </div>
+      )}
+
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
@@ -68,15 +91,40 @@ export default function Payroll() {
         empty="No payroll runs yet"
         onRowClick={(r) => navigate(`/payroll/${r.id}`)}
         columns={[
-          { header: "Number", cell: (r) => <span className="font-medium">{r.number}</span> },
+          {
+            header: "Number",
+            cell: (r) => (
+              <span className="od-mono font-medium text-[var(--od-ink)]">{r.number}</span>
+            ),
+          },
           {
             header: "Period",
             cell: (r) => `${formatDate(r.period_start)} – ${formatDate(r.period_end)}`,
           },
-          { header: "Staff", align: "right", cell: (r) => r.payslip_count },
-          { header: "Gross", align: "right", cell: (r) => formatMoney(r.gross_total) },
-          { header: "Net", align: "right", cell: (r) => formatMoney(r.net_total) },
-          { header: "Paid", align: "right", cell: (r) => formatMoney(r.paid_total) },
+          {
+            header: "Staff",
+            align: "right",
+            cell: (r) => <span className="od-tabular">{r.payslip_count}</span>,
+          },
+          {
+            header: "Gross",
+            align: "right",
+            cell: (r) => <span className="od-tabular">{formatMoney(r.gross_total)}</span>,
+          },
+          {
+            header: "Net",
+            align: "right",
+            cell: (r) => (
+              <span className="od-tabular font-semibold text-[var(--od-ink)]">
+                {formatMoney(r.net_total)}
+              </span>
+            ),
+          },
+          {
+            header: "Paid",
+            align: "right",
+            cell: (r) => <span className="od-tabular">{formatMoney(r.paid_total)}</span>,
+          },
           { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
         ]}
       />
@@ -107,6 +155,6 @@ export default function Payroll() {
           </Field>
         </div>
       </FormDialog>
-    </>
+    </div>
   );
 }

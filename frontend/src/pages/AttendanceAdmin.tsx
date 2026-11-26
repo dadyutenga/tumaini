@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
@@ -143,8 +144,8 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
   }
 
   return (
-    <>
-      <div className="mb-4 flex flex-wrap items-end gap-3">
+    <div className="space-y-4">
+      <FilterBar className="items-end">
         <Field label="From">
           <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
         </Field>
@@ -156,7 +157,7 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
             <Plus size={16} /> Record a day
           </Button>
         )}
-      </div>
+      </FilterBar>
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
@@ -166,20 +167,38 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
           { header: "Date", cell: (d) => formatDate(d.day) },
           {
             header: "Employee",
-            cell: (d) => <span className="font-medium">{d.employee_name}</span>,
+            cell: (d) => (
+              <span className="font-medium text-[var(--od-ink)]">{d.employee_name}</span>
+            ),
           },
-          { header: "In", cell: (d) => time(d.first_in) },
-          { header: "Out", cell: (d) => time(d.last_out) },
-          { header: "Worked", align: "right", cell: (d) => hours(d.worked_minutes) },
+          {
+            header: "In",
+            cell: (d) => <span className="od-mono text-xs">{time(d.first_in)}</span>,
+          },
+          {
+            header: "Out",
+            cell: (d) => <span className="od-mono text-xs">{time(d.last_out)}</span>,
+          },
+          {
+            header: "Worked",
+            align: "right",
+            cell: (d) => <span className="od-tabular">{hours(d.worked_minutes)}</span>,
+          },
           {
             header: overtimeOnly ? "Overtime" : "Late",
             align: "right",
             cell: (d) =>
-              overtimeOnly
-                ? hours(d.overtime_minutes)
-                : d.late_minutes
-                  ? `${d.late_minutes} min`
-                  : "-",
+              overtimeOnly ? (
+                <span className="od-tabular font-medium text-[var(--od-ink)]">
+                  {hours(d.overtime_minutes)}
+                </span>
+              ) : d.late_minutes ? (
+                <span className="od-tabular font-medium text-[var(--od-warning)]">
+                  {d.late_minutes} min
+                </span>
+              ) : (
+                <span className="text-[var(--od-ink-muted)]">-</span>
+              ),
           },
           {
             header: "Status",
@@ -202,6 +221,7 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
                     <Button
                       size="sm"
                       variant="outline"
+                      className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                       onClick={() => decide.mutate({ day: d, action: "reject" })}
                     >
                       Reject
@@ -311,7 +331,7 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
           />
         </Field>
       </FormDialog>
-    </>
+    </div>
   );
 }
 
@@ -350,8 +370,8 @@ function MonthlySummary() {
   }
 
   return (
-    <>
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+    <div className="space-y-4">
+      <FilterBar className="items-end justify-between">
         <Field label="Month">
           <Input
             type="month"
@@ -363,7 +383,7 @@ function MonthlySummary() {
         <Button variant="outline" size="sm" disabled={!rows.length} onClick={exportCsv}>
           <Download size={14} /> Export CSV
         </Button>
-      </div>
+      </FilterBar>
       <DataGrid
         rows={rows}
         loading={res.isLoading}
@@ -374,31 +394,69 @@ function MonthlySummary() {
             header: "Employee",
             cell: (r) => (
               <div>
-                <p className="font-medium">{r.employee_name}</p>
-                <p className="text-xs text-muted-foreground">{r.employee_no}</p>
+                <p className="font-medium text-[var(--od-ink)]">{r.employee_name}</p>
+                <p className="od-mono text-xs text-[var(--od-ink-muted)]">{r.employee_no}</p>
               </div>
             ),
           },
-          { header: "Present", align: "right", cell: (r) => r.days_present },
+          {
+            header: "Present",
+            align: "right",
+            cell: (r) => <span className="od-tabular">{r.days_present}</span>,
+          },
           {
             header: "Late",
             align: "right",
-            cell: (r) => (r.late_count ? `${r.late_count} (${r.late_minutes}m)` : "0"),
+            cell: (r) =>
+              r.late_count ? (
+                <span className="od-tabular font-medium text-[var(--od-warning)]">
+                  {r.late_count} ({r.late_minutes}m)
+                </span>
+              ) : (
+                <span className="od-tabular text-[var(--od-ink-muted)]">0</span>
+              ),
           },
-          { header: "Absent", align: "right", cell: (r) => r.days_absent },
-          { header: "Half day", align: "right", cell: (r) => r.half_days },
-          { header: "Leave", align: "right", cell: (r) => r.leave_days },
-          { header: "Worked hrs", align: "right", cell: (r) => `${r.worked_hours}h` },
-          { header: "OT hrs", align: "right", cell: (r) => `${r.overtime_hours}h` },
+          {
+            header: "Absent",
+            align: "right",
+            cell: (r) =>
+              r.days_absent ? (
+                <span className="od-tabular font-medium text-[var(--od-bad)]">{r.days_absent}</span>
+              ) : (
+                <span className="od-tabular text-[var(--od-ink-muted)]">0</span>
+              ),
+          },
+          {
+            header: "Half day",
+            align: "right",
+            cell: (r) => <span className="od-tabular">{r.half_days}</span>,
+          },
+          {
+            header: "Leave",
+            align: "right",
+            cell: (r) => <span className="od-tabular">{r.leave_days}</span>,
+          },
+          {
+            header: "Worked hrs",
+            align: "right",
+            cell: (r) => (
+              <span className="od-tabular font-medium text-[var(--od-ink)]">{r.worked_hours}h</span>
+            ),
+          },
+          {
+            header: "OT hrs",
+            align: "right",
+            cell: (r) => <span className="od-tabular">{r.overtime_hours}h</span>,
+          },
         ]}
       />
-    </>
+    </div>
   );
 }
 
 export default function AttendanceAdmin() {
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Attendance"
         description="Daily records, monthly summaries, corrections and overtime approval."
@@ -419,6 +477,6 @@ export default function AttendanceAdmin() {
           <History overtimeOnly />
         </TabsContent>
       </Tabs>
-    </>
+    </div>
   );
 }

@@ -1,11 +1,13 @@
 import { useState, type ReactNode } from "react";
 import { Plus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
@@ -54,13 +56,13 @@ export function SimpleList<Row extends { id: string }, Draft extends object>({
     },
   });
   return (
-    <>
+    <div className="space-y-4">
       {canCreate && (
-        <div className="mb-4 flex justify-end">
+        <FilterBar className="justify-end">
           <Button onClick={() => setOpen(true)}>
             <Plus size={16} /> {title}
           </Button>
-        </div>
+        </FilterBar>
       )}
       <DataGrid rows={rows} loading={loading} rowKey={(r) => r.id} columns={columns} />
       <FormDialog
@@ -72,7 +74,7 @@ export function SimpleList<Row extends { id: string }, Draft extends object>({
       >
         {form(draft, (patch) => setDraft((d) => ({ ...d, ...patch })))}
       </FormDialog>
-    </>
+    </div>
   );
 }
 
@@ -96,9 +98,24 @@ function LeaveTypes() {
       canCreate={can("hr.employee.manage")}
       blank={{ name: "", days_per_year: "21", is_paid: true }}
       columns={[
-        { header: "Name", cell: (l) => <span className="font-medium">{l.name}</span> },
-        { header: "Days a year", align: "right", cell: (l) => String(Number(l.days_per_year)) },
-        { header: "Paid", cell: (l) => (l.is_paid ? "Yes" : "No") },
+        {
+          header: "Name",
+          cell: (l) => <span className="font-medium text-[var(--od-ink)]">{l.name}</span>,
+        },
+        {
+          header: "Days a year",
+          align: "right",
+          cell: (l) => <span className="od-tabular">{String(Number(l.days_per_year))}</span>,
+        },
+        {
+          header: "Paid",
+          cell: (l) =>
+            l.is_paid ? (
+              <Badge variant="secondary">Paid</Badge>
+            ) : (
+              <span className="text-[var(--od-ink-muted)]">Unpaid</span>
+            ),
+        },
         {
           header: "Status",
           cell: (l) => <StatusBadge value={l.is_active ? "active" : "inactive"} />,
@@ -112,11 +129,12 @@ function LeaveTypes() {
           <Field label="Days a year">
             <Input
               inputMode="decimal"
+              className="od-tabular"
               value={d.days_per_year}
               onChange={(e) => set({ days_per_year: e.target.value })}
             />
           </Field>
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3.5 py-2.5 text-sm text-[var(--od-ink)]">
             <input
               type="checkbox"
               checked={d.is_paid}
@@ -202,14 +220,14 @@ function Loans() {
   const canDisburse = canAny("hr.compensation.manage", "finance.payment.make");
   const canRepay = canAny("hr.compensation.manage", "finance.payment.receive");
   return (
-    <>
-      <div className="mb-4 flex justify-end">
-        {can("hr.compensation.manage") && (
+    <div className="space-y-4">
+      {can("hr.compensation.manage") && (
+        <FilterBar className="justify-end">
           <Button onClick={() => setOpen(true)}>
             <Plus size={16} /> New advance / loan
           </Button>
-        )}
-      </div>
+        </FilterBar>
+      )}
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
@@ -218,17 +236,46 @@ function Loans() {
         columns={[
           {
             header: "Employee",
-            cell: (l) => <span className="font-medium">{l.employee_name}</span>,
+            cell: (l) => (
+              <span className="font-medium text-[var(--od-ink)]">{l.employee_name}</span>
+            ),
           },
-          { header: "Type", cell: (l) => <span className="capitalize">{l.kind}</span> },
-          { header: "Principal", align: "right", cell: (l) => formatMoney(l.principal) },
-          { header: "Monthly", align: "right", cell: (l) => formatMoney(l.monthly_deduction) },
-          { header: "Balance", align: "right", cell: (l) => formatMoney(l.balance) },
+          {
+            header: "Type",
+            cell: (l) => (
+              <Badge variant="secondary" className="capitalize">
+                {l.kind}
+              </Badge>
+            ),
+          },
+          {
+            header: "Principal",
+            align: "right",
+            cell: (l) => <span className="od-tabular">{formatMoney(l.principal)}</span>,
+          },
+          {
+            header: "Monthly",
+            align: "right",
+            cell: (l) => <span className="od-tabular">{formatMoney(l.monthly_deduction)}</span>,
+          },
+          {
+            header: "Balance",
+            align: "right",
+            cell: (l) => (
+              <span
+                className={`od-tabular font-semibold ${
+                  Number(l.balance) > 0 ? "text-[var(--od-warning)]" : "text-[var(--od-ink)]"
+                }`}
+              >
+                {formatMoney(l.balance)}
+              </span>
+            ),
+          },
           { header: "Status", cell: (l) => <StatusBadge value={l.status} /> },
           {
             header: "",
             cell: (l) => (
-              <div className="flex gap-2">
+              <div className="flex justify-end gap-1.5">
                 {((l.status === "active" && !l.payment_id) || l.status === "approved") &&
                   canDisburse && (
                     <Button size="sm" onClick={() => setActing({ loan: l, mode: "disburse" })}>
@@ -287,6 +334,7 @@ function Loans() {
             <Input
               required
               inputMode="decimal"
+              className="od-tabular"
               value={draft.principal}
               onChange={(e) => setDraft((d) => ({ ...d, principal: e.target.value }))}
             />
@@ -295,6 +343,7 @@ function Loans() {
             <Field label="Deducted each month">
               <Input
                 inputMode="decimal"
+                className="od-tabular"
                 placeholder="Defaults to full amount"
                 value={draft.monthly_deduction}
                 onChange={(e) => setDraft((d) => ({ ...d, monthly_deduction: e.target.value }))}
@@ -322,11 +371,20 @@ function Loans() {
           )
         }
       >
+        {acting && (
+          <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3.5 py-2.5 text-sm text-[var(--od-ink-secondary)]">
+            {acting.mode === "repay" ? "Current balance: " : "Principal to disburse: "}
+            <strong className="od-tabular font-semibold text-[var(--od-ink)]">
+              {formatMoney(acting.mode === "repay" ? acting.loan.balance : acting.loan.principal)}
+            </strong>
+          </div>
+        )}
         {acting?.mode === "repay" && (
           <Field label="Amount">
             <Input
               required
               inputMode="decimal"
+              className="od-tabular"
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
             />
@@ -345,7 +403,7 @@ function Loans() {
           </NativeSelect>
         </Field>
       </FormDialog>
-    </>
+    </div>
   );
 }
 
@@ -354,7 +412,7 @@ export default function HrSetup() {
   const canLeaveTypes = can("hr.employee.manage");
   const canLoans = canAny("hr.compensation.view", "hr.compensation.manage", "hr.payroll.view");
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader title="HR setup" description="Leave types and staff advances / loans." />
       <Tabs defaultValue={canLeaveTypes ? "leave" : "loans"}>
         <TabsList className="mb-4 flex-wrap">
@@ -372,6 +430,6 @@ export default function HrSetup() {
           </TabsContent>
         )}
       </Tabs>
-    </>
+    </div>
   );
 }

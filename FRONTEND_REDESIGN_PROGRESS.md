@@ -3,8 +3,8 @@
 ## Overview
 - **Design System**: OpenDashboards (`od`, `od-app`, `od-mkt`)
 - **Total Pages Discovered**: 52 routed pages (53 page source files including `MoneyExtras.tsx` sub-tab)
-- **Completed Pages**: 33 / 52
-- **Current Batch**: Batch 12 — `AttendanceAdmin`, `HrSetup`, `Payroll`
+- **Completed Pages**: 36 / 52
+- **Current Batch**: Batch 13 — `PayrollSetup`, `PayrollRun`, `Reports`
 
 ## Design System Improvements
 - [x] Copied OpenDashboards bundled assets (`od-tokens.css`, `od-components.css`, `od-tokens.json`) into `frontend/src/styles/`
@@ -28,9 +28,9 @@
 | 8 | `DesignJobDetail`, `ClientDocuments`, `ServiceTasks` | Completed | `2977191` | ESLint 0 errors, 37/37 tests, build passed |
 | 9 | `Renewals`, `Contractors`, `Money` (+ `MoneyExtras`) | Completed | `e4d86f6` | ESLint 0 errors, 37/37 tests, build passed |
 | 10 | `Debts`, `DayClosing`, `Expenses` | Completed | `b4813ba` | ESLint 0 errors, 37/37 tests, build passed |
-| 11 | `ExpenseSetup`, `People`, `EmployeeDetail` | Completed | Pending hash | ESLint 0 errors, 37/37 tests, build passed |
-| 12 | `AttendanceAdmin`, `HrSetup`, `Payroll` | In Progress | — | Pending |
-| 13 | `PayrollSetup`, `PayrollRun`, `Reports` | Remaining | — | Pending |
+| 11 | `ExpenseSetup`, `People`, `EmployeeDetail` | Completed | `d254b52` | ESLint 0 errors, 37/37 tests, build passed |
+| 12 | `AttendanceAdmin`, `HrSetup`, `Payroll` | Completed | Pending hash | ESLint 0 errors, 37/37 tests, build passed |
+| 13 | `PayrollSetup`, `PayrollRun`, `Reports` | In Progress | — | Pending |
 | 14 | `Approvals`, `Notifications`, `Team` | Remaining | — | Pending |
 | 15 | `Audit`, `LoginHistory`, `Backups` | Remaining | — | Pending |
 | 16 | `Settings`, `MyWork`, `Profile` | Remaining | — | Pending |
@@ -49,9 +49,10 @@
 - `Renewals`, `Contractors`, `Money` (+ `MoneyExtras`)
 - `Debts`, `DayClosing`, `Expenses`
 - `ExpenseSetup`, `People`, `EmployeeDetail`
+- `AttendanceAdmin`, `HrSetup`, `Payroll`
 
 ## Remaining Pages
-`AttendanceAdmin`, `HrSetup`, `Payroll`, `PayrollSetup`, `PayrollRun`, `Reports`, `Approvals`, `Notifications`, `Team`, `Audit`, `LoginHistory`, `Backups`, `Settings`, `MyWork`, `Profile`, `Auth`, `ForgotPassword`, `ClientApproval`, `Status`
+`PayrollSetup`, `PayrollRun`, `Reports`, `Approvals`, `Notifications`, `Team`, `Audit`, `LoginHistory`, `Backups`, `Settings`, `MyWork`, `Profile`, `Auth`, `ForgotPassword`, `ClientApproval`, `Status`
 
 ## Blockers & Resolutions
 - Pre-existing prettier formatting errors detected in `Backups.tsx`, `LoginHistory.tsx`, `Notifications.tsx` during baseline lint; will be resolved as those batches are redesigned and formatted with Prettier.
