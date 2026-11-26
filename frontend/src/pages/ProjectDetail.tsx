@@ -13,6 +13,7 @@ import {
   FormDialog,
   NativeSelect,
   PageHeader,
+  SectionCard,
   StatusBadge,
 } from "@/components/shared/kit";
 import { PageLoader } from "@/components/shared/Display";
@@ -103,7 +104,7 @@ function StageDialog({
                 }
               />
               <span
-                className={`flex-1 text-sm ${c.done ? "text-muted-foreground line-through" : ""}`}
+                className={`flex-1 text-[13px] ${c.done ? "text-[var(--od-ink-muted)] line-through" : ""}`}
               >
                 {c.text}
               </span>
@@ -232,6 +233,7 @@ function DesignJobsDialog({
         <Button
           type="button"
           variant="outline"
+          size="sm"
           onClick={() =>
             setJobs((l) => [...l, { job_type: "business_card", title: "", deadline: "" }])
           }
@@ -337,12 +339,12 @@ export default function ProjectDetail() {
   const p = project.data;
   if (!p)
     return (
-      <p className="text-destructive">
-        Project not found.{" "}
-        <Link className="underline" to="/projects">
-          Back
-        </Link>
-      </p>
+      <div className="od-card items-center py-10 text-center">
+        <p className="text-[14px] font-semibold text-[var(--od-bad)]">Project not found.</p>
+        <Button asChild variant="outline" size="sm" className="mt-3">
+          <Link to="/projects">Back to projects</Link>
+        </Button>
+      </div>
     );
   const manage = can("services.project.manage");
   const billing = can("services.invoice.manage");
@@ -361,15 +363,18 @@ export default function ProjectDetail() {
   }
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
+        backTo="/projects"
+        backLabel="Projects"
         title={p.name}
+        badge={<StatusBadge value={p.status} />}
         description={`${p.number} · Client: ${p.client_name}${p.owner_name ? ` · Owner: ${p.owner_name}` : ""}`}
         actions={
           <>
-            <StatusBadge value={p.status} />
             {manage && (
               <Button
+                size="sm"
                 variant="outline"
                 onClick={() => {
                   setEdit({
@@ -384,78 +389,89 @@ export default function ProjectDetail() {
                 Edit
               </Button>
             )}
-            {billing && <Button onClick={() => setPaying(true)}>Add payment</Button>}
             {billing && (
-              <Button variant="outline" onClick={() => setCosting(true)}>
+              <Button size="sm" onClick={() => setPaying(true)}>
+                Add payment
+              </Button>
+            )}
+            {billing && (
+              <Button size="sm" variant="outline" onClick={() => setCosting(true)}>
                 Add expense
               </Button>
             )}
             {manage && (
-              <Button variant="outline" onClick={() => setMessaging(true)}>
+              <Button size="sm" variant="outline" onClick={() => setMessaging(true)}>
                 Send update to client
               </Button>
             )}
           </>
         }
       />
-      <section className="mb-6 rounded-2xl border bg-card p-5">
-        <div className="mb-2 flex items-center justify-between text-sm">
-          <span className="font-medium">
+
+      <SectionCard>
+        <div className="flex items-center justify-between text-[13px]">
+          <span className="font-semibold text-[var(--od-ink)]">
             {p.stages_done} of {p.stages_total} stages done
           </span>
-          <span className="text-muted-foreground">
+          <span className="od-caption">
             {p.current_stage ? `Now: ${p.current_stage}` : "All stages complete"}
           </span>
         </div>
-        <Progress value={percent} />
-      </section>
+        <Progress className="h-2" value={percent} />
+      </SectionCard>
 
-      <div className="mb-6 overflow-x-auto rounded-2xl border bg-card">
-        <table className="w-full text-sm">
+      <div className="od-card-flush overflow-x-auto">
+        <table className="w-full text-[13px]">
           <thead>
-            <tr className="border-b text-left text-muted-foreground">
-              <th className="px-4 py-3 font-medium">Stage</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Owner</th>
-              <th className="px-4 py-3 font-medium">Deadline</th>
-              <th className="px-4 py-3 font-medium">Documents</th>
-              <th className="px-4 py-3" />
+            <tr className="border-b border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)]/70 text-left text-[12px] text-[var(--od-ink-muted)]">
+              <th className="px-4 py-2.5 font-medium">Stage</th>
+              <th className="px-4 py-2.5 font-medium">Status</th>
+              <th className="px-4 py-2.5 font-medium">Owner</th>
+              <th className="px-4 py-2.5 font-medium">Deadline</th>
+              <th className="px-4 py-2.5 font-medium">Documents</th>
+              <th className="px-4 py-2.5" />
             </tr>
           </thead>
-          <tbody>
+          <tbody className="divide-y divide-[var(--od-border)]">
             {p.stages.map((s) => {
               const left = daysUntil(s.deadline);
               const late = left !== null && left < 0 && s.status !== "done";
               const done = s.checklist.filter((c) => c.done).length;
               return (
-                <tr key={s.id} className="border-b last:border-0">
+                <tr key={s.id} className="transition-colors hover:bg-[var(--od-surface-subtle)]">
                   <td className="px-4 py-3">
-                    <p className="font-medium">
+                    <p className="font-medium text-[var(--od-ink)]">
                       {s.position}. {s.name}
                     </p>
                     {s.checklist.length > 0 && (
-                      <p className="text-xs text-muted-foreground">
+                      <p className="od-caption od-tabular">
                         Checklist {done}/{s.checklist.length}
                       </p>
                     )}
-                    {s.note && <p className="text-xs text-muted-foreground">{s.note}</p>}
+                    {s.note && <p className="od-caption">{s.note}</p>}
                   </td>
                   <td className="px-4 py-3">
                     <StatusBadge value={s.status} />
                   </td>
-                  <td className="px-4 py-3">{s.owner_name ?? "-"}</td>
-                  <td className={`px-4 py-3 ${late ? "font-medium text-destructive" : ""}`}>
-                    {s.deadline ? formatDate(s.deadline) : "-"}
+                  <td className="px-4 py-3 text-[var(--od-ink-secondary)]">
+                    {s.owner_name ?? "—"}
+                  </td>
+                  <td
+                    className={`px-4 py-3 ${late ? "font-semibold text-[var(--od-bad)]" : "text-[var(--od-ink-secondary)]"}`}
+                  >
+                    {s.deadline ? formatDate(s.deadline) : "—"}
                     {late && ` (${-left!}d late)`}
                   </td>
                   <td className="px-4 py-3">
                     {s.documents_missing > 0 ? (
-                      <span className="text-destructive">{s.documents_missing} missing</span>
+                      <span className="font-medium text-[var(--od-bad)]">
+                        {s.documents_missing} missing
+                      </span>
                     ) : (
-                      "-"
+                      <span className="text-[var(--od-ink-muted)]">—</span>
                     )}
                   </td>
-                  <td className="space-x-2 px-4 py-3 text-right">
+                  <td className="space-x-1.5 px-4 py-3 text-right">
                     {can("services.design.manage") &&
                       s.status !== "done" &&
                       /brand|design|logo/i.test(s.name) && (
@@ -475,7 +491,7 @@ export default function ProjectDetail() {
           </tbody>
         </table>
         {manage && (
-          <div className="border-t p-3">
+          <div className="border-t border-[var(--od-border)] px-4 py-2.5">
             <Button size="sm" variant="ghost" onClick={() => setAddingStage(true)}>
               <Plus size={14} /> Add a stage
             </Button>
@@ -483,7 +499,7 @@ export default function ProjectDetail() {
         )}
       </div>
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Tile label="Total" value={formatMoney(p.total_price)} />
         <Tile label="Paid" value={formatMoney(p.paid)} />
         <Tile
@@ -495,7 +511,7 @@ export default function ProjectDetail() {
       </div>
 
       <Tabs defaultValue="overview">
-        <TabsList className="mb-4 flex-wrap">
+        <TabsList>
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="documents">Documents</TabsTrigger>
           <TabsTrigger value="payments">Payments</TabsTrigger>
@@ -505,9 +521,15 @@ export default function ProjectDetail() {
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
-          {p.notes && <p className="rounded-2xl border bg-card p-4 text-sm">{p.notes}</p>}
-          <div>
-            <h2 className="mb-2 font-semibold">Invoices</h2>
+          {p.notes && (
+            <SectionCard title="Project notes">
+              <p className="text-[13px] leading-relaxed text-[var(--od-ink-secondary)]">
+                {p.notes}
+              </p>
+            </SectionCard>
+          )}
+          <div className="space-y-2.5">
+            <h2 className="od-section-title">Invoices</h2>
             <DataGrid
               rows={p.invoices}
               rowKey={(i) => i.id}
@@ -516,7 +538,10 @@ export default function ProjectDetail() {
                 {
                   header: "Invoice",
                   cell: (i) => (
-                    <Link className="underline" to={`/service-invoices?open=${i.id}`}>
+                    <Link
+                      className="od-mono font-medium underline underline-offset-4"
+                      to={`/service-invoices?open=${i.id}`}
+                    >
                       {i.number}
                     </Link>
                   ),
@@ -527,8 +552,8 @@ export default function ProjectDetail() {
               ]}
             />
           </div>
-          <div>
-            <h2 className="mb-2 font-semibold">Design jobs</h2>
+          <div className="space-y-2.5">
+            <h2 className="od-section-title">Design jobs</h2>
             <DataGrid
               rows={p.design_jobs}
               rowKey={(j) => j.id}
@@ -537,13 +562,16 @@ export default function ProjectDetail() {
                 {
                   header: "Job",
                   cell: (j) => (
-                    <Link className="underline" to={`/design-jobs/${j.id}`}>
+                    <Link
+                      className="font-medium underline underline-offset-4"
+                      to={`/design-jobs/${j.id}`}
+                    >
                       {j.title}
                     </Link>
                   ),
                 },
                 { header: "Type", cell: (j) => label(j.job_type) },
-                { header: "Designer", cell: (j) => j.designer_name ?? "-" },
+                { header: "Designer", cell: (j) => j.designer_name ?? "—" },
                 { header: "Status", cell: (j) => <StatusBadge value={j.status} /> },
               ]}
             />
@@ -569,13 +597,13 @@ export default function ProjectDetail() {
               { header: "Status", cell: (d) => <StatusBadge value={d.status} /> },
               {
                 header: "Received",
-                cell: (d) => (d.received_at ? formatDate(d.received_at) : "-"),
+                cell: (d) => (d.received_at ? formatDate(d.received_at) : "—"),
               },
               {
                 header: "",
                 className: "text-right",
                 cell: (d) => (
-                  <div className="flex justify-end gap-2">
+                  <div className="flex justify-end gap-1.5">
                     {d.file_id && (
                       <>
                         <Button
@@ -583,7 +611,7 @@ export default function ProjectDetail() {
                           variant="outline"
                           onClick={() => setPreviewDoc({ id: d.file_id!, name: d.name })}
                         >
-                          <Eye size={14} /> Preview
+                          <Eye size={13} /> Preview
                         </Button>
                         <Button
                           size="sm"
@@ -594,7 +622,7 @@ export default function ProjectDetail() {
                             )
                           }
                         >
-                          <Download size={14} /> Download
+                          <Download size={13} /> Download
                         </Button>
                       </>
                     )}
@@ -608,7 +636,7 @@ export default function ProjectDetail() {
                             fileInput.current?.click();
                           }}
                         >
-                          <Upload size={14} /> Upload
+                          <Upload size={13} /> Upload
                         </Button>
                         <Button
                           size="sm"
@@ -631,22 +659,29 @@ export default function ProjectDetail() {
           />
         </TabsContent>
 
-        <TabsContent value="payments">
+        <TabsContent value="payments" className="space-y-3">
           <DataGrid
             rows={p.payments}
             rowKey={(x) => x.id}
             empty="No payments yet. Add the deposit to issue a receipt."
             columns={[
-              { header: "Receipt", cell: (x) => x.number },
+              {
+                header: "Receipt",
+                cell: (x) => <span className="od-mono font-medium">{x.number}</span>,
+              },
               { header: "Date", cell: (x) => formatDate(x.date) },
               { header: "Method", cell: (x) => label(x.method) },
               { header: "Status", cell: (x) => <StatusBadge value={x.status} /> },
-              { header: "Amount", align: "right", cell: (x) => formatMoney(x.amount) },
+              {
+                header: "Amount",
+                align: "right",
+                cell: (x) => <span className="font-medium">{formatMoney(x.amount)}</span>,
+              },
               {
                 header: "",
                 className: "text-right",
                 cell: (x) => (
-                  <div className="flex justify-end gap-2">
+                  <div className="flex justify-end gap-1.5">
                     <Button
                       size="sm"
                       variant="outline"
@@ -658,13 +693,13 @@ export default function ProjectDetail() {
                         ).catch((e) => toast.error(errorMessage(e)))
                       }
                     >
-                      <Download size={14} /> Receipt PDF
+                      <Download size={13} /> Receipt PDF
                     </Button>
                     {billing && x.status === "posted" && (
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="text-destructive"
+                        className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                         onClick={() => setVoiding(x.id)}
                       >
                         Void
@@ -675,12 +710,13 @@ export default function ProjectDetail() {
               },
             ]}
           />
-          <p className="mt-3 text-sm text-muted-foreground">
-            Balance still due: <strong>{formatMoney(p.balance)}</strong>
+          <p className="od-caption">
+            Balance still due:{" "}
+            <strong className="od-tabular text-[var(--od-ink)]">{formatMoney(p.balance)}</strong>
           </p>
         </TabsContent>
 
-        <TabsContent value="costs">
+        <TabsContent value="costs" className="space-y-3">
           <DataGrid
             rows={p.costs_list}
             rowKey={(x) => x.id}
@@ -689,9 +725,13 @@ export default function ProjectDetail() {
               { header: "Date", cell: (x) => formatDate(x.date) },
               { header: "Type", cell: (x) => label(x.kind) },
               { header: "Description", cell: (x) => x.description },
-              { header: "Contractor", cell: (x) => x.contractor_name ?? "-" },
+              { header: "Contractor", cell: (x) => x.contractor_name ?? "—" },
               { header: "Status", cell: (x) => <StatusBadge value={x.status} /> },
-              { header: "Amount", align: "right", cell: (x) => formatMoney(x.amount) },
+              {
+                header: "Amount",
+                align: "right",
+                cell: (x) => <span className="font-medium">{formatMoney(x.amount)}</span>,
+              },
               {
                 header: "",
                 className: "text-right",
@@ -700,7 +740,7 @@ export default function ProjectDetail() {
                     <Button
                       size="sm"
                       variant="ghost"
-                      className="text-destructive"
+                      className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                       onClick={() => setVoidingCost(x.id)}
                     >
                       Void
@@ -709,8 +749,9 @@ export default function ProjectDetail() {
               },
             ]}
           />
-          <p className="mt-3 text-sm text-muted-foreground">
-            Profit = payments received minus costs: <strong>{formatMoney(p.profit)}</strong>
+          <p className="od-caption">
+            Profit = payments received minus costs:{" "}
+            <strong className="od-tabular text-[var(--od-ink)]">{formatMoney(p.profit)}</strong>
           </p>
         </TabsContent>
 
@@ -754,15 +795,15 @@ export default function ProjectDetail() {
             columns={[
               { header: "Date", cell: (n) => formatDate(n.noted_on) },
               { header: "Type", cell: (n) => label(n.kind) },
-              { header: "By", cell: (n) => n.author ?? "-" },
+              { header: "By", cell: (n) => n.author ?? "—" },
               { header: "Note", cell: (n) => n.body, className: "whitespace-normal" },
             ]}
           />
         </TabsContent>
 
         <TabsContent value="history" className="space-y-6">
-          <div>
-            <h2 className="mb-2 font-semibold">Stage updates</h2>
+          <div className="space-y-2.5">
+            <h2 className="od-section-title">Stage updates</h2>
             <DataGrid
               rows={p.stage_events ?? []}
               rowKey={(e) => e.id}
@@ -778,15 +819,14 @@ export default function ProjectDetail() {
                   cell: (e) =>
                     `${e.from_status ? label(e.from_status) : "Created"} → ${label(e.to_status)}`,
                 },
-                { header: "By", cell: (e) => e.actor_name ?? "-" },
-                { header: "Note", cell: (e) => e.note ?? "-", className: "whitespace-normal" },
+                { header: "By", cell: (e) => e.actor_name ?? "—" },
+                { header: "Note", cell: (e) => e.note ?? "—", className: "whitespace-normal" },
               ]}
             />
           </div>
-          <div>
-            <h2 className="mb-2 font-semibold">Record audit log</h2>
+          <SectionCard title="Record audit log">
             <RecordHistoryTab entityType="svc_project" entityId={p.id} />
-          </div>
+          </SectionCard>
         </TabsContent>
       </Tabs>
 
@@ -863,7 +903,7 @@ export default function ProjectDetail() {
             <option value="email">Email</option>
           </NativeSelect>
         </Field>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-1.5">
           {[
             "Your TIN is ready.",
             "Your business name has been approved.",
@@ -884,8 +924,8 @@ export default function ProjectDetail() {
           />
         </Field>
         {msgUnavailable && message.trim() && (
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
-            <span className="text-amber-800 dark:text-amber-300">
+          <div className="flex items-center justify-between gap-2 rounded-[var(--od-radius-sm,8px)] bg-[var(--od-warning-soft)] p-3 text-xs">
+            <span className="font-medium text-[var(--od-warning)]">
               Channel not configured. Send manually via WhatsApp:
             </span>
             <Button type="button" size="sm" variant="outline" asChild>
@@ -894,7 +934,7 @@ export default function ProjectDetail() {
                 target="_blank"
                 rel="noreferrer"
               >
-                <MessageCircle size={14} /> Open in WhatsApp
+                <MessageCircle size={13} /> Open in WhatsApp
               </a>
             </Button>
           </div>
@@ -978,6 +1018,6 @@ export default function ProjectDetail() {
         fileName={previewDoc?.name}
         onClose={() => setPreviewDoc(null)}
       />
-    </>
+    </div>
   );
 }

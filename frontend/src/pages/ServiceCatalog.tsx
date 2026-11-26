@@ -1,21 +1,23 @@
 import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { label } from "@/features/services/helpers";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { api } from "@/lib/api";
-import { formatMoney } from "@/lib/formatters";
+import { formatMoney, toNumber } from "@/lib/formatters";
 import type { CatalogDetail, CatalogItem } from "@/types/services";
 
 const CATEGORIES = [
@@ -145,40 +147,44 @@ export default function ServiceCatalog() {
   );
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Service catalog"
-        description="What you sell, its standard price and the stages every job goes through."
+        description="Standard services, fixed pricing, government fees and stage templates."
         actions={
           manage && (
-            <Button onClick={() => setDraft(blank)}>
-              <Plus size={16} /> New service
+            <Button size="sm" onClick={() => setDraft(blank)}>
+              <Plus size={14} /> New service
             </Button>
           )
         }
       />
-      <div className="mb-4 flex flex-wrap gap-3">
-        <Input
-          aria-label="Search services"
-          className="max-w-xs"
-          placeholder="Search services…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <NativeSelect
-          aria-label="Category"
-          className="w-44"
+
+      <FilterBar className="justify-between">
+        <div className="relative min-w-60 flex-1 sm:max-w-xs">
+          <Search
+            size={15}
+            className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
+          />
+          <Input
+            aria-label="Search services"
+            className="pl-9"
+            placeholder="Search services…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+        <SegmentedChips
+          ariaLabel="Category"
           value={category}
-          onChange={(e) => setCategory(e.target.value)}
-        >
-          <option value="">All categories</option>
-          {CATEGORIES.map((c) => (
-            <option key={c} value={c}>
-              {label(c)}
-            </option>
-          ))}
-        </NativeSelect>
-      </div>
+          onChange={setCategory}
+          options={[
+            { value: "", label: "All" },
+            ...CATEGORIES.map((c) => ({ value: c, label: label(c) })),
+          ]}
+        />
+      </FilterBar>
+
       <DataGrid
         rows={list.data}
         loading={list.isLoading || loading}
@@ -188,21 +194,41 @@ export default function ServiceCatalog() {
         columns={[
           {
             header: "Service",
+            sortValue: (s) => s.name,
             cell: (s) => (
               <div>
                 <p className="font-medium">{s.name}</p>
                 {s.is_package && (
-                  <p className="text-xs text-muted-foreground">
-                    Package of {s.service_count} services
-                  </p>
+                  <p className="od-caption">Package of {s.service_count} services</p>
                 )}
               </div>
             ),
           },
-          { header: "Category", cell: (s) => label(s.category) },
-          { header: "Stages", align: "right", cell: (s) => s.stage_count },
-          { header: "Price", align: "right", cell: (s) => formatMoney(s.standard_price) },
-          { header: "Govt fees", align: "right", cell: (s) => formatMoney(s.government_fees) },
+          {
+            header: "Category",
+            sortValue: (s) => s.category,
+            cell: (s) => (
+              <span className="text-[var(--od-ink-secondary)]">{label(s.category)}</span>
+            ),
+          },
+          {
+            header: "Stages",
+            align: "right",
+            sortValue: (s) => s.stage_count,
+            cell: (s) => s.stage_count,
+          },
+          {
+            header: "Price",
+            align: "right",
+            sortValue: (s) => toNumber(s.standard_price),
+            cell: (s) => <span className="font-medium">{formatMoney(s.standard_price)}</span>,
+          },
+          {
+            header: "Govt fees",
+            align: "right",
+            sortValue: (s) => toNumber(s.government_fees),
+            cell: (s) => formatMoney(s.government_fees),
+          },
           {
             header: "Status",
             cell: (s) => <StatusBadge value={s.is_active ? "active" : "inactive"} />,
@@ -226,6 +252,7 @@ export default function ServiceCatalog() {
           },
         ]}
       />
+
       {draft && (
         <FormDialog
           open
@@ -282,7 +309,7 @@ export default function ServiceCatalog() {
               />
             </Field>
           </div>
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex items-center gap-2 text-[13px] text-[var(--od-ink-secondary)]">
             <input
               type="checkbox"
               checked={draft.is_package}
@@ -293,12 +320,10 @@ export default function ServiceCatalog() {
 
           {draft.is_package ? (
             <Field label="Services in the package">
-              <div className="max-h-48 space-y-1 overflow-y-auto rounded-md border p-2">
-                {singles.length === 0 && (
-                  <p className="text-sm text-muted-foreground">Add single services first.</p>
-                )}
+              <div className="max-h-48 space-y-1.5 overflow-y-auto rounded-[var(--od-radius-sm,8px)] border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] p-3">
+                {singles.length === 0 && <p className="od-caption">Add single services first.</p>}
                 {singles.map((s) => (
-                  <label key={s.id} className="flex items-center gap-2 text-sm">
+                  <label key={s.id} className="flex items-center gap-2 text-[13px]">
                     <input
                       type="checkbox"
                       checked={draft.package_services.includes(s.id)}
@@ -322,7 +347,9 @@ export default function ServiceCatalog() {
                 <div className="space-y-2">
                   {draft.stages.map((s, i) => (
                     <div key={i} className="grid grid-cols-[2rem_1fr_6rem_auto] items-center gap-2">
-                      <span className="text-sm text-muted-foreground">{i + 1}.</span>
+                      <span className="od-tabular text-xs text-[var(--od-ink-muted)]">
+                        {i + 1}.
+                      </span>
                       <Input
                         aria-label={`Stage ${i + 1} name`}
                         required
@@ -444,6 +471,6 @@ export default function ServiceCatalog() {
           )}
         </FormDialog>
       )}
-    </>
+    </div>
   );
 }
