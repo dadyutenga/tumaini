@@ -6,8 +6,11 @@ import {
   Download,
   MessageCircle,
   Minus,
+  Package,
   Plus,
   RefreshCw,
+  Search,
+  ShoppingBag,
   Trash2,
   UserPlus,
 } from "lucide-react";
@@ -15,6 +18,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FormDialog, NativeSelect, PageHeader } from "@/components/shared/kit";
+import { ProductImage } from "@/components/shared/ProductImage";
 import { useAuth } from "@/features/auth/auth";
 import { whatsappUrl } from "@/features/services/helpers";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -279,8 +283,26 @@ export default function Pos() {
   }
   const setQty = (id: string, qty: string) =>
     setCart((c) => c.map((l) => (l.product.id === id ? { ...l, qty } : l)));
+  const decrementOrRemove = (id: string) =>
+    setCart((c) =>
+      c.flatMap((l) => {
+        if (l.product.id !== id) return [l];
+        const next = toNumber(l.qty) - 1;
+        return next <= 0 ? [] : [{ ...l, qty: String(next) }];
+      }),
+    );
   const setSerial = (id: string, serial_number: string) =>
     setCart((c) => c.map((l) => (l.product.id === id ? { ...l, serial_number } : l)));
+
+  const cartQtyById = useMemo(
+    () => new Map(cart.map((l) => [l.product.id, toNumber(l.qty)])),
+    [cart],
+  );
+  const totalCartItems = useMemo(() => cart.reduce((sum, l) => sum + toNumber(l.qty), 0), [cart]);
+  const activeCategories = useMemo(
+    () => (categories.data ?? []).filter((c) => c.is_active),
+    [categories.data],
+  );
 
   async function holdCart() {
     try {
@@ -453,11 +475,16 @@ export default function Pos() {
 
       <div className="grid gap-6 lg:grid-cols-[1fr_410px]">
         <section className="space-y-4">
-          <div className="flex flex-wrap gap-2">
+          {/* Search & Barcode Input */}
+          <div className="relative">
+            <Search
+              size={18}
+              className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-muted-foreground"
+            />
             <Input
               autoFocus
               aria-label="Find a product"
-              className="min-w-48 flex-1"
+              className="h-11 rounded-xl bg-card pl-10 text-sm shadow-xs"
               placeholder="Scan barcode or search product name / SKU…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -471,72 +498,193 @@ export default function Pos() {
                 }
               }}
             />
-            <NativeSelect
-              aria-label="Category"
-              className="w-44"
-              value={categoryId}
-              onChange={(e) => setCategoryId(e.target.value)}
-            >
-              <option value="">All categories</option>
-              {(categories.data ?? [])
-                .filter((c) => c.is_active)
-                .map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-            </NativeSelect>
           </div>
 
-          {/* Product Quick-Tap Grid */}
-          <ul className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {tiles.slice(0, 12).map((p) => {
-              const outOfStock = p.qty_on_hand !== undefined && toNumber(p.qty_on_hand) <= 0;
+          {/* Horizontal Category Filter Pills */}
+          {activeCategories.length > 0 && (
+            <div
+              role="tablist"
+              aria-label="Product categories"
+              className="no-scrollbar flex items-center gap-2 overflow-x-auto pb-1"
+            >
+              <button
+                type="button"
+                role="tab"
+                aria-selected={categoryId === ""}
+                onClick={() => setCategoryId("")}
+                className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                  categoryId === ""
+                    ? "bg-primary text-primary-foreground shadow-xs"
+                    : "border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                }`}
+              >
+                All items
+              </button>
+              {activeCategories.map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={categoryId === c.id}
+                  onClick={() => setCategoryId(c.id)}
+                  className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                    categoryId === c.id
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                  }`}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* E-Commerce Product Grid */}
+          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+            {tiles.slice(0, 24).map((p) => {
+              const qtyOnHand = p.qty_on_hand !== undefined ? toNumber(p.qty_on_hand) : null;
+              const outOfStock = qtyOnHand !== null && qtyOnHand <= 0;
+              const isLow =
+                !outOfStock && qtyOnHand !== null && qtyOnHand <= toNumber(p.reorder_level);
+              const inCartQty = cartQtyById.get(p.id) ?? 0;
+
               return (
                 <li key={p.id}>
-                  <button
-                    type="button"
-                    disabled={outOfStock}
-                    onClick={() => add(p)}
-                    className={`w-full rounded-xl border bg-card p-3 text-left transition ${
+                  <div
+                    className={`group flex h-full flex-col overflow-hidden rounded-2xl border bg-card shadow-xs transition duration-200 ${
                       outOfStock
-                        ? "cursor-not-allowed opacity-50"
-                        : "hover:border-primary active:scale-[0.99]"
+                        ? "opacity-55"
+                        : inCartQty > 0
+                          ? "border-primary ring-2 ring-primary/25 shadow-sm"
+                          : "hover:-translate-y-0.5 hover:border-primary/45 hover:shadow-md"
                     }`}
                   >
-                    <p className="truncate font-medium">{p.name}</p>
-                    <div className="mt-1 flex items-center justify-between text-xs">
-                      <span className="font-semibold text-foreground">
-                        {formatMoney(p.sell_price)}
-                      </span>
-                      <span
-                        className={
-                          outOfStock
-                            ? "font-medium text-destructive"
-                            : toNumber(p.qty_on_hand) <= toNumber(p.reorder_level)
-                              ? "font-medium text-amber-600"
-                              : "text-muted-foreground"
-                        }
+                    {/* Clickable Product Image + Badges */}
+                    <button
+                      type="button"
+                      disabled={outOfStock}
+                      onClick={() => add(p)}
+                      className={`relative aspect-[4/3] w-full overflow-hidden bg-muted text-left focus:outline-none ${
+                        outOfStock ? "cursor-not-allowed" : "cursor-pointer"
+                      }`}
+                    >
+                      <ProductImage fileId={p.photo_file} name={p.name} />
+                      {inCartQty > 0 && (
+                        <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[11px] font-bold text-primary-foreground shadow-sm">
+                          ×{inCartQty}
+                        </span>
+                      )}
+                      {qtyOnHand !== null && (
+                        <span
+                          className={`absolute top-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold shadow-xs backdrop-blur ${
+                            outOfStock
+                              ? "bg-destructive text-destructive-foreground"
+                              : isLow
+                                ? "bg-amber-500 text-white"
+                                : "bg-background/90 text-foreground"
+                          }`}
+                        >
+                          {outOfStock ? "Out" : `${qtyOnHand} left`}
+                        </span>
+                      )}
+                    </button>
+
+                    {/* Title, Price & Quick Add / Stepper */}
+                    <div className="flex flex-1 flex-col justify-between p-3">
+                      <button
+                        type="button"
+                        disabled={outOfStock}
+                        onClick={() => add(p)}
+                        className="text-left focus:outline-none"
                       >
-                        {outOfStock ? "Out of stock" : `${toNumber(p.qty_on_hand)} left`}
-                      </span>
+                        <p className="line-clamp-2 text-sm font-semibold leading-snug text-foreground group-hover:text-primary">
+                          {p.name}
+                        </p>
+                        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{p.sku}</p>
+                      </button>
+
+                      <div className="mt-2.5 space-y-2">
+                        <p className="text-sm font-bold tracking-tight text-foreground tabular-nums">
+                          {formatMoney(p.sell_price)}
+                        </p>
+
+                        {inCartQty > 0 ? (
+                          <div className="flex items-center justify-between gap-1 rounded-xl border border-primary/30 bg-primary/8 p-0.5">
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 rounded-lg text-primary hover:bg-primary/15"
+                              aria-label={`Remove one ${p.name}`}
+                              onClick={() => decrementOrRemove(p.id)}
+                            >
+                              <Minus size={13} />
+                            </Button>
+                            <span className="text-xs font-bold tabular-nums text-primary">
+                              {inCartQty}
+                            </span>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7 rounded-lg text-primary hover:bg-primary/15"
+                              aria-label={`Add one more ${p.name}`}
+                              onClick={() => add(p)}
+                            >
+                              <Plus size={13} />
+                            </Button>
+                          </div>
+                        ) : (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={outOfStock ? "outline" : "default"}
+                            disabled={outOfStock}
+                            onClick={() => add(p)}
+                            className="h-8 w-full rounded-xl text-xs font-semibold"
+                          >
+                            <Plus size={13} /> {outOfStock ? "Out of stock" : "Add"}
+                          </Button>
+                        )}
+                      </div>
                     </div>
-                  </button>
+                  </div>
                 </li>
               );
             })}
             {tiles.length === 0 && (
-              <li className="col-span-full rounded-xl border bg-card p-6 text-center text-sm text-muted-foreground">
+              <li className="col-span-full flex flex-col items-center justify-center rounded-2xl border bg-card p-10 text-center text-sm text-muted-foreground">
+                <Package size={24} className="mb-2 text-primary/60" />
                 No matching products.
               </li>
             )}
           </ul>
 
           {/* Cart */}
-          <div className="overflow-hidden rounded-2xl border bg-card">
+          <div className="overflow-hidden rounded-2xl border bg-card shadow-xs">
+            <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-3">
+              <div className="flex items-center gap-2">
+                <ShoppingBag size={16} className="text-primary" />
+                <h2 className="text-sm font-semibold">
+                  Selected items{totalCartItems > 0 ? ` (${totalCartItems})` : ""}
+                </h2>
+              </div>
+              {cart.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCart([]);
+                    setDiscountValue("");
+                  }}
+                  className="text-xs font-medium text-muted-foreground hover:text-destructive"
+                >
+                  Clear cart
+                </button>
+              )}
+            </div>
             {cart.length === 0 ? (
               <p className="p-8 text-center text-sm text-muted-foreground">
-                The cart is empty. Tap a product or scan a barcode to start.
+                The cart is empty. Tap any product card above or scan a barcode to start.
               </p>
             ) : (
               <ul className="divide-y">
@@ -544,7 +692,14 @@ export default function Pos() {
                   const line = preview.data?.items.find((i) => i.product_id === l.product.id);
                   return (
                     <li key={l.product.id} className="space-y-2 p-3">
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2.5">
+                        <div className="h-11 w-11 shrink-0 overflow-hidden rounded-xl border bg-muted">
+                          <ProductImage
+                            fileId={l.product.photo_file}
+                            name={l.product.name}
+                            size="thumb"
+                          />
+                        </div>
                         <div className="min-w-0 flex-1">
                           <p className="truncate font-medium">{l.product.name}</p>
                           <p className="text-xs text-muted-foreground">
@@ -557,6 +712,7 @@ export default function Pos() {
                         <Button
                           variant="outline"
                           size="icon"
+                          className="h-8 w-8 rounded-lg"
                           aria-label="Decrease quantity"
                           onClick={() =>
                             setQty(l.product.id, String(Math.max(1, toNumber(l.qty) - 1)))
@@ -566,7 +722,7 @@ export default function Pos() {
                         </Button>
                         <Input
                           aria-label={`Quantity of ${l.product.name}`}
-                          className="w-16 text-center"
+                          className="h-8 w-14 text-center"
                           inputMode="decimal"
                           value={l.qty}
                           onChange={(e) => setQty(l.product.id, e.target.value)}
@@ -574,12 +730,13 @@ export default function Pos() {
                         <Button
                           variant="outline"
                           size="icon"
+                          className="h-8 w-8 rounded-lg"
                           aria-label="Increase quantity"
                           onClick={() => setQty(l.product.id, String(toNumber(l.qty) + 1))}
                         >
                           <Plus size={14} />
                         </Button>
-                        <span className="w-24 text-right text-sm font-medium tabular-nums">
+                        <span className="w-24 text-right text-sm font-semibold tabular-nums">
                           {line
                             ? formatMoney(line.line_total)
                             : formatMoney(toNumber(l.qty) * toNumber(l.product.sell_price))}
@@ -587,10 +744,11 @@ export default function Pos() {
                         <Button
                           variant="ghost"
                           size="icon"
+                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
                           aria-label={`Remove ${l.product.name}`}
                           onClick={() => setCart((c) => c.filter((x) => x !== l))}
                         >
-                          <Trash2 size={16} />
+                          <Trash2 size={15} />
                         </Button>
                       </div>
                       {l.product.track_serial && (
@@ -611,7 +769,7 @@ export default function Pos() {
         </section>
 
         {/* Checkout Sidebar */}
-        <aside className="h-fit space-y-4 rounded-2xl border bg-card p-5">
+        <aside className="h-fit space-y-4 rounded-2xl border bg-card p-5 shadow-sm lg:sticky lg:top-20">
           {canViewCustomers && (
             <Field label="Customer">
               <div className="flex gap-2">

@@ -1,6 +1,17 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download, Grid2x2, List, Plus, ShoppingCart, Upload } from "lucide-react";
+import {
+  AlertCircle,
+  Download,
+  Grid2x2,
+  List,
+  Package,
+  Pencil,
+  Plus,
+  Search,
+  ShoppingCart,
+  Upload,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,7 +25,7 @@ import {
   Pager,
   StatusBadge,
 } from "@/components/shared/kit";
-import { FileThumbnail } from "@/components/shared/FilePreview";
+import { ProductImage } from "@/components/shared/ProductImage";
 import { useAuth } from "@/features/auth/auth";
 import { useDebounce } from "@/hooks/useDebounce";
 import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
@@ -65,13 +76,13 @@ export default function Products() {
   const [catFilter, setCatFilter] = useState("");
   const [page, setPage] = useState(1);
   const [low, setLow] = useState(false);
-  const [view, setView] = useState<"catalog" | "table">(manage ? "table" : "catalog");
+  const [view, setView] = useState<"catalog" | "table">("catalog");
   const search = useDebounce(q, 300);
   const { data, isLoading, refetch } = useGetPage<Product>("/products", {
     q: search,
     category_id: catFilter || undefined,
     page,
-    per_page: 25,
+    per_page: 24,
     low_stock: low || undefined,
   });
   const [editing, setEditing] = useState<Product | "new" | null>(null);
@@ -86,6 +97,10 @@ export default function Products() {
 
   const categories = useGet<Category[]>("/categories");
   const units = useGet<Unit[]>("/units");
+  const categoryNames = useMemo(
+    () => new Map((categories.data ?? []).map((c) => [c.id, c.name])),
+    [categories.data],
+  );
 
   const save = useWrite<Record<string, unknown>, Product>(
     editing && editing !== "new" ? "PUT" : "POST",
@@ -254,108 +269,224 @@ export default function Products() {
           </TabsList>
         )}
 
-        <TabsContent value="products">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <Input
-              aria-label="Search products"
-              placeholder="Search name, SKU or barcode…"
-              className="max-w-xs"
-              value={q}
-              onChange={(e) => {
-                setQ(e.target.value);
-                setPage(1);
-              }}
-            />
-            <NativeSelect
-              aria-label="Category"
-              className="w-44"
-              value={catFilter}
-              onChange={(e) => {
-                setCatFilter(e.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="">All categories</option>
-              {(categories.data ?? []).map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </NativeSelect>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={low}
+        <TabsContent value="products" className="space-y-4">
+          {/* Search + Quick Filters */}
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="relative min-w-60 flex-1 sm:max-w-md">
+              <Search
+                size={16}
+                className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-muted-foreground"
+              />
+              <Input
+                aria-label="Search products"
+                placeholder="Search products by name, SKU or barcode…"
+                className="h-10 rounded-xl bg-card pl-10 shadow-xs"
+                value={q}
                 onChange={(e) => {
-                  setLow(e.target.checked);
+                  setQ(e.target.value);
                   setPage(1);
                 }}
-              />{" "}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setLow((v) => !v);
+                setPage(1);
+              }}
+              className={`inline-flex h-10 items-center gap-1.5 rounded-xl border px-3.5 text-sm font-medium transition ${
+                low
+                  ? "border-amber-500/40 bg-amber-500/12 text-amber-700 dark:text-amber-400"
+                  : "bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground"
+              }`}
+            >
+              <AlertCircle size={15} />
               Low stock only
-            </label>
+            </button>
           </div>
 
+          {/* Horizontal Scrollable Category Pills */}
+          {(categories.data ?? []).length > 0 && (
+            <div className="no-scrollbar flex items-center gap-2 overflow-x-auto pb-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setCatFilter("");
+                  setPage(1);
+                }}
+                className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                  catFilter === ""
+                    ? "bg-primary text-primary-foreground shadow-xs"
+                    : "border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                }`}
+              >
+                All items
+              </button>
+              {(categories.data ?? []).map((c) => (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => {
+                    setCatFilter(c.id);
+                    setPage(1);
+                  }}
+                  className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                    catFilter === c.id
+                      ? "bg-primary text-primary-foreground shadow-xs"
+                      : "border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                  }`}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
+
           {view === "catalog" ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {(data?.data ?? []).map((p) => {
-                const qty = toNumber(p.qty_on_hand);
-                const isLow = qty <= toNumber(p.reorder_level);
-                return (
+            isLoading ? (
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
+                {Array.from({ length: 8 }).map((_, i) => (
                   <div
-                    key={p.id}
-                    className="flex flex-col justify-between gap-3 rounded-2xl border bg-card p-4"
+                    key={i}
+                    className="overflow-hidden rounded-2xl border bg-card shadow-xs animate-pulse"
                   >
-                    <div className="flex gap-3">
-                      {p.photo_file && (
-                        <FileThumbnail fileId={p.photo_file} fileName={p.name} mimeType="image/*" />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <button
-                          type="button"
-                          onClick={() => navigate(`/products/${p.id}`)}
-                          className="text-left font-semibold hover:text-primary"
-                        >
-                          {p.name}
-                        </button>
-                        <p className="text-xs text-muted-foreground">{p.sku}</p>
-                        <p className="mt-2 text-lg font-bold tabular-nums">
-                          {formatMoney(p.sell_price)}
-                        </p>
-                        <p
-                          className={`text-xs ${
-                            qty <= 0
-                              ? "font-medium text-destructive"
-                              : isLow
-                                ? "font-medium text-amber-600"
-                                : "text-muted-foreground"
-                          }`}
-                        >
-                          {qty <= 0
-                            ? "Out of stock"
-                            : `In stock: ${formatQty(p.qty_on_hand)} ${p.unit}`}
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex justify-end gap-2">
-                      {can("shop.sale.create") && p.is_active && (
-                        <Button
-                          size="sm"
-                          disabled={qty <= 0}
-                          onClick={() => navigate(`/pos?add=${p.id}`)}
-                        >
-                          <ShoppingCart size={14} /> Sell
-                        </Button>
-                      )}
-                      {manage && (
-                        <Button size="sm" variant="outline" onClick={() => open(p)}>
-                          Edit
-                        </Button>
-                      )}
+                    <div className="aspect-[4/3] bg-muted" />
+                    <div className="space-y-2 p-4">
+                      <div className="h-4 w-3/4 rounded bg-muted" />
+                      <div className="h-3 w-1/3 rounded bg-muted" />
+                      <div className="mt-3 h-6 w-1/2 rounded bg-muted" />
                     </div>
                   </div>
-                );
-              })}
-            </div>
+                ))}
+              </div>
+            ) : (data?.data ?? []).length === 0 ? (
+              <div className="flex flex-col items-center justify-center rounded-2xl border bg-card py-16 text-center shadow-xs">
+                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
+                  <Package size={26} />
+                </div>
+                <p className="mt-4 text-base font-semibold">No products found</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {q || catFilter || low
+                    ? "Try clearing your search or category filter."
+                    : "Add your first product to start selling from the catalog."}
+                </p>
+                {manage && !q && !catFilter && !low && (
+                  <Button className="mt-4" size="sm" onClick={() => open("new")}>
+                    <Plus size={15} /> New product
+                  </Button>
+                )}
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
+                {(data?.data ?? []).map((p) => {
+                  const qty = toNumber(p.qty_on_hand);
+                  const outOfStock = qty <= 0;
+                  const isLow = !outOfStock && qty <= toNumber(p.reorder_level);
+                  const categoryName = p.category_id ? categoryNames.get(p.category_id) : undefined;
+                  return (
+                    <article
+                      key={p.id}
+                      className="group flex flex-col overflow-hidden rounded-2xl border bg-card shadow-xs transition duration-200 hover:-translate-y-0.5 hover:border-primary/45 hover:shadow-md"
+                    >
+                      {/* E-Commerce Photo Header */}
+                      <button
+                        type="button"
+                        onClick={() => navigate(`/products/${p.id}`)}
+                        className="relative aspect-[4/3] w-full overflow-hidden bg-muted text-left focus:outline-none"
+                      >
+                        <ProductImage fileId={p.photo_file} name={p.name} />
+                        {categoryName && (
+                          <span className="absolute top-2.5 left-2.5 max-w-[55%] truncate rounded-full bg-background/90 px-2.5 py-0.5 text-[11px] font-semibold text-foreground shadow-xs backdrop-blur">
+                            {categoryName}
+                          </span>
+                        )}
+                        <span
+                          className={`absolute top-2.5 right-2.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold shadow-xs backdrop-blur ${
+                            !p.is_active
+                              ? "bg-muted/95 text-muted-foreground"
+                              : outOfStock
+                                ? "bg-destructive text-destructive-foreground"
+                                : isLow
+                                  ? "bg-amber-500 text-white"
+                                  : "bg-primary text-primary-foreground"
+                          }`}
+                        >
+                          {!p.is_active
+                            ? "Inactive"
+                            : outOfStock
+                              ? "Out of stock"
+                              : `${formatQty(p.qty_on_hand)} ${p.unit}`}
+                        </span>
+                      </button>
+
+                      {/* Card Details & Actions */}
+                      <div className="flex flex-1 flex-col justify-between p-3.5 sm:p-4">
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => navigate(`/products/${p.id}`)}
+                            className="line-clamp-2 text-left text-sm font-semibold leading-snug text-foreground transition group-hover:text-primary sm:text-[15px]"
+                          >
+                            {p.name}
+                          </button>
+                          <p className="mt-1 truncate text-xs text-muted-foreground">
+                            {p.sku}
+                            {p.warranty_months ? ` · ${p.warranty_months}m warranty` : ""}
+                          </p>
+                        </div>
+
+                        <div className="mt-3 space-y-3 border-t pt-3">
+                          <div className="flex items-baseline justify-between gap-2">
+                            <p className="text-base font-bold tracking-tight text-foreground tabular-nums sm:text-lg">
+                              {formatMoney(p.sell_price)}
+                            </p>
+                            {showCost && p.avg_cost && (
+                              <span className="truncate text-[11px] text-muted-foreground tabular-nums">
+                                Cost {formatMoney(p.avg_cost)}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            {can("shop.sale.create") && p.is_active ? (
+                              <Button
+                                size="sm"
+                                className="flex-1 rounded-xl"
+                                disabled={outOfStock}
+                                onClick={() => navigate(`/pos?add=${p.id}`)}
+                              >
+                                <ShoppingCart size={14} />
+                                {outOfStock ? "Out of stock" : "Sell"}
+                              </Button>
+                            ) : (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="flex-1 rounded-xl"
+                                onClick={() => navigate(`/products/${p.id}`)}
+                              >
+                                View
+                              </Button>
+                            )}
+                            {manage && (
+                              <Button
+                                size="icon"
+                                variant="outline"
+                                className="h-8 w-8 shrink-0 rounded-xl"
+                                aria-label={`Edit ${p.name}`}
+                                onClick={() => open(p)}
+                              >
+                                <Pencil size={14} />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )
           ) : (
             <DataGrid
               rows={data?.data}
@@ -364,7 +495,24 @@ export default function Products() {
               empty="No products found"
               onRowClick={(p) => navigate(`/products/${p.id}`)}
               columns={[
-                { header: "Name", cell: (p) => <span className="font-medium">{p.name}</span> },
+                {
+                  header: "Product",
+                  cell: (p) => (
+                    <div className="flex items-center gap-3">
+                      <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl border bg-muted">
+                        <ProductImage fileId={p.photo_file} name={p.name} size="thumb" />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{p.name}</p>
+                        {p.category_id && categoryNames.get(p.category_id) && (
+                          <p className="text-xs text-muted-foreground">
+                            {categoryNames.get(p.category_id)}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  ),
+                },
                 { header: "SKU", cell: (p) => p.sku },
                 { header: "Price", align: "right", cell: (p) => formatMoney(p.sell_price) },
                 ...(showCost

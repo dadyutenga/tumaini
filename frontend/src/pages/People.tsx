@@ -1,6 +1,8 @@
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Clock, LogIn, LogOut, Plus } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
+import { Clock, KeyRound, LogIn, LogOut, Plus, ShieldCheck } from "lucide-react";
+import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -13,22 +15,35 @@ import {
   Pager,
   StatusBadge,
 } from "@/components/shared/kit";
+import { CopyButton } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
-import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
+import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
+import { api } from "@/lib/api";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
+import type { Branch } from "@/types";
 
 interface Employee {
   id: string;
   employee_no: string;
   name: string;
   phone?: string | null;
+  email?: string | null;
   position?: string | null;
   department_name?: string | null;
   position_name?: string | null;
+  branch_id?: string | null;
   branch_name?: string;
+  user_id?: string | null;
+  role_name?: string | null;
+  role_slug?: string | null;
   status: string;
   hire_date?: string;
   base_pay?: string;
+}
+interface RoleOption {
+  id: string;
+  name: string;
+  slug: string;
 }
 interface LeaveType {
   id: string;
@@ -94,30 +109,144 @@ function ClockCard() {
 function EmployeesTab() {
   const { can, canAny } = useAuth();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
   const list = useGetPage<Employee>("/employees", { q: q || undefined, page });
+  const canGrantAccess = can("security.user.manage");
+  const roles = useGet<RoleOption[]>("/roles", undefined, { enabled: canGrantAccess });
+  const branches = useGet<Branch[]>("/branches");
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get("new") === "1" && can("hr.employee.manage")) {
+      setOpen(true);
+      setSearchParams({}, { replace: true });
+    }
+  }, [searchParams, setSearchParams, can]);
+
   const blank = {
     name: "",
     phone: "",
+    email: "",
     position: "",
     hire_date: today(),
     base_pay: "",
+    grant_access: false,
+    role_id: "",
+    default_branch_id: "",
+    password: "",
   };
   const [draft, setDraft] = useState(blank);
-  const create = useWrite<Record<string, unknown>, unknown>("POST", "/employees", {
-    invalidate: ["/employees"],
+  const [creatingWithAccess, setCreatingWithAccess] = useState(false);
+
+  const [accessTarget, setAccessTarget] = useState<Employee | null>(null);
+  const [accessForm, setAccessForm] = useState({
+    phone: "",
+    email: "",
+    role_id: "",
+    default_branch_id: "",
+    password: "",
+  });
+  const [grantedBanner, setGrantedBanner] = useState<{
+    name: string;
+    role: string;
+    password: string;
+  } | null>(null);
+
+  const create = useWrite<Record<string, unknown>, Employee>("POST", "/employees", {
+    invalidate: ["/employees", "/users"],
     success: "Employee added",
     onSuccess: () => {
       setOpen(false);
       setDraft(blank);
     },
   });
+
+  const grantLogin = useWrite<Record<string, unknown>, unknown>(
+    "POST",
+    () => `/employees/${accessTarget?.id}/user`,
+    {
+      invalidate: ["/employees", "/users"],
+      success: "System access granted",
+      onSuccess: () => {
+        if (accessTarget) {
+          const roleName =
+            roles.data?.find((r) => r.id === accessForm.role_id)?.name ?? "System user";
+          setGrantedBanner({
+            name: accessTarget.name,
+            role: roleName,
+            password: accessForm.password,
+          });
+        }
+        setAccessTarget(null);
+        setAccessForm({ phone: "", email: "", role_id: "", default_branch_id: "", password: "" });
+      },
+    },
+  );
+
+  async function submitNewEmployee() {
+    const payload: Record<string, unknown> = {
+      name: draft.name,
+      phone: draft.phone || undefined,
+      email: draft.email || undefined,
+      position: draft.position,
+      hire_date: draft.hire_date,
+    };
+    if (canSetSalary && draft.base_pay.trim() !== "") {
+      payload.base_pay = draft.base_pay.trim();
+    }
+    if (!draft.grant_access || !canGrantAccess) {
+      create.mutate(payload);
+      return;
+    }
+    setCreatingWithAccess(true);
+    try {
+      const emp = await create.mutateAsync(payload);
+      await api.post(`/employees/${emp.id}/user`, {
+        name: draft.name,
+        phone: draft.phone,
+        email: draft.email,
+        password: draft.password,
+        role_id: draft.role_id,
+        branch_ids: draft.default_branch_id ? [draft.default_branch_id] : [],
+      });
+      const roleName = roles.data?.find((r) => r.id === draft.role_id)?.name ?? "System user";
+      setGrantedBanner({ name: draft.name, role: roleName, password: draft.password });
+      toast.success("Employee added and system access granted");
+      setOpen(false);
+      setDraft(blank);
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setCreatingWithAccess(false);
+    }
+  }
+
   const canSeeSalary = canAny("hr.compensation.view", "hr.compensation.manage");
   const canSetSalary = can("hr.compensation.manage");
+  const activeBranches = (branches.data ?? []).filter((b) => b.is_active);
   return (
     <>
+      {grantedBanner && (
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/5 p-4 text-sm">
+          <div>
+            <p className="font-medium">
+              System access granted for {grantedBanner.name} ({grantedBanner.role})
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Share this temporary password securely. They will change it on their first sign-in.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <code className="rounded bg-muted px-2 py-1 font-mono">{grantedBanner.password}</code>
+            <CopyButton text={grantedBanner.password} />
+            <Button size="sm" variant="ghost" onClick={() => setGrantedBanner(null)}>
+              Dismiss
+            </Button>
+          </div>
+        </div>
+      )}
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <Input
           aria-label="Search employees"
@@ -139,7 +268,7 @@ function EmployeesTab() {
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(e) => e.id}
-        empty="No employees yet"
+        empty="No employees yet. Create an employee first, then grant them Manager or Staff access."
         onRowClick={(e) => navigate(`/employees/${e.id}`)}
         columns={[
           { header: "No.", cell: (e) => e.employee_no },
@@ -159,6 +288,37 @@ function EmployeesTab() {
                 },
               ]
             : []),
+          {
+            header: "System access",
+            cell: (e) =>
+              e.user_id ? (
+                <Badge variant="secondary" className="gap-1">
+                  <ShieldCheck size={12} className="text-primary" />
+                  {e.role_name || "Active login"}
+                </Badge>
+              ) : canGrantAccess && e.status !== "terminated" ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    setAccessTarget(e);
+                    setAccessForm({
+                      phone: e.phone ?? "",
+                      email: e.email ?? "",
+                      role_id: "",
+                      default_branch_id: e.branch_id ?? "",
+                      password: "",
+                    });
+                  }}
+                >
+                  <KeyRound size={12} /> Grant access
+                </Button>
+              ) : (
+                <span className="text-xs text-muted-foreground">No login</span>
+              ),
+          },
           { header: "Status", cell: (e) => <StatusBadge value={e.status} /> },
         ]}
       />
@@ -167,19 +327,9 @@ function EmployeesTab() {
         open={open}
         onOpenChange={setOpen}
         title="New employee"
-        busy={create.isPending}
-        onSubmit={() => {
-          const payload: Record<string, unknown> = {
-            name: draft.name,
-            phone: draft.phone || undefined,
-            position: draft.position,
-            hire_date: draft.hire_date,
-          };
-          if (canSetSalary && draft.base_pay.trim() !== "") {
-            payload.base_pay = draft.base_pay.trim();
-          }
-          create.mutate(payload);
-        }}
+        description="Every Manager or Staff member starts here as an employee. You can also grant system login right away."
+        busy={create.isPending || creatingWithAccess}
+        onSubmit={() => void submitNewEmployee()}
       >
         <Field label="Full name">
           <Input
@@ -191,14 +341,23 @@ function EmployeesTab() {
         <div className="grid grid-cols-2 gap-3">
           <Field label="Phone">
             <Input
+              required={draft.grant_access && !draft.email.trim()}
               value={draft.phone}
               onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
+            />
+          </Field>
+          <Field label="Email">
+            <Input
+              type="email"
+              value={draft.email}
+              onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))}
             />
           </Field>
           <Field label="Position / job title">
             <Input
               value={draft.position}
               onChange={(e) => setDraft((d) => ({ ...d, position: e.target.value }))}
+              placeholder="e.g. Shop Manager, Cashier, Designer"
             />
           </Field>
           <Field label="Hire date">
@@ -209,7 +368,7 @@ function EmployeesTab() {
             />
           </Field>
           {canSetSalary && (
-            <Field label="Monthly basic salary">
+            <Field label="Monthly basic salary" className="col-span-2">
               <Input
                 inputMode="decimal"
                 placeholder="Optional"
@@ -219,6 +378,134 @@ function EmployeesTab() {
             </Field>
           )}
         </div>
+        {canGrantAccess && (
+          <div className="space-y-3 rounded-xl border bg-muted/30 p-3">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+              <input
+                type="checkbox"
+                checked={draft.grant_access}
+                onChange={(e) => setDraft((d) => ({ ...d, grant_access: e.target.checked }))}
+              />
+              Grant system login now (Admin, Manager, or Staff)
+            </label>
+            {draft.grant_access && (
+              <div className="grid grid-cols-2 gap-3 pt-1">
+                <Field label="Role *">
+                  <NativeSelect
+                    required
+                    value={draft.role_id}
+                    onChange={(e) => setDraft((d) => ({ ...d, role_id: e.target.value }))}
+                  >
+                    <option value="">Choose role…</option>
+                    {roles.data?.map((r) => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </Field>
+                <Field label="Default location">
+                  <NativeSelect
+                    value={draft.default_branch_id}
+                    onChange={(e) => setDraft((d) => ({ ...d, default_branch_id: e.target.value }))}
+                  >
+                    <option value="">Main / default</option>
+                    {activeBranches.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </Field>
+                <Field label="Temporary password *" className="col-span-2">
+                  <Input
+                    required
+                    minLength={8}
+                    type="password"
+                    value={draft.password}
+                    onChange={(e) => setDraft((d) => ({ ...d, password: e.target.value }))}
+                    placeholder="At least 8 characters"
+                  />
+                </Field>
+              </div>
+            )}
+          </div>
+        )}
+      </FormDialog>
+
+      <FormDialog
+        open={accessTarget !== null}
+        onOpenChange={(o) => !o && setAccessTarget(null)}
+        title={`Grant system access — ${accessTarget?.name ?? ""}`}
+        description="Assign a Manager, Staff, or custom role so this employee can sign in."
+        submitLabel="Grant access"
+        busy={grantLogin.isPending}
+        onSubmit={() =>
+          grantLogin.mutate({
+            name: accessTarget?.name ?? "",
+            phone: accessForm.phone,
+            email: accessForm.email,
+            role_id: accessForm.role_id,
+            branch_ids: accessForm.default_branch_id ? [accessForm.default_branch_id] : [],
+            password: accessForm.password,
+          })
+        }
+      >
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Phone">
+            <Input
+              required={!accessForm.email.trim()}
+              value={accessForm.phone}
+              onChange={(e) => setAccessForm((f) => ({ ...f, phone: e.target.value }))}
+            />
+          </Field>
+          <Field label="Email (optional)">
+            <Input
+              type="email"
+              value={accessForm.email}
+              onChange={(e) => setAccessForm((f) => ({ ...f, email: e.target.value }))}
+            />
+          </Field>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Role *">
+            <NativeSelect
+              required
+              value={accessForm.role_id}
+              onChange={(e) => setAccessForm((f) => ({ ...f, role_id: e.target.value }))}
+            >
+              <option value="">Choose role…</option>
+              {roles.data?.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+          <Field label="Default location">
+            <NativeSelect
+              value={accessForm.default_branch_id}
+              onChange={(e) => setAccessForm((f) => ({ ...f, default_branch_id: e.target.value }))}
+            >
+              <option value="">Main / default</option>
+              {activeBranches.map((b) => (
+                <option key={b.id} value={b.id}>
+                  {b.name}
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+        </div>
+        <Field label="Temporary password *">
+          <Input
+            required
+            minLength={8}
+            type="password"
+            value={accessForm.password}
+            onChange={(e) => setAccessForm((f) => ({ ...f, password: e.target.value }))}
+            placeholder="At least 8 characters"
+          />
+        </Field>
       </FormDialog>
     </>
   );

@@ -73,13 +73,16 @@ const employeeCols = `e.id, e.employee_no, e.full_name::text AS name, e.phone::t
 	e.position::text AS position, e.location_id AS branch_id, l.name::text AS branch_name,
 	e.start_date AS hire_date, e.end_date AS terminated_on, e.status::text AS status,
 	e.photo_file_id, e.emergency_contact_name AS emergency_contact, e.emergency_contact_phone::text AS emergency_contact_phone,
-	e.membership_id, m.user_id, e.created_at, e.updated_at,
+	e.membership_id, m.user_id, r.id AS role_id, r.name::text AS role_name, r.code::text AS role_slug,
+	e.created_at, e.updated_at,
 	comp.basic_salary AS base_pay, comp.pay_method::text AS pay_method,
 	comp.payout_account_last4 AS pay_account_last4, comp.payout_provider AS pay_provider`
 
 const employeeFrom = ` FROM app.employees e
 	LEFT JOIN app.locations l ON l.tenant_id = e.tenant_id AND l.id = e.location_id
 	LEFT JOIN app.memberships m ON m.tenant_id = e.tenant_id AND m.id = e.membership_id
+	LEFT JOIN app.membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.membership_id = m.id
+	LEFT JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id
 	LEFT JOIN LATERAL (
 		SELECT c.basic_salary, c.pay_method, c.payout_account_last4, c.payout_provider
 		FROM app.employee_compensation c

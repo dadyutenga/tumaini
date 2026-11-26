@@ -199,12 +199,22 @@ func (p *Principal) Actor() db.Actor {
 }
 
 // Has reports whether the caller holds a permission code.
+// The tenant owner/admin always holds every permission.
 func (p *Principal) Has(code string) bool {
+	if p.IsOwner {
+		return true
+	}
 	_, ok := p.Perms[code]
 	return ok
 }
 
 func (p *Principal) Can(key string) (Grant, bool) {
+	if p.IsOwner {
+		if g, ok := p.Perms[key]; ok {
+			return g, true
+		}
+		return Grant{Scope: "all"}, true
+	}
 	g, ok := p.Perms[key]
 	return g, ok
 }

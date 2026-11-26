@@ -1,6 +1,21 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Briefcase, Check, Clock, CreditCard, ShoppingCart, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowUpRight,
+  Briefcase,
+  Check,
+  Clock,
+  CreditCard,
+  Receipt,
+  RefreshCw,
+  ShoppingBag,
+  ShoppingCart,
+  TrendingDown,
+  TrendingUp,
+  Wallet,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,7 +25,7 @@ import { Field, FormDialog, NativeSelect, PageHeader, StatusBadge } from "@/comp
 import { useAuth } from "@/features/auth/auth";
 import { ClientSelect } from "@/features/services/shared";
 import { label } from "@/features/services/helpers";
-import { useGet, useWrite } from "@/hooks/useApi";
+import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, today, toNumber } from "@/lib/formatters";
 import type { CatalogItem } from "@/types/services";
 
@@ -99,29 +114,90 @@ function greeting() {
   return "Good evening";
 }
 
-function trendText(pct?: string | null) {
-  if (pct === null || pct === undefined || pct === "") return undefined;
+function trendInfo(pct?: string | null) {
+  if (pct === null || pct === undefined || pct === "") return null;
   const n = toNumber(pct);
   const sign = n > 0 ? "+" : "";
-  return `${sign}${n.toFixed(1)}% vs previous`;
+  return {
+    text: `${sign}${n.toFixed(1)}%`,
+    positive: n >= 0,
+  };
+}
+
+function DashboardError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center rounded-2xl border border-destructive/30 bg-card p-10 text-center shadow-sm">
+      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
+        <AlertTriangle size={22} />
+      </div>
+      <h2 className="mt-4 text-base font-semibold">Could not load dashboard data</h2>
+      <p className="mt-1 max-w-md text-sm text-muted-foreground">{message}</p>
+      <Button className="mt-4" variant="outline" onClick={onRetry}>
+        <RefreshCw size={15} /> Try again
+      </Button>
+    </div>
+  );
 }
 
 function KpiCard({
   label: title,
   value,
   sub,
+  trend,
+  icon: Icon,
   to,
+  accent = "primary",
 }: {
   label: string;
   value: string;
   sub?: string;
+  trend?: { text: string; positive: boolean } | null;
+  icon: React.ComponentType<{ size?: number; className?: string }>;
   to?: string;
+  accent?: "primary" | "amber" | "emerald";
 }) {
+  const iconTone =
+    accent === "amber"
+      ? "bg-amber-500/12 text-amber-600 dark:text-amber-400 ring-amber-500/20"
+      : "bg-primary/12 text-primary ring-primary/20";
+
   const inner = (
-    <div className="rounded-2xl border bg-card p-5 transition hover:border-primary">
-      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{title}</p>
-      <p className="mt-2 text-2xl font-bold tabular-nums">{value}</p>
-      {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
+    <div className="group relative overflow-hidden rounded-2xl border bg-card p-5 shadow-xs transition duration-200 hover:-translate-y-0.5 hover:border-primary/45 hover:shadow-md">
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-primary/70 via-primary/30 to-transparent opacity-75 transition group-hover:opacity-100" />
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+            {title}
+          </p>
+          <p className="mt-2 truncate text-2xl font-bold tracking-tight tabular-nums">{value}</p>
+        </div>
+        <div
+          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ${iconTone}`}
+        >
+          <Icon size={18} />
+        </div>
+      </div>
+      <div className="mt-3 flex items-center justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          {trend && (
+            <span
+              className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                trend.positive ? "bg-primary/12 text-primary" : "bg-destructive/12 text-destructive"
+              }`}
+            >
+              {trend.positive ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
+              {trend.text}
+            </span>
+          )}
+          {sub && <p className="truncate text-xs text-muted-foreground">{sub}</p>}
+        </div>
+        {to && (
+          <ArrowUpRight
+            size={15}
+            className="shrink-0 text-muted-foreground/60 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-primary"
+          />
+        )}
+      </div>
     </div>
   );
   return to ? <Link to={to}>{inner}</Link> : inner;
@@ -268,6 +344,11 @@ function StaffHome() {
   });
 
   if (meDash.isLoading) return <PageLoader />;
+  if (meDash.isError) {
+    return (
+      <DashboardError message={errorMessage(meDash.error)} onRetry={() => void meDash.refetch()} />
+    );
+  }
   const d = meDash.data;
   const clockedIn = Boolean(d?.attendance?.clocked_in);
 
@@ -292,7 +373,11 @@ function StaffHome() {
       {/* 3 Big Speed-First Action Buttons */}
       <div className="grid gap-3 sm:grid-cols-3">
         {can("shop.sale.create") && (
-          <Button size="lg" className="h-14 text-base" onClick={() => navigate("/pos")}>
+          <Button
+            size="lg"
+            className="h-14 rounded-2xl text-base shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+            onClick={() => navigate("/pos")}
+          >
             <ShoppingCart size={20} /> NEW SALE
           </Button>
         )}
@@ -300,10 +385,10 @@ function StaffHome() {
           <Button
             size="lg"
             variant="outline"
-            className="h-14 text-base"
+            className="h-14 rounded-2xl bg-card text-base shadow-xs transition hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-sm"
             onClick={() => setNewJobOpen(true)}
           >
-            <Briefcase size={20} /> NEW JOB
+            <Briefcase size={20} className="text-primary" /> NEW JOB
           </Button>
         )}
         {(can("shop.customer.view_all") ||
@@ -313,19 +398,19 @@ function StaffHome() {
           <Button
             size="lg"
             variant="outline"
-            className="h-14 text-base"
+            className="h-14 rounded-2xl bg-card text-base shadow-xs transition hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-sm"
             onClick={() =>
               navigate(can("services.invoice.manage") ? "/service-invoices" : "/customers")
             }
           >
-            <CreditCard size={20} /> RECEIVE PAYMENT
+            <CreditCard size={20} className="text-primary" /> RECEIVE PAYMENT
           </Button>
         )}
       </div>
 
       {/* 4 Staff Dashboard Panels */}
       <div className="grid gap-6 lg:grid-cols-2">
-        <section className="rounded-2xl border bg-card p-5">
+        <section className="rounded-2xl border bg-card p-5 shadow-xs">
           <h2 className="font-semibold">My sales today</h2>
           <div className="mt-4 grid grid-cols-2 gap-4">
             <div>
@@ -447,7 +532,7 @@ function StaffHome() {
 
 /** SRS Section 5: Unified Admin & Manager Dashboard. */
 export default function Dashboard() {
-  const { me, canAny, user } = useAuth();
+  const { me, can, canAny, user } = useAuth();
   const navigate = useNavigate();
   const isStaffHome =
     !me?.is_owner && !canAny("dashboard.business.view", "dashboard.operations.view");
@@ -484,7 +569,18 @@ export default function Dashboard() {
 
   if (isStaffHome) return <StaffHome />;
   if (dash.isLoading) return <PageLoader />;
+  if (dash.isError) {
+    return (
+      <DashboardError message={errorMessage(dash.error)} onRetry={() => void dash.refetch()} />
+    );
+  }
   const d = dash.data;
+
+  const canBusinessDash = Boolean(me?.is_owner) || can("dashboard.business.view");
+  const showSalesKpi = Boolean(d?.sales) || business !== "services";
+  const showServicesKpi = Boolean(d?.service_income) || business !== "shop";
+  const showExpensesKpi = Boolean(d?.expenses) || canBusinessDash;
+  const showProfitKpi = Boolean(d?.profit) || Boolean(me?.is_owner) || can("reports.profit.view");
 
   const owedToUs = toNumber(d?.outstanding?.customers_owe) + toNumber(d?.outstanding?.clients_owe);
   const weOwe =
@@ -505,6 +601,11 @@ export default function Dashboard() {
         description="Business overview across Shop (Business A) and Services (Business B)."
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {can("shop.sale.create") && (
+              <Button size="sm" onClick={() => navigate("/pos")}>
+                <ShoppingCart size={15} /> Open POS
+              </Button>
+            )}
             <NativeSelect
               aria-label="Period"
               className="w-36"
@@ -548,35 +649,44 @@ export default function Dashboard() {
 
       {/* Row 1: Four KPI Total Cards */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {d?.sales && (
+        {showSalesKpi && (
           <KpiCard
             label="Shop sales"
-            value={formatMoney(d.sales.total)}
-            sub={`${d.sales.count} sales${trendText(d.sales.change_pct) ? ` · ${trendText(d.sales.change_pct)}` : ""}`}
+            value={formatMoney(d?.sales?.total ?? "0")}
+            sub={`${d?.sales?.count ?? 0} sales`}
+            trend={trendInfo(d?.sales?.change_pct)}
+            icon={ShoppingBag}
             to="/reports?path=/reports/sales/summary"
           />
         )}
-        {d?.service_income && (
+        {showServicesKpi && (
           <KpiCard
             label="Service income"
-            value={formatMoney(d.service_income.total)}
-            sub={trendText(d.service_income.change_pct) ?? "Services revenue"}
+            value={formatMoney(d?.service_income?.total ?? "0")}
+            sub="Services revenue"
+            trend={trendInfo(d?.service_income?.change_pct)}
+            icon={Briefcase}
             to="/reports?path=/reports/projects"
           />
         )}
-        {d?.expenses && (
+        {showExpensesKpi && (
           <KpiCard
             label="Expenses"
-            value={formatMoney(d.expenses.total)}
-            sub={trendText(d.expenses.change_pct) ?? "Approved & paid"}
+            value={formatMoney(d?.expenses?.total ?? "0")}
+            sub="Approved & paid"
+            trend={trendInfo(d?.expenses?.change_pct)}
+            icon={Receipt}
+            accent="amber"
             to="/reports?path=/reports/expenses"
           />
         )}
-        {d?.profit && (
+        {showProfitKpi && (
           <KpiCard
             label="Net profit"
-            value={formatMoney(d.profit.net_profit)}
-            sub={trendText(d.profit.change_pct) ?? `Gross ${formatMoney(d.profit.gross_profit)}`}
+            value={formatMoney(d?.profit?.net_profit ?? "0")}
+            sub={`Gross ${formatMoney(d?.profit?.gross_profit ?? "0")}`}
+            trend={trendInfo(d?.profit?.change_pct)}
+            icon={TrendingUp}
             to="/reports?path=/reports/profit-loss"
           />
         )}
@@ -584,35 +694,50 @@ export default function Dashboard() {
 
       {/* Row 2: Income vs Expenses Line Chart + Cash Balances */}
       <div className="grid gap-6 lg:grid-cols-3">
-        {chartData.length > 0 && (
-          <div className="lg:col-span-2">
-            <ChartCard
-              title="Income vs expenses by day"
-              description="Click a day to inspect transactions"
-            >
+        <div className={d?.cash ? "lg:col-span-2" : "lg:col-span-3"}>
+          <ChartCard
+            title="Income vs expenses by day"
+            description="Click a day to inspect transactions"
+          >
+            {chartData.length > 0 ? (
               <IncomeExpenseChart data={chartData} onDayClick={() => navigate("/money")} />
-            </ChartCard>
-          </div>
-        )}
+            ) : (
+              <div className="flex h-56 items-center justify-center text-sm text-muted-foreground">
+                No income or expense transactions recorded for this period yet.
+              </div>
+            )}
+          </ChartCard>
+        </div>
         {d?.cash && (
-          <section className="rounded-2xl border bg-card p-5">
+          <section className="rounded-2xl border bg-card p-5 shadow-xs">
             <div className="flex items-center justify-between">
-              <h2 className="font-semibold">Cash balances</h2>
-              <Link to="/money" className="text-xs text-primary underline">
+              <div className="flex items-center gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/12 text-primary">
+                  <Wallet size={16} />
+                </span>
+                <h2 className="font-semibold">Cash balances</h2>
+              </div>
+              <Link to="/money" className="text-xs font-medium text-primary hover:underline">
                 Accounts
               </Link>
             </div>
-            <p className="mt-2 text-2xl font-bold tabular-nums">{formatMoney(d.cash.total)}</p>
+            <p className="mt-3 text-2xl font-bold tracking-tight tabular-nums">
+              {formatMoney(d.cash.total)}
+            </p>
             <ul className="mt-4 divide-y text-sm">
-              {d.cash.accounts.slice(0, 6).map((a) => (
-                <li key={a.id} className="flex items-center justify-between py-2">
-                  <div>
-                    <p className="font-medium">{a.name}</p>
-                    <p className="text-xs text-muted-foreground">{label(a.type)}</p>
-                  </div>
-                  <span className="font-medium tabular-nums">{formatMoney(a.balance)}</span>
-                </li>
-              ))}
+              {d.cash.accounts.length === 0 ? (
+                <li className="py-3 text-xs text-muted-foreground">No money accounts yet.</li>
+              ) : (
+                d.cash.accounts.slice(0, 6).map((a) => (
+                  <li key={a.id} className="flex items-center justify-between py-2.5">
+                    <div>
+                      <p className="font-medium">{a.name}</p>
+                      <p className="text-xs text-muted-foreground">{label(a.type)}</p>
+                    </div>
+                    <span className="font-semibold tabular-nums">{formatMoney(a.balance)}</span>
+                  </li>
+                ))
+              )}
             </ul>
           </section>
         )}

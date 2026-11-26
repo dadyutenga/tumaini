@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { KeyRound, LogOut, Pencil, Plus, Shield, Trash2 } from "lucide-react";
+import { Link } from "react-router-dom";
+import { KeyRound, LogOut, Pencil, Plus, Shield, Trash2, UserPlus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -26,7 +28,20 @@ interface Role {
   rank?: number;
   is_system: boolean;
 }
-const blank = {
+interface EmployeeRef {
+  id: string;
+  employee_no: string;
+  name: string;
+  phone?: string | null;
+  email?: string | null;
+  position?: string | null;
+  branch_id?: string | null;
+  user_id?: string | null;
+  status: string;
+}
+
+const blankGrant = {
+  employee_id: "",
   name: "",
   phone: "",
   email: "",
@@ -37,38 +52,50 @@ const blank = {
 
 export default function Team() {
   const { can } = useAuth();
+  const manage = can("security.user.manage");
   const [editingRole, setEditingRole] = useState<string | null | undefined>(undefined);
   const [retireRole, setRetireRole] = useState<Role | null>(null);
   const [page, setPage] = useState(1);
   const users = useGetPage<SessionUser>("/users", { page, per_page: 25 });
-  const roles = useGet<Role[]>("/roles", undefined, { enabled: can("security.user.manage") });
+  const roles = useGet<Role[]>("/roles", undefined, { enabled: manage });
   const branches = useGet<Branch[]>("/branches");
-  const [open, setOpen] = useState(false);
+  const employees = useGet<EmployeeRef[]>(
+    "/employees",
+    { per_page: 200 },
+    { enabled: manage || can("hr.employee.view") },
+  );
+
+  const [grantOpen, setGrantOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<SessionUser | null>(null);
-  const [draft, setDraft] = useState(blank);
+  const [draft, setDraft] = useState(blankGrant);
   const [resetTarget, setResetTarget] = useState<SessionUser | null>(null);
   const [resetPw, setResetPw] = useState("");
   const [resetResult, setResetResult] = useState<{ name: string; password: string } | null>(null);
   const [kickTarget, setKickTarget] = useState<SessionUser | null>(null);
   const [permTarget, setPermTarget] = useState<SessionUser | null>(null);
 
-  const create = useWrite<Record<string, unknown>, unknown>("POST", "/users", {
-    invalidate: ["/users"],
-    success: "User created",
-    onSuccess: () => {
-      setOpen(false);
-      setDraft(blank);
+  const grantAccess = useWrite<Record<string, unknown>, unknown>(
+    "POST",
+    () => `/employees/${draft.employee_id}/user`,
+    {
+      invalidate: ["/users", "/employees"],
+      success: "System access granted to employee",
+      onSuccess: () => {
+        setResetResult({ name: draft.name, password: draft.password });
+        setGrantOpen(false);
+        setDraft(blankGrant);
+      },
     },
-  });
+  );
   const update = useWrite<Record<string, unknown>, unknown>(
     "PUT",
     () => `/users/${editingUser?.id}`,
     {
-      invalidate: ["/users"],
+      invalidate: ["/users", "/employees"],
       success: "User updated",
       onSuccess: () => {
         setEditingUser(null);
-        setDraft(blank);
+        setDraft(blankGrant);
       },
     },
   );
@@ -107,30 +134,55 @@ export default function Team() {
     onSuccess: () => setRetireRole(null),
   });
 
-  const manage = can("security.user.manage");
   const branchNames = new Map((branches.data ?? []).map((b) => [b.id, b.name]));
   const activeBranches = (branches.data ?? []).filter((b) => b.is_active);
+  const employeeList = Array.isArray(employees.data) ? employees.data : [];
+  const empById = new Map(employeeList.map((e) => [e.id, e]));
+  const unlinkedEmployees = employeeList.filter((e) => !e.user_id && e.status !== "terminated");
+
+  function onPickEmployee(empId: string) {
+    const emp = empById.get(empId);
+    if (!emp) {
+      setDraft((d) => ({ ...d, employee_id: empId }));
+      return;
+    }
+    setDraft((d) => ({
+      ...d,
+      employee_id: emp.id,
+      name: emp.name,
+      phone: emp.phone ?? "",
+      email: emp.email ?? "",
+      default_branch_id: emp.branch_id ?? d.default_branch_id,
+    }));
+  }
 
   return (
     <>
       <PageHeader
         title="Team and roles"
-        description="Manage seats, default locations, roles, authority limits, and per-user permission overrides."
+        description="Every Manager or Staff member starts as an Employee first, then receives system access and a role here or from People."
         actions={
           manage && (
-            <Button
-              onClick={() => {
-                setDraft(blank);
-                setOpen(true);
-              }}
-            >
-              <Plus size={16} /> New user
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" asChild>
+                <Link to="/people?new=1">
+                  <UserPlus size={16} /> New employee
+                </Link>
+              </Button>
+              <Button
+                onClick={() => {
+                  setDraft(blankGrant);
+                  setGrantOpen(true);
+                }}
+              >
+                <Plus size={16} /> Grant access
+              </Button>
+            </div>
           )
         }
       />
       {resetResult && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border bg-card p-4 text-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/5 p-4 text-sm">
           <div>
             <p className="font-medium">Temporary password for {resetResult.name}</p>
             <p className="text-xs text-muted-foreground">
@@ -159,6 +211,29 @@ export default function Team() {
             columns={[
               { header: "Name", cell: (u) => <span className="font-medium">{u.name}</span> },
               { header: "Contact", cell: (u) => u.phone ?? u.email ?? "-" },
+              {
+                header: "Employee profile",
+                cell: (u) => {
+                  if (u.employee_id) {
+                    const emp = empById.get(u.employee_id);
+                    return (
+                      <Link
+                        to={`/employees/${u.employee_id}`}
+                        className="text-xs font-medium text-primary hover:underline"
+                      >
+                        {emp
+                          ? `${emp.employee_no} · ${emp.position || "Employee"}`
+                          : "View profile"}
+                      </Link>
+                    );
+                  }
+                  return (
+                    <Badge variant="outline" className="text-[11px] text-muted-foreground">
+                      {u.role_slug === "admin" || u.role_slug === "owner" ? "Owner" : "Not linked"}
+                    </Badge>
+                  );
+                },
+              },
               { header: "Role", cell: (u) => u.role_name },
               {
                 header: "Default location",
@@ -182,6 +257,7 @@ export default function Team() {
                         size="sm"
                         onClick={() => {
                           setDraft({
+                            employee_id: u.employee_id ?? "",
                             name: u.name,
                             phone: u.phone ?? "",
                             email: u.email ?? "",
@@ -262,22 +338,141 @@ export default function Team() {
           />
         </TabsContent>
       </Tabs>
+
       <RoleEditor
         roleId={editingRole ?? null}
         open={editingRole !== undefined}
         onClose={() => setEditingRole(undefined)}
       />
+
+      {/* Employee-first Grant Access Dialog */}
       <FormDialog
-        open={open || editingUser !== null}
+        open={grantOpen}
         onOpenChange={(o) => {
           if (!o) {
-            setOpen(false);
-            setEditingUser(null);
-            setDraft(blank);
+            setGrantOpen(false);
+            setDraft(blankGrant);
           }
         }}
-        title={editingUser ? `Edit ${editingUser.name}` : "New user"}
-        busy={create.isPending || update.isPending}
+        title="Grant system access to an employee"
+        description="To get a Manager, Staff, or Admin account, a person must be registered as an employee first."
+        submitLabel={unlinkedEmployees.length > 0 ? "Grant access" : "Close"}
+        busy={grantAccess.isPending}
+        onSubmit={() => {
+          if (unlinkedEmployees.length === 0) {
+            setGrantOpen(false);
+            return;
+          }
+          grantAccess.mutate({
+            name: draft.name,
+            phone: draft.phone,
+            email: draft.email,
+            password: draft.password,
+            role_id: draft.role_id,
+            branch_ids: draft.default_branch_id ? [draft.default_branch_id] : [],
+          });
+        }}
+      >
+        {unlinkedEmployees.length === 0 ? (
+          <div className="space-y-3 rounded-xl border border-dashed bg-muted/30 p-5 text-center">
+            <p className="text-sm font-medium">No employees waiting for a login</p>
+            <p className="text-xs text-muted-foreground">
+              Every active employee already has system access, or you haven&apos;t added an employee
+              profile yet. Create the employee first, then assign their role.
+            </p>
+            <Button asChild size="sm">
+              <Link to="/people?new=1">
+                <UserPlus size={14} /> Create Employee First
+              </Link>
+            </Button>
+          </div>
+        ) : (
+          <>
+            <Field label="Employee *">
+              <NativeSelect
+                required
+                value={draft.employee_id}
+                onChange={(e) => onPickEmployee(e.target.value)}
+              >
+                <option value="">Choose an employee…</option>
+                {unlinkedEmployees.map((e) => (
+                  <option key={e.id} value={e.id}>
+                    {e.name} ({e.employee_no}
+                    {e.position ? ` · ${e.position}` : ""})
+                  </option>
+                ))}
+              </NativeSelect>
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Phone">
+                <Input
+                  required={!draft.email.trim()}
+                  value={draft.phone}
+                  onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
+                />
+              </Field>
+              <Field label="Email">
+                <Input
+                  type="email"
+                  value={draft.email}
+                  onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))}
+                />
+              </Field>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Role *">
+                <NativeSelect
+                  required
+                  value={draft.role_id}
+                  onChange={(e) => setDraft((d) => ({ ...d, role_id: e.target.value }))}
+                >
+                  <option value="">Choose…</option>
+                  {roles.data?.map((r) => (
+                    <option key={r.id} value={r.id}>
+                      {r.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </Field>
+              <Field label="Default location">
+                <NativeSelect
+                  value={draft.default_branch_id}
+                  onChange={(e) => setDraft((d) => ({ ...d, default_branch_id: e.target.value }))}
+                >
+                  <option value="">Main / default</option>
+                  {activeBranches.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </NativeSelect>
+              </Field>
+            </div>
+            <Field label="Temporary password *">
+              <Input
+                required
+                minLength={8}
+                type="password"
+                value={draft.password}
+                onChange={(e) => setDraft((d) => ({ ...d, password: e.target.value }))}
+                placeholder="At least 8 characters"
+              />
+            </Field>
+          </>
+        )}
+      </FormDialog>
+
+      {/* Edit Existing User Dialog (also supports linking an unlinked user to an employee) */}
+      <FormDialog
+        open={editingUser !== null}
+        onOpenChange={(o) => {
+          if (!o) {
+            setEditingUser(null);
+            setDraft(blankGrant);
+          }
+        }}
+        title={`Edit ${editingUser?.name ?? ""}`}
+        busy={update.isPending}
         onSubmit={() => {
           const payload: Record<string, unknown> = {
             name: draft.name,
@@ -286,11 +481,10 @@ export default function Team() {
             role_id: draft.role_id,
             branch_ids: draft.default_branch_id ? [draft.default_branch_id] : [],
           };
-          if (editingUser) {
-            update.mutate(payload);
-          } else {
-            create.mutate({ ...payload, password: draft.password });
+          if (draft.employee_id && !editingUser?.employee_id) {
+            payload.employee_id = draft.employee_id;
           }
+          update.mutate(payload);
         }}
       >
         <Field label="Name *">
@@ -315,17 +509,6 @@ export default function Team() {
             />
           </Field>
         </div>
-        {!editingUser && (
-          <Field label="Temporary password *">
-            <Input
-              required
-              minLength={8}
-              type="password"
-              value={draft.password}
-              onChange={(e) => setDraft((d) => ({ ...d, password: e.target.value }))}
-            />
-          </Field>
-        )}
         <Field label="Role *">
           <NativeSelect
             required
@@ -353,7 +536,23 @@ export default function Team() {
             ))}
           </NativeSelect>
         </Field>
+        {!editingUser?.employee_id && unlinkedEmployees.length > 0 && (
+          <Field label="Link to employee profile">
+            <NativeSelect
+              value={draft.employee_id}
+              onChange={(e) => setDraft((d) => ({ ...d, employee_id: e.target.value }))}
+            >
+              <option value="">Not linked</option>
+              {unlinkedEmployees.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name} ({e.employee_no})
+                </option>
+              ))}
+            </NativeSelect>
+          </Field>
+        )}
       </FormDialog>
+
       <FormDialog
         open={resetTarget !== null}
         onOpenChange={(o) => !o && setResetTarget(null)}

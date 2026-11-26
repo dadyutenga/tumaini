@@ -87,10 +87,10 @@ function Navigation({
                     to={path}
                     title={compact ? display : undefined}
                     className={({ isActive }) =>
-                      `flex items-center gap-3 rounded-xl px-3 py-2 text-sm font-medium transition ${
+                      `flex items-center gap-3 rounded-xl px-3 py-2 text-sm transition ${
                         isActive
-                          ? "bg-primary/15 text-primary"
-                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          ? "bg-primary/12 font-semibold text-primary ring-1 ring-primary/15"
+                          : "font-medium text-muted-foreground hover:bg-muted/80 hover:text-foreground"
                       }`
                     }
                   >
@@ -135,7 +135,7 @@ export default function DashboardLayout() {
         }`}
       >
         <Link to="/" className="mb-6 flex h-10 items-center gap-3 px-2 font-bold">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-primary text-xs font-black text-primary-foreground">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-br from-primary to-primary/80 text-xs font-black text-primary-foreground shadow-sm shadow-primary/25">
             {initials}
           </span>
           {!compact && <span className="truncate text-base tracking-tight">{brand}</span>}
@@ -145,7 +145,7 @@ export default function DashboardLayout() {
 
       {/* Main Content Area */}
       <div className={compact ? "md:pl-20" : "md:pl-64"}>
-        <header className="sticky top-0 z-10 flex h-16 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur sm:px-8">
+        <header className="sticky top-0 z-10 flex h-16 items-center gap-3 border-b bg-background/85 px-4 backdrop-blur-md sm:px-8">
           {/* Mobile Sheet Drawer */}
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
