@@ -70,7 +70,20 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	outb := outbound.New(database, clk, sender.OutboundFromConfig(cfg))
 	ap := approval.New(n)
 	pepper := sha256.Sum256([]byte("auth-events:" + cfg.JWTSecret))
-	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, TTL: cfg.RefreshTokenTTL, IdleTimeout: cfg.SessionIdleTimeout, Pepper: pepper[:], DefaultTimezone: cfg.DefaultTimezone, DefaultCurrency: cfg.DefaultCurrency}
+	mfaKeySecret := cfg.MFAEncryptionKey
+	mfaKeyID := "env-v1"
+	if mfaKeySecret == "" {
+		mfaKeySecret = cfg.JWTSecret
+		mfaKeyID = "derived-v1"
+	}
+	mfaKey := auth.DeriveKey(mfaKeySecret, "mfa-totp-key:v1")
+	ident := &identity.Service{
+		DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now},
+		Hash:  auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads},
+		Clock: clk, Audit: aud, Notify: n, TTL: cfg.RefreshTokenTTL, IdleTimeout: cfg.SessionIdleTimeout,
+		ReauthTTL: cfg.ReauthTTL, Pepper: pepper[:], MFAKey: mfaKey, MFAKeyID: mfaKeyID,
+		DefaultTimezone: cfg.DefaultTimezone, DefaultCurrency: cfg.DefaultCurrency,
+	}
 	jobPool := database.Jobs
 	if jobPool == nil {
 		jobPool = database.Pool

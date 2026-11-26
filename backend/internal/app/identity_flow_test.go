@@ -71,15 +71,18 @@ func TestAuthLoginLockoutAndHistory(t *testing.T) {
 	}
 	code, locked, _ := raw(t, app, http.MethodPost, "/api/v1/auth/login", map[string]any{"identifier": staffPhone, "password": "staff-pass-123"}, nil)
 	require.Equal(t, 401, code)
-	require.Equal(t, "account_locked", errCode(locked))
+	// Locked accounts return the same generic error code/message so lockouts cannot enumerate accounts.
+	require.Equal(t, errCode(bad), errCode(locked))
+	require.Equal(t, bad["error"].(map[string]any)["message"], locked["error"].(map[string]any)["message"])
 	require.Contains(t, titles(t, e.owner), "Account locked")
 
-	// Login history records every attempt with its result; only login_history.view may read it.
+	// Login history records every attempt with its result (including the internal "locked" reason); only login_history.view may read it.
 	hist := e.owner.call(t, http.MethodGet, "/api/v1/login-history?user_id="+staffID, nil, "")
 	require.Equal(t, 200, hist.code, hist.raw)
 	rows := asList(hist.body["data"])
 	require.GreaterOrEqual(t, len(rows), 5)
 	require.Equal(t, false, rows[0]["success"])
+	require.Equal(t, "locked", str(rows[0]["reason"]))
 	mgr, _ := e.user(t, "manager")
 	require.Equal(t, 403, mgr.call(t, http.MethodGet, "/api/v1/login-history", nil, "").code)
 	require.Equal(t, 400, e.owner.call(t, http.MethodGet, "/api/v1/login-history?from=garbage", nil, "").code)
@@ -100,12 +103,14 @@ func TestAuthRefreshRotationReplayAndLogout(t *testing.T) {
 	require.NotEmpty(t, second)
 	require.NotEqual(t, first, second)
 
-	// Replaying the old token is rejected: iam.sessions stores only the current rotated hash.
+	// Replaying the old token is detected as reuse/theft and revokes the entire session,
+	// so even the rotated token (second) stops working immediately.
 	code, replay, _ := raw(t, app, http.MethodPost, "/api/v1/auth/refresh", nil, map[string]string{"Cookie": "refresh_token=" + first})
 	require.Equal(t, 401, code)
 	require.Equal(t, "session_ended", errCode(replay))
-	code, _, _ = raw(t, app, http.MethodPost, "/api/v1/auth/refresh", nil, map[string]string{"Cookie": "refresh_token=" + second})
-	require.Equal(t, 200, code)
+	code, afterReuse, _ := raw(t, app, http.MethodPost, "/api/v1/auth/refresh", nil, map[string]string{"Cookie": "refresh_token=" + second})
+	require.Equal(t, 401, code)
+	require.Equal(t, "session_ended", errCode(afterReuse))
 
 	// Garbage and missing cookies are plain 401s.
 	code, _, _ = raw(t, app, http.MethodPost, "/api/v1/auth/refresh", nil, map[string]string{"Cookie": "refresh_token=not-a-token"})

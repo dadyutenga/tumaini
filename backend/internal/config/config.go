@@ -19,20 +19,23 @@ type Config struct {
 	JobsDatabaseURL string
 	// SessionIdleTimeout ends a session that has not been used for this long.
 	SessionIdleTimeout time.Duration
-	JWTSecret          string
-	AccessTokenTTL     time.Duration
-	RefreshTokenTTL    time.Duration
-	CORSOrigins        []string
-	CookieDomain       string
-	CookieSecure       bool
-	StorageDriver      string
-	StoragePath        string
-	DefaultTimezone    string
-	DefaultCurrency    string
-	LogLevel           string
-	ArgonMemory        uint32
-	ArgonTime          uint32
-	ArgonThreads       uint8
+	// ReauthTTL is how long a recent primary credential check remains valid for sensitive account changes.
+	ReauthTTL        time.Duration
+	JWTSecret        string
+	MFAEncryptionKey string
+	AccessTokenTTL   time.Duration
+	RefreshTokenTTL  time.Duration
+	CORSOrigins      []string
+	CookieDomain     string
+	CookieSecure     bool
+	StorageDriver    string
+	StoragePath      string
+	DefaultTimezone  string
+	DefaultCurrency  string
+	LogLevel         string
+	ArgonMemory      uint32
+	ArgonTime        uint32
+	ArgonThreads     uint8
 	// TrustedProxies are the reverse proxies (IPs or CIDRs) whose X-Forwarded-For is believed.
 	// Empty means the socket address is used, so rate limits and audit IPs cannot be spoofed.
 	TrustedProxies     []string
@@ -59,7 +62,9 @@ func Load() (Config, error) {
 		MigrateDatabaseURL: os.Getenv("MIGRATE_DATABASE_URL"),
 		JobsDatabaseURL:    os.Getenv("JOBS_DATABASE_URL"),
 		SessionIdleTimeout: duration("SESSION_IDLE_TIMEOUT", 30*time.Minute),
+		ReauthTTL:          duration("REAUTH_TTL", 10*time.Minute),
 		JWTSecret:          os.Getenv("JWT_SECRET"),
+		MFAEncryptionKey:   os.Getenv("MFA_ENCRYPTION_KEY"),
 		AccessTokenTTL:     duration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL:    duration("REFRESH_TOKEN_TTL", 30*24*time.Hour),
 		CORSOrigins:        splitCSV(getenv("CORS_ORIGINS", "http://localhost:5173")),
@@ -96,14 +101,23 @@ func Load() (Config, error) {
 	if len(c.JWTSecret) < 32 {
 		return c, fmt.Errorf("JWT_SECRET must be at least 32 characters")
 	}
+	if c.MFAEncryptionKey != "" && len(c.MFAEncryptionKey) < 32 {
+		return c, fmt.Errorf("MFA_ENCRYPTION_KEY must be at least 32 characters when set")
+	}
 	if c.MigrateDatabaseURL == "" {
 		c.MigrateDatabaseURL = c.DatabaseURL
 	}
 	if c.AccessTokenTTL <= 0 || c.AccessTokenTTL > time.Hour {
 		return c, fmt.Errorf("ACCESS_TOKEN_TTL must be between 1s and 1h")
 	}
-	if c.RefreshTokenTTL < c.AccessTokenTTL {
-		return c, fmt.Errorf("REFRESH_TOKEN_TTL must be longer than ACCESS_TOKEN_TTL")
+	if c.RefreshTokenTTL < c.AccessTokenTTL || c.RefreshTokenTTL > 90*24*time.Hour {
+		return c, fmt.Errorf("REFRESH_TOKEN_TTL must be longer than ACCESS_TOKEN_TTL and at most 90 days")
+	}
+	if c.SessionIdleTimeout < time.Minute {
+		return c, fmt.Errorf("SESSION_IDLE_TIMEOUT must be at least 1m")
+	}
+	if c.ReauthTTL < time.Minute || c.ReauthTTL > time.Hour {
+		return c, fmt.Errorf("REAUTH_TTL must be between 1m and 1h")
 	}
 	if c.ArgonMemory < 8192 || c.ArgonTime < 1 || c.ArgonThreads < 1 {
 		return c, fmt.Errorf("ARGON_MEMORY must be at least 8192 and ARGON_TIME, ARGON_THREADS at least 1")
@@ -129,8 +143,22 @@ func Load() (Config, error) {
 		if !c.CookieSecure {
 			return c, fmt.Errorf("COOKIE_SECURE must be true in production")
 		}
-		if strings.Contains(c.JWTSecret, "replace-with") {
-			return c, fmt.Errorf("JWT_SECRET still has the example value")
+		lowerSecret := strings.ToLower(c.JWTSecret)
+		for _, badSecret := range []string{"replace-with", "dev-only", "changeme"} {
+			if strings.Contains(lowerSecret, badSecret) {
+				return c, fmt.Errorf("JWT_SECRET still has an example or development value")
+			}
+		}
+		for _, url := range []string{c.DatabaseURL, c.JobsDatabaseURL, c.MigrateDatabaseURL} {
+			for _, devPass := range []string{"bms_api_dev", "bms_owner_dev", "bms_jobs_dev", "bms_app_dev", "postgres_dev"} {
+				if strings.Contains(url, devPass) {
+					return c, fmt.Errorf("database URL must not use default development credentials in production")
+				}
+			}
+		}
+		argonOK := (c.ArgonMemory >= 19456 && c.ArgonTime >= 2) || (c.ArgonMemory >= 47104 && c.ArgonTime >= 1)
+		if !argonOK {
+			return c, fmt.Errorf("Argon2id parameters are below OWASP minimums for production (need m>=19456,t>=2 or m>=47104,t>=1)")
 		}
 		for _, o := range c.CORSOrigins {
 			if o == "*" {

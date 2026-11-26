@@ -37,8 +37,8 @@ func (s *Service) guardTarget(ctx context.Context, tx pgx.Tx, p *auth.Principal,
 		WHERE m.tenant_id = $1 AND m.user_id = $2`, p.TenantID, userID).Scan(&rank); err != nil {
 		return httpx.NotFound("not_found", "User not found")
 	}
-	if !p.IsOwner && rank > p.RoleRank {
-		return forbidden("You cannot change the account of someone senior to you")
+	if !p.IsOwner && (rank > p.RoleRank || (rank == p.RoleRank && p.UserID != userID)) {
+		return forbidden("You cannot change the account of someone at or above your role rank")
 	}
 	return nil
 }

@@ -71,6 +71,10 @@ func (r *Recovery) Forgot(ctx context.Context, identifier, ip string) error {
 	if err != nil {
 		return err
 	}
+	// Users with no active seat (e.g., suspended/terminated everywhere) cannot recover access.
+	if _, _, merr := r.Svc.pickMembership(ctx, u.ID, nil); merr != nil {
+		return nil
+	}
 	code, err := sixDigits()
 	if err != nil {
 		return err
@@ -124,9 +128,8 @@ func (r *Recovery) Reset(ctx context.Context, identifier, code, password, ip str
 	if err != nil {
 		return err
 	}
-	hash, err := auth.HashPassword(password, r.Svc.Hash)
-	if err != nil {
-		return err
+	if _, _, merr := r.Svc.pickMembership(ctx, u.ID, nil); merr != nil {
+		return errInvalidCode
 	}
 	now := r.Svc.Clock.Now()
 	matched := false
@@ -149,6 +152,11 @@ func (r *Recovery) Reset(ctx context.Context, identifier, code, password, ip str
 			_, err := tx.Exec(ctx, `
 				UPDATE iam.password_reset_requests SET attempts = attempts + 1,
 				       superseded_at = CASE WHEN attempts + 1 >= $2 THEN $3::timestamptz ELSE NULL END WHERE id=$1`, id, resetMaxAttempts, now)
+			return err
+		}
+		// Only run Argon2id once the reset code has been verified (avoids timing side-channel and CPU DoS).
+		hash, err := auth.HashPassword(password, r.Svc.Hash)
+		if err != nil {
 			return err
 		}
 		matched = true

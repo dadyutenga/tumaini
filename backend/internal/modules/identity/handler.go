@@ -66,6 +66,27 @@ func (h *Handler) Login(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	if out.Refresh != "" {
+		h.cookie(c, out.Refresh, int(h.RefreshTTL.Seconds()))
+	}
+	return c.JSON(httpx.Data(out))
+}
+
+func (h *Handler) VerifyMFALogin(c fiber.Ctx) error {
+	var body struct {
+		MFAToken string `json:"mfa_token"`
+		Code     string `json:"code"`
+	}
+	if err := c.Bind().Body(&body); err != nil {
+		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
+	}
+	if body.MFAToken == "" || body.Code == "" {
+		return httpx.BadRequest("invalid_body", "mfa_token and code are required")
+	}
+	out, err := h.Svc.VerifyMFALogin(c.Context(), body.MFAToken, body.Code, c.IP(), c.Get("User-Agent"))
+	if err != nil {
+		return err
+	}
 	h.cookie(c, out.Refresh, int(h.RefreshTTL.Seconds()))
 	return c.JSON(httpx.Data(out))
 }
@@ -74,6 +95,7 @@ func (h *Handler) Refresh(c fiber.Ctx) error {
 	raw := c.Cookies("refresh_token")
 	out, err := h.Svc.Refresh(c.Context(), raw, c.IP(), c.Get("User-Agent"))
 	if err != nil {
+		h.cookie(c, "", -1)
 		return err
 	}
 	h.cookie(c, out.Refresh, int(h.RefreshTTL.Seconds()))
@@ -81,11 +103,103 @@ func (h *Handler) Refresh(c fiber.Ctx) error {
 }
 
 func (h *Handler) Logout(c fiber.Ctx) error {
-	if err := h.Svc.Logout(c.Context(), middleware.Principal(c)); err != nil {
+	if err := h.Svc.Logout(c.Context(), middleware.Principal(c), c.Cookies("refresh_token")); err != nil {
 		return err
 	}
 	h.cookie(c, "", -1)
 	return c.JSON(httpx.Data(fiber.Map{"ok": true}))
+}
+
+func (h *Handler) Reauthenticate(c fiber.Ctx) error {
+	var body struct {
+		Password string `json:"password"`
+		MFACode  string `json:"mfa_code"`
+	}
+	if err := c.Bind().Body(&body); err != nil {
+		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
+	}
+	if body.Password == "" {
+		return httpx.BadRequest("invalid_body", "Password is required")
+	}
+	out, err := h.Svc.Reauthenticate(c.Context(), middleware.Principal(c), body.Password, body.MFACode)
+	if err != nil {
+		return err
+	}
+	return c.JSON(httpx.Data(out))
+}
+
+func (h *Handler) MFAStatus(c fiber.Ctx) error {
+	out, err := h.Svc.MFAStatus(c.Context(), middleware.Principal(c))
+	if err != nil {
+		return err
+	}
+	return c.JSON(httpx.Data(out))
+}
+
+func (h *Handler) StartMFASetup(c fiber.Ctx) error {
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+	}
+	if err := c.Bind().Body(&body); err != nil {
+		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
+	}
+	if body.CurrentPassword == "" {
+		return httpx.BadRequest("invalid_body", "Current password is required")
+	}
+	out, err := h.Svc.StartMFASetup(c.Context(), middleware.Principal(c), body.CurrentPassword)
+	if err != nil {
+		return err
+	}
+	return c.JSON(httpx.Data(out))
+}
+
+func (h *Handler) ConfirmMFASetup(c fiber.Ctx) error {
+	var body struct {
+		Code string `json:"code"`
+	}
+	if err := c.Bind().Body(&body); err != nil {
+		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
+	}
+	out, err := h.Svc.ConfirmMFASetup(c.Context(), middleware.Principal(c), body.Code)
+	if err != nil {
+		return err
+	}
+	return c.JSON(httpx.Data(out))
+}
+
+func (h *Handler) DisableMFA(c fiber.Ctx) error {
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+		Code            string `json:"code"`
+	}
+	if err := c.Bind().Body(&body); err != nil {
+		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
+	}
+	if body.CurrentPassword == "" || body.Code == "" {
+		return httpx.BadRequest("invalid_body", "current_password and code are required")
+	}
+	if err := h.Svc.DisableMFA(c.Context(), middleware.Principal(c), body.CurrentPassword, body.Code); err != nil {
+		return err
+	}
+	return c.JSON(httpx.Data(fiber.Map{"ok": true}))
+}
+
+func (h *Handler) RegenerateRecoveryCodes(c fiber.Ctx) error {
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+		Code            string `json:"code"`
+	}
+	if err := c.Bind().Body(&body); err != nil {
+		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
+	}
+	if body.CurrentPassword == "" || body.Code == "" {
+		return httpx.BadRequest("invalid_body", "current_password and code are required")
+	}
+	codes, err := h.Svc.RegenerateRecoveryCodes(c.Context(), middleware.Principal(c), body.CurrentPassword, body.Code)
+	if err != nil {
+		return err
+	}
+	return c.JSON(httpx.Data(fiber.Map{"recovery_codes": codes}))
 }
 
 func (h *Handler) Password(c fiber.Ctx) error {
@@ -368,32 +482,42 @@ func (h *Handler) DeleteRole(c fiber.Ctx) error {
 func RegisterPublic(r fiber.Router, h *Handler, limit fiber.Handler) {
 	r.Post("/register", limit, h.Register)
 	r.Post("/login", limit, h.Login)
+	r.Post("/mfa/verify", limit, h.VerifyMFALogin)
 	r.Post("/refresh", limit, h.Refresh)
 }
 
 func Register(r fiber.Router, h *Handler) {
+	reauth := middleware.RequireRecentAuth(h.Svc.reauthWindow(), h.Svc.Clock.Now)
+	userLimit := middleware.NewLimiter(20, time.Minute).HandlerByUser()
+
 	r.Post("/auth/logout", h.Logout)
-	r.Put("/auth/password", h.Password)
+	r.Post("/auth/reauthenticate", userLimit, h.Reauthenticate)
+	r.Put("/auth/password", userLimit, h.Password)
 	r.Get("/me", h.Me)
 	r.Put("/me", h.UpdateMe)
 	r.Get("/me/sessions", h.Sessions)
 	r.Delete("/me/sessions/:id", h.EndSession)
 	r.Get("/me/login-history", h.MyLoginHistory)
+	r.Get("/me/mfa", h.MFAStatus)
+	r.Post("/me/mfa/setup", userLimit, h.StartMFASetup)
+	r.Post("/me/mfa/confirm", userLimit, h.ConfirmMFASetup)
+	r.Post("/me/mfa/disable", userLimit, h.DisableMFA)
+	r.Post("/me/mfa/recovery-codes", userLimit, h.RegenerateRecoveryCodes)
 	r.Get("/users", middleware.Require("security.user.manage"), h.ListUsers)
 	r.Post("/users", middleware.Require("security.user.manage"), h.CreateUser)
 	r.Get("/users/:id", middleware.Require("security.user.manage"), h.GetUser)
 	r.Put("/users/:id", middleware.Require("security.user.manage"), h.UpdateUser)
-	r.Post("/users/:id/deactivate", middleware.Require("security.user.manage"), h.setActive(false))
+	r.Post("/users/:id/deactivate", middleware.Require("security.user.manage"), reauth, h.setActive(false))
 	r.Post("/users/:id/activate", middleware.Require("security.user.manage"), h.setActive(true))
-	r.Post("/users/:id/reset-password", middleware.Require("security.user.manage"), h.ResetPassword)
+	r.Post("/users/:id/reset-password", middleware.Require("security.user.manage"), reauth, userLimit, h.ResetPassword)
 	r.Delete("/users/:id/sessions", middleware.Require("security.user.manage"), h.EndUserSessions)
 	r.Get("/users/:id/permissions", middleware.Require("security.user.manage"), h.GetUserPermissions)
-	r.Put("/users/:id/permissions", middleware.Require("security.user.manage"), h.PutUserPermissions)
+	r.Put("/users/:id/permissions", middleware.Require("security.user.manage"), reauth, h.PutUserPermissions)
 	r.Get("/login-history", middleware.Require("security.audit.view"), h.LoginHistory)
 	r.Get("/permissions", middleware.Require("security.user.manage"), h.Permissions)
 	r.Get("/roles", middleware.Require("security.user.manage"), h.ListRoles)
-	r.Post("/roles", middleware.Require("security.user.manage"), h.CreateRole)
+	r.Post("/roles", middleware.Require("security.user.manage"), reauth, h.CreateRole)
 	r.Get("/roles/:id", middleware.Require("security.user.manage"), h.GetRole)
-	r.Put("/roles/:id", middleware.Require("security.user.manage"), h.UpdateRole)
-	r.Delete("/roles/:id", middleware.Require("security.user.manage"), h.DeleteRole)
+	r.Put("/roles/:id", middleware.Require("security.user.manage"), reauth, h.UpdateRole)
+	r.Delete("/roles/:id", middleware.Require("security.user.manage"), reauth, h.DeleteRole)
 }

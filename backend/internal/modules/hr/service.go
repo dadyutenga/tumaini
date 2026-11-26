@@ -367,6 +367,26 @@ func (s *Service) UpdateEmployee(ctx context.Context, p *auth.Principal, id uuid
 			in.BranchID, strings.TrimSpace(in.HireDate), in.PhotoFileID, in.EmergencyContact, in.EmergencyContactPhone != nil, eph, strings.TrimSpace(in.Status)); err != nil {
 			return err
 		}
+		// Suspending an employee immediately suspends their linked login seat and revokes all active sessions.
+		if strings.TrimSpace(in.Status) == "suspended" && before["status"] != "suspended" {
+			var mid *uuid.UUID
+			if tx.QueryRow(ctx, `SELECT membership_id FROM app.employees WHERE tenant_id = $1 AND id = $2`, p.TenantID, id).Scan(&mid) == nil && mid != nil {
+				var isOnlyAdmin bool
+				_ = tx.QueryRow(ctx, `
+					SELECT EXISTS (SELECT 1 FROM app.membership_roles mr JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id WHERE mr.tenant_id = $1 AND mr.membership_id = $2 AND r.code = 'admin')
+					   AND (SELECT count(*) FROM app.membership_roles mr JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id JOIN app.memberships m ON m.tenant_id = mr.tenant_id AND m.id = mr.membership_id WHERE mr.tenant_id = $1 AND r.code = 'admin' AND m.status = 'active') <= 1`,
+					p.TenantID, *mid).Scan(&isOnlyAdmin)
+				if isOnlyAdmin {
+					return httpx.Conflict("last_owner", "The business must keep at least one active admin")
+				}
+				if _, err := tx.Exec(ctx, `UPDATE app.memberships SET status = 'suspended', deactivated_at = now(), deactivation_reason = 'Employee suspended' WHERE tenant_id = $1 AND id = $2 AND status = 'active'`, p.TenantID, *mid); err != nil {
+					return err
+				}
+				if _, err := tx.Exec(ctx, `UPDATE iam.sessions SET revoked_at = now(), revoked_reason = 'membership_revoked' WHERE membership_id = $1 AND revoked_at IS NULL`, *mid); err != nil {
+					return err
+				}
+			}
+		}
 		if in.BasePay != nil {
 			eff := strings.TrimSpace(in.EffectiveFrom)
 			if eff == "" {
@@ -468,8 +488,8 @@ func (s *Service) CreateLogin(ctx context.Context, p *auth.Principal, id uuid.UU
 		if err != nil {
 			return err
 		}
-		if emp["status"] == "terminated" {
-			return httpx.Conflict("invalid_status", "A terminated employee cannot get a login")
+		if emp["status"] == "terminated" || emp["status"] == "suspended" {
+			return httpx.Conflict("invalid_status", "A suspended or terminated employee cannot get a login")
 		}
 		if emp["membership_id"] != nil {
 			return httpx.Conflict("duplicate", "This employee already has a login")

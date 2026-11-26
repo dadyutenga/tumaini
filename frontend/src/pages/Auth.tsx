@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { AlertCircle, Eye, EyeOff } from "lucide-react";
+import { AlertCircle, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { AuthLayout } from "@/components/layout/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,12 +10,14 @@ import { ApiError } from "@/lib/api";
 
 export default function AuthPage({ mode }: { mode: string }) {
   const isRegister = mode === "register";
-  const { status, login, register } = useAuth();
+  const { status, login, verifyMfa, register } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from ?? "/";
   const [busy, setBusy] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [mfaCode, setMfaCode] = useState("");
   const [remember, setRemember] = useState(() => {
     try {
       return localStorage.getItem("bms-remember") === "1";
@@ -52,6 +54,11 @@ export default function AuthPage({ mode }: { mode: string }) {
     setBusy(true);
     setError(null);
     try {
+      if (mfaToken) {
+        await verifyMfa(mfaToken, mfaCode);
+        navigate(from, { replace: true });
+        return;
+      }
       if (isRegister) {
         await register({
           business_name: form.business_name,
@@ -61,7 +68,7 @@ export default function AuthPage({ mode }: { mode: string }) {
           password: form.password,
         });
       } else {
-        await login({ identifier: form.identifier, password: form.password });
+        const outcome = await login({ identifier: form.identifier, password: form.password });
         try {
           if (remember) {
             localStorage.setItem("bms-remember", "1");
@@ -73,6 +80,11 @@ export default function AuthPage({ mode }: { mode: string }) {
         } catch {
           /* ignore */
         }
+        if (outcome.mfaRequired && outcome.mfaToken) {
+          setMfaToken(outcome.mfaToken);
+          setMfaCode("");
+          return;
+        }
       }
       navigate(from, { replace: true });
     } catch (err) {
@@ -80,6 +92,67 @@ export default function AuthPage({ mode }: { mode: string }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  if (mfaToken) {
+    return (
+      <AuthLayout>
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] text-[var(--od-ink)]">
+            <ShieldCheck size={18} />
+          </div>
+          <div>
+            <h1 className="text-[22px] font-semibold tracking-tight text-[var(--od-ink)]">
+              Two-factor verification
+            </h1>
+            <p className="mt-1 text-sm text-[var(--od-ink-secondary)]">
+              Enter the 6-digit code from your authenticator app or a single-use recovery code.
+            </p>
+          </div>
+        </div>
+
+        <form onSubmit={submit} className="mt-6 space-y-4" noValidate>
+          <Field label="Verification code">
+            <Input
+              required
+              autoFocus
+              autoComplete="one-time-code"
+              className="od-mono tracking-widest"
+              placeholder="123456 or XXXX-XXXX"
+              value={mfaCode}
+              onChange={(e) => setMfaCode(e.target.value)}
+            />
+          </Field>
+
+          {error && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-xl border border-[var(--od-bad-mark)]/30 bg-[var(--od-bad-soft,rgba(239,68,68,0.08))] p-3 text-sm text-[var(--od-bad)]"
+            >
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              <span>{error.message}</span>
+            </div>
+          )}
+
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setMfaToken(null);
+                setMfaCode("");
+                setError(null);
+              }}
+            >
+              Back
+            </Button>
+            <Button type="submit" className="flex-1" disabled={busy}>
+              {busy ? "Verifying…" : "Verify and sign in"}
+            </Button>
+          </div>
+        </form>
+      </AuthLayout>
+    );
   }
 
   return (

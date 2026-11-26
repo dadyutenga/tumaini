@@ -50,6 +50,22 @@ func TestProductionGuards(t *testing.T) {
 	t.Setenv("SMTP_HOST", "smtp.example.com")
 	_, err = Load()
 	require.ErrorContains(t, err, "SMTP_FROM")
+	t.Setenv("SMTP_HOST", "")
+
+	// Default dev DB credentials and weak Argon2id parameters are rejected in production.
+	t.Setenv("DATABASE_URL", "postgres://bms_api:bms_api_dev@127.0.0.1:5432/bms")
+	_, err = Load()
+	require.ErrorContains(t, err, "development credentials")
+	t.Setenv("DATABASE_URL", "postgres://bms_api:real-secret@127.0.0.1:5432/bms")
+
+	t.Setenv("ARGON_MEMORY", "8192")
+	t.Setenv("ARGON_TIME", "1")
+	_, err = Load()
+	require.ErrorContains(t, err, "Argon2id")
+	t.Setenv("ARGON_MEMORY", "65536")
+	t.Setenv("ARGON_TIME", "3")
+	_, err = Load()
+	require.NoError(t, err)
 }
 
 func TestLogLevelAndDefaultsAreValidated(t *testing.T) {

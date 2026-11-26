@@ -34,6 +34,8 @@ export interface Me {
   tenant_id?: string;
   business_id?: string;
   membership_id?: string;
+  mfa_enabled?: boolean;
+  mfa_recommended?: boolean;
 }
 
 export interface Branch {

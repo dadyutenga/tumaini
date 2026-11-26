@@ -4,7 +4,11 @@
 # The staff user is linked to an employee record so My work, clock in and leave all work.
 set -euo pipefail
 API="${API:-http://localhost:8080}/api/v1"
-PASS="${SEED_PASSWORD:-BMS#2026}"
+case "$API" in
+  http://localhost:*|http://127.0.0.1:*) ;;
+  *) echo "Refusing to seed non-local API: $API" >&2; exit 1 ;;
+esac
+PASS="${SEED_PASSWORD:?Set SEED_PASSWORD (min 8 chars) to seed local dev accounts}"
 j() { python3 -c "import sys,json;d=json.load(sys.stdin);print(eval('d'+sys.argv[1]))" "$1"; }
 
 reg=$(curl -sS -X POST "$API/auth/register" -H 'Content-Type: application/json' \

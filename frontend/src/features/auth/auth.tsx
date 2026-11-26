@@ -38,9 +38,16 @@ export interface RegisterInput {
   password: string;
 }
 interface SessionResult {
-  access_token: string;
-  branch_id: string;
+  access_token?: string;
+  branch_id?: string;
   must_change_password?: boolean;
+  mfa_required?: boolean;
+  mfa_token?: string;
+}
+
+export interface LoginOutcome {
+  mfaRequired: boolean;
+  mfaToken?: string;
 }
 
 interface Auth {
@@ -53,7 +60,8 @@ interface Auth {
   can: (permission: string) => boolean;
   canAny: (...permissions: string[]) => boolean;
   limit: (code: string) => string | null;
-  login: (input: Credentials) => Promise<void>;
+  login: (input: Credentials) => Promise<LoginOutcome>;
+  verifyMfa: (mfaToken: string, code: string) => Promise<void>;
   register: (input: RegisterInput) => Promise<void>;
   logout: () => Promise<void>;
   reloadMe: () => Promise<void>;
@@ -78,6 +86,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
   const [branchId, setBranch] = useState<string | null>(storedBranch);
   const [warnSeconds, setWarnSeconds] = useState<number | null>(null);
+  const [reauthOpen, setReauthOpen] = useState(false);
+  const [reauthPassword, setReauthPassword] = useState("");
+  const [reauthCode, setReauthCode] = useState("");
+  const [reauthBusy, setReauthBusy] = useState(false);
+  const [reauthError, setReauthError] = useState<string | null>(null);
+  const reauthResolverRef = useRef<((ok: boolean) => void) | null>(null);
   const lastActiveRef = useRef(Date.now());
 
   const loadMe = useCallback(
@@ -104,8 +118,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     session.onLost(clear);
-    return () => session.onLost(null);
+    session.onReauthRequired(
+      () =>
+        new Promise<boolean>((resolve) => {
+          reauthResolverRef.current = resolve;
+          setReauthPassword("");
+          setReauthCode("");
+          setReauthError(null);
+          setReauthOpen(true);
+        }),
+    );
+    return () => {
+      session.onLost(null);
+      session.onReauthRequired(null);
+    };
   }, [clear]);
+
+  const closeReauth = useCallback((ok: boolean) => {
+    setReauthOpen(false);
+    setReauthPassword("");
+    setReauthCode("");
+    setReauthError(null);
+    const resolve = reauthResolverRef.current;
+    reauthResolverRef.current = null;
+    resolve?.(ok);
+  }, []);
+
+  const submitReauth = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      setReauthBusy(true);
+      setReauthError(null);
+      try {
+        await api.post(
+          "/auth/reauthenticate",
+          { password: reauthPassword, mfa_code: reauthCode || undefined },
+          { noRefresh: true },
+        );
+        closeReauth(true);
+      } catch (err) {
+        setReauthError(err instanceof ApiError ? err.message : "Could not verify your identity.");
+      } finally {
+        setReauthBusy(false);
+      }
+    },
+    [reauthPassword, reauthCode, closeReauth],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -130,7 +188,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const enter = useCallback(
     async (result: SessionResult) => {
-      session.setToken(result.access_token);
+      session.setToken(result.access_token ?? null);
       lastActiveRef.current = Date.now();
       await loadMe(result.branch_id);
     },
@@ -138,8 +196,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const login = useCallback(
-    async (input: Credentials) => {
+    async (input: Credentials): Promise<LoginOutcome> => {
       const result = await api.post<SessionResult>("/auth/login", input, { noRefresh: true });
+      if (result.mfa_required && result.mfa_token) {
+        return { mfaRequired: true, mfaToken: result.mfa_token };
+      }
+      await enter(result);
+      return { mfaRequired: false };
+    },
+    [enter],
+  );
+
+  const verifyMfa = useCallback(
+    async (mfaToken: string, code: string) => {
+      const result = await api.post<SessionResult>(
+        "/auth/mfa/verify",
+        { mfa_token: mfaToken, code },
+        { noRefresh: true },
+      );
       await enter(result);
     },
     [enter],
@@ -223,15 +297,66 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canAny: (...permissions: string[]) => permissions.some(can),
       limit,
       login,
+      verifyMfa,
       register,
       logout,
       reloadMe,
     };
-  }, [status, me, branchId, setBranchId, login, register, logout, reloadMe]);
+  }, [status, me, branchId, setBranchId, login, verifyMfa, register, logout, reloadMe]);
 
   return (
     <Context.Provider value={value}>
       {children}
+      <Dialog open={reauthOpen} onOpenChange={(o) => !o && closeReauth(false)}>
+        <DialogContent>
+          <form onSubmit={submitReauth} className="space-y-4">
+            <DialogHeader>
+              <DialogTitle>Confirm your identity</DialogTitle>
+              <DialogDescription>
+                This sensitive account change requires confirming your password
+                {me?.mfa_enabled ? " and authenticator code" : ""}.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1">
+              <label className="text-sm font-medium">Current password *</label>
+              <Input
+                required
+                autoFocus
+                type="password"
+                autoComplete="current-password"
+                value={reauthPassword}
+                onChange={(e) => setReauthPassword(e.target.value)}
+              />
+            </div>
+            {me?.mfa_enabled && (
+              <div className="space-y-1">
+                <label className="text-sm font-medium">Authenticator or recovery code *</label>
+                <Input
+                  required
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  placeholder="6-digit code or XXXX-XXXX"
+                  value={reauthCode}
+                  onChange={(e) => setReauthCode(e.target.value)}
+                />
+              </div>
+            )}
+            {reauthError && (
+              <p role="alert" className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+                {reauthError}
+              </p>
+            )}
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => closeReauth(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={reauthBusy}>
+                {reauthBusy ? "Verifying…" : "Confirm"}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <Dialog open={warnSeconds !== null} onOpenChange={() => {}}>
         <DialogContent>
           <DialogHeader>

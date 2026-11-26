@@ -35,6 +35,7 @@ function baseUrl() {
 let accessToken: string | null = null;
 let branchId: string | null = null;
 let onSessionLost: (() => void) | null = null;
+let onReauthRequired: (() => Promise<boolean>) | null = null;
 let refreshing: Promise<boolean> | null = null;
 
 export const session = {
@@ -47,6 +48,9 @@ export const session = {
   },
   onLost: (fn: (() => void) | null) => {
     onSessionLost = fn;
+  },
+  onReauthRequired: (fn: (() => Promise<boolean>) | null) => {
+    onReauthRequired = fn;
   },
 };
 
@@ -141,6 +145,16 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       data?: unknown;
     } | null;
     const err = body?.error;
+    if (
+      response.status === 403 &&
+      err?.code === "reauth_required" &&
+      !options.noRefresh &&
+      onReauthRequired
+    ) {
+      if (await onReauthRequired()) {
+        return request<T>(path, { ...options, noRefresh: true });
+      }
+    }
     throw new ApiError(
       err?.message ?? response.statusText ?? "Request failed",
       response.status,

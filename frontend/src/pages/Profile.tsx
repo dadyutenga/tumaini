@@ -1,13 +1,36 @@
 import { useState } from "react";
+import { KeyRound, ShieldCheck, ShieldOff } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { DataGrid, Field, NativeSelect, PageHeader, StatusBadge } from "@/components/shared/kit";
+import {
+  DataGrid,
+  Field,
+  FormDialog,
+  NativeSelect,
+  PageHeader,
+  StatusBadge,
+} from "@/components/shared/kit";
+import { CopyButton } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
 import { useI18n } from "@/features/i18n/i18n";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDateTime } from "@/lib/formatters";
 import type { Locale } from "@/types";
+
+interface MFAStatus {
+  enabled: boolean;
+  factor_type?: string;
+  confirmed_at?: string | null;
+  recovery_codes_remaining: number;
+  recommended: boolean;
+}
+
+interface MFASetupPayload {
+  secret: string;
+  otpauth_url: string;
+  issuer: string;
+}
 
 interface SessionItem {
   id: string;
@@ -37,6 +60,68 @@ export default function Profile() {
 
   const sessions = useGet<SessionItem[]>("/me/sessions");
   const logins = useGet<LoginEvent[]>("/me/login-history", { per_page: 10 });
+  const mfa = useGet<MFAStatus>("/me/mfa");
+
+  const [mfaSetupOpen, setMfaSetupOpen] = useState(false);
+  const [mfaSetupData, setMfaSetupData] = useState<MFASetupPayload | null>(null);
+  const [mfaPassword, setMfaPassword] = useState("");
+  const [mfaCode, setMfaCode] = useState("");
+  const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null);
+  const [mfaAction, setMfaAction] = useState<"disable" | "regen" | null>(null);
+
+  const startMfa = useWrite<{ current_password: string }, MFASetupPayload>(
+    "POST",
+    "/me/mfa/setup",
+    {
+      onSuccess: (res) => {
+        setMfaSetupData(res);
+        setMfaPassword("");
+        setMfaCode("");
+      },
+    },
+  );
+  const confirmMfa = useWrite<{ code: string }, { enabled: boolean; recovery_codes: string[] }>(
+    "POST",
+    "/me/mfa/confirm",
+    {
+      invalidate: ["/me/mfa"],
+      success: "Two-factor authentication enabled",
+      onSuccess: (res) => {
+        setRecoveryCodes(res.recovery_codes);
+        setMfaSetupOpen(false);
+        setMfaSetupData(null);
+        setMfaCode("");
+        void reloadMe();
+      },
+    },
+  );
+  const disableMfa = useWrite<{ current_password: string; code: string }>(
+    "POST",
+    "/me/mfa/disable",
+    {
+      invalidate: ["/me/mfa"],
+      success: "Two-factor authentication disabled",
+      onSuccess: () => {
+        setMfaAction(null);
+        setMfaPassword("");
+        setMfaCode("");
+        void reloadMe();
+      },
+    },
+  );
+  const regenCodes = useWrite<
+    { current_password: string; code: string },
+    { recovery_codes: string[] }
+  >("POST", "/me/mfa/recovery-codes", {
+    invalidate: ["/me/mfa"],
+    success: "New recovery codes generated",
+    onSuccess: (res) => {
+      setRecoveryCodes(res.recovery_codes);
+      setMfaAction(null);
+      setMfaPassword("");
+      setMfaCode("");
+    },
+  });
 
   const update = useWrite<{ name: string; language: Locale }, unknown>("PUT", "/me", {
     success: "Profile updated",
@@ -142,6 +227,241 @@ export default function Profile() {
           </div>
         </form>
       </div>
+
+      <section className="od-card max-w-4xl space-y-4 p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <h2 className="od-card-title text-[var(--od-ink)]">Two-factor authentication</h2>
+              {mfa.data?.enabled ? (
+                <StatusBadge value="active" />
+              ) : (
+                <Badge variant="outline">Not enabled</Badge>
+              )}
+              {mfa.data?.recommended && !mfa.data?.enabled && (
+                <Badge variant="secondary">Recommended for your role</Badge>
+              )}
+            </div>
+            <p className="od-card-subtitle">
+              Protect your account with a 6-digit authenticator app code (TOTP) and single-use
+              recovery codes.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {mfa.data?.enabled ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setMfaPassword("");
+                    setMfaCode("");
+                    setMfaAction("regen");
+                  }}
+                >
+                  <KeyRound size={14} /> Regenerate codes
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
+                  onClick={() => {
+                    setMfaPassword("");
+                    setMfaCode("");
+                    setMfaAction("disable");
+                  }}
+                >
+                  <ShieldOff size={14} /> Disable MFA
+                </Button>
+              </>
+            ) : (
+              <Button
+                size="sm"
+                onClick={() => {
+                  setMfaSetupData(null);
+                  setMfaPassword("");
+                  setMfaCode("");
+                  setMfaSetupOpen(true);
+                }}
+              >
+                <ShieldCheck size={14} /> Enable two-factor
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {mfa.data?.enabled && (
+          <div className="flex flex-wrap items-center gap-6 border-t border-[var(--od-border)] pt-3 text-xs text-[var(--od-ink-secondary)]">
+            <span>
+              Method: <strong className="text-[var(--od-ink)]">Authenticator app (TOTP)</strong>
+            </span>
+            <span>
+              Recovery codes remaining:{" "}
+              <strong className="od-tabular text-[var(--od-ink)]">
+                {mfa.data.recovery_codes_remaining}
+              </strong>
+            </span>
+            {mfa.data.confirmed_at && (
+              <span>
+                Enabled: <span className="od-tabular">{formatDateTime(mfa.data.confirmed_at)}</span>
+              </span>
+            )}
+          </div>
+        )}
+
+        {recoveryCodes && (
+          <div className="space-y-3 rounded-xl border border-[var(--od-info-mark)]/30 bg-[var(--od-surface-subtle)] p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <p className="text-sm font-semibold text-[var(--od-ink)]">
+                  Save your single-use recovery codes
+                </p>
+                <p className="od-caption">
+                  Store these safely. Each code works once if you lose access to your authenticator.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <CopyButton text={recoveryCodes.join("\n")} />
+                <Button size="sm" variant="ghost" onClick={() => setRecoveryCodes(null)}>
+                  Done
+                </Button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+              {recoveryCodes.map((c) => (
+                <code
+                  key={c}
+                  className="od-mono rounded-lg border border-[var(--od-border)] bg-[var(--od-surface)] px-2.5 py-1.5 text-center text-xs font-medium text-[var(--od-ink)]"
+                >
+                  {c}
+                </code>
+              ))}
+            </div>
+          </div>
+        )}
+      </section>
+
+      <FormDialog
+        open={mfaSetupOpen}
+        onOpenChange={(o) => {
+          if (!o) {
+            setMfaSetupOpen(false);
+            setMfaSetupData(null);
+            setMfaPassword("");
+            setMfaCode("");
+          }
+        }}
+        title={mfaSetupData ? "Verify your authenticator app" : "Enable two-factor authentication"}
+        description={
+          mfaSetupData
+            ? "Add this secret key in Google Authenticator, Authy, or 1Password, then enter the 6-digit code."
+            : "Confirm your current password to generate a new authenticator secret."
+        }
+        submitLabel={mfaSetupData ? "Verify and enable" : "Continue"}
+        busy={startMfa.isPending || confirmMfa.isPending}
+        onSubmit={() => {
+          if (!mfaSetupData) {
+            startMfa.mutate({ current_password: mfaPassword });
+          } else {
+            confirmMfa.mutate({ code: mfaCode });
+          }
+        }}
+      >
+        {!mfaSetupData ? (
+          <Field label="Current password *">
+            <Input
+              required
+              type="password"
+              autoComplete="current-password"
+              value={mfaPassword}
+              onChange={(e) => setMfaPassword(e.target.value)}
+            />
+          </Field>
+        ) : (
+          <>
+            <div className="space-y-2 rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-[var(--od-ink-secondary)]">
+                  Setup secret key
+                </span>
+                <CopyButton text={mfaSetupData.secret} />
+              </div>
+              <code className="od-mono block break-all text-xs font-semibold text-[var(--od-ink)]">
+                {mfaSetupData.secret}
+              </code>
+              <div className="flex items-center justify-between gap-2 border-t border-[var(--od-border)] pt-2">
+                <span className="text-xs text-[var(--od-ink-muted)]">Authenticator URI</span>
+                <CopyButton text={mfaSetupData.otpauth_url} />
+              </div>
+            </div>
+            <Field label="6-digit verification code *">
+              <Input
+                required
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                className="od-mono tracking-widest"
+                placeholder="123456"
+                value={mfaCode}
+                onChange={(e) => setMfaCode(e.target.value)}
+              />
+            </Field>
+          </>
+        )}
+      </FormDialog>
+
+      <FormDialog
+        open={mfaAction !== null}
+        onOpenChange={(o) => {
+          if (!o) {
+            setMfaAction(null);
+            setMfaPassword("");
+            setMfaCode("");
+          }
+        }}
+        title={
+          mfaAction === "disable"
+            ? "Disable two-factor authentication"
+            : "Regenerate recovery codes"
+        }
+        description={
+          mfaAction === "disable"
+            ? "Confirm your password and enter a live authenticator code or recovery code."
+            : "This replaces all unused recovery codes. Enter your password and a live 6-digit authenticator code."
+        }
+        submitLabel={mfaAction === "disable" ? "Disable MFA" : "Generate new codes"}
+        busy={disableMfa.isPending || regenCodes.isPending}
+        onSubmit={() => {
+          if (mfaAction === "disable") {
+            disableMfa.mutate({ current_password: mfaPassword, code: mfaCode });
+          } else if (mfaAction === "regen") {
+            regenCodes.mutate({ current_password: mfaPassword, code: mfaCode });
+          }
+        }}
+      >
+        <Field label="Current password *">
+          <Input
+            required
+            type="password"
+            autoComplete="current-password"
+            value={mfaPassword}
+            onChange={(e) => setMfaPassword(e.target.value)}
+          />
+        </Field>
+        <Field
+          label={
+            mfaAction === "disable" ? "Authenticator or recovery code *" : "6-digit TOTP code *"
+          }
+        >
+          <Input
+            required
+            autoComplete="one-time-code"
+            className="od-mono tracking-widest"
+            placeholder={mfaAction === "disable" ? "123456 or XXXX-XXXX" : "123456"}
+            value={mfaCode}
+            onChange={(e) => setMfaCode(e.target.value)}
+          />
+        </Field>
+      </FormDialog>
 
       <section className="max-w-4xl space-y-3">
         <div>

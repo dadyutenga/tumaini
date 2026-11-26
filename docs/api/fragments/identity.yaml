@@ -101,6 +101,48 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /auth/mfa/verify:
+    post:
+      summary: Complete a two-factor sign-in challenge using a TOTP or single-use recovery code
+      operationId: post_auth_mfa_verify
+      tags:
+      - Auth
+      x-permission: public
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mfa_token:
+                  type: string
+                code:
+                  type: string
+              required:
+              - mfa_token
+              - code
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Too many attempts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /auth/refresh:
     post:
       summary: Rotate the refresh token and return a new access token
@@ -239,6 +281,48 @@ paths:
           $ref: '#/components/responses/NotFound'
         '401':
           $ref: '#/components/responses/Unauthorized'
+  /auth/reauthenticate:
+    post:
+      summary: Re-verify current password (and MFA code if enabled) to refresh the recent-authentication window for sensitive changes
+      operationId: post_auth_reauthenticate
+      tags:
+      - Auth
+      x-permission: any
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password:
+                  type: string
+                mfa_code:
+                  type: string
+              required:
+              - password
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: Too many attempts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /auth/password:
     put:
       summary: Change own password. Every other session of the user is signed out. Five wrong current passwords in 15 minutes
@@ -392,6 +476,171 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '404':
           $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/mfa:
+    get:
+      summary: View two-factor authentication status and remaining recovery codes
+      operationId: get_me_mfa
+      tags:
+      - Auth
+      x-permission: any
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/mfa/setup:
+    post:
+      summary: Start TOTP two-factor setup (requires current password)
+      operationId: post_me_mfa_setup
+      tags:
+      - Auth
+      x-permission: any
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_password:
+                  type: string
+              required:
+              - current_password
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /me/mfa/confirm:
+    post:
+      summary: Confirm TOTP setup with a 6-digit code and issue single-use recovery codes
+      operationId: post_me_mfa_confirm
+      tags:
+      - Auth
+      x-permission: any
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                code:
+                  type: string
+              required:
+              - code
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/mfa/disable:
+    post:
+      summary: Disable two-factor authentication (requires current password and valid TOTP or recovery code)
+      operationId: post_me_mfa_disable
+      tags:
+      - Auth
+      x-permission: any
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_password:
+                  type: string
+                code:
+                  type: string
+              required:
+              - current_password
+              - code
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /me/mfa/recovery-codes:
+    post:
+      summary: Regenerate single-use MFA recovery codes (requires current password and valid TOTP code)
+      operationId: post_me_mfa_recovery_codes
+      tags:
+      - Auth
+      x-permission: any
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                current_password:
+                  type: string
+                code:
+                  type: string
+              required:
+              - current_password
+              - code
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
   /users:

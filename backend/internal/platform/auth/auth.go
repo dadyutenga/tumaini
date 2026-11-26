@@ -25,6 +25,9 @@ type Params struct {
 }
 
 func HashPassword(password string, p Params) (string, error) {
+	if p.Memory == 0 || p.Time == 0 || p.Threads == 0 {
+		return "", errors.New("invalid argon2 parameters")
+	}
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
@@ -37,6 +40,25 @@ func HashPassword(password string, p Params) (string, error) {
 	), nil
 }
 
+// DummyPasswordHash returns a valid Argon2id hash using p so login can perform
+// constant-work verification even when an identifier does not match an account.
+func DummyPasswordHash(p Params) string {
+	if p.Memory == 0 {
+		p.Memory = 19456
+	}
+	if p.Time == 0 {
+		p.Time = 2
+	}
+	if p.Threads == 0 {
+		p.Threads = 1
+	}
+	h, err := HashPassword("dummy-constant-time-password-placeholder", p)
+	if err != nil {
+		return ""
+	}
+	return h
+}
+
 func VerifyPassword(encoded, password string) bool {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {
@@ -47,12 +69,15 @@ func VerifyPassword(encoded, password string) bool {
 	if _, err := fmt.Sscanf(parts[3], "m=%d,t=%d,p=%d", &memory, &timeCost, &threads); err != nil {
 		return false
 	}
+	if memory == 0 || timeCost == 0 || threads == 0 {
+		return false
+	}
 	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
-	if err != nil {
+	if err != nil || len(salt) == 0 {
 		return false
 	}
 	want, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil {
+	if err != nil || len(want) == 0 {
 		return false
 	}
 	got := argon2.IDKey([]byte(password), salt, timeCost, memory, threads, uint32(len(want)))
@@ -115,7 +140,22 @@ type Claims struct {
 	TenantID     uuid.UUID `json:"tid"`
 	MembershipID uuid.UUID `json:"mid"`
 	SessionID    uuid.UUID `json:"sid"`
+	Purpose      string    `json:"pur,omitempty"`
 }
+
+// MFAChallengeClaims is a short-lived signed token issued between password verification
+// and MFA verification. Its explicit Purpose prevents it from ever being accepted as an access token.
+type MFAChallengeClaims struct {
+	jwt.RegisteredClaims
+	TenantID   *uuid.UUID `json:"tid,omitempty"`
+	Identifier string     `json:"idf,omitempty"`
+	Purpose    string     `json:"pur"`
+}
+
+const (
+	mfaChallengePurpose = "mfa_challenge"
+	MFAChallengeTTL     = 5 * time.Minute
+)
 
 type Tokens struct {
 	Secret []byte
@@ -151,6 +191,41 @@ func (t Tokens) Verify(raw string) (Claims, error) {
 	if err != nil {
 		return Claims{}, err
 	}
+	if claims.Purpose != "" {
+		return Claims{}, errors.New("unexpected token purpose")
+	}
+	return claims, nil
+}
+
+func (t Tokens) SignMFAChallenge(userID uuid.UUID, tenantID *uuid.UUID, identifier string, now time.Time) (string, error) {
+	claims := MFAChallengeClaims{
+		RegisteredClaims: jwt.RegisteredClaims{
+			Subject:   userID.String(),
+			IssuedAt:  jwt.NewNumericDate(now),
+			ExpiresAt: jwt.NewNumericDate(now.Add(MFAChallengeTTL)),
+		},
+		TenantID:   tenantID,
+		Identifier: identifier,
+		Purpose:    mfaChallengePurpose,
+	}
+	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return tok.SignedString(t.Secret)
+}
+
+func (t Tokens) VerifyMFAChallenge(raw string) (MFAChallengeClaims, error) {
+	var claims MFAChallengeClaims
+	_, err := jwt.ParseWithClaims(raw, &claims, func(token *jwt.Token) (any, error) {
+		if token.Method != jwt.SigningMethodHS256 {
+			return nil, errors.New("unexpected signing method")
+		}
+		return t.Secret, nil
+	}, t.parserOptions()...)
+	if err != nil {
+		return MFAChallengeClaims{}, err
+	}
+	if claims.Purpose != mfaChallengePurpose {
+		return MFAChallengeClaims{}, errors.New("unexpected token purpose")
+	}
 	return claims, nil
 }
 
@@ -179,18 +254,20 @@ type Principal struct {
 	EmployeeID *uuid.UUID
 	// Limits are the caller's authority limits (app.authority_limits), keyed by limit code. A missing
 	// key means unlimited for a holder of the matching permission.
-	Limits    map[string]decimal.Decimal
-	Name      string
-	Language  string
-	RoleSlug  string
-	IsOwner   bool
-	BranchIDs []uuid.UUID
-	Perms     map[string]Grant
-	BranchID  *uuid.UUID
-	SessionID uuid.UUID
-	IP        string
-	UserAgent string
-	RequestID string
+	Limits            map[string]decimal.Decimal
+	Name              string
+	Language          string
+	RoleSlug          string
+	IsOwner           bool
+	BranchIDs         []uuid.UUID
+	Perms             map[string]Grant
+	BranchID          *uuid.UUID
+	SessionID         uuid.UUID
+	ReauthenticatedAt time.Time
+	MFAVerified       bool
+	IP                string
+	UserAgent         string
+	RequestID         string
 }
 
 // Actor is the database request context for this caller.

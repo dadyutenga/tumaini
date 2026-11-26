@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -79,33 +80,61 @@ func NewLimiter(max int, win time.Duration) *Limiter {
 	return &Limiter{m: map[string]bucket{}, max: max, win: win}
 }
 
+func (l *Limiter) allow(key string) (bool, int) {
+	now := time.Now()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	// Evict expired buckets so a flood of distinct addresses cannot grow the map without bound.
+	if len(l.m) >= limiterMaxKeys && now.Sub(l.swept) >= time.Second {
+		l.swept = now
+		for k, v := range l.m {
+			if now.Sub(v.start) > l.win {
+				delete(l.m, k)
+			}
+		}
+		// Still over the hard cap inside one window: memory matters more than remembering.
+		if len(l.m) >= 4*limiterMaxKeys {
+			l.m = map[string]bucket{}
+		}
+	}
+	b := l.m[key]
+	if now.Sub(b.start) > l.win {
+		b = bucket{start: now}
+	}
+	b.n++
+	l.m[key] = b
+	if b.n > l.max {
+		retryAfter := int(l.win.Seconds() - now.Sub(b.start).Seconds())
+		if retryAfter < 1 {
+			retryAfter = 1
+		}
+		return false, retryAfter
+	}
+	return true, 0
+}
+
 func (l *Limiter) Handler() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		key := c.IP() + "|" + c.Path()
-		now := time.Now()
-		l.mu.Lock()
-		// Evict expired buckets so a flood of distinct addresses cannot grow the map without bound.
-		if len(l.m) >= limiterMaxKeys && now.Sub(l.swept) >= time.Second {
-			l.swept = now
-			for k, v := range l.m {
-				if now.Sub(v.start) > l.win {
-					delete(l.m, k)
-				}
-			}
-			// Still over the hard cap inside one window: memory matters more than remembering.
-			if len(l.m) >= 4*limiterMaxKeys {
-				l.m = map[string]bucket{}
-			}
+		ok, retryAfter := l.allow(key)
+		if !ok {
+			c.Set("Retry-After", strconv.Itoa(retryAfter))
+			return httpx.TooMany("too_many_requests", "Too many attempts. Wait a minute and try again.")
 		}
-		b := l.m[key]
-		if now.Sub(b.start) > l.win {
-			b = bucket{start: now}
+		return c.Next()
+	}
+}
+
+// HandlerByUser rate limits authenticated requests by user id (falling back to IP) and route path.
+func (l *Limiter) HandlerByUser() fiber.Handler {
+	return func(c fiber.Ctx) error {
+		subject := c.IP()
+		if p := Principal(c); p != nil {
+			subject = p.UserID.String()
 		}
-		b.n++
-		l.m[key] = b
-		tooMany := b.n > l.max
-		l.mu.Unlock()
-		if tooMany {
+		ok, retryAfter := l.allow(subject + "|" + c.Path())
+		if !ok {
+			c.Set("Retry-After", strconv.Itoa(retryAfter))
 			return httpx.TooMany("too_many_requests", "Too many attempts. Wait a minute and try again.")
 		}
 		return c.Next()
@@ -221,6 +250,27 @@ func Require(key string) fiber.Handler {
 func GrantFrom(c fiber.Ctx) auth.Grant {
 	g, _ := c.Locals(scopeKey).(auth.Grant)
 	return g
+}
+
+// RequireRecentAuth ensures the caller verified their primary credentials within window.
+// Sensitive account and privilege changes return 403 reauth_required once the window expires.
+func RequireRecentAuth(window time.Duration, now func() time.Time) fiber.Handler {
+	if window <= 0 {
+		window = 10 * time.Minute
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return func(c fiber.Ctx) error {
+		p := Principal(c)
+		if p == nil {
+			return httpx.Unauthorized("invalid_token", "Sign in again")
+		}
+		if p.ReauthenticatedAt.IsZero() || now().Sub(p.ReauthenticatedAt) > window {
+			return httpx.Forbidden("reauth_required", "Please confirm your password to continue")
+		}
+		return c.Next()
+	}
 }
 
 // Idempotent requires a key and stores it for the service to claim inside its transaction.

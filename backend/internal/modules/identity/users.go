@@ -222,6 +222,15 @@ func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUI
 				return httpx.BadRequest("invalid_phone", err.Error())
 			}
 		}
+		email := strings.ToLower(strings.TrimSpace(in.Email))
+		roleChanged := cur.RoleID == nil || newRole != *cur.RoleID
+		phoneChanged := phone != "" && (cur.Phone == nil || *cur.Phone != phone)
+		emailChanged := email != "" && (cur.Email == nil || strings.ToLower(*cur.Email) != email)
+		if roleChanged || phoneChanged || emailChanged {
+			if p.ReauthenticatedAt.IsZero() || s.Clock.Now().Sub(p.ReauthenticatedAt) > s.reauthWindow() {
+				return httpx.Forbidden("reauth_required", "Please confirm your password to continue")
+			}
+		}
 		lang := in.Language
 		if lang != "sw" && lang != "en" {
 			lang = ""
@@ -229,7 +238,7 @@ func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUI
 		if _, err := tx.Exec(ctx, `
 			UPDATE iam.users SET full_name = coalesce(NULLIF($2,''), full_name), phone = coalesce(NULLIF($3,'')::app.phone_e164, phone),
 			       email = coalesce(NULLIF($4,'')::app.email, email), preferred_locale = coalesce(NULLIF($5,''), preferred_locale)
-			WHERE id = $1`, id, strings.TrimSpace(in.Name), phone, strings.ToLower(strings.TrimSpace(in.Email)), lang); err != nil {
+			WHERE id = $1`, id, strings.TrimSpace(in.Name), phone, email, lang); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "That phone or email is already in use")
 			}
@@ -311,12 +320,29 @@ func (s *Service) ensureAnotherAdmin(ctx context.Context, tx pgx.Tx, tenantID, e
 }
 
 func (s *Service) ResetPassword(ctx context.Context, p *auth.Principal, id uuid.UUID, password string) error {
+	if p.UserID == id {
+		return httpx.Forbidden("permission_denied", "Use Change Password to update your own password")
+	}
 	if err := auth.PasswordOK(password); err != nil {
 		return httpx.BadRequest("weak_password", err.Error())
 	}
 	hash, err := auth.HashPassword(password, s.Hash)
 	if err != nil {
 		return err
+	}
+	// Do not allow a single tenant administrator to overwrite credentials of a user who belongs to other active businesses.
+	var activeTenants int
+	if err := s.DB.InUserTx(ctx, id, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT count(DISTINCT m.tenant_id)
+			  FROM app.memberships m
+			  JOIN app.tenants t ON t.id = m.tenant_id AND t.status = 'active'
+			 WHERE m.user_id = $1 AND m.status = 'active'`, id).Scan(&activeTenants)
+	}); err != nil {
+		return err
+	}
+	if activeTenants > 1 {
+		return httpx.Conflict("multi_tenant_user", "This user belongs to multiple businesses and must reset their password themselves")
 	}
 	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := s.getUser(ctx, tx, p.TenantID, id); err != nil {
@@ -751,6 +777,7 @@ func (s *Service) Me(ctx context.Context, p *auth.Principal) (map[string]any, er
 	return map[string]any{
 		"user": u, "permissions": perms, "limits": limits, "branches": u.Branches,
 		"is_owner": p.IsOwner, "tenant_id": p.TenantID, "business_id": p.TenantID, "membership_id": p.MembershipID,
+		"mfa_enabled": s.hasConfirmedMFA(ctx, p.UserID), "mfa_recommended": isMFARecommended(p),
 	}, nil
 }
 
