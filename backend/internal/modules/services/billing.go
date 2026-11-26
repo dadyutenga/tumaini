@@ -2,13 +2,14 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
-	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/payments"
 	"bms/internal/kernel/sequence"
 	"bms/internal/platform/auth"
@@ -18,6 +19,7 @@ import (
 	"bms/internal/platform/ids"
 	"bms/internal/platform/money"
 	"bms/internal/platform/pdf"
+	"bms/internal/platform/phone"
 	"bms/internal/platform/sqlq"
 )
 
@@ -38,7 +40,7 @@ type line struct {
 	total   decimal.Decimal
 }
 
-func (s *Service) buildLines(ctx context.Context, tx pgx.Tx, in []LineIn) ([]line, decimal.Decimal, error) {
+func (s *Service) buildLines(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in []LineIn) ([]line, decimal.Decimal, error) {
 	if len(in) == 0 {
 		return nil, money.Zero, httpx.BadRequest("invalid_body", "Add at least one line")
 	}
@@ -60,7 +62,7 @@ func (s *Service) buildLines(ctx context.Context, tx pgx.Tx, in []LineIn) ([]lin
 		if l.ServiceID != nil {
 			var name string
 			var std decimal.Decimal
-			if err := tx.QueryRow(ctx, `SELECT name, standard_price FROM svc_catalog WHERE id=$1`, *l.ServiceID).Scan(&name, &std); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT name::text, standard_price FROM app.services WHERE tenant_id = $1 AND id = $2`, tenantID, *l.ServiceID).Scan(&name, &std); err != nil {
 				return nil, sub, httpx.NotFound("not_found", "A service on the document was not found")
 			}
 			if ln.desc == "" {
@@ -81,21 +83,46 @@ func (s *Service) buildLines(ctx context.Context, tx pgx.Tx, in []LineIn) ([]lin
 	return out, sub, nil
 }
 
-func (s *Service) saveLines(ctx context.Context, tx pgx.Tx, p *auth.Principal, docType string, docID uuid.UUID, lines []line) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM svc_lines WHERE doc_type=$1 AND doc_id=$2`, docType, docID); err != nil {
+func (s *Service) saveQuotationLines(ctx context.Context, tx pgx.Tx, tenantID, quotationID uuid.UUID, lines []line) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM app.quotation_lines WHERE tenant_id = $1 AND quotation_id = $2`, tenantID, quotationID); err != nil {
 		return err
 	}
+	var fallback *uuid.UUID
 	for i, l := range lines {
-		if _, err := tx.Exec(ctx, `INSERT INTO svc_lines (id, business_id, doc_type, doc_id, position, service_id, description, quantity, unit_price, total) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-			ids.New(), p.BusinessID, docType, docID, i+1, uuidOrNil(l.service), l.desc, l.qty, l.price, l.total); err != nil {
+		sid := l.service
+		if sid == nil {
+			if fallback == nil {
+				f, err := s.defaultCustomService(ctx, tx, tenantID)
+				if err != nil {
+					return err
+				}
+				fallback = &f
+			}
+			sid = fallback
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.quotation_lines (id, tenant_id, quotation_id, line_no, service_id, description, quantity, unit_price, line_discount, line_total)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9)`,
+			ids.New(), tenantID, quotationID, i+1, *sid, l.desc, l.qty, l.price, l.total); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Service) docLines(ctx context.Context, tx pgx.Tx, docType string, id uuid.UUID) ([]map[string]any, error) {
-	return rows(ctx, tx, `SELECT position, service_id, description, quantity, unit_price, total FROM svc_lines WHERE doc_type=$1 AND doc_id=$2 ORDER BY position`, docType, id)
+func (s *Service) saveInvoiceLines(ctx context.Context, tx pgx.Tx, tenantID, invoiceID uuid.UUID, lines []line) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM app.invoice_lines WHERE tenant_id = $1 AND invoice_id = $2`, tenantID, invoiceID); err != nil {
+		return err
+	}
+	for i, l := range lines {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.invoice_lines (id, tenant_id, invoice_id, line_no, service_id, description, quantity, unit_price, line_discount, line_total)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,0,$9)`,
+			ids.New(), tenantID, invoiceID, i+1, uuidOrNil(l.service), l.desc, l.qty, l.price, l.total); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func totals(sub, discount decimal.Decimal) (decimal.Decimal, error) {
@@ -117,24 +144,30 @@ type QuotationIn struct {
 	Lines      []LineIn        `json:"lines" validate:"dive"`
 }
 
-const quotationCols = `q.id, q.number, q.status, q.valid_until, q.subtotal, q.discount, q.total, q.notes, q.client_id, c.name AS client_name, q.project_id, q.invoice_id, q.created_at`
+const quotationCols = `q.id, q.quotation_no AS number, q.status::text AS status, q.issue_date, q.valid_until,
+	q.subtotal, q.discount_amount AS discount, q.total, q.notes, q.customer_id AS client_id, c.full_name::text AS client_name,
+	(SELECT pr.id FROM app.projects pr WHERE pr.tenant_id = q.tenant_id AND pr.quotation_id = q.id LIMIT 1) AS project_id,
+	(SELECT i.id FROM app.invoices i WHERE i.tenant_id = q.tenant_id AND i.quotation_id = q.id ORDER BY i.created_at DESC LIMIT 1) AS invoice_id,
+	q.created_at`
+
+const quotationFrom = ` FROM app.quotations q JOIN app.customers c ON c.tenant_id = q.tenant_id AND c.id = q.customer_id`
 
 func (s *Service) ListQuotations(ctx context.Context, p *auth.Principal, status string, clientID *uuid.UUID, q0 string, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	total := 0
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		q.If(status != "", "q.status = ?", status)
-		q.If(clientID != nil, "q.client_id = ?", clientID)
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		q := sqlq.New(p.TenantID)
+		q.Add("q.tenant_id = $1")
+		q.If(status != "", "q.status = ?::app.quotation_status", status)
+		q.If(clientID != nil, "q.customer_id = ?", clientID)
 		if t := clean(q0); t != "" {
-			q.Add("(q.number ILIKE '%' || ? || '%' OR c.name ILIKE '%' || ? || '%')", t, t)
+			q.Add("(q.quotation_no ILIKE '%' || ? || '%' OR c.full_name ILIKE '%' || ? || '%')", t, t)
 		}
-		from := ` FROM svc_quotations q JOIN svc_clients c ON c.id = q.client_id`
-		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+q.Where(), q.Args...).Scan(&total); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT count(*)`+quotationFrom+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		var err error
-		out, err = rows(ctx, tx, `SELECT `+quotationCols+from+q.Where()+` ORDER BY q.created_at DESC, q.id`+q.Page(page.PerPage, page.Offset), q.Args...)
+		out, err = rows(ctx, tx, `SELECT `+quotationCols+quotationFrom+q.Where()+` ORDER BY q.created_at DESC, q.id`+q.Page(page.PerPage, page.Offset), q.Args...)
 		return err
 	})
 	return out, total, err
@@ -142,21 +175,37 @@ func (s *Service) ListQuotations(ctx context.Context, p *auth.Principal, status 
 
 func (s *Service) GetQuotation(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		out, err = s.loadQuotation(ctx, tx, id)
+		out, err = s.loadQuotation(ctx, tx, p.TenantID, id)
 		return err
 	})
 	return out, err
 }
 
-func (s *Service) loadQuotation(ctx context.Context, tx pgx.Tx, id uuid.UUID) (map[string]any, error) {
-	q, err := one(ctx, tx, "Quotation", `SELECT `+quotationCols+` FROM svc_quotations q JOIN svc_clients c ON c.id = q.client_id WHERE q.id=$1`, id)
+func (s *Service) loadQuotation(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (map[string]any, error) {
+	q, err := one(ctx, tx, "Quotation", `SELECT `+quotationCols+quotationFrom+` WHERE q.tenant_id = $1 AND q.id = $2`, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
-	q["lines"], err = s.docLines(ctx, tx, "quotation", id)
+	q["lines"], err = rows(ctx, tx, `
+		SELECT line_no AS position, service_id, description::text AS description, quantity, unit_price, line_total AS total
+		FROM app.quotation_lines WHERE tenant_id = $1 AND quotation_id = $2 ORDER BY line_no`, tenantID, id)
 	return q, err
+}
+
+func defaultValidUntil(issueDate, given string) (string, error) {
+	if clean(given) != "" {
+		if given < issueDate {
+			return "", httpx.BadRequest("invalid_body", "Valid-until date cannot be before issue date")
+		}
+		return given, nil
+	}
+	t, err := time.Parse("2006-01-02", issueDate)
+	if err != nil {
+		return issueDate, nil
+	}
+	return t.AddDate(0, 0, 30).Format("2006-01-02"), nil
 }
 
 func (s *Service) CreateQuotation(ctx context.Context, p *auth.Principal, in QuotationIn) (map[string]any, error) {
@@ -164,11 +213,11 @@ func (s *Service) CreateQuotation(ctx context.Context, p *auth.Principal, in Quo
 		return nil, err
 	}
 	id := ids.New()
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if err := require404(ctx, tx, "svc_clients", "Client", in.ClientID); err != nil {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		if err := require404(ctx, tx, "app.customers", "Client", p.TenantID, in.ClientID); err != nil {
 			return err
 		}
-		lines, sub, err := s.buildLines(ctx, tx, in.Lines)
+		lines, sub, err := s.buildLines(ctx, tx, p.TenantID, in.Lines)
 		if err != nil {
 			return err
 		}
@@ -176,20 +225,32 @@ func (s *Service) CreateQuotation(ctx context.Context, p *auth.Principal, in Quo
 		if err != nil {
 			return err
 		}
-		number, err := sequence.Next(ctx, tx, *p.BranchID, "svc_quotation")
+		today, err := s.bizDate(ctx, tx)
+		if err != nil {
+			return err
+		}
+		validUntil, err := defaultValidUntil(today, in.ValidUntil)
+		if err != nil {
+			return err
+		}
+		buID, err := s.servicesBU(ctx, tx, p.TenantID)
+		if err != nil {
+			return err
+		}
+		number, err := sequence.Next(ctx, tx, uuid.Nil, "quotation")
 		if err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO svc_quotations (id, business_id, branch_id, number, client_id, project_id, valid_until, subtotal, discount, total, notes, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-			id, p.BusinessID, *p.BranchID, number, in.ClientID, uuidOrNil(in.ProjectID), dateOrNil(in.ValidUntil), sub, money.Money(in.Discount), total, nz(in.Notes), p.UserID); err != nil {
+			INSERT INTO app.quotations (id, tenant_id, quotation_no, customer_id, business_unit_id, issue_date, valid_until, subtotal, discount_amount, tax_amount, total, notes)
+			VALUES ($1,$2,$3,$4,$5,$6::date,$7::date,$8,$9,0,$10,$11)`,
+			id, p.TenantID, number, in.ClientID, buID, today, validUntil, sub, money.Money(in.Discount), total, nz(in.Notes)); err != nil {
 			return err
 		}
-		if err := s.saveLines(ctx, tx, p, "quotation", id, lines); err != nil {
+		if err := s.saveQuotationLines(ctx, tx, p.TenantID, id, lines); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "service_quotation.created", "svc_quotation", id, nil, map[string]any{"number": number, "total": total})
+		return s.Audit.Record(ctx, tx, p, "service_quotation.created", "quotation", id, nil, map[string]any{"number": number, "total": total})
 	})
 	if err != nil {
 		return nil, err
@@ -198,15 +259,15 @@ func (s *Service) CreateQuotation(ctx context.Context, p *auth.Principal, in Quo
 }
 
 func (s *Service) UpdateQuotation(ctx context.Context, p *auth.Principal, id uuid.UUID, in QuotationIn) (map[string]any, error) {
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		var status string
-		if err := tx.QueryRow(ctx, `SELECT status FROM svc_quotations WHERE id=$1 FOR UPDATE`, id).Scan(&status); err != nil {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		var status, issueDate string
+		if err := tx.QueryRow(ctx, `SELECT status::text, issue_date::text FROM app.quotations WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&status, &issueDate); err != nil {
 			return httpx.NotFound("not_found", "Quotation not found")
 		}
 		if status != "draft" {
 			return httpx.Conflict("invalid_status", "Only a draft quotation can be edited")
 		}
-		lines, sub, err := s.buildLines(ctx, tx, in.Lines)
+		lines, sub, err := s.buildLines(ctx, tx, p.TenantID, in.Lines)
 		if err != nil {
 			return err
 		}
@@ -214,14 +275,23 @@ func (s *Service) UpdateQuotation(ctx context.Context, p *auth.Principal, id uui
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE svc_quotations SET valid_until=$2, subtotal=$3, discount=$4, total=$5, notes=$6, project_id=$7 WHERE id=$1`,
-			id, dateOrNil(in.ValidUntil), sub, money.Money(in.Discount), total, nz(in.Notes), uuidOrNil(in.ProjectID)); err != nil {
+		var validUntil any
+		if clean(in.ValidUntil) != "" {
+			if in.ValidUntil < issueDate {
+				return httpx.BadRequest("invalid_body", "Valid-until date cannot be before issue date")
+			}
+			validUntil = in.ValidUntil
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE app.quotations SET valid_until = COALESCE($3::date, valid_until), subtotal = $4, discount_amount = $5, total = $6, notes = $7
+			WHERE tenant_id = $1 AND id = $2`,
+			p.TenantID, id, validUntil, sub, money.Money(in.Discount), total, nz(in.Notes)); err != nil {
 			return err
 		}
-		if err := s.saveLines(ctx, tx, p, "quotation", id, lines); err != nil {
+		if err := s.saveQuotationLines(ctx, tx, p.TenantID, id, lines); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "service_quotation.updated", "svc_quotation", id, nil, map[string]any{"total": total})
+		return s.Audit.Record(ctx, tx, p, "service_quotation.updated", "quotation", id, nil, map[string]any{"total": total})
 	})
 	if err != nil {
 		return nil, err
@@ -231,19 +301,30 @@ func (s *Service) UpdateQuotation(ctx context.Context, p *auth.Principal, id uui
 
 // MoveQuotation sends or rejects a quotation.
 func (s *Service) MoveQuotation(ctx context.Context, p *auth.Principal, id uuid.UUID, to string) (map[string]any, error) {
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		var status string
-		if err := tx.QueryRow(ctx, `SELECT status FROM svc_quotations WHERE id=$1 FOR UPDATE`, id).Scan(&status); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT status::text FROM app.quotations WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&status); err != nil {
 			return httpx.NotFound("not_found", "Quotation not found")
 		}
 		ok := (to == "sent" && status == "draft") || (to == "rejected" && (status == "draft" || status == "sent"))
 		if !ok {
 			return httpx.Conflict("invalid_status", "A "+status+" quotation cannot be marked "+to)
 		}
-		if _, err := tx.Exec(ctx, `UPDATE svc_quotations SET status=$2 WHERE id=$1`, id, to); err != nil {
-			return err
+		if to == "rejected" && status == "draft" {
+			if _, err := tx.Exec(ctx, `UPDATE app.quotations SET status = 'sent', sent_at = COALESCE(sent_at, now()) WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+				return err
+			}
 		}
-		return s.Audit.Record(ctx, tx, p, "service_quotation."+to, "svc_quotation", id, map[string]any{"status": status}, map[string]any{"status": to})
+		if to == "sent" {
+			if _, err := tx.Exec(ctx, `UPDATE app.quotations SET status = 'sent', sent_at = COALESCE(sent_at, now()) WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+				return err
+			}
+		} else {
+			if _, err := tx.Exec(ctx, `UPDATE app.quotations SET status = 'rejected', decided_at = now() WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+				return err
+			}
+		}
+		return s.Audit.Record(ctx, tx, p, "service_quotation."+to, "quotation", id, map[string]any{"status": status}, map[string]any{"status": to})
 	})
 	if err != nil {
 		return nil, err
@@ -259,54 +340,67 @@ type AcceptIn struct {
 	StartDate     string     `json:"start_date" validate:"omitempty,date"`
 }
 
-// AcceptQuotation marks it accepted and creates the draft invoice, and the project when asked (FR: convert to invoice and project).
+// AcceptQuotation marks it accepted and creates the draft invoice (and project when asked).
 func (s *Service) AcceptQuotation(ctx context.Context, p *auth.Principal, id uuid.UUID, in AcceptIn) (map[string]any, error) {
 	if err := needBranch(p); err != nil {
 		return nil, err
 	}
 	var invoiceID uuid.UUID
 	var projectID *uuid.UUID
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		var status string
-		var clientID uuid.UUID
+		var clientID, buID uuid.UUID
 		var total, subtotal, discount decimal.Decimal
 		var notes *string
-		var existing *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT status, client_id, total, subtotal, discount, notes, project_id FROM svc_quotations WHERE id=$1 FOR UPDATE`, id).
-			Scan(&status, &clientID, &total, &subtotal, &discount, &notes, &existing); err != nil {
+		if err := tx.QueryRow(ctx, `
+			SELECT status::text, customer_id, business_unit_id, total, subtotal, discount_amount, notes
+			FROM app.quotations WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).
+			Scan(&status, &clientID, &buID, &total, &subtotal, &discount, &notes); err != nil {
 			return httpx.NotFound("not_found", "Quotation not found")
 		}
 		if status != "draft" && status != "sent" {
 			return httpx.Conflict("invalid_status", "A "+status+" quotation cannot be accepted")
 		}
-		projectID = existing
-		if in.CreateProject && projectID == nil {
-			pid, err := s.createProjectTx(ctx, tx, p, ProjectIn{ClientID: clientID, ServiceID: in.ServiceID, Name: in.ProjectName, StartDate: in.StartDate, OwnerID: in.OwnerID, TotalPrice: &total})
+		if status == "draft" {
+			if _, err := tx.Exec(ctx, `UPDATE app.quotations SET status = 'sent', sent_at = COALESCE(sent_at, now()) WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+				return err
+			}
+		}
+		if _, err := tx.Exec(ctx, `UPDATE app.quotations SET status = 'accepted', decided_at = now() WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+			return err
+		}
+		if in.CreateProject {
+			pid, err := s.createProjectTx(ctx, tx, p, ProjectIn{
+				ClientID: clientID, ServiceID: in.ServiceID, Name: in.ProjectName, StartDate: in.StartDate, OwnerID: in.OwnerID, TotalPrice: &total,
+			}, &id)
 			if err != nil {
 				return err
 			}
 			projectID = &pid
 		}
-		number, err := sequence.Next(ctx, tx, *p.BranchID, "svc_invoice")
+		today, err := s.bizDate(ctx, tx)
+		if err != nil {
+			return err
+		}
+		dueDate, _ := defaultValidUntil(today, "")
+		number, err := sequence.Next(ctx, tx, uuid.Nil, "invoice")
 		if err != nil {
 			return err
 		}
 		invoiceID = ids.New()
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO svc_invoices (id, business_id, branch_id, number, client_id, project_id, quotation_id, subtotal, discount, total, balance, notes, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10,$11,$12)`,
-			invoiceID, p.BusinessID, *p.BranchID, number, clientID, uuidOrNil(projectID), id, subtotal, discount, total, notes, p.UserID); err != nil {
+			INSERT INTO app.invoices (id, tenant_id, invoice_no, customer_id, business_unit_id, project_id, quotation_id, issue_date, due_date, subtotal, discount_amount, tax_amount, total, notes)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8::date,$9::date,$10,$11,0,$12,$13)`,
+			invoiceID, p.TenantID, number, clientID, buID, uuidOrNil(projectID), id, today, dueDate, subtotal, discount, total, notes); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO svc_lines (id, business_id, doc_type, doc_id, position, service_id, description, quantity, unit_price, total)
-			SELECT gen_random_uuid(), business_id, 'invoice', $2, position, service_id, description, quantity, unit_price, total FROM svc_lines WHERE doc_type='quotation' AND doc_id=$1`, id, invoiceID); err != nil {
+			INSERT INTO app.invoice_lines (id, tenant_id, invoice_id, line_no, service_id, description, quantity, unit_price, line_discount, line_total)
+			SELECT gen_random_uuid(), tenant_id, $3, line_no, service_id, description, quantity, unit_price, line_discount, line_total
+			FROM app.quotation_lines WHERE tenant_id = $1 AND quotation_id = $2`, p.TenantID, id, invoiceID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE svc_quotations SET status='accepted', invoice_id=$2, project_id=$3 WHERE id=$1`, id, invoiceID, uuidOrNil(projectID)); err != nil {
-			return err
-		}
-		return s.Audit.Record(ctx, tx, p, "service_quotation.accepted", "svc_quotation", id, map[string]any{"status": status}, map[string]any{"invoice_id": invoiceID, "project_id": projectID})
+		return s.Audit.Record(ctx, tx, p, "service_quotation.accepted", "quotation", id, map[string]any{"status": status}, map[string]any{"invoice_id": invoiceID, "project_id": projectID})
 	})
 	if err != nil {
 		return nil, err
@@ -359,20 +453,14 @@ func docPDF(biz, title string, m map[string]any, withPaid bool) []byte {
 	return d.Bytes()
 }
 
-func (s *Service) businessName(ctx context.Context, tx pgx.Tx, p *auth.Principal) string {
-	var name string
-	_ = tx.QueryRow(ctx, `SELECT name FROM businesses WHERE id=$1`, p.BusinessID).Scan(&name)
-	return name
-}
-
 func (s *Service) QuotationPDF(ctx context.Context, p *auth.Principal, id uuid.UUID) ([]byte, error) {
 	var out []byte
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		q, err := s.loadQuotation(ctx, tx, id)
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		q, err := s.loadQuotation(ctx, tx, p.TenantID, id)
 		if err != nil {
 			return err
 		}
-		out = quotationPDF(s.businessName(ctx, tx, p), q)
+		out = quotationPDF(s.businessName(ctx, tx, p.TenantID), q)
 		return nil
 	})
 	return out, err
@@ -396,26 +484,43 @@ type InvoiceIn struct {
 	Installments []InstallmentIn `json:"installments" validate:"dive"`
 }
 
-const invoiceCols = `i.id, i.number, i.status, i.issue_date, i.due_date, i.subtotal, i.discount, i.total, i.paid_total, i.balance, i.notes, i.client_id, c.name AS client_name,
-	i.project_id, pr.number AS project_number, i.design_job_id, i.quotation_id, i.created_at, i.void_reason`
-const invoiceFrom = ` FROM svc_invoices i JOIN svc_clients c ON c.id = i.client_id LEFT JOIN svc_projects pr ON pr.id = i.project_id`
+const invoiceCols = `i.id, i.invoice_no AS number,
+	CASE WHEN i.status = 'partially_paid' THEN 'partial' ELSE i.status::text END AS status,
+	i.issue_date, i.due_date, i.subtotal, i.discount_amount AS discount, i.total,
+	i.amount_paid AS paid_total, i.balance_due AS balance, i.notes, i.customer_id AS client_id, c.full_name::text AS client_name,
+	i.project_id, pr.project_no AS project_number, i.design_job_id, i.quotation_id, i.created_at, i.void_reason`
+
+const invoiceFrom = ` FROM app.invoices i
+	JOIN app.customers c ON c.tenant_id = i.tenant_id AND c.id = i.customer_id
+	LEFT JOIN app.projects pr ON pr.tenant_id = i.tenant_id AND pr.id = i.project_id`
+
+func mapInvoiceStatusFilter(st string) string {
+	if st == "partial" {
+		return "partially_paid"
+	}
+	return st
+}
 
 func (s *Service) ListInvoices(ctx context.Context, p *auth.Principal, status string, clientID, projectID *uuid.UUID, overdue bool, q0 string, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	total := 0
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		q.If(status != "", "i.status = ?", status)
-		q.If(clientID != nil, "i.client_id = ?", clientID)
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		today, err := s.bizDate(ctx, tx)
+		if err != nil {
+			return err
+		}
+		q := sqlq.New(p.TenantID)
+		q.Add("i.tenant_id = $1")
+		q.If(status != "", "i.status = ?::app.invoice_status", mapInvoiceStatusFilter(status))
+		q.If(clientID != nil, "i.customer_id = ?", clientID)
 		q.If(projectID != nil, "i.project_id = ?", projectID)
-		q.If(overdue, "i.status IN ('issued','partial') AND i.due_date < svc_today()")
+		q.If(overdue, "i.status IN ('issued','partially_paid') AND i.due_date < ?::date", today)
 		if t := clean(q0); t != "" {
-			q.Add("(i.number ILIKE '%' || ? || '%' OR c.name ILIKE '%' || ? || '%')", t, t)
+			q.Add("(i.invoice_no ILIKE '%' || ? || '%' OR c.full_name ILIKE '%' || ? || '%')", t, t)
 		}
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+invoiceFrom+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
-		var err error
 		out, err = rows(ctx, tx, `SELECT `+invoiceCols+invoiceFrom+q.Where()+` ORDER BY i.created_at DESC, i.id`+q.Page(page.PerPage, page.Offset), q.Args...)
 		return err
 	})
@@ -424,23 +529,27 @@ func (s *Service) ListInvoices(ctx context.Context, p *auth.Principal, status st
 
 func (s *Service) GetInvoice(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		out, err = s.loadInvoice(ctx, tx, id)
+		out, err = s.loadInvoice(ctx, tx, p.TenantID, id)
 		return err
 	})
 	return out, err
 }
 
-func (s *Service) loadInvoice(ctx context.Context, tx pgx.Tx, id uuid.UUID) (map[string]any, error) {
-	inv, err := one(ctx, tx, "Invoice", `SELECT `+invoiceCols+invoiceFrom+` WHERE i.id=$1`, id)
+func (s *Service) loadInvoice(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (map[string]any, error) {
+	inv, err := one(ctx, tx, "Invoice", `SELECT `+invoiceCols+invoiceFrom+` WHERE i.tenant_id = $1 AND i.id = $2`, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
-	if inv["lines"], err = s.docLines(ctx, tx, "invoice", id); err != nil {
+	if inv["lines"], err = rows(ctx, tx, `
+		SELECT line_no AS position, service_id, description::text AS description, quantity, unit_price, line_total AS total
+		FROM app.invoice_lines WHERE tenant_id = $1 AND invoice_id = $2 ORDER BY line_no`, tenantID, id); err != nil {
 		return nil, err
 	}
-	inst, err := rows(ctx, tx, `SELECT position, due_date, amount FROM svc_invoice_installments WHERE invoice_id=$1 ORDER BY position`, id)
+	inst, err := rows(ctx, tx, `
+		SELECT seq AS position, label, due_date, amount
+		FROM app.invoice_installments WHERE tenant_id = $1 AND invoice_id = $2 ORDER BY seq`, tenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -453,15 +562,19 @@ func (s *Service) loadInvoice(ctx context.Context, tx pgx.Tx, id uuid.UUID) (map
 	}
 	inv["installments"] = inst
 	inv["payments"], err = rows(ctx, tx, `
-		SELECT sp.id, pa.number, pa.payment_date AS date, a.amount, pa.method, pa.reference, sp.status
-		FROM svc_payment_allocations a JOIN svc_payments sp ON sp.id = a.payment_id JOIN payments pa ON pa.id = sp.id
-		WHERE a.invoice_id=$1 ORDER BY pa.payment_date, pa.created_at`, id)
+		SELECT pr.id, pr.receipt_no AS number, pr.business_date AS date, a.amount,
+		       CASE WHEN pr.method = 'bank_transfer' THEN 'bank' ELSE pr.method::text END AS method,
+		       pr.reference, pr.status::text AS status
+		FROM app.payment_allocations a
+		JOIN app.payments_received pr ON pr.tenant_id = a.tenant_id AND pr.id = a.payment_received_id
+		WHERE a.tenant_id = $1 AND a.invoice_id = $2
+		ORDER BY pr.business_date, pr.created_at`, tenantID, id)
 	return inv, err
 }
 
-func (s *Service) invoiceFromScope(ctx context.Context, tx pgx.Tx, in *InvoiceIn) ([]line, error) {
+func (s *Service) invoiceFromScope(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, in *InvoiceIn) ([]line, error) {
 	if len(in.Lines) > 0 {
-		lines, _, err := s.buildLines(ctx, tx, in.Lines)
+		lines, _, err := s.buildLines(ctx, tx, tenantID, in.Lines)
 		return lines, err
 	}
 	var desc string
@@ -470,22 +583,22 @@ func (s *Service) invoiceFromScope(ctx context.Context, tx pgx.Tx, in *InvoiceIn
 	case in.ProjectID != nil:
 		var number, name string
 		var price decimal.Decimal
-		if err := tx.QueryRow(ctx, `SELECT number, name, total_price FROM svc_projects WHERE id=$1 AND client_id=$2`, *in.ProjectID, in.ClientID).Scan(&number, &name, &price); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT project_no, title::text, total_price FROM app.projects WHERE tenant_id = $1 AND id = $2 AND customer_id = $3`, tenantID, *in.ProjectID, in.ClientID).Scan(&number, &name, &price); err != nil {
 			return nil, httpx.NotFound("not_found", "Project not found for this client")
 		}
 		var billed decimal.Decimal
-		if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(total),0) FROM svc_invoices WHERE project_id=$1 AND status <> 'void'`, *in.ProjectID).Scan(&billed); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(total), 0) FROM app.invoices WHERE tenant_id = $1 AND project_id = $2 AND status <> 'void'`, tenantID, *in.ProjectID).Scan(&billed); err != nil {
 			return nil, err
 		}
 		desc, amount = number+" "+name, price.Sub(billed)
 	case in.DesignJobID != nil:
 		var number, title string
 		var price decimal.Decimal
-		if err := tx.QueryRow(ctx, `SELECT number, title, price FROM design_jobs WHERE id=$1 AND client_id=$2`, *in.DesignJobID, in.ClientID).Scan(&number, &title, &price); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT job_no, title::text, price FROM app.design_jobs WHERE tenant_id = $1 AND id = $2 AND customer_id = $3`, tenantID, *in.DesignJobID, in.ClientID).Scan(&number, &title, &price); err != nil {
 			return nil, httpx.NotFound("not_found", "Design job not found for this client")
 		}
 		var billed decimal.Decimal
-		if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(total),0) FROM svc_invoices WHERE design_job_id=$1 AND status <> 'void'`, *in.DesignJobID).Scan(&billed); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(SUM(total), 0) FROM app.invoices WHERE tenant_id = $1 AND design_job_id = $2 AND status <> 'void'`, tenantID, *in.DesignJobID).Scan(&billed); err != nil {
 			return nil, err
 		}
 		desc, amount = number+" "+title, price.Sub(billed)
@@ -495,7 +608,7 @@ func (s *Service) invoiceFromScope(ctx context.Context, tx pgx.Tx, in *InvoiceIn
 	if !amount.IsPositive() {
 		return nil, httpx.Conflict("nothing_to_invoice", "This work is already fully invoiced")
 	}
-	lines, _, err := s.buildLines(ctx, tx, []LineIn{{Description: desc, Quantity: decimal.NewFromInt(1), UnitPrice: &amount}})
+	lines, _, err := s.buildLines(ctx, tx, tenantID, []LineIn{{Description: desc, Quantity: decimal.NewFromInt(1), UnitPrice: &amount}})
 	return lines, err
 }
 
@@ -513,13 +626,22 @@ func (s *Service) checkInstallments(in []InstallmentIn, total decimal.Decimal) e
 	return nil
 }
 
-func (s *Service) saveInstallments(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID, in []InstallmentIn) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM svc_invoice_installments WHERE invoice_id=$1`, id); err != nil {
+func (s *Service) saveInstallments(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, in []InstallmentIn) error {
+	if _, err := tx.Exec(ctx, `DELETE FROM app.invoice_installments WHERE tenant_id = $1 AND invoice_id = $2`, tenantID, id); err != nil {
 		return err
 	}
 	for i, x := range in {
-		if _, err := tx.Exec(ctx, `INSERT INTO svc_invoice_installments (id, business_id, invoice_id, position, due_date, amount) VALUES ($1,$2,$3,$4,$5,$6)`,
-			ids.New(), p.BusinessID, id, i+1, x.DueDate, money.Money(x.Amount)); err != nil {
+		lbl := "installment"
+		switch {
+		case len(in) == 1 || i == len(in)-1:
+			lbl = "final"
+		case i == 0:
+			lbl = "deposit"
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.invoice_installments (id, tenant_id, invoice_id, seq, label, due_date, amount)
+			VALUES ($1,$2,$3,$4,$5,$6::date,$7)`,
+			ids.New(), tenantID, id, i+1, lbl, x.DueDate, money.Money(x.Amount)); err != nil {
 			return err
 		}
 	}
@@ -531,14 +653,14 @@ func (s *Service) CreateInvoice(ctx context.Context, p *auth.Principal, in Invoi
 		return nil, err
 	}
 	id := ids.New()
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if err := require404(ctx, tx, "svc_clients", "Client", in.ClientID); err != nil {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		if err := require404(ctx, tx, "app.customers", "Client", p.TenantID, in.ClientID); err != nil {
 			return err
 		}
 		if in.ProjectID != nil && in.DesignJobID != nil {
 			return httpx.BadRequest("invalid_body", "An invoice belongs to a project or a design job, not both")
 		}
-		lines, err := s.invoiceFromScope(ctx, tx, &in)
+		lines, err := s.invoiceFromScope(ctx, tx, p.TenantID, &in)
 		if err != nil {
 			return err
 		}
@@ -558,27 +680,41 @@ func (s *Service) CreateInvoice(ctx context.Context, p *auth.Principal, in Invoi
 		}
 		if in.ProjectID != nil {
 			var c uuid.UUID
-			if err := tx.QueryRow(ctx, `SELECT client_id FROM svc_projects WHERE id=$1`, *in.ProjectID).Scan(&c); err != nil || c != in.ClientID {
+			if err := tx.QueryRow(ctx, `SELECT customer_id FROM app.projects WHERE tenant_id = $1 AND id = $2`, p.TenantID, *in.ProjectID).Scan(&c); err != nil || c != in.ClientID {
 				return httpx.NotFound("not_found", "Project not found for this client")
 			}
 		}
-		number, err := sequence.Next(ctx, tx, *p.BranchID, "svc_invoice")
+		today, err := s.bizDate(ctx, tx)
+		if err != nil {
+			return err
+		}
+		dueOn := clean(in.DueDate)
+		if dueOn == "" {
+			dueOn = today
+		} else if dueOn < today {
+			return httpx.BadRequest("invalid_body", "Due date cannot be before issue date")
+		}
+		buID, err := s.servicesBU(ctx, tx, p.TenantID)
+		if err != nil {
+			return err
+		}
+		number, err := sequence.Next(ctx, tx, uuid.Nil, "invoice")
 		if err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO svc_invoices (id, business_id, branch_id, number, client_id, project_id, design_job_id, due_date, subtotal, discount, total, balance, notes, created_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$11,$12,$13)`,
-			id, p.BusinessID, *p.BranchID, number, in.ClientID, uuidOrNil(in.ProjectID), uuidOrNil(in.DesignJobID), dateOrNil(in.DueDate), sub, money.Money(in.Discount), total, nz(in.Notes), p.UserID); err != nil {
+			INSERT INTO app.invoices (id, tenant_id, invoice_no, customer_id, business_unit_id, project_id, design_job_id, issue_date, due_date, subtotal, discount_amount, tax_amount, total, notes)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8::date,$9::date,$10,$11,0,$12,$13)`,
+			id, p.TenantID, number, in.ClientID, buID, uuidOrNil(in.ProjectID), uuidOrNil(in.DesignJobID), today, dueOn, sub, money.Money(in.Discount), total, nz(in.Notes)); err != nil {
 			return err
 		}
-		if err := s.saveLines(ctx, tx, p, "invoice", id, lines); err != nil {
+		if err := s.saveInvoiceLines(ctx, tx, p.TenantID, id, lines); err != nil {
 			return err
 		}
-		if err := s.saveInstallments(ctx, tx, p, id, in.Installments); err != nil {
+		if err := s.saveInstallments(ctx, tx, p.TenantID, id, in.Installments); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "service_invoice.created", "svc_invoice", id, nil, map[string]any{"number": number, "total": total})
+		return s.Audit.Record(ctx, tx, p, "service_invoice.created", "invoice", id, nil, map[string]any{"number": number, "total": total})
 	})
 	if err != nil {
 		return nil, err
@@ -587,17 +723,17 @@ func (s *Service) CreateInvoice(ctx context.Context, p *auth.Principal, in Invoi
 }
 
 func (s *Service) UpdateInvoice(ctx context.Context, p *auth.Principal, id uuid.UUID, in InvoiceIn) (map[string]any, error) {
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		var status string
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		var status, issueDate string
 		var client uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT status, client_id FROM svc_invoices WHERE id=$1 FOR UPDATE`, id).Scan(&status, &client); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT status::text, customer_id, issue_date::text FROM app.invoices WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&status, &client, &issueDate); err != nil {
 			return httpx.NotFound("not_found", "Invoice not found")
 		}
 		if status != "draft" {
 			return httpx.Conflict("invalid_status", "Only a draft invoice can be edited. Void it and create a new one")
 		}
 		in.ClientID = client
-		lines, _, err := s.buildLines(ctx, tx, in.Lines)
+		lines, _, err := s.buildLines(ctx, tx, p.TenantID, in.Lines)
 		if err != nil {
 			return err
 		}
@@ -615,17 +751,26 @@ func (s *Service) UpdateInvoice(ctx context.Context, p *auth.Principal, id uuid.
 		if err := s.checkInstallments(in.Installments, total); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE svc_invoices SET due_date=$2, subtotal=$3, discount=$4, total=$5, balance=$5, notes=$6 WHERE id=$1`,
-			id, dateOrNil(in.DueDate), sub, money.Money(in.Discount), total, nz(in.Notes)); err != nil {
+		var dueOn any
+		if clean(in.DueDate) != "" {
+			if in.DueDate < issueDate {
+				return httpx.BadRequest("invalid_body", "Due date cannot be before issue date")
+			}
+			dueOn = in.DueDate
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE app.invoices SET due_date = COALESCE($3::date, due_date), subtotal = $4, discount_amount = $5, total = $6, notes = $7
+			WHERE tenant_id = $1 AND id = $2`,
+			p.TenantID, id, dueOn, sub, money.Money(in.Discount), total, nz(in.Notes)); err != nil {
 			return err
 		}
-		if err := s.saveLines(ctx, tx, p, "invoice", id, lines); err != nil {
+		if err := s.saveInvoiceLines(ctx, tx, p.TenantID, id, lines); err != nil {
 			return err
 		}
-		if err := s.saveInstallments(ctx, tx, p, id, in.Installments); err != nil {
+		if err := s.saveInstallments(ctx, tx, p.TenantID, id, in.Installments); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "service_invoice.updated", "svc_invoice", id, nil, map[string]any{"total": total})
+		return s.Audit.Record(ctx, tx, p, "service_invoice.updated", "invoice", id, nil, map[string]any{"total": total})
 	})
 	if err != nil {
 		return nil, err
@@ -633,31 +778,21 @@ func (s *Service) UpdateInvoice(ctx context.Context, p *auth.Principal, id uuid.
 	return s.GetInvoice(ctx, p, id)
 }
 
-// recalc recomputes paid, balance and status from the posted allocations.
-func recalcInvoice(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
-	_, err := tx.Exec(ctx, `
-		WITH paid AS (
-		  SELECT COALESCE(SUM(a.amount),0) AS amt FROM svc_payment_allocations a JOIN svc_payments sp ON sp.id = a.payment_id
-		  WHERE a.invoice_id = $1 AND sp.status = 'posted')
-		UPDATE svc_invoices i SET paid_total = paid.amt, balance = i.total - paid.amt,
-		  status = CASE WHEN i.total - paid.amt <= 0 THEN 'paid' WHEN paid.amt > 0 THEN 'partial' ELSE 'issued' END
-		FROM paid WHERE i.id = $1 AND i.status IN ('issued','partial','paid')`, id)
-	return err
-}
-
-// IssueInvoice posts the receivable and applies deposits already received for the project or job.
+// IssueInvoice marks a draft invoice issued and applies any unallocated deposits for the project or job.
 func (s *Service) IssueInvoice(ctx context.Context, p *auth.Principal, id uuid.UUID, dueDate string) (map[string]any, error) {
 	if err := needBranch(p); err != nil {
 		return nil, err
 	}
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		var status, number string
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		var status string
 		var client uuid.UUID
 		var project, job *uuid.UUID
 		var total decimal.Decimal
-		var due *string
-		if err := tx.QueryRow(ctx, `SELECT status, number, client_id, project_id, design_job_id, total, due_date::text FROM svc_invoices WHERE id=$1 FOR UPDATE`, id).
-			Scan(&status, &number, &client, &project, &job, &total, &due); err != nil {
+		var due string
+		if err := tx.QueryRow(ctx, `
+			SELECT status::text, customer_id, project_id, design_job_id, total, due_date::text
+			FROM app.invoices WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).
+			Scan(&status, &client, &project, &job, &total, &due); err != nil {
 			return httpx.NotFound("not_found", "Invoice not found")
 		}
 		if status != "draft" {
@@ -667,27 +802,22 @@ func (s *Service) IssueInvoice(ctx context.Context, p *auth.Principal, id uuid.U
 		if err != nil {
 			return err
 		}
-		dueOn := dueDate
-		if dueOn == "" && due != nil {
-			dueOn = *due
-		}
+		dueOn := clean(dueDate)
 		if dueOn == "" {
+			dueOn = due
+		}
+		if dueOn == "" || dueOn < date {
 			dueOn = date
 		}
-		user := p.UserID
-		if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "service_invoice", id, "Invoice "+number, &user, []ledger.Line{
-			{Code: "1100", BranchID: p.BranchID, PartyType: "client", PartyID: &client, Debit: total},
-			{Code: "4300", BranchID: p.BranchID, Credit: total},
-		}); err != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE app.invoices SET status = 'issued', issue_date = $3::date, due_date = $4::date, issued_at = now()
+			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, date, dueOn); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE svc_invoices SET status='issued', issue_date=$2, due_date=$3 WHERE id=$1`, id, date, dueOn); err != nil {
+		if err := s.applyDeposits(ctx, tx, p.TenantID, id, client, project, job); err != nil {
 			return err
 		}
-		if err := s.applyDeposits(ctx, tx, p, id, client, project, job, date); err != nil {
-			return err
-		}
-		return s.Audit.Record(ctx, tx, p, "service_invoice.issued", "svc_invoice", id, map[string]any{"status": "draft"}, map[string]any{"status": "issued", "total": total})
+		return s.Audit.Record(ctx, tx, p, "service_invoice.issued", "invoice", id, map[string]any{"status": "draft"}, map[string]any{"status": "issued", "total": total})
 	})
 	if err != nil {
 		return nil, err
@@ -695,13 +825,19 @@ func (s *Service) IssueInvoice(ctx context.Context, p *auth.Principal, id uuid.U
 	return s.GetInvoice(ctx, p, id)
 }
 
-func (s *Service) applyDeposits(ctx context.Context, tx pgx.Tx, p *auth.Principal, invoiceID, client uuid.UUID, project, job *uuid.UUID, date string) error {
+func (s *Service) applyDeposits(ctx context.Context, tx pgx.Tx, tenantID, invoiceID, client uuid.UUID, project, job *uuid.UUID) error {
 	if project == nil && job == nil {
 		return nil
 	}
 	var balance decimal.Decimal
-	if err := tx.QueryRow(ctx, `SELECT total - paid_total FROM svc_invoices WHERE id=$1`, invoiceID).Scan(&balance); err != nil {
+	if err := tx.QueryRow(ctx, `SELECT balance_due FROM app.invoices WHERE tenant_id = $1 AND id = $2`, tenantID, invoiceID).Scan(&balance); err != nil {
 		return err
+	}
+	var tag string
+	if project != nil {
+		tag = "%[project:" + project.String() + "]%"
+	} else {
+		tag = "%[design_job:" + job.String() + "]%"
 	}
 	type dep struct {
 		id    uuid.UUID
@@ -709,9 +845,10 @@ func (s *Service) applyDeposits(ctx context.Context, tx pgx.Tx, p *auth.Principa
 	}
 	var deps []dep
 	r, err := tx.Query(ctx, `
-		SELECT id, amount - applied FROM svc_payments
-		WHERE status = 'posted' AND amount > applied AND (($1::uuid IS NOT NULL AND project_id = $1) OR ($2::uuid IS NOT NULL AND design_job_id = $2))
-		ORDER BY created_at, id FOR UPDATE`, project, job)
+		SELECT pr.id, pr.amount - COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id), 0) AS avail
+		FROM app.payments_received pr
+		WHERE pr.tenant_id = $1 AND pr.customer_id = $2 AND pr.status = 'posted' AND pr.notes LIKE $3
+		ORDER BY pr.created_at, pr.id FOR UPDATE`, tenantID, client, tag)
 	if err != nil {
 		return err
 	}
@@ -721,72 +858,53 @@ func (s *Service) applyDeposits(ctx context.Context, tx pgx.Tx, p *auth.Principa
 			r.Close()
 			return err
 		}
-		deps = append(deps, d)
+		if d.avail.IsPositive() {
+			deps = append(deps, d)
+		}
 	}
 	r.Close()
 	if err := r.Err(); err != nil {
 		return err
 	}
-	user := p.UserID
 	for _, d := range deps {
 		if !balance.IsPositive() {
 			break
 		}
 		use := decimal.Min(d.avail, balance)
 		balance = balance.Sub(use)
-		if _, err := tx.Exec(ctx, `UPDATE svc_payments SET applied = applied + $2 WHERE id=$1`, d.id, use); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `INSERT INTO svc_payment_allocations (id, business_id, payment_id, invoice_id, amount) VALUES ($1,$2,$3,$4,$5)`, ids.New(), p.BusinessID, d.id, invoiceID, use); err != nil {
-			return err
-		}
-		if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "service_deposit_apply", d.id, "Deposit applied to invoice", &user, []ledger.Line{
-			{Code: "2400", BranchID: p.BranchID, PartyType: "client", PartyID: &client, Debit: use},
-			{Code: "1100", BranchID: p.BranchID, PartyType: "client", PartyID: &client, Credit: use},
-		}); err != nil {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.payment_allocations (tenant_id, payment_received_id, invoice_id, amount)
+			VALUES ($1,$2,$3,$4)`, tenantID, d.id, invoiceID, use); err != nil {
 			return err
 		}
 	}
-	return recalcInvoice(ctx, tx, invoiceID)
+	return nil
 }
 
-// VoidInvoice cancels a draft, or reverses an issued invoice that has no payments.
+// VoidInvoice cancels a draft or unpaid issued invoice.
 func (s *Service) VoidInvoice(ctx context.Context, p *auth.Principal, id uuid.UUID, reason string) (map[string]any, error) {
 	reason = clean(reason)
 	if reason == "" {
 		return nil, httpx.BadRequest("invalid_body", "A reason is required")
 	}
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		var status, number string
-		var issued *string
-		if err := tx.QueryRow(ctx, `SELECT status, number, issue_date::text FROM svc_invoices WHERE id=$1 FOR UPDATE`, id).Scan(&status, &number, &issued); err != nil {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		var status string
+		var paid decimal.Decimal
+		if err := tx.QueryRow(ctx, `SELECT status::text, amount_paid FROM app.invoices WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&status, &paid); err != nil {
 			return httpx.NotFound("not_found", "Invoice not found")
 		}
-		switch status {
-		case "void":
+		if status == "void" {
 			return httpx.Conflict("invalid_status", "This invoice is already void")
-		case "draft":
-		default:
-			var n int
-			if err := tx.QueryRow(ctx, `SELECT count(*) FROM svc_payment_allocations a JOIN svc_payments sp ON sp.id=a.payment_id WHERE a.invoice_id=$1 AND sp.status='posted'`, id).Scan(&n); err != nil {
-				return err
-			}
-			if n > 0 {
-				return httpx.Conflict("has_payments", "Void the payments on this invoice first")
-			}
-			date, err := s.bizDate(ctx, tx)
-			if err != nil {
-				return err
-			}
-			user := p.UserID
-			if _, err := s.Ledger.ReverseSource(ctx, tx, p.BusinessID, id, date, "Void of invoice "+number+": "+reason, &user); err != nil {
-				return err
-			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE svc_invoices SET status='void', balance=0, void_reason=$2, voided_at=now() WHERE id=$1`, id, reason); err != nil {
+		if paid.IsPositive() {
+			return httpx.Conflict("has_payments", "Void the payments on this invoice first")
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE app.invoices SET status = 'void', void_reason = $3, voided_at = now(), issued_at = COALESCE(issued_at, now())
+			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, reason); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "service_invoice.voided", "svc_invoice", id, map[string]any{"status": status}, map[string]any{"status": "void", "reason": reason})
+		return s.Audit.Record(ctx, tx, p, "service_invoice.voided", "invoice", id, map[string]any{"status": status}, map[string]any{"status": "void", "reason": reason})
 	})
 	if err != nil {
 		return nil, err
@@ -796,12 +914,12 @@ func (s *Service) VoidInvoice(ctx context.Context, p *auth.Principal, id uuid.UU
 
 func (s *Service) InvoicePDF(ctx context.Context, p *auth.Principal, id uuid.UUID) ([]byte, error) {
 	var out []byte
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		inv, err := s.loadInvoice(ctx, tx, id)
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		inv, err := s.loadInvoice(ctx, tx, p.TenantID, id)
 		if err != nil {
 			return err
 		}
-		out = docPDF(s.businessName(ctx, tx, p), "Invoice", inv, true)
+		out = docPDF(s.businessName(ctx, tx, p.TenantID), "Invoice", inv, true)
 		return nil
 	})
 	return out, err
@@ -811,9 +929,9 @@ func (s *Service) InvoicePDF(ctx context.Context, p *auth.Principal, id uuid.UUI
 
 type PayIn struct {
 	Amount         decimal.Decimal `json:"amount" validate:"dpos"`
-	Method         string          `json:"method" validate:"required,oneof=cash mobile_money bank"`
+	Method         string          `json:"method" validate:"required,oneof=cash mobile_money bank bank_transfer card cheque"`
 	MoneyAccountID uuid.UUID       `json:"money_account_id" validate:"required"`
-	Reference      string          `json:"reference" validate:"max=120"`
+	Reference      string          `json:"reference" validate:"max=60"`
 	Date           string          `json:"date" validate:"omitempty,date"`
 }
 
@@ -828,8 +946,8 @@ type payScope struct {
 func (s *Service) idemTx(ctx context.Context, p *auth.Principal, fn func(ctx context.Context, tx pgx.Tx) (int, any, error)) (int, []byte, error) {
 	var status int
 	var body []byte
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.BusinessID, p.UserID); err != nil || rep != nil {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -846,19 +964,16 @@ func (s *Service) idemTx(ctx context.Context, p *auth.Principal, fn func(ctx con
 	return status, body, err
 }
 
-// receive books a client payment. Money first settles the scope's issued invoices, oldest first;
-// what is left stays as a deposit that the next invoice for the same project or job absorbs.
+// receive books a client payment into app.payments_received and allocates it to open invoices.
+// Any remainder stays unallocated as a deposit tagged with the project/design job so future invoices absorb it.
 func (s *Service) receive(ctx context.Context, tx pgx.Tx, p *auth.Principal, sc payScope, in PayIn) (map[string]any, error) {
 	if err := needBranch(p); err != nil {
-		return nil, err
-	}
-	acc, err := payments.ActiveAccount(ctx, tx, in.MoneyAccountID)
-	if err != nil {
 		return nil, err
 	}
 	amount := money.Money(in.Amount)
 	date := in.Date
 	if date == "" {
+		var err error
 		if date, err = s.bizDate(ctx, tx); err != nil {
 			return nil, err
 		}
@@ -869,9 +984,8 @@ func (s *Service) receive(ctx context.Context, tx pgx.Tx, p *auth.Principal, sc 
 	}
 	var docs []doc
 	left := amount
-	q := sqlq.New()
-	q.Add("client_id = ?", sc.client)
-	q.Add("status IN ('issued','partial')")
+	q := sqlq.New(p.TenantID, sc.client)
+	q.Add("tenant_id = $1 AND customer_id = $2 AND status IN ('issued','partially_paid')")
 	if sc.invoice != nil {
 		q.Add("id = ?", *sc.invoice)
 	} else if sc.project != nil {
@@ -879,7 +993,7 @@ func (s *Service) receive(ctx context.Context, tx pgx.Tx, p *auth.Principal, sc 
 	} else if sc.job != nil {
 		q.Add("design_job_id = ?", *sc.job)
 	}
-	r, err := tx.Query(ctx, `SELECT id, balance FROM svc_invoices`+q.Where()+` ORDER BY issue_date, created_at FOR UPDATE`, q.Args...)
+	r, err := tx.Query(ctx, `SELECT id, balance_due FROM app.invoices`+q.Where()+` ORDER BY issue_date, created_at FOR UPDATE`, q.Args...)
 	if err != nil {
 		return nil, err
 	}
@@ -890,7 +1004,7 @@ func (s *Service) receive(ctx context.Context, tx pgx.Tx, p *auth.Principal, sc 
 			r.Close()
 			return nil, err
 		}
-		if left.IsPositive() {
+		if left.IsPositive() && bal.IsPositive() {
 			use := decimal.Min(left, bal)
 			left = left.Sub(use)
 			docs = append(docs, doc{id, use})
@@ -908,49 +1022,49 @@ func (s *Service) receive(ctx context.Context, tx pgx.Tx, p *auth.Principal, sc 
 			return nil, httpx.Conflict("overpayment", "The payment is more than the invoice balance")
 		}
 	}
-	res, err := payments.Insert(ctx, tx, payments.Input{
-		BusinessID: p.BusinessID, BranchID: *p.BranchID, MoneyAccountID: in.MoneyAccountID, UserID: p.UserID,
-		Direction: "in", Kind: "service_payment", Method: in.Method, PartyType: "client", PartyID: &sc.client,
-		Amount: amount, Reference: in.Reference, Date: date,
+	applied := amount.Sub(left)
+	purpose := "installment"
+	if applied.IsZero() {
+		purpose = "deposit"
+	} else if left.IsZero() && sc.invoice != nil {
+		var bal decimal.Decimal
+		_ = tx.QueryRow(ctx, `SELECT balance_due FROM app.invoices WHERE tenant_id = $1 AND id = $2`, p.TenantID, *sc.invoice).Scan(&bal)
+		if bal.Equal(applied) {
+			purpose = "final"
+		}
+	}
+	var notes string
+	if sc.project != nil {
+		notes = "[project:" + sc.project.String() + "]"
+	} else if sc.job != nil {
+		notes = "[design_job:" + sc.job.String() + "]"
+	}
+	allocInputs := make([]payments.Alloc, 0, len(docs))
+	allocsOut := make([]map[string]any, 0, len(docs))
+	for _, d := range docs {
+		invID := d.id
+		allocInputs = append(allocInputs, payments.Alloc{InvoiceID: &invID, Amount: d.use})
+		allocsOut = append(allocsOut, map[string]any{"invoice_id": d.id, "amount": d.use})
+	}
+	clientID := sc.client
+	res, err := payments.Receive(ctx, tx, payments.ReceiveInput{
+		TenantID: p.TenantID, LocationID: *p.BranchID, AccountID: in.MoneyAccountID,
+		CustomerID: &clientID, Purpose: purpose, Method: payments.Method(in.Method),
+		Amount: amount, Reference: clean(in.Reference), BusinessDate: date, Notes: notes,
+		Allocations: allocInputs,
 	})
 	if err != nil {
 		return nil, err
 	}
-	applied := amount.Sub(left)
-	if _, err := tx.Exec(ctx, `INSERT INTO svc_payments (id, business_id, branch_id, client_id, project_id, design_job_id, amount, applied, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		res.ID, p.BusinessID, *p.BranchID, sc.client, uuidOrNil(sc.project), uuidOrNil(sc.job), amount, applied, p.UserID); err != nil {
-		return nil, err
-	}
-	allocs := []map[string]any{}
-	for _, d := range docs {
-		if _, err := tx.Exec(ctx, `INSERT INTO svc_payment_allocations (id, business_id, payment_id, invoice_id, amount) VALUES ($1,$2,$3,$4,$5)`, ids.New(), p.BusinessID, res.ID, d.id, d.use); err != nil {
-			return nil, err
-		}
-		if err := recalcInvoice(ctx, tx, d.id); err != nil {
-			return nil, err
-		}
-		allocs = append(allocs, map[string]any{"invoice_id": d.id, "amount": d.use})
-	}
-	user := p.UserID
-	lines := []ledger.Line{{Code: acc.Code, BranchID: p.BranchID, MoneyAccountID: &in.MoneyAccountID, PartyType: "client", PartyID: &sc.client, Debit: amount}}
-	if applied.IsPositive() {
-		lines = append(lines, ledger.Line{Code: "1100", BranchID: p.BranchID, PartyType: "client", PartyID: &sc.client, Credit: applied})
-	}
-	if left.IsPositive() {
-		lines = append(lines, ledger.Line{Code: "2400", BranchID: p.BranchID, PartyType: "client", PartyID: &sc.client, Credit: left})
-	}
-	if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "service_payment", res.ID, "Client payment "+res.Number, &user, lines); err != nil {
-		return nil, err
-	}
-	out := map[string]any{"id": res.ID, "number": res.Number, "amount": amount, "applied": applied, "deposit": left, "allocations": allocs, "date": date}
-	return out, s.Audit.Record(ctx, tx, p, "service_payment.received", "payment", res.ID, nil, map[string]any{"amount": amount, "client_id": sc.client, "project_id": sc.project, "design_job_id": sc.job})
+	out := map[string]any{"id": res.ID, "number": res.Number, "amount": amount, "applied": applied, "deposit": left, "allocations": allocsOut, "date": date}
+	return out, s.Audit.Record(ctx, tx, p, "service_payment.received", "payment_received", res.ID, nil, map[string]any{"amount": amount, "client_id": sc.client, "project_id": sc.project, "design_job_id": sc.job})
 }
 
 func (s *Service) PayInvoice(ctx context.Context, p *auth.Principal, id uuid.UUID, in PayIn) (int, []byte, error) {
 	return s.idemTx(ctx, p, func(ctx context.Context, tx pgx.Tx) (int, any, error) {
 		var client uuid.UUID
 		var project, job *uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT client_id, project_id, design_job_id FROM svc_invoices WHERE id=$1 FOR UPDATE`, id).Scan(&client, &project, &job); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT customer_id, project_id, design_job_id FROM app.invoices WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&client, &project, &job); err != nil {
 			return 0, nil, httpx.NotFound("not_found", "Invoice not found")
 		}
 		out, err := s.receive(ctx, tx, p, payScope{client: client, project: project, job: job, invoice: &id}, in)
@@ -962,7 +1076,7 @@ func (s *Service) PayProject(ctx context.Context, p *auth.Principal, id uuid.UUI
 	return s.idemTx(ctx, p, func(ctx context.Context, tx pgx.Tx) (int, any, error) {
 		var client uuid.UUID
 		var status string
-		if err := tx.QueryRow(ctx, `SELECT client_id, status FROM svc_projects WHERE id=$1 FOR UPDATE`, id).Scan(&client, &status); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT customer_id, status::text FROM app.projects WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&client, &status); err != nil {
 			return 0, nil, httpx.NotFound("not_found", "Project not found")
 		}
 		if status == "cancelled" {
@@ -977,7 +1091,7 @@ func (s *Service) PayDesignJob(ctx context.Context, p *auth.Principal, id uuid.U
 	return s.idemTx(ctx, p, func(ctx context.Context, tx pgx.Tx) (int, any, error) {
 		var client uuid.UUID
 		var status string
-		if err := tx.QueryRow(ctx, `SELECT client_id, status FROM design_jobs WHERE id=$1 FOR UPDATE`, id).Scan(&client, &status); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT customer_id, status::text FROM app.design_jobs WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&client, &status); err != nil {
 			return 0, nil, httpx.NotFound("not_found", "Design job not found")
 		}
 		if status == "cancelled" {
@@ -991,81 +1105,130 @@ func (s *Service) PayDesignJob(ctx context.Context, p *auth.Principal, id uuid.U
 func (s *Service) ListPayments(ctx context.Context, p *auth.Principal, clientID, projectID, jobID *uuid.UUID, from, to string, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	total := 0
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
-		q.If(clientID != nil, "sp.client_id = ?", clientID)
-		q.If(projectID != nil, "sp.project_id = ?", projectID)
-		q.If(jobID != nil, "sp.design_job_id = ?", jobID)
-		q.If(from != "", "pa.payment_date >= ?::date", from)
-		q.If(to != "", "pa.payment_date <= ?::date", to)
-		from := ` FROM svc_payments sp JOIN payments pa ON pa.id = sp.id JOIN svc_clients c ON c.id = sp.client_id`
-		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+q.Where(), q.Args...).Scan(&total); err != nil {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		q := sqlq.New(p.TenantID)
+		q.Add("pr.tenant_id = $1 AND c.client_status IS NOT NULL")
+		q.If(clientID != nil, "pr.customer_id = ?", clientID)
+		q.If(projectID != nil, `(pr.notes LIKE '%[project:' || ?::text || ']%' OR EXISTS (SELECT 1 FROM app.payment_allocations a JOIN app.invoices i ON i.tenant_id = a.tenant_id AND i.id = a.invoice_id WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id AND i.project_id = ?))`, projectID, projectID)
+		q.If(jobID != nil, `(pr.notes LIKE '%[design_job:' || ?::text || ']%' OR EXISTS (SELECT 1 FROM app.payment_allocations a JOIN app.invoices i ON i.tenant_id = a.tenant_id AND i.id = a.invoice_id WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id AND i.design_job_id = ?))`, jobID, jobID)
+		q.If(from != "", "pr.business_date >= ?::date", from)
+		q.If(to != "", "pr.business_date <= ?::date", to)
+		fromSQL := ` FROM app.payments_received pr JOIN app.customers c ON c.tenant_id = pr.tenant_id AND c.id = pr.customer_id`
+		if err := tx.QueryRow(ctx, `SELECT count(*)`+fromSQL+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		var err error
-		out, err = rows(ctx, tx, `SELECT sp.id, pa.number, pa.payment_date AS date, sp.amount, sp.applied, pa.method, pa.reference, sp.status, sp.client_id, c.name AS client_name, sp.project_id, sp.design_job_id`+
-			from+q.Where()+` ORDER BY pa.payment_date DESC, pa.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
+		out, err = rows(ctx, tx, `
+			SELECT pr.id, pr.receipt_no AS number, pr.business_date AS date, pr.amount,
+			       COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id), 0) AS applied,
+			       CASE WHEN pr.method = 'bank_transfer' THEN 'bank' ELSE pr.method::text END AS method,
+			       pr.reference, pr.status::text AS status, pr.customer_id AS client_id, c.full_name::text AS client_name,
+			       (SELECT i.project_id FROM app.payment_allocations a JOIN app.invoices i ON i.tenant_id = a.tenant_id AND i.id = a.invoice_id WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id AND i.project_id IS NOT NULL LIMIT 1) AS project_id,
+			       (SELECT i.design_job_id FROM app.payment_allocations a JOIN app.invoices i ON i.tenant_id = a.tenant_id AND i.id = a.invoice_id WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id AND i.design_job_id IS NOT NULL LIMIT 1) AS design_job_id`+
+			fromSQL+q.Where()+` ORDER BY pr.business_date DESC, pr.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
 		return err
 	})
 	return out, total, err
 }
 
-// PaymentReceipt returns a service payment receipt (SRS Section 11: Service receipt)
-// with business details, client, project/design job, purpose, total paid so far and balance remaining.
+// PaymentReceipt returns a service payment receipt with business details, client, project/design job, purpose, and balance remaining.
 func (s *Service) PaymentReceipt(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		row, err := one(ctx, tx, "Payment", `
-			SELECT sp.id, pa.number, pa.payment_date AS date, sp.amount, sp.applied, (sp.amount - sp.applied) AS deposit,
-			       pa.method, COALESCE(pa.reference,'') AS reference, sp.status,
-			       sp.client_id, c.name AS client_name, COALESCE(c.phone,'') AS client_phone,
-			       sp.project_id, COALESCE(pr.number,'') AS project_number, COALESCE(pr.name,'') AS project_name, COALESCE(pr.total_price, 0) AS project_price,
-			       sp.design_job_id, COALESCE(dj.number,'') AS design_job_number, COALESCE(dj.title,'') AS design_job_title, COALESCE(dj.price, 0) AS design_job_price,
-			       COALESCE(u.name,'') AS received_by
-			FROM svc_payments sp
-			JOIN payments pa ON pa.id = sp.id
-			JOIN svc_clients c ON c.id = sp.client_id
-			LEFT JOIN svc_projects pr ON pr.id = sp.project_id
-			LEFT JOIN design_jobs dj ON dj.id = sp.design_job_id
-			LEFT JOIN users u ON u.id = sp.created_by
-			WHERE sp.id=$1`, id)
+			SELECT pr.id, pr.receipt_no AS number, pr.business_date AS date, pr.amount,
+			       COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id), 0) AS applied,
+			       pr.amount - COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id), 0) AS deposit,
+			       CASE WHEN pr.method = 'bank_transfer' THEN 'bank' ELSE pr.method::text END AS method,
+			       COALESCE(pr.reference, '') AS reference, pr.status::text AS status, pr.notes,
+			       pr.customer_id AS client_id, COALESCE(c.full_name::text, '') AS client_name, COALESCE(c.phone::text, '') AS client_phone,
+			       COALESCE(u.full_name::text, '') AS received_by
+			FROM app.payments_received pr
+			LEFT JOIN app.customers c ON c.tenant_id = pr.tenant_id AND c.id = pr.customer_id
+			LEFT JOIN app.memberships m ON m.tenant_id = pr.tenant_id AND m.id = pr.created_by
+			LEFT JOIN iam.users u ON u.id = m.user_id
+			WHERE pr.tenant_id = $1 AND pr.id = $2`, p.TenantID, id)
 		if err != nil {
 			return err
 		}
 		var bName, bPhone, bAddr, bTin string
-		_ = tx.QueryRow(ctx, `SELECT name, COALESCE(phone,''), COALESCE(address,''), COALESCE(tax_number,'') FROM businesses WHERE id=$1`, p.BusinessID).Scan(&bName, &bPhone, &bAddr, &bTin)
+		_ = tx.QueryRow(ctx, `
+			SELECT COALESCE(NULLIF(s.business_name::text,''), t.legal_name::text),
+			       COALESCE(s.phone::text, ''), COALESCE(s.address, ''), COALESCE(s.tin, '')
+			FROM app.tenants t LEFT JOIN app.tenant_settings s ON s.tenant_id = t.id WHERE t.id = $1`, p.TenantID).Scan(&bName, &bPhone, &bAddr, &bTin)
+
+		allocs, err := rows(ctx, tx, `
+			SELECT a.invoice_id, i.invoice_no AS invoice_number, a.amount, i.project_id, i.design_job_id
+			FROM app.payment_allocations a
+			JOIN app.invoices i ON i.tenant_id = a.tenant_id AND i.id = a.invoice_id
+			WHERE a.tenant_id = $1 AND a.payment_received_id = $2 ORDER BY i.invoice_no`, p.TenantID, id)
+		if err != nil {
+			return err
+		}
+		var projID, jobID *uuid.UUID
+		for _, a := range allocs {
+			if pid, ok := a["project_id"].(uuid.UUID); ok && pid != uuid.Nil && projID == nil {
+				projID = &pid
+			}
+			if jid, ok := a["design_job_id"].(uuid.UUID); ok && jid != uuid.Nil && jobID == nil {
+				jobID = &jid
+			}
+		}
+		if notes, _ := row["notes"].(string); notes != "" {
+			if projID == nil && strings.Contains(notes, "[project:") {
+				if parsed, err := extractTagUUID(notes, "[project:"); err == nil {
+					projID = &parsed
+				}
+			}
+			if jobID == nil && strings.Contains(notes, "[design_job:") {
+				if parsed, err := extractTagUUID(notes, "[design_job:"); err == nil {
+					jobID = &parsed
+				}
+			}
+		}
+		delete(row, "notes")
+		row["project_id"] = projID
+		row["project_number"] = ""
+		row["project_name"] = ""
+		row["design_job_id"] = jobID
+		row["design_job_number"] = ""
+		row["design_job_title"] = ""
 
 		totalPaid := money.Zero
 		totalPrice := money.Zero
-		purpose := "Payment"
-		if pid, ok := row["project_id"].(uuid.UUID); ok && pid != uuid.Nil {
-			totalPrice = num(row, "project_price")
-			_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0) FROM svc_payments WHERE project_id=$1 AND status='posted'`, pid).Scan(&totalPaid)
-		} else if jid, ok := row["design_job_id"].(uuid.UUID); ok && jid != uuid.Nil {
-			totalPrice = num(row, "design_job_price")
-			_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0) FROM svc_payments WHERE design_job_id=$1 AND status='posted'`, jid).Scan(&totalPaid)
-		} else {
-			cid := row["client_id"].(uuid.UUID)
-			_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(total),0) FROM svc_invoices WHERE client_id=$1 AND status IN ('issued','partial','paid')`, cid).Scan(&totalPrice)
-			_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount),0) FROM svc_payments WHERE client_id=$1 AND status='posted'`, cid).Scan(&totalPaid)
+		if projID != nil {
+			var pno, pname string
+			_ = tx.QueryRow(ctx, `SELECT project_no, title::text, total_price FROM app.projects WHERE tenant_id = $1 AND id = $2`, p.TenantID, *projID).Scan(&pno, &pname, &totalPrice)
+			row["project_number"], row["project_name"] = pno, pname
+			_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount_paid), 0) FROM app.invoices WHERE tenant_id = $1 AND project_id = $2 AND status <> 'void'`, p.TenantID, *projID).Scan(&totalPaid)
+			var dep decimal.Decimal
+			_ = tx.QueryRow(ctx, `
+				SELECT COALESCE(SUM(pr.amount - COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id), 0)), 0)
+				FROM app.payments_received pr WHERE pr.tenant_id = $1 AND pr.status = 'posted' AND pr.notes LIKE $2`, p.TenantID, "%[project:"+projID.String()+"]%").Scan(&dep)
+			totalPaid = totalPaid.Add(dep)
+		} else if jobID != nil {
+			var jno, jtitle string
+			_ = tx.QueryRow(ctx, `SELECT job_no, title::text, price FROM app.design_jobs WHERE tenant_id = $1 AND id = $2`, p.TenantID, *jobID).Scan(&jno, &jtitle, &totalPrice)
+			row["design_job_number"], row["design_job_title"] = jno, jtitle
+			_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount_paid), 0) FROM app.invoices WHERE tenant_id = $1 AND design_job_id = $2 AND status <> 'void'`, p.TenantID, *jobID).Scan(&totalPaid)
+			var dep decimal.Decimal
+			_ = tx.QueryRow(ctx, `
+				SELECT COALESCE(SUM(pr.amount - COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id), 0)), 0)
+				FROM app.payments_received pr WHERE pr.tenant_id = $1 AND pr.status = 'posted' AND pr.notes LIKE $2`, p.TenantID, "%[design_job:"+jobID.String()+"]%").Scan(&dep)
+			totalPaid = totalPaid.Add(dep)
+		} else if cid, ok := row["client_id"].(uuid.UUID); ok && cid != uuid.Nil {
+			_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(total), 0) FROM app.invoices WHERE tenant_id = $1 AND customer_id = $2 AND status IN ('issued','partially_paid','paid')`, p.TenantID, cid).Scan(&totalPrice)
+			_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(amount), 0) FROM app.payments_received WHERE tenant_id = $1 AND customer_id = $2 AND status = 'posted'`, p.TenantID, cid).Scan(&totalPaid)
 		}
 		balance := totalPrice.Sub(totalPaid)
 		if balance.IsNegative() {
 			balance = money.Zero
 		}
+		purpose := "Installment payment"
 		if num(row, "deposit").IsPositive() && num(row, "applied").IsZero() {
 			purpose = "Deposit"
 		} else if balance.IsZero() && totalPrice.IsPositive() {
 			purpose = "Final payment"
-		} else {
-			purpose = "Installment payment"
-		}
-		allocs, err := rows(ctx, tx, `
-			SELECT a.invoice_id, i.number AS invoice_number, a.amount
-			FROM svc_payment_allocations a JOIN svc_invoices i ON i.id = a.invoice_id
-			WHERE a.payment_id=$1 ORDER BY i.number`, id)
-		if err != nil {
-			return err
 		}
 		row["business"] = map[string]any{"name": bName, "phone": bPhone, "address": bAddr, "tax_number": bTin}
 		row["purpose"] = purpose
@@ -1076,6 +1239,19 @@ func (s *Service) PaymentReceipt(ctx context.Context, p *auth.Principal, id uuid
 		return nil
 	})
 	return out, err
+}
+
+func extractTagUUID(s, prefix string) (uuid.UUID, error) {
+	i := strings.Index(s, prefix)
+	if i < 0 {
+		return uuid.Nil, fmt.Errorf("missing tag")
+	}
+	rest := s[i+len(prefix):]
+	j := strings.Index(rest, "]")
+	if j < 0 {
+		return uuid.Nil, fmt.Errorf("unclosed tag")
+	}
+	return uuid.Parse(rest[:j])
 }
 
 func serviceReceiptPDF(m map[string]any) []byte {
@@ -1134,65 +1310,27 @@ func serviceReceiptPDF(m map[string]any) []byte {
 	return d.Bytes()
 }
 
-// VoidPayment reverses a client payment, its deposit applications and its invoice allocations.
+// VoidPayment reverses a client payment; database triggers reverse financial_transactions and invoice allocations.
 func (s *Service) VoidPayment(ctx context.Context, p *auth.Principal, id uuid.UUID, reason string) (map[string]any, error) {
 	reason = clean(reason)
 	if reason == "" {
 		return nil, httpx.BadRequest("invalid_body", "A reason is required")
 	}
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		var status, number string
-		var account uuid.UUID
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		var status string
 		var amount decimal.Decimal
-		var date string
-		if err := tx.QueryRow(ctx, `
-			SELECT sp.status, pa.number, pa.money_account_id, pa.amount, pa.payment_date::text FROM svc_payments sp JOIN payments pa ON pa.id = sp.id WHERE sp.id=$1 FOR UPDATE OF sp`, id).
-			Scan(&status, &number, &account, &amount, &date); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT status::text, amount FROM app.payments_received WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&status, &amount); err != nil {
 			return httpx.NotFound("not_found", "Payment not found")
 		}
 		if status != "posted" {
 			return httpx.Conflict("invalid_status", "This payment is already voided")
 		}
-		if err := s.Ledger.EnsureOpen(ctx, tx, date); err != nil {
+		if _, err := tx.Exec(ctx, `
+			UPDATE app.payments_received SET status = 'voided', voided_by = $3, voided_at = now(), void_reason = $4
+			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, p.MembershipID, reason); err != nil {
 			return err
 		}
-		if err := s.Ledger.EnsureFunds(ctx, tx, account, amount); err != nil {
-			return err
-		}
-		today, err := s.bizDate(ctx, tx)
-		if err != nil {
-			return err
-		}
-		user := p.UserID
-		if _, err := s.Ledger.ReverseSource(ctx, tx, p.BusinessID, id, today, "Void of payment "+number+": "+reason, &user); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE svc_payments SET status='voided' WHERE id=$1`, id); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `UPDATE payments SET status='voided', voided_by=$2, voided_at=now(), void_reason=$3 WHERE id=$1`, id, p.UserID, reason); err != nil {
-			return err
-		}
-		r, err := tx.Query(ctx, `SELECT DISTINCT invoice_id FROM svc_payment_allocations WHERE payment_id=$1`, id)
-		if err != nil {
-			return err
-		}
-		var inv []uuid.UUID
-		for r.Next() {
-			var i uuid.UUID
-			if err := r.Scan(&i); err != nil {
-				r.Close()
-				return err
-			}
-			inv = append(inv, i)
-		}
-		r.Close()
-		for _, i := range inv {
-			if err := recalcInvoice(ctx, tx, i); err != nil {
-				return err
-			}
-		}
-		return s.Audit.Record(ctx, tx, p, "service_payment.voided", "payment", id, map[string]any{"status": "posted"}, map[string]any{"status": "voided", "reason": reason, "amount": amount})
+		return s.Audit.Record(ctx, tx, p, "service_payment.voided", "payment_received", id, map[string]any{"status": "posted"}, map[string]any{"status": "voided", "reason": reason, "amount": amount})
 	})
 	if err != nil {
 		return nil, err
@@ -1211,10 +1349,61 @@ type CostIn struct {
 	Amount         decimal.Decimal `json:"amount" validate:"dpos"`
 	Date           string          `json:"date" validate:"omitempty,date"`
 	MoneyAccountID *uuid.UUID      `json:"money_account_id"`
-	Method         string          `json:"method" validate:"omitempty,oneof=cash mobile_money bank"`
+	Method         string          `json:"method" validate:"omitempty,oneof=cash mobile_money bank bank_transfer"`
 }
 
-// AddCost records a project or job cost. With a money account it is paid now; without one it is owed to the contractor.
+const costUnionSQL = `SELECT * FROM (
+	SELECT b.id, b.bill_no AS number, 'contractor'::text AS kind, b.description::text AS description,
+	       b.amount, b.bill_date AS date,
+	       CASE WHEN b.status = 'open' OR b.status = 'partially_paid' THEN 'owed'
+	            WHEN b.status = 'void' THEN 'voided' ELSE b.status::text END AS status,
+	       b.amount_paid AS settled, b.project_id, b.design_job_id, b.contractor_id, ct.name::text AS contractor_name, b.created_at
+	FROM app.contractor_bills b
+	LEFT JOIN app.contractors ct ON ct.tenant_id = b.tenant_id AND ct.id = b.contractor_id
+	WHERE b.tenant_id = $1
+	UNION ALL
+	SELECT e.id, e.expense_no AS number, lower(replace(ec.name::text, ' ', '_')) AS kind, e.description::text AS description,
+	       e.amount, e.expense_date AS date,
+	       CASE WHEN e.status IN ('cancelled','rejected') THEN 'voided' ELSE e.status::text END AS status,
+	       CASE WHEN e.status = 'paid' THEN e.amount ELSE 0::numeric END AS settled,
+	       e.project_id, e.design_job_id, NULL::uuid AS contractor_id, NULL::text AS contractor_name, e.created_at
+	FROM app.expenses e
+	JOIN app.expense_categories ec ON ec.tenant_id = e.tenant_id AND ec.id = e.category_id
+	WHERE e.tenant_id = $1 AND (e.project_id IS NOT NULL OR e.design_job_id IS NOT NULL)
+) k`
+
+func costKindLabel(kind string) string {
+	switch kind {
+	case "government_fee":
+		return "Government fee"
+	case "materials":
+		return "Materials"
+	case "printing":
+		return "Printing"
+	case "stock_images":
+		return "Stock images"
+	case "fonts":
+		return "Fonts"
+	case "designer_time":
+		return "Designer time"
+	case "contractor":
+		return "Contractor"
+	default:
+		return "Project cost"
+	}
+}
+
+func upsertProjectCostCategory(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, kind string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := tx.QueryRow(ctx, `
+		INSERT INTO app.expense_categories (tenant_id, name, is_project_cost) VALUES ($1, $2, true)
+		ON CONFLICT (tenant_id, name) DO UPDATE SET is_project_cost = true
+		RETURNING id`, tenantID, costKindLabel(kind)).Scan(&id)
+	return id, err
+}
+
+// AddCost records a project or job cost. With a contractor it creates a contractor bill (and pays it immediately
+// if money_account_id is given). Without a contractor it submits a project expense linked to the project/job.
 func (s *Service) AddCost(ctx context.Context, p *auth.Principal, in CostIn) (int, []byte, error) {
 	if err := needBranch(p); err != nil {
 		return 0, nil, err
@@ -1226,26 +1415,20 @@ func (s *Service) AddCost(ctx context.Context, p *auth.Principal, in CostIn) (in
 		return 0, nil, httpx.BadRequest("invalid_body", "Choose the money account that paid, or a contractor who is owed")
 	}
 	return s.idemTx(ctx, p, func(ctx context.Context, tx pgx.Tx) (int, any, error) {
-		out, err := s.addCostTx(ctx, tx, p, in)
+		out, err := s.addCostTx(ctx, tx, p, in, nil)
 		return 201, out, err
 	})
 }
 
-func (s *Service) addCostTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, in CostIn) (map[string]any, error) {
+func (s *Service) addCostTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, in CostIn, printOrderID *uuid.UUID) (map[string]any, error) {
 	if in.ProjectID != nil {
-		if err := require404(ctx, tx, "svc_projects", "Project", *in.ProjectID); err != nil {
+		if err := require404(ctx, tx, "app.projects", "Project", p.TenantID, *in.ProjectID); err != nil {
 			return nil, err
 		}
 	}
 	if in.DesignJobID != nil {
-		if err := require404(ctx, tx, "design_jobs", "Design job", *in.DesignJobID); err != nil {
+		if err := require404(ctx, tx, "app.design_jobs", "Design job", p.TenantID, *in.DesignJobID); err != nil {
 			return nil, err
-		}
-	}
-	if in.ContractorID != nil {
-		var active bool
-		if err := tx.QueryRow(ctx, `SELECT is_active FROM contractors WHERE id=$1`, *in.ContractorID).Scan(&active); err != nil {
-			return nil, httpx.NotFound("not_found", "Contractor not found")
 		}
 	}
 	date := in.Date
@@ -1256,117 +1439,123 @@ func (s *Service) addCostTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, i
 		}
 	}
 	amount := money.Money(in.Amount)
-	number, err := sequence.Next(ctx, tx, *p.BranchID, "svc_cost")
+	buID, err := s.servicesBU(ctx, tx, p.TenantID)
 	if err != nil {
 		return nil, err
 	}
-	id := ids.New()
-	user := p.UserID
-	var paymentID *uuid.UUID
-	status := "owed"
-	if in.MoneyAccountID != nil {
-		status = "paid"
-		acc, err := payments.ActiveAccount(ctx, tx, *in.MoneyAccountID)
-		if err != nil {
-			return nil, err
-		}
-		if err := s.Ledger.EnsureFunds(ctx, tx, *in.MoneyAccountID, amount); err != nil {
-			return nil, err
-		}
-		method := in.Method
-		if method == "" {
-			method = payments.MethodFor(acc.Type)
-		}
-		pin := payments.Input{BusinessID: p.BusinessID, BranchID: *p.BranchID, MoneyAccountID: *in.MoneyAccountID, UserID: p.UserID,
-			Direction: "out", Kind: "expense", Method: method, Amount: amount, Date: date, Note: in.Description}
-		if in.ContractorID != nil {
-			pin.PartyType, pin.PartyID = "contractor", in.ContractorID
-		}
-		res, err := payments.Insert(ctx, tx, pin)
-		if err != nil {
-			return nil, err
-		}
-		paymentID = &res.ID
-		if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "service_cost", res.ID, "Service cost "+number, &user, []ledger.Line{
-			{Code: "5200", BranchID: p.BranchID, Debit: amount},
-			{Code: acc.Code, BranchID: p.BranchID, MoneyAccountID: in.MoneyAccountID, Credit: amount}}); err != nil {
-			return nil, err
-		}
-	} else if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "service_cost", id, "Service cost "+number, &user, []ledger.Line{
-		{Code: "5200", BranchID: p.BranchID, Debit: amount},
-		{Code: "2000", BranchID: p.BranchID, PartyType: "contractor", PartyID: in.ContractorID, Credit: amount}}); err != nil {
-		return nil, err
-	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO svc_costs (id, business_id, branch_id, number, project_id, design_job_id, contractor_id, kind, description, amount, cost_date, money_account_id, status, payment_id, created_by)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-		id, p.BusinessID, *p.BranchID, number, uuidOrNil(in.ProjectID), uuidOrNil(in.DesignJobID), uuidOrNil(in.ContractorID), in.Kind, clean(in.Description), amount, date, uuidOrNil(in.MoneyAccountID), status, uuidOrNil(paymentID), p.UserID); err != nil {
-		return nil, err
-	}
-	if err := s.Audit.Record(ctx, tx, p, "service_cost.created", "svc_cost", id, nil, map[string]any{"number": number, "amount": amount, "status": status}); err != nil {
-		return nil, err
-	}
-	return one(ctx, tx, "Cost", costSQL+` WHERE k.id=$1`, id)
-}
 
-const costSQL = `SELECT k.id, k.number, k.kind, k.description, k.amount, k.cost_date AS date, k.status, k.settled, k.project_id, k.design_job_id, k.contractor_id, ct.name AS contractor_name
-	FROM svc_costs k LEFT JOIN contractors ct ON ct.id = k.contractor_id`
+	if in.ContractorID != nil {
+		if err := require404(ctx, tx, "app.contractors", "Contractor", p.TenantID, *in.ContractorID); err != nil {
+			return nil, err
+		}
+		billNo, err := sequence.Next(ctx, tx, uuid.Nil, "contractor_bill")
+		if err != nil {
+			return nil, err
+		}
+		billID := ids.New()
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.contractor_bills (id, tenant_id, bill_no, contractor_id, business_unit_id, project_id, design_job_id, print_order_id, description, amount, bill_date)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::date)`,
+			billID, p.TenantID, billNo, *in.ContractorID, buID, uuidOrNil(in.ProjectID), uuidOrNil(in.DesignJobID), uuidOrNil(printOrderID), clean(in.Description), amount, date); err != nil {
+			return nil, err
+		}
+		status := "owed"
+		if in.MoneyAccountID != nil {
+			status = "paid"
+			if _, err := payments.Pay(ctx, tx, payments.PayInput{
+				TenantID: p.TenantID, LocationID: *p.BranchID, AccountID: *in.MoneyAccountID,
+				ContractorID: in.ContractorID, Method: payments.Method(in.Method), Amount: amount,
+				BusinessDate: date, Notes: clean(in.Description),
+				Allocations: []payments.Alloc{{BillID: &billID, Amount: amount}},
+			}); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.Audit.Record(ctx, tx, p, "service_cost.created", "contractor_bill", billID, nil, map[string]any{"number": billNo, "amount": amount, "status": status}); err != nil {
+			return nil, err
+		}
+		return one(ctx, tx, "Cost", costUnionSQL+` WHERE k.id = $2`, p.TenantID, billID)
+	}
+
+	// Non-contractor cost: validate account and submit a project expense in app.expenses.
+	if _, err := payments.ActiveFin(ctx, tx, *in.MoneyAccountID); err != nil {
+		return nil, err
+	}
+	catID, err := upsertProjectCostCategory(ctx, tx, p.TenantID, in.Kind)
+	if err != nil {
+		return nil, err
+	}
+	expNo, err := sequence.Next(ctx, tx, uuid.Nil, "expense")
+	if err != nil {
+		return nil, err
+	}
+	expID := ids.New()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO app.expenses (id, tenant_id, expense_no, category_id, description, amount, expense_date, business_unit_id, location_id, project_id, design_job_id, account_id, status)
+		VALUES ($1,$2,$3,$4,$5,$6,$7::date,$8,$9,$10,$11,$12,'submitted')`,
+		expID, p.TenantID, expNo, catID, clean(in.Description), amount, date, buID, *p.BranchID, uuidOrNil(in.ProjectID), uuidOrNil(in.DesignJobID), *in.MoneyAccountID); err != nil {
+		return nil, err
+	}
+	if err := s.Audit.Record(ctx, tx, p, "service_cost.created", "expense", expID, nil, map[string]any{"number": expNo, "amount": amount, "status": "submitted"}); err != nil {
+		return nil, err
+	}
+	return one(ctx, tx, "Cost", costUnionSQL+` WHERE k.id = $2`, p.TenantID, expID)
+}
 
 func (s *Service) ListCosts(ctx context.Context, p *auth.Principal, projectID, jobID, contractorID *uuid.UUID, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	total := 0
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		q := sqlq.New(p.TenantID)
 		q.If(projectID != nil, "k.project_id = ?", projectID)
 		q.If(jobID != nil, "k.design_job_id = ?", jobID)
 		q.If(contractorID != nil, "k.contractor_id = ?", contractorID)
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM svc_costs k`+q.Where(), q.Args...).Scan(&total); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM (`+costUnionSQL+`) u`+strings.ReplaceAll(q.Where(), "k.", "u."), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		var err error
-		out, err = rows(ctx, tx, costSQL+q.Where()+` ORDER BY k.cost_date DESC, k.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
+		out, err = rows(ctx, tx, costUnionSQL+q.Where()+` ORDER BY k.date DESC, k.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
 		return err
 	})
 	return out, total, err
 }
 
 func (s *Service) voidCostTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID, reason string) error {
-	var status, number, date string
-	var settled decimal.Decimal
-	var payment *uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT status, number, settled, payment_id, cost_date::text FROM svc_costs WHERE id=$1 FOR UPDATE`, id).Scan(&status, &number, &settled, &payment, &date); err != nil {
-		return httpx.NotFound("not_found", "Cost not found")
+	var status string
+	var paid decimal.Decimal
+	err := tx.QueryRow(ctx, `SELECT status::text, amount_paid FROM app.contractor_bills WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&status, &paid)
+	if err == nil {
+		if status == "void" {
+			return httpx.Conflict("invalid_status", "This cost is already voided")
+		}
+		if paid.IsPositive() {
+			return httpx.Conflict("has_payments", "This cost has been paid to the contractor. Void those payments first")
+		}
+		if _, err := tx.Exec(ctx, `UPDATE app.contractor_bills SET status = 'void' WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+			return err
+		}
+		return s.Audit.Record(ctx, tx, p, "service_cost.voided", "contractor_bill", id, map[string]any{"status": status}, map[string]any{"status": "void", "reason": reason})
 	}
-	if status == "voided" {
-		return httpx.Conflict("invalid_status", "This cost is already voided")
-	}
-	if settled.IsPositive() {
-		return httpx.Conflict("has_payments", "This cost has been paid to the contractor. Void those payments first")
-	}
-	if err := s.Ledger.EnsureOpen(ctx, tx, date); err != nil {
+	if !isNoRows(err) {
 		return err
 	}
-	today, err := s.bizDate(ctx, tx)
+	err = tx.QueryRow(ctx, `SELECT status::text FROM app.expenses WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&status)
+	if isNoRows(err) {
+		return httpx.NotFound("not_found", "Cost not found")
+	}
 	if err != nil {
 		return err
 	}
-	src := id
-	if payment != nil {
-		src = *payment
+	switch status {
+	case "cancelled", "rejected":
+		return httpx.Conflict("invalid_status", "This cost is already voided")
+	case "paid":
+		return httpx.Conflict("has_payments", "A paid expense cannot be voided directly; create a transaction correction")
 	}
-	user := p.UserID
-	if _, err := s.Ledger.ReverseSource(ctx, tx, p.BusinessID, src, today, "Void of cost "+number+": "+reason, &user); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE app.expenses SET status = 'cancelled' WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
 		return err
 	}
-	if payment != nil {
-		if _, err := tx.Exec(ctx, `UPDATE payments SET status='voided', voided_by=$2, voided_at=now(), void_reason=$3 WHERE id=$1`, *payment, p.UserID, reason); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.Exec(ctx, `UPDATE svc_costs SET status='voided' WHERE id=$1`, id); err != nil {
-		return err
-	}
-	return s.Audit.Record(ctx, tx, p, "service_cost.voided", "svc_cost", id, map[string]any{"status": status}, map[string]any{"status": "voided", "reason": reason})
+	return s.Audit.Record(ctx, tx, p, "service_cost.voided", "expense", id, map[string]any{"status": status}, map[string]any{"status": "cancelled", "reason": reason})
 }
 
 func (s *Service) VoidCost(ctx context.Context, p *auth.Principal, id uuid.UUID, reason string) (map[string]any, error) {
@@ -1375,16 +1564,18 @@ func (s *Service) VoidCost(ctx context.Context, p *auth.Principal, id uuid.UUID,
 		return nil, httpx.BadRequest("invalid_body", "A reason is required")
 	}
 	var out map[string]any
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		if err := s.voidCostTx(ctx, tx, p, id, reason); err != nil {
 			return err
 		}
 		var err error
-		out, err = one(ctx, tx, "Cost", costSQL+` WHERE k.id=$1`, id)
+		out, err = one(ctx, tx, "Cost", costUnionSQL+` WHERE k.id = $2`, p.TenantID, id)
 		return err
 	})
 	return out, err
 }
+
+// ---------- contractors ----------
 
 type ContractorIn struct {
 	Name    string `json:"name" validate:"max=200"`
@@ -1393,25 +1584,28 @@ type ContractorIn struct {
 	Email   string `json:"email" validate:"omitempty,email"`
 	Address string `json:"address" validate:"max=500"`
 	Notes   string `json:"notes" validate:"max=2000"`
+	TIN     string `json:"tin" validate:"max=20"`
 }
 
-const contractorCols = `c.id, c.name, c.trade, c.phone, c.email::text AS email, c.address, c.notes, c.is_active, c.created_at,
-	COALESCE((SELECT SUM(k.amount - k.settled) FROM svc_costs k WHERE k.contractor_id = c.id AND k.status = 'owed'), 0) AS owed`
+const contractorCols = `c.id, c.name::text AS name, c.trade::text AS trade, c.phone::text AS phone, c.email::text AS email,
+	c.tin, NULL::text AS address, NULL::text AS notes, (c.status = 'active') AS is_active, c.created_at,
+	COALESCE((SELECT SUM(b.balance_due) FROM app.contractor_bills b WHERE b.tenant_id = c.tenant_id AND b.contractor_id = c.id AND b.status IN ('open','partially_paid')), 0) AS owed`
 
 func (s *Service) ListContractors(ctx context.Context, p *auth.Principal, q0 string, all bool, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	total := 0
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New()
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		q := sqlq.New(p.TenantID)
+		q.Add("c.tenant_id = $1")
 		if t := clean(q0); t != "" {
-			q.Add("(c.name ILIKE '%' || ? || '%' OR c.trade ILIKE '%' || ? || '%' OR c.phone ILIKE '%' || ? || '%')", t, t, t)
+			q.Add("(c.name ILIKE '%' || ? || '%' OR c.trade ILIKE '%' || ? || '%' OR c.phone::text ILIKE '%' || ? || '%')", t, t, t)
 		}
-		q.If(!all, "c.is_active")
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM contractors c`+q.Where(), q.Args...).Scan(&total); err != nil {
+		q.If(!all, "c.status = 'active'")
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.contractors c`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		var err error
-		out, err = rows(ctx, tx, `SELECT `+contractorCols+` FROM contractors c`+q.Where()+` ORDER BY c.name`+q.Page(page.PerPage, page.Offset), q.Args...)
+		out, err = rows(ctx, tx, `SELECT `+contractorCols+` FROM app.contractors c`+q.Where()+` ORDER BY c.name`+q.Page(page.PerPage, page.Offset), q.Args...)
 		return err
 	})
 	return out, total, err
@@ -1421,10 +1615,20 @@ func (s *Service) CreateContractor(ctx context.Context, p *auth.Principal, in Co
 	if clean(in.Name) == "" {
 		return nil, httpx.BadRequest("invalid_body", "Contractor name is required")
 	}
+	ph, err := phone.Optional(in.Phone)
+	if err != nil {
+		return nil, err
+	}
+	trade := clean(in.Trade)
+	if trade == "" {
+		trade = "General"
+	}
 	id := ids.New()
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `INSERT INTO contractors (id, business_id, name, trade, phone, email, address, notes) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-			id, p.BusinessID, clean(in.Name), nz(in.Trade), nz(in.Phone), nz(in.Email), nz(in.Address), nz(in.Notes)); err != nil {
+	err = s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.contractors (id, tenant_id, name, trade, phone, email, tin)
+			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			id, p.TenantID, clean(in.Name), trade, nz(ph), nz(in.Email), nz(in.TIN)); err != nil {
 			if isDup(err) {
 				return httpx.Conflict("duplicate", "A contractor with that name already exists")
 			}
@@ -1440,20 +1644,41 @@ func (s *Service) CreateContractor(ctx context.Context, p *auth.Principal, in Co
 
 func (s *Service) GetContractor(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		out, err = one(ctx, tx, "Contractor", `SELECT `+contractorCols+` FROM contractors c WHERE c.id=$1`, id)
+		out, err = one(ctx, tx, "Contractor", `SELECT `+contractorCols+` FROM app.contractors c WHERE c.tenant_id = $1 AND c.id = $2`, p.TenantID, id)
 		return err
 	})
 	return out, err
 }
 
 func (s *Service) UpdateContractor(ctx context.Context, p *auth.Principal, id uuid.UUID, in ContractorIn, active *bool) (map[string]any, error) {
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
+	var ph string
+	if clean(in.Phone) != "" {
+		var err error
+		if ph, err = phone.Optional(in.Phone); err != nil {
+			return nil, err
+		}
+	}
+	var st any
+	if active != nil {
+		if *active {
+			st = "active"
+		} else {
+			st = "inactive"
+		}
+	}
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
-			UPDATE contractors SET name=COALESCE(NULLIF($2,''), name), trade=COALESCE(NULLIF($3,''), trade), phone=COALESCE(NULLIF($4,''), phone),
-			  email=COALESCE(NULLIF($5,'')::citext, email), address=COALESCE(NULLIF($6,''), address), notes=COALESCE(NULLIF($7,''), notes), is_active=COALESCE($8, is_active)
-			WHERE id=$1`, id, clean(in.Name), clean(in.Trade), clean(in.Phone), clean(in.Email), clean(in.Address), clean(in.Notes), active)
+			UPDATE app.contractors SET
+			  name = COALESCE(NULLIF($3,''), name),
+			  trade = COALESCE(NULLIF($4,''), trade),
+			  phone = COALESCE($5, phone),
+			  email = COALESCE(NULLIF($6,'')::citext, email),
+			  tin = COALESCE(NULLIF($7,''), tin),
+			  status = COALESCE($8::app.record_status, status)
+			WHERE tenant_id = $1 AND id = $2`,
+			p.TenantID, id, clean(in.Name), clean(in.Trade), nz(ph), clean(in.Email), clean(in.TIN), st)
 		if isDup(err) {
 			return httpx.Conflict("duplicate", "A contractor with that name already exists")
 		}
@@ -1471,33 +1696,32 @@ func (s *Service) UpdateContractor(ctx context.Context, p *auth.Principal, id uu
 	return s.GetContractor(ctx, p, id)
 }
 
-// ContractorStatement lists work done (we owe) and payments made.
+// ContractorStatement lists bills (work done) and payments made.
 func (s *Service) ContractorStatement(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
-	err := s.tx(ctx, p.BusinessID, func(ctx context.Context, tx pgx.Tx) error {
-		c, err := one(ctx, tx, "Contractor", `SELECT `+contractorCols+` FROM contractors c WHERE c.id=$1`, id)
+	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		c, err := one(ctx, tx, "Contractor", `SELECT `+contractorCols+` FROM app.contractors c WHERE c.tenant_id = $1 AND c.id = $2`, p.TenantID, id)
 		if err != nil {
 			return err
 		}
 		lines, err := rows(ctx, tx, `
 			SELECT * FROM (
-			  SELECT k.cost_date AS date, k.number, k.description, k.amount AS owed_amount, CASE WHEN k.status = 'paid' THEN k.amount ELSE 0::numeric END AS paid_amount, k.created_at
-			  FROM svc_costs k WHERE k.contractor_id=$1 AND k.status IN ('owed','paid')
+			  SELECT b.bill_date AS date, b.bill_no AS number, b.description::text AS description, b.amount AS owed_amount, 0::numeric AS paid_amount, b.created_at
+			  FROM app.contractor_bills b WHERE b.tenant_id = $1 AND b.contractor_id = $2 AND b.status <> 'void'
 			  UNION ALL
-			  SELECT pa.payment_date, pa.number, 'Payment to contractor', 0::numeric, cp.amount, cp.created_at
-			  FROM contractor_payments cp JOIN payments pa ON pa.id = cp.id WHERE cp.contractor_id=$1 AND cp.status='posted'
-			) x ORDER BY date, created_at`, id)
+			  SELECT pm.business_date AS date, pm.payment_no AS number, 'Payment to contractor' AS description, 0::numeric AS owed_amount, pm.amount AS paid_amount, pm.created_at
+			  FROM app.payments_made pm WHERE pm.tenant_id = $1 AND pm.contractor_id = $2 AND pm.status = 'posted'
+			) x ORDER BY date, created_at`, p.TenantID, id)
 		if err != nil {
 			return err
 		}
 		bal := money.Zero
 		for _, ln := range lines {
-			// A cost paid on the spot has equal owed and paid amounts, so it never leaves a balance.
 			bal = bal.Add(num(ln, "owed_amount")).Sub(num(ln, "paid_amount"))
 			ln["balance"] = bal
 			delete(ln, "created_at")
 		}
-		out = map[string]any{"contractor": c, "lines": lines, "owed": c["owed"], "business_name": s.businessName(ctx, tx, p)}
+		out = map[string]any{"contractor": c, "lines": lines, "owed": c["owed"], "business_name": s.businessName(ctx, tx, p.TenantID)}
 		return nil
 	})
 	return out, err
@@ -1537,47 +1761,43 @@ func contractorStatementPDF(m map[string]any) []byte {
 
 type ContractorPayIn struct {
 	Amount         decimal.Decimal `json:"amount" validate:"dpos"`
-	Method         string          `json:"method" validate:"required,oneof=cash mobile_money bank"`
+	Method         string          `json:"method" validate:"required,oneof=cash mobile_money bank bank_transfer card cheque"`
 	MoneyAccountID uuid.UUID       `json:"money_account_id" validate:"required"`
-	Reference      string          `json:"reference" validate:"max=120"`
+	Reference      string          `json:"reference" validate:"max=60"`
 	Date           string          `json:"date" validate:"omitempty,date"`
 }
 
-// PayContractor settles owed costs, oldest first, from a money account.
+// PayContractor settles open contractor bills, oldest first, from a money account.
 func (s *Service) PayContractor(ctx context.Context, p *auth.Principal, id uuid.UUID, in ContractorPayIn) (int, []byte, error) {
 	if err := needBranch(p); err != nil {
 		return 0, nil, err
 	}
 	return s.idemTx(ctx, p, func(ctx context.Context, tx pgx.Tx) (int, any, error) {
-		if err := require404(ctx, tx, "contractors", "Contractor", id); err != nil {
-			return 0, nil, err
-		}
-		acc, err := payments.ActiveAccount(ctx, tx, in.MoneyAccountID)
-		if err != nil {
+		if err := require404(ctx, tx, "app.contractors", "Contractor", p.TenantID, id); err != nil {
 			return 0, nil, err
 		}
 		amount := money.Money(in.Amount)
-		r, err := tx.Query(ctx, `SELECT id, amount - settled FROM svc_costs WHERE contractor_id=$1 AND status='owed' AND amount > settled ORDER BY cost_date, created_at FOR UPDATE`, id)
+		r, err := tx.Query(ctx, `
+			SELECT id, balance_due FROM app.contractor_bills
+			WHERE tenant_id = $1 AND contractor_id = $2 AND status IN ('open','partially_paid') AND balance_due > 0
+			ORDER BY bill_date, created_at FOR UPDATE`, p.TenantID, id)
 		if err != nil {
 			return 0, nil, err
 		}
-		type owed struct {
-			id  uuid.UUID
-			use decimal.Decimal
-		}
-		var list []owed
+		var allocs []payments.Alloc
 		left := amount
 		for r.Next() {
-			var o owed
-			var out decimal.Decimal
-			if err := r.Scan(&o.id, &out); err != nil {
+			var bid uuid.UUID
+			var bal decimal.Decimal
+			if err := r.Scan(&bid, &bal); err != nil {
 				r.Close()
 				return 0, nil, err
 			}
 			if left.IsPositive() {
-				o.use = decimal.Min(left, out)
-				left = left.Sub(o.use)
-				list = append(list, o)
+				use := decimal.Min(left, bal)
+				left = left.Sub(use)
+				idCopy := bid
+				allocs = append(allocs, payments.Alloc{BillID: &idCopy, Amount: use})
 			}
 		}
 		r.Close()
@@ -1593,29 +1813,15 @@ func (s *Service) PayContractor(ctx context.Context, p *auth.Principal, id uuid.
 				return 0, nil, err
 			}
 		}
-		if err := s.Ledger.EnsureFunds(ctx, tx, in.MoneyAccountID, amount); err != nil {
-			return 0, nil, err
-		}
-		res, err := payments.Insert(ctx, tx, payments.Input{BusinessID: p.BusinessID, BranchID: *p.BranchID, MoneyAccountID: in.MoneyAccountID, UserID: p.UserID,
-			Direction: "out", Kind: "contractor_payment", Method: in.Method, PartyType: "contractor", PartyID: &id, Amount: amount, Reference: in.Reference, Date: date})
+		res, err := payments.Pay(ctx, tx, payments.PayInput{
+			TenantID: p.TenantID, LocationID: *p.BranchID, AccountID: in.MoneyAccountID,
+			ContractorID: &id, Method: payments.Method(in.Method), Amount: amount,
+			Reference: clean(in.Reference), BusinessDate: date, Allocations: allocs,
+		})
 		if err != nil {
 			return 0, nil, err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO contractor_payments (id, business_id, contractor_id, amount) VALUES ($1,$2,$3,$4)`, res.ID, p.BusinessID, id, amount); err != nil {
-			return 0, nil, err
-		}
-		for _, o := range list {
-			if _, err := tx.Exec(ctx, `UPDATE svc_costs SET settled = settled + $2 WHERE id=$1`, o.id, o.use); err != nil {
-				return 0, nil, err
-			}
-		}
-		user := p.UserID
-		if _, err := s.Ledger.Post(ctx, tx, p.BusinessID, date, "contractor_payment", res.ID, "Contractor payment "+res.Number, &user, []ledger.Line{
-			{Code: "2000", BranchID: p.BranchID, PartyType: "contractor", PartyID: &id, Debit: amount},
-			{Code: acc.Code, BranchID: p.BranchID, MoneyAccountID: &in.MoneyAccountID, Credit: amount}}); err != nil {
-			return 0, nil, err
-		}
-		if err := s.Audit.Record(ctx, tx, p, "contractor.paid", "payment", res.ID, nil, map[string]any{"amount": amount, "contractor_id": id}); err != nil {
+		if err := s.Audit.Record(ctx, tx, p, "contractor.paid", "payment_made", res.ID, nil, map[string]any{"contractor_id": id, "amount": amount}); err != nil {
 			return 0, nil, err
 		}
 		return 201, map[string]any{"id": res.ID, "number": res.Number, "amount": amount, "date": date}, nil
