@@ -13,7 +13,8 @@ import (
 )
 
 func TestListUsersIncludesBranches(t *testing.T) {
-	t.Setenv("DATABASE_URL", "postgres://bms_app:bms_app_dev@127.0.0.1:5433/bms?sslmode=disable")
+	t.Setenv("DATABASE_URL", "postgres://bms_api:bms_api_dev@127.0.0.1:5433/bms?sslmode=disable")
+	t.Setenv("JOBS_DATABASE_URL", "postgres://bms_jobs:bms_jobs_dev@127.0.0.1:5433/bms?sslmode=disable")
 	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
 	t.Setenv("ARGON_MEMORY", "8192")
 	t.Setenv("ARGON_TIME", "1")
@@ -45,14 +46,14 @@ func TestUserPermissionOverrides(t *testing.T) {
 	me0 := staff.call(t, http.MethodGet, "/api/v1/me", nil, "")
 	require.Equal(t, 200, me0.code, me0.raw)
 	perms0 := me0.data["permissions"].(map[string]any)
-	_, hasAudit0 := perms0["audit.view"]
+	_, hasAudit0 := perms0["security.audit.view"]
 	require.False(t, hasAudit0)
 
-	// Grant audit.view and revoke sales.create for this specific user.
+	// Grant security.audit.view and revoke shop.sale.create for this specific user.
 	put := e.owner.call(t, http.MethodPut, "/api/v1/users/"+staffID+"/permissions", map[string]any{
 		"overrides": []map[string]any{
-			{"permission_key": "audit.view", "allowed": true, "scope": "all"},
-			{"permission_key": "sales.create", "allowed": false, "scope": "all"},
+			{"permission_key": "security.audit.view", "allowed": true, "scope": "all"},
+			{"permission_key": "shop.sale.create", "allowed": false, "scope": "all"},
 		},
 	}, "")
 	require.Equal(t, 200, put.code, put.raw)
@@ -60,8 +61,8 @@ func TestUserPermissionOverrides(t *testing.T) {
 	me1 := staff.call(t, http.MethodGet, "/api/v1/me", nil, "")
 	require.Equal(t, 200, me1.code, me1.raw)
 	perms1 := me1.data["permissions"].(map[string]any)
-	_, hasAudit1 := perms1["audit.view"]
-	_, hasSales1 := perms1["sales.create"]
+	_, hasAudit1 := perms1["security.audit.view"]
+	_, hasSales1 := perms1["shop.sale.create"]
 	require.True(t, hasAudit1, "override grant should apply")
 	require.False(t, hasSales1, "override revoke should apply")
 

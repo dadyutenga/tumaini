@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"bms/internal/platform/db"
 	"bms/internal/platform/setting"
 )
 
@@ -105,12 +106,21 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, tenantID, membership uu
 	if len(body) > 1000 {
 		body = body[:1000]
 	}
-	_, err := tx.Exec(ctx, `
+	sub, err := tx.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := sub.Exec(ctx, `
 		INSERT INTO app.notifications (tenant_id, recipient_id, notification_type, title, body, link_path, dedupe_key)
-		VALUES ($1, $2, $3::app.notification_type, left($4, 200), NULLIF($5, ''), NULLIF($6, ''), $7)
-		ON CONFLICT (tenant_id, recipient_id, dedupe_key) DO NOTHING`,
-		tenantID, membership, typ, m.Title, body, link, dedupe)
-	return err
+		VALUES ($1, $2, $3::app.notification_type, left($4, 200), NULLIF($5, ''), NULLIF($6, ''), $7)`,
+		tenantID, membership, typ, m.Title, body, link, dedupe); err != nil {
+		_ = sub.Rollback(ctx)
+		if db.IsUnique(err) {
+			return nil
+		}
+		return err
+	}
+	return sub.Commit(ctx)
 }
 
 // DaysBefore is how many days ahead a reminder of this type fires: the tenant's setting if it set

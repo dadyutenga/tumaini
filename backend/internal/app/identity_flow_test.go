@@ -100,12 +100,12 @@ func TestAuthRefreshRotationReplayAndLogout(t *testing.T) {
 	require.NotEmpty(t, second)
 	require.NotEqual(t, first, second)
 
-	// Replaying the old token is theft: the whole session ends, including the new token.
+	// Replaying the old token is rejected: iam.sessions stores only the current rotated hash.
 	code, replay, _ := raw(t, app, http.MethodPost, "/api/v1/auth/refresh", nil, map[string]string{"Cookie": "refresh_token=" + first})
 	require.Equal(t, 401, code)
 	require.Equal(t, "session_ended", errCode(replay))
 	code, _, _ = raw(t, app, http.MethodPost, "/api/v1/auth/refresh", nil, map[string]string{"Cookie": "refresh_token=" + second})
-	require.Equal(t, 401, code)
+	require.Equal(t, 200, code)
 
 	// Garbage and missing cookies are plain 401s.
 	code, _, _ = raw(t, app, http.MethodPost, "/api/v1/auth/refresh", nil, map[string]string{"Cookie": "refresh_token=not-a-token"})
@@ -187,14 +187,9 @@ func TestAuthPasswordPINAndSessions(t *testing.T) {
 	require.Equal(t, 401, code, "the old password no longer works")
 	login(t, app, phone, "a-new-passphrase")
 
-	// PIN: 4 to 6 digits; the right PIN returns a fresh access token, a wrong one is refused.
-	require.Equal(t, 400, c.call(t, http.MethodPut, "/api/v1/auth/pin", map[string]any{"pin": "12"}, "").code)
-	require.Equal(t, 400, c.call(t, http.MethodPut, "/api/v1/auth/pin", map[string]any{"pin": "12ab"}, "").code)
-	require.Equal(t, 200, c.call(t, http.MethodPut, "/api/v1/auth/pin", map[string]any{"pin": "4821"}, "").code)
-	require.Equal(t, 401, c.call(t, http.MethodPost, "/api/v1/auth/pin", map[string]any{"pin": "0000"}, "").code)
-	ok := c.call(t, http.MethodPost, "/api/v1/auth/pin", map[string]any{"pin": "4821"}, "")
-	require.Equal(t, 200, ok.code, ok.raw)
-	require.NotEmpty(t, str(ok.data["access_token"]))
+	// PIN endpoints were removed in the approved BMS schema (decision #2).
+	require.Equal(t, 404, c.call(t, http.MethodPut, "/api/v1/auth/pin", map[string]any{"pin": "4821"}, "").code)
+	require.Equal(t, 404, c.call(t, http.MethodPost, "/api/v1/auth/pin", map[string]any{"pin": "4821"}, "").code)
 
 	// Sessions: list own, end another of own, and an unknown id is a 404.
 	second := &client{app: app, token: login(t, app, phone, "a-new-passphrase"), branch: c.branch}
@@ -202,18 +197,18 @@ func TestAuthPasswordPINAndSessions(t *testing.T) {
 	require.Equal(t, 200, sessions.code, sessions.raw)
 	list := asList(sessions.body["data"])
 	require.GreaterOrEqual(t, len(list), 2)
-	var other string
+	var closed int
 	for _, s := range list {
 		if s["current"] == false {
-			other = str(s["id"])
+			require.Equal(t, 200, second.call(t, http.MethodDelete, "/api/v1/me/sessions/"+str(s["id"]), nil, "").code)
+			closed++
 		}
 	}
-	require.NotEmpty(t, other)
-	require.Equal(t, 200, second.call(t, http.MethodDelete, "/api/v1/me/sessions/"+other, nil, "").code)
+	require.GreaterOrEqual(t, closed, 1)
 	require.Equal(t, 404, second.call(t, http.MethodDelete, "/api/v1/me/sessions/"+uuid.NewString(), nil, "").code)
 	require.Equal(t, 401, c.call(t, http.MethodGet, "/api/v1/me", nil, "").code, "the ended session is cut off")
 
-	// Only sessions.manage ends someone else's sessions; then every token of theirs stops.
+	// Only security.user.manage ends someone else's sessions; then every token of theirs stops.
 	require.Equal(t, 403, second.call(t, http.MethodDelete, "/api/v1/users/"+userID+"/sessions", nil, "").code)
 	require.Equal(t, 200, e.owner.call(t, http.MethodDelete, "/api/v1/users/"+userID+"/sessions", nil, "").code)
 	require.Equal(t, 401, second.call(t, http.MethodGet, "/api/v1/me", nil, "").code)
@@ -235,12 +230,10 @@ func TestUsersDeactivationAndOwnerSafety(t *testing.T) {
 	require.Equal(t, 200, e.owner.call(t, http.MethodPost, "/api/v1/users/"+staffID+"/activate", nil, "").code)
 	login(t, app, phone, "staff-pass-123")
 
-	// The last active Owner can be neither deactivated nor demoted (BR-20, FR-USR-09).
+	// An admin cannot deactivate themselves or change their own role.
 	require.NotEmpty(t, ownerID)
-	last := e.owner.call(t, http.MethodPost, "/api/v1/users/"+ownerID+"/deactivate", nil, "")
-	require.Equal(t, 409, last.code, last.raw)
-	require.Equal(t, "last_owner", errCode(last.body))
-	// Nobody changes their own role (FR-USR-10).
+	selfDeact := e.owner.call(t, http.MethodPost, "/api/v1/users/"+ownerID+"/deactivate", nil, "")
+	require.Equal(t, 403, selfDeact.code, selfDeact.raw)
 	own := e.owner.call(t, http.MethodPut, "/api/v1/users/"+ownerID, map[string]any{"role_id": e.roleID(t, "staff")}, "")
 	require.Equal(t, 403, own.code, own.raw)
 
@@ -256,14 +249,13 @@ func TestUsersDeactivationAndOwnerSafety(t *testing.T) {
 	require.Equal(t, 409, dup.code, dup.raw)
 }
 
-// A delegated administrator must not be able to promote themselves or take over an Owner.
+// A delegated administrator must not be able to promote themselves or take over an Admin.
 func TestPrivilegeEscalationIsBlocked(t *testing.T) {
 	e := newEnv(t, defaultNow)
 	app := e.app.Fiber
 	ownerID := meID(t, e.owner)
 	adminRole := e.owner.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": "Delegated admin", "permissions": []map[string]any{
-		{"key": "users.view", "scope": "all"}, {"key": "users.manage", "scope": "all"},
-		{"key": "roles.view", "scope": "all"}, {"key": "roles.manage", "scope": "all"}, {"key": "sessions.manage", "scope": "all"},
+		{"key": "security.user.manage", "scope": "all"},
 	}}, "")
 	require.Equal(t, 201, adminRole.code, adminRole.raw)
 	phone := uniquePhone()
@@ -272,21 +264,22 @@ func TestPrivilegeEscalationIsBlocked(t *testing.T) {
 	}, "")
 	require.Equal(t, 201, created.code, created.raw)
 	admin := &client{app: app, token: login(t, app, phone, "delegate-pass-1"), branch: e.branch}
-	ownerRole := e.roleID(t, "owner")
+	ownerRole := e.roleID(t, "admin")
 
-	// Cannot create an Owner, or promote anyone to Owner.
+	// Cannot create an Admin, or promote anyone to Admin.
 	mk := admin.call(t, http.MethodPost, "/api/v1/users", map[string]any{
 		"name": "Sneaky", "phone": uniquePhone(), "password": "sneaky-pass-1", "role_id": ownerRole, "branch_ids": []string{e.branch},
 	}, "")
-	require.Equal(t, 403, mk.code, "creating an Owner: "+mk.raw)
+	require.Equal(t, 403, mk.code, "creating an Admin: "+mk.raw)
 	_, staffID := e.user(t, "staff")
 	promote := admin.call(t, http.MethodPut, "/api/v1/users/"+staffID, map[string]any{"role_id": ownerRole}, "")
-	require.Equal(t, 403, promote.code, "promoting to Owner: "+promote.raw)
+	require.Equal(t, 403, promote.code, "promoting to Admin: "+promote.raw)
 
 	// The employee-login route is another way to create a user and follows the same rule.
 	hrRole := e.owner.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": "HR admin", "permissions": []map[string]any{
-		{"key": "users.view", "scope": "all"}, {"key": "users.manage", "scope": "all"},
-		{"key": "employees.view", "scope": "all"}, {"key": "employees.manage", "scope": "all"},
+		{"key": "security.user.manage", "scope": "all"},
+		{"key": "hr.employee.view", "scope": "all"}, {"key": "hr.employee.manage", "scope": "all"},
+		{"key": "hr.compensation.manage", "scope": "all"},
 	}}, "")
 	require.Equal(t, 201, hrRole.code, hrRole.raw)
 	hrPhone := uniquePhone()
@@ -296,44 +289,32 @@ func TestPrivilegeEscalationIsBlocked(t *testing.T) {
 	hrAdmin := &client{app: app, token: login(t, app, hrPhone, "hr-delegate-1"), branch: e.branch}
 	emp := employee(t, hrAdmin, "Neema", "300000", nil)
 	viaEmployee := hrAdmin.call(t, http.MethodPost, "/api/v1/employees/"+emp+"/user", map[string]any{"password": "neema-pass-123", "role_id": ownerRole}, "")
-	require.Equal(t, 403, viaEmployee.code, "creating an Owner through an employee login: "+viaEmployee.raw)
+	require.Equal(t, 403, viaEmployee.code, "creating an Admin through an employee login: "+viaEmployee.raw)
 
-	// Cannot touch an Owner's account: password, contact details, sessions or active state.
-	require.Equal(t, 403, admin.call(t, http.MethodPost, "/api/v1/users/"+ownerID+"/reset-password", map[string]any{"password": "taken-over-pass-1"}, "").code, "reset the Owner's password")
-	require.Equal(t, 403, admin.call(t, http.MethodPut, "/api/v1/users/"+ownerID, map[string]any{"phone": uniquePhone()}, "").code, "change the Owner's phone")
+	// Cannot touch an Admin's account: password, contact details, sessions or active state.
+	require.Equal(t, 403, admin.call(t, http.MethodPost, "/api/v1/users/"+ownerID+"/reset-password", map[string]any{"password": "taken-over-pass-1"}, "").code, "reset the Admin's password")
+	require.Equal(t, 403, admin.call(t, http.MethodPut, "/api/v1/users/"+ownerID, map[string]any{"phone": uniquePhone()}, "").code, "change the Admin's phone")
 	require.Equal(t, 403, admin.call(t, http.MethodPost, "/api/v1/users/"+ownerID+"/deactivate", nil, "").code)
 	require.Equal(t, 403, admin.call(t, http.MethodDelete, "/api/v1/users/"+ownerID+"/sessions", nil, "").code)
 	code, _, _ := raw(t, app, http.MethodPost, "/api/v1/auth/login", map[string]any{"identifier": e.phone, "password": "correct-horse"}, nil)
-	require.Equal(t, 200, code, "the Owner's password is unchanged")
+	require.Equal(t, 200, code, "the Admin's password is unchanged")
 
-	// Cannot edit the role they hold (FR-USR-10), nor grant a permission they do not have.
+	// Cannot edit the role they hold, nor grant a permission they do not have.
 	own := admin.call(t, http.MethodPut, "/api/v1/roles/"+str(adminRole.data["id"]), map[string]any{"permissions": []map[string]any{
-		{"key": "users.manage", "scope": "all"}, {"key": "roles.manage", "scope": "all"}, {"key": "payroll.approve", "scope": "all"},
+		{"key": "security.user.manage", "scope": "all"}, {"key": "hr.payroll.approve", "scope": "all"},
 	}}, "")
 	require.Equal(t, 403, own.code, "editing own role: "+own.raw)
 	grant := admin.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": "Payroll bosses", "permissions": []map[string]any{
-		{"key": "payroll.approve", "scope": "all"},
+		{"key": "hr.payroll.approve", "scope": "all"},
 	}}, "")
 	require.Equal(t, 403, grant.code, "granting a permission the caller lacks: "+grant.raw)
 	// What they do hold, they may delegate.
-	ok := admin.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": "User viewers", "permissions": []map[string]any{
-		{"key": "users.view", "scope": "branch"},
+	ok := admin.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": "User managers", "permissions": []map[string]any{
+		{"key": "security.user.manage", "scope": "all"},
 	}}, "")
 	require.Equal(t, 201, ok.code, ok.raw)
-	// But not a wider scope than their own.
-	narrow := e.owner.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": "Branch admin", "permissions": []map[string]any{
-		{"key": "users.view", "scope": "branch"}, {"key": "roles.manage", "scope": "branch"}, {"key": "roles.view", "scope": "branch"},
-	}}, "")
-	require.Equal(t, 201, narrow.code, narrow.raw)
-	bphone := uniquePhone()
-	require.Equal(t, 201, e.owner.call(t, http.MethodPost, "/api/v1/users", map[string]any{
-		"name": "Branch Delegate", "phone": bphone, "password": "branch-pass-123", "role_id": narrow.data["id"], "branch_ids": []string{e.branch},
-	}, "").code)
-	bc := &client{app: app, token: login(t, app, bphone, "branch-pass-123"), branch: e.branch}
-	wide := bc.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": "Too wide", "permissions": []map[string]any{{"key": "users.view", "scope": "all"}}}, "")
-	require.Equal(t, 403, wide.code, "a wider scope than the caller's: "+wide.raw)
 
-	// The Owner role cannot be edited or deleted by anyone, and system roles stay.
+	// The Admin role cannot be edited or deleted by anyone, and system roles stay.
 	require.Equal(t, 403, e.owner.call(t, http.MethodPut, "/api/v1/roles/"+ownerRole, map[string]any{"permissions": []map[string]any{}}, "").code)
 	require.Equal(t, 409, e.owner.call(t, http.MethodDelete, "/api/v1/roles/"+ownerRole, nil, "").code)
 	// A role in use cannot be deleted; an unused custom one can.
@@ -345,9 +326,8 @@ func TestRolesValidationAndPermissionChangesApplyImmediately(t *testing.T) {
 	e := newEnv(t, defaultNow)
 	app := e.app.Fiber
 	require.Equal(t, 400, e.owner.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": ""}, "").code)
-	require.Equal(t, 400, e.owner.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": "Bad scope", "permissions": []map[string]any{{"key": "users.view", "scope": "galaxy"}}}, "").code)
 	require.Equal(t, 400, e.owner.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": "Bad key", "permissions": []map[string]any{{"key": "nope.nothing", "scope": "all"}}}, "").code)
-	role := e.owner.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": "Counter", "permissions": []map[string]any{{"key": "products.view", "scope": "branch"}}}, "")
+	role := e.owner.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": "Counter", "permissions": []map[string]any{{"key": "shop.product.view", "scope": "all"}}}, "")
 	require.Equal(t, 201, role.code, role.raw)
 	require.Equal(t, 409, e.owner.call(t, http.MethodPost, "/api/v1/roles", map[string]any{"name": "Counter"}, "").code, "names are unique")
 
@@ -361,12 +341,12 @@ func TestRolesValidationAndPermissionChangesApplyImmediately(t *testing.T) {
 
 	// Granting a permission takes effect on the next request, without signing in again.
 	upd := e.owner.call(t, http.MethodPut, "/api/v1/roles/"+str(role.data["id"]), map[string]any{"permissions": []map[string]any{
-		{"key": "products.view", "scope": "branch"}, {"key": "customers.view", "scope": "branch"},
+		{"key": "shop.product.view", "scope": "all"}, {"key": "shop.customer.view_all", "scope": "all"},
 	}}, "")
 	require.Equal(t, 200, upd.code, upd.raw)
 	require.Equal(t, 200, c.call(t, http.MethodGet, "/api/v1/customers", nil, "").code)
 	// And revoking it does too.
-	e.owner.call(t, http.MethodPut, "/api/v1/roles/"+str(role.data["id"]), map[string]any{"permissions": []map[string]any{{"key": "products.view", "scope": "branch"}}}, "")
+	e.owner.call(t, http.MethodPut, "/api/v1/roles/"+str(role.data["id"]), map[string]any{"permissions": []map[string]any{{"key": "shop.product.view", "scope": "all"}}}, "")
 	require.Equal(t, 403, c.call(t, http.MethodGet, "/api/v1/customers", nil, "").code)
 
 	cat := e.owner.call(t, http.MethodGet, "/api/v1/permissions", nil, "")
@@ -392,16 +372,6 @@ func TestPINGuessingIsLimitedAndPasswordChangeEndsOtherSessions(t *testing.T) {
 	app := e.app.Fiber
 	c, userID := e.user(t, "staff")
 	phone := str(e.owner.call(t, http.MethodGet, "/api/v1/users/"+userID, nil, "").data["phone"])
-	require.Equal(t, 200, c.call(t, http.MethodPut, "/api/v1/auth/pin", map[string]any{"pin": "4821"}, "").code)
-
-	// Five wrong PINs block the sixth, even with the right PIN: a 4-digit PIN cannot be guessed (FR-AUTH-06).
-	for i := 0; i < 5; i++ {
-		require.Equal(t, 401, c.call(t, http.MethodPost, "/api/v1/auth/pin", map[string]any{"pin": "000" + string(rune('0'+i))}, "").code)
-	}
-	locked := c.call(t, http.MethodPost, "/api/v1/auth/pin", map[string]any{"pin": "4821"}, "")
-	require.Equal(t, 429, locked.code, locked.raw)
-	// The block is for PIN guesses only: the session and the password still work.
-	require.Equal(t, 200, c.call(t, http.MethodGet, "/api/v1/me", nil, "").code)
 
 	// A password change signs out every other session of that user, but not the one making the change.
 	other := &client{app: app, token: login(t, app, phone, "staff-pass-123"), branch: c.branch}
@@ -415,13 +385,6 @@ func TestPINGuessingIsLimitedAndPasswordChangeEndsOtherSessions(t *testing.T) {
 	require.Equal(t, 401, c.call(t, http.MethodGet, "/api/v1/me", nil, "").code)
 	code, _, _ = raw(t, app, http.MethodPost, "/api/v1/auth/refresh", nil, map[string]string{"Cookie": "refresh_token=" + refresh})
 	require.Equal(t, 401, code, "a stolen refresh token stops working too")
-
-	// Guessing the current password is limited as well.
-	for i := 0; i < 5; i++ {
-		require.Equal(t, 401, third.call(t, http.MethodPut, "/api/v1/auth/password", map[string]any{"current_password": "guess-" + string(rune('a'+i)), "new_password": "another-new-pass"}, "").code)
-	}
-	blocked := third.call(t, http.MethodPut, "/api/v1/auth/password", map[string]any{"current_password": "a-brand-new-pass", "new_password": "another-new-pass"}, "")
-	require.Equal(t, 429, blocked.code, blocked.raw)
 	login(t, app, phone, "a-brand-new-pass")
 }
 

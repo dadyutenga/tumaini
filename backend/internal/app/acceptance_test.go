@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,7 +25,10 @@ import (
 
 func TestAcceptance(t *testing.T) {
 	if os.Getenv("DATABASE_URL") == "" {
-		t.Setenv("DATABASE_URL", "postgres://bms_app:bms_app_dev@127.0.0.1:5433/bms?sslmode=disable")
+		t.Setenv("DATABASE_URL", "postgres://bms_api:bms_api_dev@127.0.0.1:5433/bms?sslmode=disable")
+	}
+	if os.Getenv("JOBS_DATABASE_URL") == "" {
+		t.Setenv("JOBS_DATABASE_URL", "postgres://bms_jobs:bms_jobs_dev@127.0.0.1:5433/bms?sslmode=disable")
 	}
 	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
 	t.Setenv("ARGON_MEMORY", "8192")
@@ -461,8 +465,11 @@ func find(rows []map[string]any, key, want string) map[string]any {
 	return map[string]any{}
 }
 
+var phoneSeq uint64 = uint64(time.Now().UnixNano() % 100000000)
+
 func uniquePhone() string {
-	return "2557" + uuid.NewString()[:8]
+	n := atomic.AddUint64(&phoneSeq, 1) % 100000000
+	return fmt.Sprintf("+2557%08d", n)
 }
 
 func init() {}

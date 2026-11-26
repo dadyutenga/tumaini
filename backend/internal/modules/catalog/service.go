@@ -104,6 +104,7 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, q string, categor
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		f := sqlq.New(p.BranchID)
+		f.Add("($1::uuid IS NULL OR $1::uuid IS NOT NULL)")
 		q = strings.TrimSpace(q)
 		f.If(q != "", "(p.name ILIKE '%' || ? || '%' OR p.sku ILIKE '%' || ? || '%' OR p.barcode = ?)", q, q, q)
 		f.If(category != nil, "p.category_id = ?", category)

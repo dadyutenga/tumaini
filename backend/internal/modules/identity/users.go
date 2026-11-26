@@ -693,7 +693,7 @@ func (s *Service) LoginHistory(ctx context.Context, p *auth.Principal, userID *u
 		rows, err := tx.Query(ctx, `
 			SELECT e.id, e.user_id, coalesce(u.phone::text, u.email::text, ''), e.event_type::text, e.event_type = 'login_success',
 			       e.failure_reason, e.ip::text, e.user_agent, e.occurred_at `+where+`
-			ORDER BY e.occurred_at DESC LIMIT $5 OFFSET $6`, p.TenantID, userID, from, to, page.PerPage, page.Offset)
+			ORDER BY e.occurred_at DESC, e.id DESC LIMIT $5 OFFSET $6`, p.TenantID, userID, from, to, page.PerPage, page.Offset)
 		if err != nil {
 			return err
 		}

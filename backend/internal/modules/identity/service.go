@@ -21,6 +21,7 @@ import (
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
+	"bms/internal/platform/ids"
 )
 
 // Sign-in lockout. The tenant is not known until the person is identified, so these are fixed
@@ -44,7 +45,9 @@ type Service struct {
 	IdleTimeout time.Duration
 	// Pepper keys the HMAC that stands in for the typed identifier in auth events, so history
 	// never holds a phone number or email in plain text.
-	Pepper []byte
+	Pepper          []byte
+	DefaultTimezone string
+	DefaultCurrency string
 }
 
 type SessionResult struct {
@@ -158,6 +161,19 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (SessionResult
 			tenantID, phone, email); err != nil {
 			return err
 		}
+		if s.DefaultTimezone != "" {
+			if _, err := tx.Exec(ctx, `UPDATE app.tenants SET timezone = $2 WHERE id = $1`, tenantID, s.DefaultTimezone); err != nil {
+				return err
+			}
+		}
+		if s.DefaultCurrency != "" {
+			if _, err := tx.Exec(ctx, `UPDATE app.tenants SET default_currency = $2::app.currency WHERE id = $1`, tenantID, s.DefaultCurrency); err != nil {
+				return err
+			}
+			if _, err := tx.Exec(ctx, `UPDATE app.tenant_settings SET currency = $2::app.currency WHERE tenant_id = $1`, tenantID, s.DefaultCurrency); err != nil {
+				return err
+			}
+		}
 		return seedDefaults(ctx, tx, tenantID, locationID)
 	})
 	if err != nil {
@@ -227,9 +243,9 @@ func (s *Service) startSession(ctx context.Context, userID, tenantID, membership
 func (s *Service) event(ctx context.Context, kind string, userID, tenantID *uuid.UUID, identifier string, sessionID *uuid.UUID, ip, ua, reason string) {
 	_ = s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO iam.auth_events (occurred_at, event_type, user_id, tenant_id, identifier_hmac, session_id, ip, user_agent, failure_reason)
-			VALUES ($1, $2::iam.auth_event_type, $3, $4, $5, $6, NULLIF($7,'')::inet, LEFT($8, 512), NULLIF($9,''))
-		`, s.Clock.Now(), kind, userID, tenantID, s.identifierHMAC(identifier), sessionID, ip, ua, reason)
+			INSERT INTO iam.auth_events (id, occurred_at, event_type, user_id, tenant_id, identifier_hmac, session_id, ip, user_agent, failure_reason)
+			VALUES ($1, $2, $3::iam.auth_event_type, $4, $5, $6, $7, NULLIF($8,'')::inet, LEFT($9, 512), NULLIF($10,''))
+		`, ids.New(), s.Clock.Now(), kind, userID, tenantID, s.identifierHMAC(identifier), sessionID, ip, ua, reason)
 		return err
 	})
 }
@@ -295,9 +311,31 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (SessionResult, erro
 		s.event(ctx, "login_failure", &u.ID, nil, id, nil, in.IP, in.UserAgent, "membership_inactive")
 		return SessionResult{}, errInvalid
 	}
+	var notifyNewDevice bool
+	if ua := strings.TrimSpace(in.UserAgent); ua != "" && s.Notify != nil {
+		_ = s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+			var hadAny, hadSame bool
+			if err := tx.QueryRow(ctx, `
+				SELECT EXISTS (SELECT 1 FROM iam.sessions WHERE user_id = $1),
+				       EXISTS (SELECT 1 FROM iam.sessions WHERE user_id = $1 AND user_agent = LEFT($2, 512))`,
+				u.ID, ua).Scan(&hadAny, &hadSame); err == nil && hadAny && !hadSame {
+				notifyNewDevice = true
+			}
+			return nil
+		})
+	}
 	out, err := s.startSession(ctx, u.ID, tenantID, membershipID, in.IP, in.UserAgent)
 	if err != nil {
 		return SessionResult{}, err
+	}
+	if notifyNewDevice {
+		_ = s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+			return s.Notify.ToUser(ctx, tx, tenantID, u.ID, notify.Message{
+				Type: "account_locked", Title: "Sign-in from a new device",
+				Body: "Your account was signed in from " + in.UserAgent,
+				Link: "/me/sessions",
+			})
+		})
 	}
 	_ = s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE iam.user_credentials SET failed_attempts = 0, last_failed_at = NULL, locked_until = NULL, updated_at = $2 WHERE user_id = $1`, u.ID, now)
@@ -320,6 +358,32 @@ func (s *Service) failed(ctx context.Context, userID uuid.UUID, identifier strin
 	})
 	if err == nil && attempts == lockoutThreshold {
 		s.event(ctx, "account_locked", &userID, nil, identifier, nil, in.IP, in.UserAgent, "")
+		if s.Notify != nil {
+			var tenants []uuid.UUID
+			_ = s.DB.InUserTx(ctx, userID, func(ctx context.Context, tx pgx.Tx) error {
+				rows, err := tx.Query(ctx, `SELECT tenant_id FROM app.memberships WHERE user_id = $1 AND status = 'active'`, userID)
+				if err != nil {
+					return err
+				}
+				defer rows.Close()
+				for rows.Next() {
+					var tid uuid.UUID
+					if err := rows.Scan(&tid); err == nil {
+						tenants = append(tenants, tid)
+					}
+				}
+				return rows.Err()
+			})
+			for _, tid := range tenants {
+				_ = s.DB.InTx(ctx, tid, func(ctx context.Context, tx pgx.Tx) error {
+					return s.Notify.ToPermission(ctx, tx, tid, nil, "security.user.manage", notify.Message{
+						Type: "account_locked", Title: "Account locked",
+						Body: "Account " + identifier + " was locked for 15 minutes after repeated failed sign-in attempts.",
+						Link: "/users",
+					})
+				})
+			}
+		}
 	}
 }
 

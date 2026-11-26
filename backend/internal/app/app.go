@@ -67,7 +67,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	n := notify.New()
 	ap := approval.New(n)
 	pepper := sha256.Sum256([]byte("auth-events:" + cfg.JWTSecret))
-	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, TTL: cfg.RefreshTokenTTL, IdleTimeout: cfg.SessionIdleTimeout, Pepper: pepper[:]}
+	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, TTL: cfg.RefreshTokenTTL, IdleTimeout: cfg.SessionIdleTimeout, Pepper: pepper[:], DefaultTimezone: cfg.DefaultTimezone, DefaultCurrency: cfg.DefaultCurrency}
 	jobPool := database.Jobs
 	if jobPool == nil {
 		jobPool = database.Pool

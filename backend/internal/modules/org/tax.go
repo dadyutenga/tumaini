@@ -182,6 +182,9 @@ func (s *Service) UpdatePaymentMethods(ctx context.Context, p *auth.Principal, b
 	}
 	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		cur := map[string]any{}
+		if def, err := json.Marshal(setting.Defaults["payment.methods"]); err == nil {
+			_ = json.Unmarshal(def, &cur)
+		}
 		if raw, err := setting.Raw(ctx, tx, "payment.methods"); err == nil {
 			_ = json.Unmarshal(raw, &cur)
 		}
