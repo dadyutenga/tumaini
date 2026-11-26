@@ -43,9 +43,9 @@ export function RecordHistoryTab({
 
   if (!can("security.audit.view")) {
     return (
-      <p className="rounded-2xl border bg-card p-6 text-sm text-muted-foreground">
+      <div className="od-card p-6 text-sm text-[var(--od-ink-secondary)]">
         Detailed change history is available to administrators.
-      </p>
+      </div>
     );
   }
 
@@ -56,18 +56,39 @@ export function RecordHistoryTab({
       rowKey={(a) => a.id}
       empty="No history entries recorded yet"
       columns={[
-        { header: "When", cell: (a) => formatDateTime(a.created_at) },
-        { header: "Who", cell: (a) => a.user_name ?? a.user_id?.slice(0, 8) ?? "System" },
-        { header: "Action", cell: (a) => <span className="font-medium">{a.action}</span> },
+        {
+          header: "When",
+          cell: (a) => (
+            <span className="od-tabular text-xs text-[var(--od-ink-secondary)]">
+              {formatDateTime(a.created_at)}
+            </span>
+          ),
+        },
+        {
+          header: "Who",
+          cell: (a) => (
+            <span className="font-medium text-[var(--od-ink)]">
+              {a.user_name ?? a.user_id?.slice(0, 8) ?? "System"}
+            </span>
+          ),
+        },
+        {
+          header: "Action",
+          cell: (a) => (
+            <code className="od-mono rounded-md border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-1.5 py-0.5 text-xs text-[var(--od-ink)]">
+              {a.action}
+            </code>
+          ),
+        },
         {
           header: "Old value",
           cell: (a) => summarize(a.before),
-          className: "max-w-xs whitespace-normal text-xs text-muted-foreground",
+          className: "max-w-xs whitespace-normal text-xs text-[var(--od-ink-muted)]",
         },
         {
           header: "New value",
           cell: (a) => summarize(a.after),
-          className: "max-w-xs whitespace-normal text-xs",
+          className: "max-w-xs whitespace-normal text-xs text-[var(--od-ink-secondary)]",
         },
       ]}
     />

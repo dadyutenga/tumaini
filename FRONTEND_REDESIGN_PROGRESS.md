@@ -3,8 +3,8 @@
 ## Overview
 - **Design System**: OpenDashboards (`od`, `od-app`, `od-mkt`)
 - **Total Pages Discovered**: 52 routed pages (53 page source files including `MoneyExtras.tsx` sub-tab)
-- **Completed Pages**: 51 / 52
-- **Current Batch**: Batch 18 (Final) — `Status` (+ Final QA)
+- **Completed Pages**: 52 / 52 (100% complete)
+- **Current Batch**: Complete — Final QA passed (0 ESLint errors, 37/37 tests, production build passed)
 
 ## Design System Improvements
 - [x] Copied OpenDashboards bundled assets (`od-tokens.css`, `od-components.css`, `od-tokens.json`) into `frontend/src/styles/`
@@ -12,7 +12,7 @@
 - [x] Mapped Tailwind v4 theme variables and light/dark modes in `globals.css` & `ThemeProvider.tsx` (`data-mode="dark"`)
 - [x] Upgraded core UI primitives (`button`, `card`, `input`, `textarea`, `badge`, `table`, `tabs`, `dialog`)
 - [x] Upgraded app chrome (`DashboardLayout`, `AuthLayout`, `Toolbar`, `BranchSwitcher`, `RouteErrors`)
-- [x] Upgraded shared patterns (`kit.tsx`, `Display.tsx`, `Charts.tsx` with `SectionCard`, `SegmentedChips`, `FilterBar`, `MetaGrid`, OD chart series tokens)
+- [x] Upgraded shared patterns (`kit.tsx`, `Display.tsx`, `Charts.tsx`, `RecordHistoryTab.tsx`, `AttachmentsSection.tsx`, `services/shared.tsx`, `SettingsGroups.tsx` with `SectionCard`, `SegmentedChips`, `FilterBar`, `MetaGrid`, OD chart series tokens)
 
 ## Batch Schedule & Status
 
@@ -34,8 +34,8 @@
 | 14 | `Approvals`, `Notifications`, `Team` | Completed | `c17b95a` | ESLint 0 errors, 37/37 tests, build passed |
 | 15 | `Audit`, `LoginHistory`, `Backups` | Completed | `725aeca` | ESLint 0 errors, 37/37 tests, build passed |
 | 16 | `Settings`, `MyWork`, `Profile` (+ `SettingsGroups`) | Completed | `286e014` | ESLint 0 errors, 37/37 tests, build passed |
-| 17 | `Auth`, `ForgotPassword`, `ClientApproval` | Completed | Pending hash | ESLint 0 errors, 37/37 tests, build passed |
-| 18 | `Status` (+ Final QA) | In Progress | — | Pending |
+| 17 | `Auth`, `ForgotPassword`, `ClientApproval` | Completed | `6a809cf` | ESLint 0 errors, 37/37 tests, build passed |
+| 18 | `Status` (+ Final QA, `RecordHistoryTab`, `AttachmentsSection`) | Completed | Final commit | Full `npm run lint` 0 errors, 37/37 tests, build passed |
 
 ## Completed Pages
 - `Dashboard`, `Pos`, `Sales`
@@ -55,9 +55,10 @@
 - `Audit`, `LoginHistory`, `Backups`
 - `Settings`, `MyWork`, `Profile`
 - `Auth`, `ForgotPassword`, `ClientApproval`
+- `Status`
 
 ## Remaining Pages
-`Status`
+None — all 52 routed pages (53 page source files) have been redesigned, validated, and committed.
 
 ## Blockers & Resolutions
 - Pre-existing prettier formatting errors in `Backups.tsx`, `LoginHistory.tsx`, `Notifications.tsx` were resolved as Batches 14–15 were redesigned and formatted.
