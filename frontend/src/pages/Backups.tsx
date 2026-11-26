@@ -1,8 +1,8 @@
 import { useState } from "react";
-import { DatabaseBackup, Download, RefreshCw } from "lucide-react";
+import { DatabaseBackup, Download, RefreshCw, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { DataGrid, PageHeader, StatusBadge } from "@/components/shared/kit";
+import { DataGrid, PageHeader, SectionCard, StatusBadge } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { download } from "@/lib/api";
@@ -36,7 +36,7 @@ export default function Backups() {
   const lastAuto = query.data?.last_automatic_backup_at;
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Backups"
         description="Automatic daily backups and on-demand business data exports."
@@ -52,7 +52,7 @@ export default function Backups() {
                 setRefreshing(false);
               }}
             >
-              <RefreshCw size={14} /> Refresh
+              <RefreshCw size={14} className={refreshing ? "animate-spin" : undefined} /> Refresh
             </Button>
             <Button size="sm" disabled={runNow.isPending} onClick={() => runNow.mutate(undefined)}>
               <DatabaseBackup size={14} /> Run backup now
@@ -61,29 +61,37 @@ export default function Backups() {
         }
       />
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2">
-        <div className="rounded-2xl border bg-card p-5">
-          <p className="text-xs uppercase tracking-wide text-muted-foreground">
-            Last automatic nightly backup
-          </p>
-          <p className="mt-1 text-lg font-semibold">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <SectionCard
+          title="Last automatic nightly backup"
+          subtitle="Scheduled host database protection"
+        >
+          <p className="od-tabular text-lg font-semibold text-[var(--od-ink)]">
             {lastAuto ? formatDateTime(lastAuto) : "Configured via host schedule"}
           </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Nightly PostgreSQL dumps are run by the deployment script (<code>deploy/backup.sh</code>).
+          <p className="od-caption mt-2">
+            Nightly PostgreSQL dumps are run by the deployment script (
+            <code className="od-mono rounded border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-1.5 py-0.5 text-[11px] text-[var(--od-ink)]">
+              deploy/backup.sh
+            </code>
+            ).
           </p>
-        </div>
+        </SectionCard>
         {me?.is_owner && (
-          <div className="rounded-2xl border bg-card p-5">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Restore a backup (Owner only)
+          <SectionCard
+            title="Restore a backup (Owner only)"
+            subtitle="Offline recovery procedure"
+            actions={<ShieldAlert size={16} className="text-[var(--od-warning)]" />}
+          >
+            <p className="text-sm leading-relaxed text-[var(--od-ink-secondary)]">
+              Download any completed backup archive below for safekeeping. Full database restores
+              are performed offline by the Owner using{" "}
+              <code className="od-mono rounded border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-1.5 py-0.5 text-xs text-[var(--od-ink)]">
+                pg_restore
+              </code>{" "}
+              to prevent partial tenant corruption while staff are selling.
             </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Download any completed backup archive below for safekeeping. Full database restores are
-              performed offline by the Owner using <code>pg_restore</code> to prevent partial tenant
-              corruption while staff are selling.
-            </p>
-          </div>
+          </SectionCard>
         )}
       </div>
 
@@ -93,17 +101,33 @@ export default function Backups() {
         rowKey={(b) => b.id}
         empty="No backups generated yet. Click Run backup now to create one."
         columns={[
-          { header: "Requested", cell: (b) => formatDateTime(b.created_at) },
-          { header: "Finished", cell: (b) => (b.finished_at ? formatDateTime(b.finished_at) : "-") },
+          {
+            header: "Requested",
+            cell: (b) => <span className="od-tabular">{formatDateTime(b.created_at)}</span>,
+          },
+          {
+            header: "Finished",
+            cell: (b) => (
+              <span className="od-tabular">
+                {b.finished_at ? formatDateTime(b.finished_at) : "-"}
+              </span>
+            ),
+          },
           { header: "Requested by", cell: (b) => b.user_name ?? "-" },
           {
             header: "Status",
             cell: (b) => (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge
-                  value={b.status === "done" ? "approved" : b.status === "failed" ? "rejected" : "pending"}
+                  value={
+                    b.status === "done"
+                      ? "approved"
+                      : b.status === "failed"
+                        ? "rejected"
+                        : "pending"
+                  }
                 />
-                {b.error && <span className="text-xs text-destructive">{b.error}</span>}
+                {b.error && <span className="text-xs text-[var(--od-bad)]">{b.error}</span>}
               </div>
             ),
           },
@@ -112,23 +136,25 @@ export default function Backups() {
             className: "text-right",
             cell: (b) =>
               b.status === "done" && b.file_id ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    download(
-                      `/files/${b.file_id}`,
-                      {},
-                      `business-backup-${b.created_at.slice(0, 10)}.zip`,
-                    ).catch((e) => toast.error(errorMessage(e)))
-                  }
-                >
-                  <Download size={14} /> Download ZIP
-                </Button>
+                <div className="flex justify-end">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      download(
+                        `/files/${b.file_id}`,
+                        {},
+                        `business-backup-${b.created_at.slice(0, 10)}.zip`,
+                      ).catch((e) => toast.error(errorMessage(e)))
+                    }
+                  >
+                    <Download size={14} /> Download ZIP
+                  </Button>
+                </div>
               ) : null,
           },
         ]}
       />
-    </>
+    </div>
   );
 }

@@ -3,8 +3,8 @@
 ## Overview
 - **Design System**: OpenDashboards (`od`, `od-app`, `od-mkt`)
 - **Total Pages Discovered**: 52 routed pages (53 page source files including `MoneyExtras.tsx` sub-tab)
-- **Completed Pages**: 42 / 52
-- **Current Batch**: Batch 15 — `Audit`, `LoginHistory`, `Backups`
+- **Completed Pages**: 45 / 52
+- **Current Batch**: Batch 16 — `Settings`, `MyWork`, `Profile`
 
 ## Design System Improvements
 - [x] Copied OpenDashboards bundled assets (`od-tokens.css`, `od-components.css`, `od-tokens.json`) into `frontend/src/styles/`
@@ -31,9 +31,9 @@
 | 11 | `ExpenseSetup`, `People`, `EmployeeDetail` | Completed | `d254b52` | ESLint 0 errors, 37/37 tests, build passed |
 | 12 | `AttendanceAdmin`, `HrSetup`, `Payroll` | Completed | `ab81ea2` | ESLint 0 errors, 37/37 tests, build passed |
 | 13 | `PayrollSetup`, `PayrollRun`, `Reports` | Completed | `3065177` | ESLint 0 errors, 37/37 tests, build passed |
-| 14 | `Approvals`, `Notifications`, `Team` | Completed | Pending hash | ESLint 0 errors, 37/37 tests, build passed |
-| 15 | `Audit`, `LoginHistory`, `Backups` | In Progress | — | Pending |
-| 16 | `Settings`, `MyWork`, `Profile` | Remaining | — | Pending |
+| 14 | `Approvals`, `Notifications`, `Team` | Completed | `c17b95a` | ESLint 0 errors, 37/37 tests, build passed |
+| 15 | `Audit`, `LoginHistory`, `Backups` | Completed | Pending hash | ESLint 0 errors, 37/37 tests, build passed |
+| 16 | `Settings`, `MyWork`, `Profile` | In Progress | — | Pending |
 | 17 | `Auth`, `ForgotPassword`, `ClientApproval` | Remaining | — | Pending |
 | 18 | `Status` (+ Final QA) | Remaining | — | Pending |
 
@@ -52,9 +52,11 @@
 - `AttendanceAdmin`, `HrSetup`, `Payroll`
 - `PayrollSetup`, `PayrollRun`, `Reports`
 - `Approvals`, `Notifications`, `Team`
+- `Audit`, `LoginHistory`, `Backups`
 
 ## Remaining Pages
-`Audit`, `LoginHistory`, `Backups`, `Settings`, `MyWork`, `Profile`, `Auth`, `ForgotPassword`, `ClientApproval`, `Status`
+`Settings`, `MyWork`, `Profile`, `Auth`, `ForgotPassword`, `ClientApproval`, `Status`
 
 ## Blockers & Resolutions
-- Pre-existing prettier formatting errors detected in `Backups.tsx`, `LoginHistory.tsx`, `Notifications.tsx` during baseline lint; will be resolved as those batches are redesigned and formatted with Prettier.
+- Pre-existing prettier formatting errors in `Backups.tsx`, `LoginHistory.tsx`, `Notifications.tsx` were resolved as Batches 14–15 were redesigned and formatted.
+- Pre-existing `react-hooks/exhaustive-deps` warnings in `Debts.tsx` were resolved during Batch 10 using memoized arrays and a pure filter helper.
