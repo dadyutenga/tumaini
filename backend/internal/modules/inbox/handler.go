@@ -10,16 +10,29 @@ import (
 type Handler struct{ Svc *Service }
 
 var approvalKinds = map[string]bool{
-	"discount": true, "refund": true, "sale_void": true, "expense": true, "stock_adjustment": true, "purchase_order": true,
-	"loan": true, "leave": true, "overtime": true, "payroll_run": true, "credit_override": true, "payment_void": true,
+	"sale_discount": true, "job_price_change": true, "sale_void": true,
+	"transaction_correction": true, "payment_void": true, "day_reopen": true,
+	"product_price_change": true,
+	// Legacy aliases accepted and normalized in service.go
+	"discount": true, "price_change": true,
+}
+
+var approvalPerms = []string{
+	"shop.discount.approve",
+	"services.price.approve",
+	"shop.sale.void",
+	"finance.transaction.correct",
+	"finance.payment.void",
+	"finance.day.reopen",
+	"shop.product.price_approve",
 }
 
 func (h *Handler) List(c fiber.Ctx) error {
 	f := ApprovalFilter{Status: c.Query("status"), Kind: c.Query("kind"), Mine: c.Query("mine") == "true"}
 	switch f.Status {
-	case "", "pending", "approved", "rejected", "cancelled":
+	case "", "pending", "approved", "rejected", "cancelled", "expired":
 	default:
-		return httpx.BadRequest("invalid_query", "status must be pending, approved, rejected or cancelled")
+		return httpx.BadRequest("invalid_query", "status must be pending, approved, rejected, cancelled or expired")
 	}
 	if f.Kind != "" && !approvalKinds[f.Kind] {
 		return httpx.BadRequest("invalid_query", "Unknown approval kind")
@@ -76,15 +89,7 @@ func (h *Handler) ApproveWithPIN(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	var body struct {
-		Approver string `json:"approver" validate:"required,max=200"`
-		PIN      string `json:"pin" validate:"required,numeric,min=4,max=6"`
-		Note     string `json:"note" validate:"max=1000"`
-	}
-	if err := httpx.Bind(c, &body); err != nil {
-		return err
-	}
-	status, raw, err := h.Svc.ApproveWithPIN(c.Context(), middleware.Principal(c), id, body.Approver, body.PIN, body.Note)
+	status, raw, err := h.Svc.ApproveWithPIN(c.Context(), middleware.Principal(c), id, "", "", "")
 	return httpx.Send(c, status, raw, err)
 }
 
@@ -193,23 +198,22 @@ func (h *Handler) Search(c fiber.Ctx) error {
 
 func Register(r fiber.Router, h *Handler) {
 	r.Get("/search", h.Search)
-	r.Get("/approvals", middleware.Require("approvals.view"), h.List)
-	r.Get("/approvals/count", middleware.Require("approvals.view"), h.Count)
-	r.Get("/approvals/:id", middleware.Require("approvals.view"), h.Get)
-	r.Post("/approvals/:id/approve", middleware.Require("approvals.decide"), middleware.Idempotent(), h.decide(true))
-	r.Post("/approvals/:id/reject", middleware.Require("approvals.decide"), h.decide(false))
+	r.Get("/approvals", middleware.RequireAny(approvalPerms...), h.List)
+	r.Get("/approvals/count", middleware.RequireAny(approvalPerms...), h.Count)
+	r.Get("/approvals/:id", middleware.RequireAny(approvalPerms...), h.Get)
+	r.Post("/approvals/:id/approve", middleware.RequireAny(approvalPerms...), middleware.Idempotent(), h.decide(true))
+	r.Post("/approvals/:id/reject", middleware.RequireAny(approvalPerms...), h.decide(false))
 	// Any requester may cancel their own request, so this route checks ownership in the service.
 	r.Post("/approvals/:id/cancel", h.Cancel)
-	// The cashier calls this; the PIN identifies an approver whose permissions are checked in the service.
-	r.Post("/approvals/:id/approve-with-pin", middleware.Idempotent(), h.ApproveWithPIN)
+	r.Post("/approvals/:id/approve-with-pin", h.ApproveWithPIN)
 	r.Get("/notifications", h.Notifications)
 	r.Get("/notifications/unread-count", h.UnreadCount)
 	r.Post("/notifications/read-all", h.ReadAll)
 	r.Post("/notifications/test", middleware.Require("settings.manage"), h.TestNotification)
 	r.Post("/notifications/:id/read", h.MarkRead)
-	r.Get("/audit-logs", middleware.Require("audit.view"), h.Audit)
-	r.Get("/audit-logs/entity/:type/:id", middleware.Require("audit.view"), h.AuditEntity)
-	r.Post("/backups/export", middleware.Require("backup.manage"), h.StartExport)
-	r.Get("/backups", middleware.Require("backup.manage"), h.Backups)
+	r.Get("/audit-logs", middleware.Require("security.audit.view"), h.Audit)
+	r.Get("/audit-logs/entity/:type/:id", middleware.Require("security.audit.view"), h.AuditEntity)
+	r.Post("/backups/export", middleware.Require("security.backup.manage"), h.StartExport)
+	r.Get("/backups", middleware.Require("security.backup.manage"), h.Backups)
 	r.Get("/exports/:id", h.Export)
 }

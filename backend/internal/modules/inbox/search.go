@@ -19,7 +19,7 @@ type SearchHit struct {
 }
 
 // GlobalSearch finds clients, customers, products, sales/receipts, invoices,
-// projects and design jobs by name, phone, number, SKU or barcode (SRS Section 3).
+// projects and design jobs by name, phone, number, SKU or barcode.
 // Only modules the caller holds view permission for are searched.
 func (s *Service) GlobalSearch(ctx context.Context, p *auth.Principal, q string) ([]SearchHit, error) {
 	q = strings.TrimSpace(q)
@@ -28,12 +28,16 @@ func (s *Service) GlobalSearch(ctx context.Context, p *auth.Principal, q string)
 	}
 	pat := "%" + q + "%"
 	out := []SearchHit{}
-	can := func(perm string) bool {
+	canAny := func(perms ...string) bool {
 		if p.IsOwner {
 			return true
 		}
-		_, ok := p.Perms[perm]
-		return ok
+		for _, perm := range perms {
+			if p.Has(perm) {
+				return true
+			}
+		}
+		return false
 	}
 
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
@@ -58,65 +62,65 @@ func (s *Service) GlobalSearch(ctx context.Context, p *auth.Principal, q string)
 			return rows.Err()
 		}
 
-		if can("products.view") {
+		if canAny("shop.product.view") {
 			if err := collect("product", "/products?q="+q, `
 				SELECT id, name, COALESCE(NULLIF(barcode,''), COALESCE(sku,''), '')
-				FROM products
-				WHERE is_active AND (name ILIKE $1 OR sku ILIKE $1 OR barcode ILIKE $1)
+				FROM app.products
+				WHERE status = 'active' AND (name ILIKE $1 OR sku ILIKE $1 OR barcode ILIKE $1)
 				ORDER BY name LIMIT 6`, pat); err != nil {
 				return err
 			}
 		}
-		if can("customers.view") {
+		if canAny("shop.customer.view_all", "shop.customer.manage") {
 			if err := collect("customer", "/customers/", `
 				SELECT id, name, COALESCE(phone, '')
-				FROM customers
-				WHERE is_active AND NOT is_walk_in AND (name ILIKE $1 OR phone ILIKE $1)
+				FROM app.customers
+				WHERE status = 'active' AND NOT is_walk_in AND client_status IS NULL AND (name ILIKE $1 OR phone ILIKE $1)
 				ORDER BY name LIMIT 6`, pat); err != nil {
 				return err
 			}
 		}
-		if can("clients.view") {
+		if canAny("services.client.view_all", "services.client.manage") {
 			if err := collect("client", "/clients/", `
 				SELECT id, name, COALESCE(phone, '')
-				FROM svc_clients
-				WHERE is_active AND (name ILIKE $1 OR phone ILIKE $1 OR email::text ILIKE $1)
+				FROM app.customers
+				WHERE status = 'active' AND client_status IS NOT NULL AND (name ILIKE $1 OR phone ILIKE $1 OR email::text ILIKE $1)
 				ORDER BY name LIMIT 6`, pat); err != nil {
 				return err
 			}
 		}
-		if can("projects.view") {
+		if canAny("services.project.view_all", "services.project.manage") {
 			if err := collect("project", "/projects/", `
-				SELECT pr.id, pr.number || ' · ' || pr.name, c.name
-				FROM svc_projects pr JOIN svc_clients c ON c.id = pr.client_id
-				WHERE pr.number ILIKE $1 OR pr.name ILIKE $1 OR c.name ILIKE $1
+				SELECT pr.id, pr.project_no || ' · ' || pr.title, c.name
+				FROM app.projects pr JOIN app.customers c ON c.tenant_id = pr.tenant_id AND c.id = pr.customer_id
+				WHERE pr.project_no ILIKE $1 OR pr.title ILIKE $1 OR c.name ILIKE $1
 				ORDER BY pr.created_at DESC LIMIT 6`, pat); err != nil {
 				return err
 			}
 		}
-		if can("design.view") {
+		if canAny("services.design.view_all", "services.design.manage") {
 			if err := collect("design_job", "/design-jobs/", `
-				SELECT j.id, j.number || ' · ' || j.title, c.name
-				FROM design_jobs j JOIN svc_clients c ON c.id = j.client_id
-				WHERE j.number ILIKE $1 OR j.title ILIKE $1 OR c.name ILIKE $1
+				SELECT j.id, j.job_no || ' · ' || j.title, c.name
+				FROM app.design_jobs j JOIN app.customers c ON c.tenant_id = j.tenant_id AND c.id = j.customer_id
+				WHERE j.job_no ILIKE $1 OR j.title ILIKE $1 OR c.name ILIKE $1
 				ORDER BY j.created_at DESC LIMIT 6`, pat); err != nil {
 				return err
 			}
 		}
-		if can("sales.view") {
+		if canAny("shop.sale.view_all", "shop.sale.create") {
 			if err := collect("sale", "/sales/", `
-				SELECT s.id, s.number, COALESCE(c.name, 'Walk-in') || ' · ' || s.total::text
-				FROM sales s LEFT JOIN customers c ON c.id = s.customer_id
-				WHERE s.number ILIKE $1 OR COALESCE(c.name,'') ILIKE $1
+				SELECT s.id, s.sale_no, COALESCE(c.name, 'Walk-in') || ' · ' || s.total::text
+				FROM app.sales s LEFT JOIN app.customers c ON c.tenant_id = s.tenant_id AND c.id = s.customer_id
+				WHERE s.sale_no ILIKE $1 OR COALESCE(c.name,'') ILIKE $1
 				ORDER BY s.created_at DESC LIMIT 6`, pat); err != nil {
 				return err
 			}
 		}
-		if can("service_billing.view") {
+		if canAny("services.invoice.manage", "services.invoice.draft") {
 			if err := collect("service_invoice", "/service-invoices?open=", `
-				SELECT i.id, i.number, c.name || ' · ' || i.total::text
-				FROM svc_invoices i JOIN svc_clients c ON c.id = i.client_id
-				WHERE i.number ILIKE $1 OR c.name ILIKE $1
+				SELECT i.id, i.invoice_no, c.name || ' · ' || i.total::text
+				FROM app.invoices i JOIN app.customers c ON c.tenant_id = i.tenant_id AND c.id = i.customer_id
+				WHERE i.invoice_no ILIKE $1 OR c.name ILIKE $1
 				ORDER BY i.created_at DESC LIMIT 6`, pat); err != nil {
 				return err
 			}
