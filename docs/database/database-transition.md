@@ -35,7 +35,7 @@ The legacy migrations are frozen in `backend/database/legacy/` for auditability.
 
 ## Backend port checklist
 
-Legend: [x] done (compiles; not yet integration-tested), [~] partly done, [ ] not started. Work happens on branch `feature/new-database`, one commit per step; `git log --oneline` is the history. Nothing here has been run against a live API yet: the integration tests in `internal/app` still describe the old schema and are re-enabled module by module once a module is ported.
+Legend: [x] done, [~] partly done, [ ] not started. The ported modules and the `internal/app` integration tests (Batches 1–5) pass against the approved schema. Two items remain below: a legacy data migration tool, and deployment/cutover documents.
 
 - [x] Migration runner, schema installed, dev roles, additive migrations 160 (worker grants), 170 (setting values), 180 (job queue)
 - [x] Platform: request context, worker pool, BM error mapping, tokens, idempotency, document numbering, jobs
@@ -55,8 +55,8 @@ Legend: [x] done (compiles; not yet integration-tested), [~] partly done, [ ] no
 - [x] Inbox (approvals list, notifications), system (exports, backups)
 - [x] Delete the old `kernel/ledger`, `kernel/stock`, `kernel/chart` and the old `payments` helpers once nothing uses them
 - [x] Rename `Principal.BusinessID` to `TenantID` everywhere, remove the alias
-- [~] Rewrite the integration tests against the new schema (Batches 1, 2a, 2b, 3 passing: identity/org/users/acceptance, catalog/inventory/customers/batch/invoice-numbers, finance/expenses/purchasing/sales, HR/attendance/payroll; remaining: services/reports/inbox/system/audit/recovery/files, OpenAPI contract — see `docs/database/HANDOFF.md`)
-- [~] Update the web client (permission codes, role editor, user form, removed features — aligned for first 12 ported modules in `ecefcb3`/`85d914a`; re-audit services/reports/inbox/system after backend tests finish)
-- [ ] OpenAPI
+- [x] Rewrite the integration tests against the new schema (Batches 1–5 passing, including the OpenAPI contract)
+- [x] Update the web client (permission codes, role editor, user form, removed features; services/reports/inbox/system re-audited, design job statuses match the approved enum)
+- [x] OpenAPI
 - [ ] Legacy data migration tool, mapping and reconciliation
 - [ ] Deployment, cutover, rollback and backup documents
