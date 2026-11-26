@@ -3,8 +3,8 @@
 ## Overview
 - **Design System**: OpenDashboards (`od`, `od-app`, `od-mkt`)
 - **Total Pages Discovered**: 52 routed pages (53 page source files including `MoneyExtras.tsx` sub-tab)
-- **Completed Pages**: 18 / 52
-- **Current Batch**: Batch 7 — `ServiceQuotations`, `ServiceInvoices`, `DesignJobs`
+- **Completed Pages**: 21 / 52
+- **Current Batch**: Batch 8 — `DesignJobDetail`, `ClientDocuments`, `ServiceTasks`
 
 ## Design System Improvements
 - [x] Copied OpenDashboards bundled assets (`od-tokens.css`, `od-components.css`, `od-tokens.json`) into `frontend/src/styles/`
@@ -23,9 +23,9 @@
 | 3 | `Stock`, `Purchasing`, `PurchaseOrderDetail` | Completed | `734bdd4` | ESLint 0 errors, 37/37 tests, build passed |
 | 4 | `StockOps`, `Customers`, `CustomerDetail` | Completed | `b893efd` | ESLint 0 errors, 37/37 tests, build passed |
 | 5 | `ServicesHome`, `Clients`, `ClientDetail` | Completed | `c2e3b00` | ESLint 0 errors, 37/37 tests, build passed |
-| 6 | `Projects`, `ProjectDetail`, `ServiceCatalog` | Completed | Pending hash | ESLint 0 errors, 37/37 tests, build passed |
-| 7 | `ServiceQuotations`, `ServiceInvoices`, `DesignJobs` | In Progress | — | Pending |
-| 8 | `DesignJobDetail`, `ClientDocuments`, `ServiceTasks` | Remaining | — | Pending |
+| 6 | `Projects`, `ProjectDetail`, `ServiceCatalog` | Completed | `655c671` | ESLint 0 errors, 37/37 tests, build passed |
+| 7 | `ServiceQuotations`, `ServiceInvoices`, `DesignJobs` | Completed | Pending hash | ESLint 0 errors, 37/37 tests, build passed |
+| 8 | `DesignJobDetail`, `ClientDocuments`, `ServiceTasks` | In Progress | — | Pending |
 | 9 | `Renewals`, `Contractors`, `Money` (+ `MoneyExtras`) | Remaining | — | Pending |
 | 10 | `Debts`, `DayClosing`, `Expenses` | Remaining | — | Pending |
 | 11 | `ExpenseSetup`, `People`, `EmployeeDetail` | Remaining | — | Pending |
@@ -44,9 +44,10 @@
 - `StockOps`, `Customers`, `CustomerDetail`
 - `ServicesHome`, `Clients`, `ClientDetail`
 - `Projects`, `ProjectDetail`, `ServiceCatalog`
+- `ServiceQuotations`, `ServiceInvoices`, `DesignJobs`
 
 ## Remaining Pages
-`ServiceQuotations`, `ServiceInvoices`, `DesignJobs`, `DesignJobDetail`, `ClientDocuments`, `ServiceTasks`, `Renewals`, `Contractors`, `Money`, `Debts`, `DayClosing`, `Expenses`, `ExpenseSetup`, `People`, `EmployeeDetail`, `AttendanceAdmin`, `HrSetup`, `Payroll`, `PayrollSetup`, `PayrollRun`, `Reports`, `Approvals`, `Notifications`, `Team`, `Audit`, `LoginHistory`, `Backups`, `Settings`, `MyWork`, `Profile`, `Auth`, `ForgotPassword`, `ClientApproval`, `Status`
+`DesignJobDetail`, `ClientDocuments`, `ServiceTasks`, `Renewals`, `Contractors`, `Money`, `Debts`, `DayClosing`, `Expenses`, `ExpenseSetup`, `People`, `EmployeeDetail`, `AttendanceAdmin`, `HrSetup`, `Payroll`, `PayrollSetup`, `PayrollRun`, `Reports`, `Approvals`, `Notifications`, `Team`, `Audit`, `LoginHistory`, `Backups`, `Settings`, `MyWork`, `Profile`, `Auth`, `ForgotPassword`, `ClientApproval`, `Status`
 
 ## Blockers & Resolutions
 - Pre-existing prettier formatting errors detected in `Backups.tsx`, `LoginHistory.tsx`, `Notifications.tsx` during baseline lint; will be resolved as those batches are redesigned and formatted with Prettier.

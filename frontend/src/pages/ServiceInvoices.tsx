@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus, Trash2 } from "lucide-react";
+import { AlertCircle, Plus, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,12 +14,14 @@ import {
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
-import { PageLoader } from "@/components/shared/Display";
+import { PageLoader, StatCard } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
 import { LinesEditor, LinesTable } from "@/features/services/LinesEditor";
 import { blankLine, linesBody, linesFrom, type LineDraft } from "@/features/services/lines";
@@ -27,6 +29,7 @@ import { ClientSelect, PaymentDialog, PdfButton, ReasonDialog } from "@/features
 import { label } from "@/features/services/helpers";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
+import { cn } from "@/lib/utils";
 import type { InvoiceDetail, InvoiceRow, ProjectRow } from "@/types/services";
 
 interface Draft {
@@ -182,7 +185,7 @@ function InvoiceForm({ draft, onClose }: { draft: Draft; onClose: () => void }) 
               <Plus size={14} /> Add installment
             </Button>
             {d.installments.length > 0 && (
-              <p className="text-sm text-muted-foreground">Planned {formatMoney(planned)}</p>
+              <p className="od-caption od-tabular">Planned {formatMoney(planned)}</p>
             )}
           </div>
         </div>
@@ -238,41 +241,45 @@ function Detail({
           <PageLoader />
         ) : (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-3 text-sm">
+            <div className="flex flex-wrap items-center gap-3 text-[13px]">
               <StatusBadge value={i.status} />
-              {i.due_date && (
-                <span className="text-muted-foreground">Due {formatDate(i.due_date)}</span>
-              )}
+              {i.due_date && <span className="od-caption">Due {formatDate(i.due_date)}</span>}
               {i.project_number && (
-                <span className="text-muted-foreground">Project {i.project_number}</span>
+                <span className="od-mono od-caption">Project {i.project_number}</span>
               )}
             </div>
             <LinesTable lines={i.lines} />
-            <div className="ml-auto w-60 space-y-1 text-sm">
-              <p className="flex justify-between">
-                <span>Subtotal</span> <span>{formatMoney(i.subtotal)}</span>
+            <div className="ml-auto w-full max-w-xs space-y-1.5 rounded-[var(--od-radius-md,12px)] bg-[var(--od-surface-subtle)] p-4 text-[13px]">
+              <p className="flex justify-between text-[var(--od-ink-secondary)]">
+                <span>Subtotal</span>
+                <span className="od-tabular">{formatMoney(i.subtotal)}</span>
               </p>
               {toNumber(i.discount) > 0 && (
-                <p className="flex justify-between">
-                  <span>Discount</span> <span>{formatMoney(i.discount)}</span>
+                <p className="flex justify-between text-[var(--od-ink-secondary)]">
+                  <span>Discount</span>
+                  <span className="od-tabular">{formatMoney(i.discount)}</span>
                 </p>
               )}
-              <p className="flex justify-between font-semibold">
-                <span>Total</span> <span>{formatMoney(i.total)}</span>
+              <p className="flex justify-between border-t border-[var(--od-border)] pt-1.5 font-semibold">
+                <span>Total</span>
+                <span className="od-tabular">{formatMoney(i.total)}</span>
               </p>
-              <p className="flex justify-between">
-                <span>Paid</span> <span>{formatMoney(i.paid_total)}</span>
+              <p className="flex justify-between text-[var(--od-ink-secondary)]">
+                <span>Paid</span>
+                <span className="od-tabular">{formatMoney(i.paid_total)}</span>
               </p>
               <p className="flex justify-between font-semibold">
                 <span>Balance</span>
-                <span className={toNumber(i.balance) > 0 ? "text-destructive" : ""}>
+                <span
+                  className={cn("od-tabular", toNumber(i.balance) > 0 && "text-[var(--od-bad)]")}
+                >
                   {formatMoney(i.balance)}
                 </span>
               </p>
             </div>
             {i.installments.length > 0 && (
-              <div>
-                <h3 className="mb-1 text-sm font-semibold">Installments</h3>
+              <div className="space-y-2">
+                <h3 className="od-card-title">Installments</h3>
                 <DataGrid
                   rows={i.installments}
                   rowKey={(x) => x.id ?? x.due_date}
@@ -282,20 +289,23 @@ function Detail({
                     { header: "Paid", align: "right", cell: (x) => formatMoney(x.paid ?? 0) },
                     {
                       header: "Status",
-                      cell: (x) => (x.status ? <StatusBadge value={x.status} /> : "-"),
+                      cell: (x) => (x.status ? <StatusBadge value={x.status} /> : "—"),
                     },
                   ]}
                 />
               </div>
             )}
             {i.payments.length > 0 && (
-              <div>
-                <h3 className="mb-1 text-sm font-semibold">Payments</h3>
+              <div className="space-y-2">
+                <h3 className="od-card-title">Payments</h3>
                 <DataGrid
                   rows={i.payments}
                   rowKey={(x) => x.id}
                   columns={[
-                    { header: "Receipt", cell: (x) => x.number },
+                    {
+                      header: "Receipt",
+                      cell: (x) => <span className="od-mono font-medium">{x.number}</span>,
+                    },
                     { header: "Date", cell: (x) => formatDate(x.date) },
                     { header: "Method", cell: (x) => label(x.method) },
                     { header: "Amount", align: "right", cell: (x) => formatMoney(x.amount) },
@@ -304,34 +314,49 @@ function Detail({
               </div>
             )}
             {i.status === "void" && i.void_reason && (
-              <p className="rounded-xl bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-400">
+              <p className="rounded-[var(--od-radius-sm,8px)] bg-[color-mix(in_srgb,var(--od-bad-mark)_10%,transparent)] p-3 text-[13px] font-medium text-[var(--od-bad)]">
                 Voided: {i.void_reason}
               </p>
             )}
-            <div className="flex flex-wrap justify-end gap-2">
-              <PdfButton path={`/service-invoices/${id}/pdf`} filename={`${i.number}.pdf`} />
+            <div className="flex flex-wrap justify-end gap-2 pt-1">
+              <PdfButton
+                size="sm"
+                path={`/service-invoices/${id}/pdf`}
+                filename={`${i.number}.pdf`}
+              />
               {i.project_id && (
-                <Button variant="outline" onClick={() => navigate(`/projects/${i.project_id}`)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => navigate(`/projects/${i.project_id}`)}
+                >
                   Open project
                 </Button>
               )}
               {canDraft && i.status === "draft" && (
-                <Button variant="outline" onClick={() => onEdit(i)}>
+                <Button size="sm" variant="outline" onClick={() => onEdit(i)}>
                   Edit
                 </Button>
               )}
               {manage && i.status === "draft" && (
-                <Button onClick={() => issue.mutate(undefined)} disabled={issue.isPending}>
+                <Button
+                  size="sm"
+                  onClick={() => issue.mutate(undefined)}
+                  disabled={issue.isPending}
+                >
                   Issue invoice
                 </Button>
               )}
               {canReceive && open && (
-                <Button onClick={() => setPaying(true)}>Record payment</Button>
+                <Button size="sm" onClick={() => setPaying(true)}>
+                  Record payment
+                </Button>
               )}
               {manage && (i.status === "draft" || (open && toNumber(i.paid_total) === 0)) && (
                 <Button
+                  size="sm"
                   variant="ghost"
-                  className="text-destructive"
+                  className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                   onClick={() => setVoiding(true)}
                 >
                   Void
@@ -393,71 +418,140 @@ export default function ServiceInvoices() {
     });
   }
 
-  const total = (list.data ?? []).reduce(
+  const rows = list.data ?? [];
+  const totalBilled = rows.reduce((s, i) => s + (i.status === "void" ? 0 : toNumber(i.total)), 0);
+  const totalBalance = rows.reduce(
     (s, i) => s + (i.status === "void" ? 0 : toNumber(i.balance)),
     0,
   );
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Invoices"
-        description={
-          list.data ? `${formatMoney(total)} still to collect on these invoices.` : undefined
-        }
+        description="Client billing, installment schedules and payment collection."
         actions={
           canAny("services.invoice.manage", "services.invoice.draft") && (
-            <Button onClick={() => setForm(blank)}>
-              <Plus size={16} /> New invoice
+            <Button size="sm" onClick={() => setForm(blank)}>
+              <Plus size={14} /> New invoice
             </Button>
           )
         }
       />
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Input
-          aria-label="Search"
-          className="max-w-xs"
-          placeholder="Search number or client…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard label="Invoices in view" value={rows.length} />
+        <StatCard label="Total billed" value={formatMoney(totalBilled)} />
+        <StatCard
+          label="Still to collect"
+          value={formatMoney(totalBalance)}
+          tone={totalBalance > 0 ? "bad" : "good"}
         />
-        <NativeSelect
-          aria-label="Status"
-          className="w-40"
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-        >
-          <option value="">All</option>
-          <option value="draft">Draft</option>
-          <option value="issued">Issued</option>
-          <option value="partial">Part paid</option>
-          <option value="paid">Paid</option>
-          <option value="void">Void</option>
-        </NativeSelect>
-        <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" checked={overdue} onChange={(e) => setOverdue(e.target.checked)} />
-          Overdue only
-        </label>
       </div>
+
+      <FilterBar className="justify-between">
+        <div className="flex flex-1 flex-wrap items-center gap-2.5">
+          <div className="relative min-w-60 flex-1 sm:max-w-xs">
+            <Search
+              size={15}
+              className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
+            />
+            <Input
+              aria-label="Search"
+              className="pl-9"
+              placeholder="Search number or client…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => setOverdue((v) => !v)}
+            className={cn(
+              "inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[var(--od-app-radius,10px)] border px-3 text-[13px] font-medium transition-colors",
+              overdue
+                ? "border-transparent bg-[color-mix(in_srgb,var(--od-bad-mark)_12%,transparent)] text-[var(--od-bad)]"
+                : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
+            )}
+          >
+            <AlertCircle size={14} /> Overdue only
+          </button>
+        </div>
+        <SegmentedChips
+          ariaLabel="Invoice status"
+          value={status}
+          onChange={setStatus}
+          options={[
+            { value: "", label: "All" },
+            { value: "draft", label: "Draft" },
+            { value: "issued", label: "Issued" },
+            { value: "partial", label: "Part paid" },
+            { value: "paid", label: "Paid" },
+            { value: "void", label: "Void" },
+          ]}
+        />
+      </FilterBar>
+
       <DataGrid
-        rows={list.data}
+        rows={rows}
         loading={list.isLoading}
         rowKey={(r) => r.id}
         empty="No invoices yet"
         onRowClick={(r) => setOpenId(r.id)}
         columns={[
-          { header: "Number", cell: (r) => <span className="font-medium">{r.number}</span> },
-          { header: "Client", cell: (r) => r.client_name },
-          { header: "Project", cell: (r) => r.project_number ?? "-" },
-          { header: "Due", cell: (r) => (r.due_date ? formatDate(r.due_date) : "-") },
+          {
+            header: "Number",
+            sortValue: (r) => r.number,
+            cell: (r) => <span className="od-mono font-medium">{r.number}</span>,
+          },
+          { header: "Client", sortValue: (r) => r.client_name, cell: (r) => r.client_name },
+          {
+            header: "Project",
+            cell: (r) => (
+              <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
+                {r.project_number ?? "—"}
+              </span>
+            ),
+          },
+          {
+            header: "Due",
+            sortValue: (r) => r.due_date ?? "",
+            cell: (r) => (r.due_date ? formatDate(r.due_date) : "—"),
+          },
           { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
-          { header: "Total", align: "right", cell: (r) => formatMoney(r.total) },
-          { header: "Paid", align: "right", cell: (r) => formatMoney(r.paid_total) },
-          { header: "Balance", align: "right", cell: (r) => formatMoney(r.balance) },
+          {
+            header: "Total",
+            align: "right",
+            sortValue: (r) => toNumber(r.total),
+            cell: (r) => formatMoney(r.total),
+          },
+          {
+            header: "Paid",
+            align: "right",
+            sortValue: (r) => toNumber(r.paid_total),
+            cell: (r) => formatMoney(r.paid_total),
+          },
+          {
+            header: "Balance",
+            align: "right",
+            sortValue: (r) => toNumber(r.balance),
+            cell: (r) => (
+              <span
+                className={
+                  toNumber(r.balance) > 0 && r.status !== "void"
+                    ? "font-semibold text-[var(--od-bad)]"
+                    : undefined
+                }
+              >
+                {formatMoney(r.balance)}
+              </span>
+            ),
+          },
         ]}
       />
+
       {form && <InvoiceForm key={form.id ?? "new"} draft={form} onClose={() => setForm(null)} />}
       {openId && <Detail id={openId} onClose={() => setOpenId(null)} onEdit={edit} />}
-    </>
+    </div>
   );
 }

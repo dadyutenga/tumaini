@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Paperclip } from "lucide-react";
+import { AlertCircle, Paperclip, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,18 +9,20 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
-import { PageLoader } from "@/components/shared/Display";
+import { PageLoader, StatCard } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
 import { ClientSelect, StaffSelect } from "@/features/services/shared";
 import { daysUntil, label, useStaff } from "@/features/services/helpers";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { uploadFile } from "@/lib/api";
-import { formatDate, formatMoney } from "@/lib/formatters";
+import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import {
   DESIGN_NEXT,
@@ -33,16 +35,16 @@ import {
   type ProjectRow,
 } from "@/types/services";
 
-/** Card edge colour by workflow step: grey, yellow, blue, red, green. */
+/** Card edge colour using OpenDashboards semantic marks. */
 const EDGE: Record<string, string> = {
-  new_brief: "border-l-muted-foreground/40",
-  in_design: "border-l-amber-500",
-  internal_review: "border-l-amber-500",
-  with_client: "border-l-sky-500",
-  changes_requested: "border-l-red-500",
-  approved: "border-l-emerald-500",
-  printing: "border-l-emerald-500",
-  delivered: "border-l-emerald-500",
+  new_brief: "border-l-[var(--od-muted-mark)]",
+  in_design: "border-l-[var(--od-warning-mark)]",
+  internal_review: "border-l-[var(--od-warning-mark)]",
+  with_client: "border-l-[var(--od-info)]",
+  changes_requested: "border-l-[var(--od-bad-mark)]",
+  approved: "border-l-[var(--od-good-mark)]",
+  printing: "border-l-[var(--od-good-mark)]",
+  delivered: "border-l-[var(--od-good-mark)]",
 };
 
 function JobCard({ job, onOpen }: { job: DesignJobRow; onOpen: () => void }) {
@@ -55,29 +57,35 @@ function JobCard({ job, onOpen }: { job: DesignJobRow; onOpen: () => void }) {
       onDragStart={(e) => e.dataTransfer.setData("text/plain", job.id)}
       onClick={onOpen}
       className={cn(
-        "w-full rounded-xl border border-l-4 bg-card p-3 text-left text-sm shadow-sm transition hover:border-primary",
+        "od-card-flush w-full cursor-pointer border-l-[3px] p-3.5 text-left text-[13px] transition-colors hover:border-[var(--od-ink-muted)]",
         EDGE[job.status],
       )}
     >
-      <p className="font-medium">{job.title}</p>
-      <p className="text-xs text-muted-foreground">{job.client_name}</p>
-      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-        <span className="text-muted-foreground">{job.designer_name ?? "Unassigned"}</span>
+      <p className="font-semibold text-[var(--od-ink)]">{job.title}</p>
+      <p className="od-caption mt-0.5">{job.client_name}</p>
+      <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        <span className="text-[var(--od-ink-secondary)]">{job.designer_name ?? "Unassigned"}</span>
         {job.deadline && (
-          <span className={late ? "font-medium text-destructive" : "text-muted-foreground"}>
+          <span
+            className={late ? "font-semibold text-[var(--od-bad)]" : "text-[var(--od-ink-muted)]"}
+          >
             {late ? "Late " : "Due "}
             {formatDate(job.deadline)}
           </span>
         )}
         <span
-          className={job.revisions_over ? "font-medium text-destructive" : "text-muted-foreground"}
+          className={
+            job.revisions_over
+              ? "od-tabular font-semibold text-[var(--od-bad)]"
+              : "od-tabular text-[var(--od-ink-muted)]"
+          }
         >
           Rev {job.revisions_used}/{job.revisions_included}
         </span>
         {job.priority === "urgent" && <StatusBadge value="urgent" />}
       </div>
       {job.status === "approved" && job.printing_needed && (
-        <p className="mt-1 text-xs text-emerald-700 dark:text-emerald-400">Ready to print</p>
+        <p className="mt-1.5 text-xs font-medium text-[var(--od-good)]">Ready to print</p>
       )}
     </button>
   );
@@ -114,7 +122,7 @@ function Board({ designer }: { designer: string }) {
   }
 
   return (
-    <div className="flex gap-3 overflow-x-auto pb-3">
+    <div className="scrollbar-thin flex gap-3.5 overflow-x-auto pb-3">
       {board.data?.map((col) => (
         <section
           key={col.status}
@@ -130,17 +138,17 @@ function Board({ designer }: { designer: string }) {
             drop(col.status, e.dataTransfer.getData("text/plain"));
           }}
           className={cn(
-            "w-64 shrink-0 rounded-2xl border bg-muted/30 p-3",
-            over === col.status && "ring-2 ring-primary",
+            "w-64 shrink-0 rounded-[var(--od-radius,16px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-3 transition-shadow",
+            over === col.status && "ring-2 ring-[var(--od-ink)]",
           )}
         >
-          <h2 className="mb-3 flex items-center justify-between text-sm font-semibold">
-            {label(col.status)}
-            <span className="rounded-full bg-background px-2 py-0.5 text-xs text-muted-foreground">
+          <h2 className="mb-3 flex items-center justify-between px-1 text-[13px] font-semibold text-[var(--od-ink)]">
+            <span>{label(col.status)}</span>
+            <span className="od-tabular rounded-full bg-[var(--od-surface)] px-2 py-0.5 text-[11px] font-medium text-[var(--od-ink-secondary)] ring-1 ring-[var(--od-border-strong)]">
               {col.jobs.length}
             </span>
           </h2>
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {col.jobs.map((j) => (
               <JobCard key={j.id} job={j} onOpen={() => navigate(`/design-jobs/${j.id}`)} />
             ))}
@@ -357,7 +365,7 @@ function NewJobDialog({
           />
         </Field>
       </div>
-      <label className="flex items-center gap-2 text-sm">
+      <label className="flex items-center gap-2 text-[13px] text-[var(--od-ink-secondary)]">
         <input
           type="checkbox"
           checked={d.printing_needed}
@@ -380,10 +388,13 @@ function NewJobDialog({
             size="sm"
             onClick={() => fileInput.current?.click()}
           >
-            <Paperclip size={14} /> Add files
+            <Paperclip size={13} /> Add files
           </Button>
           {refs.map((r) => (
-            <span key={r.id} className="rounded-full bg-muted px-2 py-0.5 text-xs">
+            <span
+              key={r.id}
+              className="rounded-full bg-[var(--od-neutral-soft)] px-2.5 py-0.5 text-xs text-[var(--od-ink-secondary)]"
+            >
               {r.name}
             </span>
           ))}
@@ -433,7 +444,7 @@ export default function DesignJobs() {
   const myInDesign = myJobs.filter((j) => j.status === "in_design").length;
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Design jobs"
         description="Logos, cards, posters, banners and branding, from brief to delivery."
@@ -441,6 +452,7 @@ export default function DesignJobs() {
           <div className="flex flex-wrap gap-2">
             {user?.id && (
               <Button
+                size="sm"
                 variant={designer === user.id ? "default" : "outline"}
                 onClick={() => setDesigner((d) => (d === user.id ? "" : user.id))}
               >
@@ -448,35 +460,27 @@ export default function DesignJobs() {
               </Button>
             )}
             {manage && (
-              <Button onClick={() => setCreating(true)}>
-                <Plus size={16} /> New job
+              <Button size="sm" onClick={() => setCreating(true)}>
+                <Plus size={14} /> New job
               </Button>
             )}
           </div>
         }
       />
+
       {user?.id && myJobs.length > 0 && (
-        <div className="mb-4 grid gap-3 sm:grid-cols-4">
-          <div className="rounded-xl border bg-card px-4 py-3 text-sm">
-            <p className="text-xs text-muted-foreground">Assigned to me</p>
-            <p className="text-xl font-semibold">{myJobs.length}</p>
-          </div>
-          <div className="rounded-xl border bg-card px-4 py-3 text-sm">
-            <p className="text-xs text-muted-foreground">Due today / overdue</p>
-            <p className={cn("text-xl font-semibold", myDueToday > 0 && "text-destructive")}>
-              {myDueToday}
-            </p>
-          </div>
-          <div className="rounded-xl border bg-card px-4 py-3 text-sm">
-            <p className="text-xs text-muted-foreground">Waiting for client</p>
-            <p className="text-xl font-semibold">{myWithClient}</p>
-          </div>
-          <div className="rounded-xl border bg-card px-4 py-3 text-sm">
-            <p className="text-xs text-muted-foreground">In design</p>
-            <p className="text-xl font-semibold">{myInDesign}</p>
-          </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard label="Assigned to me" value={myJobs.length} />
+          <StatCard
+            label="Due today / overdue"
+            value={myDueToday}
+            tone={myDueToday > 0 ? "bad" : "neutral"}
+          />
+          <StatCard label="Waiting for client" value={myWithClient} />
+          <StatCard label="In design" value={myInDesign} />
         </div>
       )}
+
       <Tabs defaultValue="board">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <TabsList>
@@ -500,18 +504,26 @@ export default function DesignJobs() {
             </NativeSelect>
           )}
         </div>
+
         <TabsContent value="board">
           <Board designer={designer} />
         </TabsContent>
-        <TabsContent value="list">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <Input
-              aria-label="Search"
-              className="max-w-xs"
-              placeholder="Search title or client…"
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-            />
+
+        <TabsContent value="list" className="space-y-4">
+          <FilterBar>
+            <div className="relative min-w-60 flex-1 sm:max-w-xs">
+              <Search
+                size={15}
+                className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
+              />
+              <Input
+                aria-label="Search"
+                className="pl-9"
+                placeholder="Search title or client…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
+            </div>
             <NativeSelect
               aria-label="Status"
               className="w-44"
@@ -525,15 +537,20 @@ export default function DesignJobs() {
                 </option>
               ))}
             </NativeSelect>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                checked={overdue}
-                onChange={(e) => setOverdue(e.target.checked)}
-              />
-              Late only
-            </label>
-          </div>
+            <button
+              type="button"
+              onClick={() => setOverdue((v) => !v)}
+              className={cn(
+                "inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[var(--od-app-radius,10px)] border px-3 text-[13px] font-medium transition-colors",
+                overdue
+                  ? "border-transparent bg-[color-mix(in_srgb,var(--od-bad-mark)_12%,transparent)] text-[var(--od-bad)]"
+                  : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
+              )}
+            >
+              <AlertCircle size={14} /> Late only
+            </button>
+          </FilterBar>
+
           <DataGrid
             rows={list.data}
             loading={list.isLoading}
@@ -541,43 +558,67 @@ export default function DesignJobs() {
             empty="No design jobs yet"
             onRowClick={(j) => navigate(`/design-jobs/${j.id}`)}
             columns={[
-              { header: "Number", cell: (j) => j.number },
+              {
+                header: "Number",
+                sortValue: (j) => j.number,
+                cell: (j) => <span className="od-mono font-medium">{j.number}</span>,
+              },
               {
                 header: "Job",
+                sortValue: (j) => j.title,
                 cell: (j) => (
                   <div>
                     <p className="font-medium">{j.title}</p>
-                    <p className="text-xs text-muted-foreground">{j.client_name}</p>
+                    <p className="od-caption">{j.client_name}</p>
                   </div>
                 ),
               },
               { header: "Type", cell: (j) => label(j.job_type) },
-              { header: "Designer", cell: (j) => j.designer_name ?? "-" },
-              { header: "Due", cell: (j) => (j.deadline ? formatDate(j.deadline) : "-") },
+              { header: "Designer", cell: (j) => j.designer_name ?? "—" },
+              { header: "Due", cell: (j) => (j.deadline ? formatDate(j.deadline) : "—") },
               {
                 header: "Status",
                 cell: (j) => <StatusBadge value={j.overdue ? "overdue" : j.status} />,
               },
-              { header: "Price", align: "right", cell: (j) => formatMoney(j.price) },
-              { header: "Balance", align: "right", cell: (j) => formatMoney(j.balance) },
+              {
+                header: "Price",
+                align: "right",
+                sortValue: (j) => toNumber(j.price),
+                cell: (j) => formatMoney(j.price),
+              },
+              {
+                header: "Balance",
+                align: "right",
+                sortValue: (j) => toNumber(j.balance),
+                cell: (j) => (
+                  <span
+                    className={
+                      toNumber(j.balance) > 0 ? "font-semibold text-[var(--od-bad)]" : undefined
+                    }
+                  >
+                    {formatMoney(j.balance)}
+                  </span>
+                ),
+              },
             ]}
           />
         </TabsContent>
-        <TabsContent value="print">
-          <div className="mb-4 flex flex-wrap items-center gap-3">
-            <NativeSelect
-              aria-label="Print order status"
-              className="w-44"
+
+        <TabsContent value="print" className="space-y-4">
+          <FilterBar>
+            <SegmentedChips
+              ariaLabel="Print order status"
               value={printStatusFilter}
-              onChange={(e) => setPrintStatusFilter(e.target.value)}
-            >
-              <option value="">All statuses</option>
-              <option value="sent">Sent to print</option>
-              <option value="ready">Ready</option>
-              <option value="delivered">Delivered</option>
-              <option value="cancelled">Cancelled</option>
-            </NativeSelect>
-          </div>
+              onChange={setPrintStatusFilter}
+              options={[
+                { value: "", label: "All" },
+                { value: "sent", label: "Sent to print" },
+                { value: "ready", label: "Ready" },
+                { value: "delivered", label: "Delivered" },
+                { value: "cancelled", label: "Cancelled" },
+              ]}
+            />
+          </FilterBar>
           <DataGrid
             rows={printOrders.data}
             loading={printOrders.isLoading}
@@ -590,15 +631,15 @@ export default function DesignJobs() {
                 cell: (o) => (
                   <div>
                     <p className="font-medium">{o.job_title}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {o.job_number} · {o.client_name}
+                    <p className="od-caption">
+                      <span className="od-mono">{o.job_number}</span> · {o.client_name}
                     </p>
                   </div>
                 ),
               },
-              { header: "Printer", cell: (o) => o.contractor_name ?? "-" },
+              { header: "Printer", cell: (o) => o.contractor_name ?? "—" },
               { header: "Qty", align: "right", cell: (o) => o.quantity },
-              { header: "Due", cell: (o) => (o.due_date ? formatDate(o.due_date) : "-") },
+              { header: "Due", cell: (o) => (o.due_date ? formatDate(o.due_date) : "—") },
               { header: "Status", cell: (o) => <StatusBadge value={o.status} /> },
               { header: "Cost", align: "right", cell: (o) => formatMoney(o.cost) },
               {
@@ -606,7 +647,7 @@ export default function DesignJobs() {
                 className: "text-right",
                 cell: (o) =>
                   manage && (o.status === "sent" || o.status === "ready") ? (
-                    <div className="flex justify-end gap-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-1.5" onClick={(e) => e.stopPropagation()}>
                       {o.status === "sent" && (
                         <Button
                           size="sm"
@@ -628,7 +669,7 @@ export default function DesignJobs() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="text-destructive"
+                        className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                         onClick={() => updatePrint.mutate({ id: o.id, status: "cancelled" })}
                       >
                         Cancel
@@ -640,7 +681,8 @@ export default function DesignJobs() {
           />
         </TabsContent>
       </Tabs>
+
       <NewJobDialog open={creating} onOpenChange={setCreating} />
-    </>
+    </div>
   );
 }
