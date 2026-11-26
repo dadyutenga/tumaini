@@ -6,6 +6,7 @@ import {
   Download,
   FileText,
   Plus,
+  Search,
   Smartphone,
   Wallet,
 } from "lucide-react";
@@ -13,9 +14,11 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { EmptyState, PageLoader, StatCard } from "@/components/shared/Display";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
@@ -47,10 +50,11 @@ const TYPES = [
 ];
 
 function AccountIcon({ type }: { type: string }) {
-  if (type === "bank") return <Building2 size={18} className="text-primary" />;
-  if (type === "mobile_money") return <Smartphone size={18} className="text-primary" />;
-  if (type === "petty_cash") return <Wallet size={18} className="text-primary" />;
-  return <Banknote size={18} className="text-primary" />;
+  if (type === "bank") return <Building2 size={16} className="text-[var(--od-ink-secondary)]" />;
+  if (type === "mobile_money")
+    return <Smartphone size={16} className="text-[var(--od-ink-secondary)]" />;
+  if (type === "petty_cash") return <Wallet size={16} className="text-[var(--od-ink-secondary)]" />;
+  return <Banknote size={16} className="text-[var(--od-ink-secondary)]" />;
 }
 
 export default function Money() {
@@ -148,23 +152,24 @@ export default function Money() {
   }
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Money"
         description="Cash, bank and mobile money accounts and every movement between them."
         actions={
           canManage && (
             <>
-              <Button variant="outline" onClick={() => setTransferring(true)}>
-                <ArrowRightLeft size={16} /> Transfer
+              <Button size="sm" variant="outline" onClick={() => setTransferring(true)}>
+                <ArrowRightLeft size={14} /> Transfer
               </Button>
-              <Button onClick={() => setCreating(true)}>
-                <Plus size={16} /> New account
+              <Button size="sm" onClick={() => setCreating(true)}>
+                <Plus size={14} /> New account
               </Button>
             </>
           )
         }
       />
+
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
           {showBalance && <TabsTrigger value="accounts">Accounts</TabsTrigger>}
@@ -172,40 +177,50 @@ export default function Money() {
           {canPayments && <TabsTrigger value="payments">Payments</TabsTrigger>}
         </TabsList>
 
-        <TabsContent value="accounts" className="space-y-4">
+        <TabsContent value="accounts" className="space-y-5">
           {showBalance && accounts.data && accounts.data.length > 0 && (
-            <div className="rounded-xl border bg-card p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-wider text-muted-foreground">
-                Total balance across all accounts
-              </p>
-              <p className="mt-1 text-2xl font-bold tabular-nums">{formatMoney(totalBalance)}</p>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <StatCard
+                label="Total balance across all accounts"
+                value={formatMoney(totalBalance)}
+                className="sm:col-span-2"
+              />
+              <StatCard
+                label="Active accounts"
+                value={active.length}
+                trend={`${accounts.data.length} total`}
+              />
             </div>
           )}
 
           {accounts.isLoading ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">Loading accounts…</p>
+            <PageLoader />
           ) : !accounts.data?.length ? (
-            <p className="py-10 text-center text-sm text-muted-foreground">No accounts yet</p>
+            <div className="od-card">
+              <EmptyState title="No accounts yet" />
+            </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {accounts.data.map((a) => (
-                <div
+                <article
                   key={a.id}
-                  className="flex flex-col justify-between rounded-xl border bg-card p-4 shadow-sm transition hover:border-primary/60"
+                  className="od-card justify-between gap-4 transition-colors hover:border-[var(--od-ink-muted)]"
                 >
                   <button
                     type="button"
                     onClick={() => openAccountTransactions(a.id)}
-                    className="text-left"
+                    className="cursor-pointer text-left"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2.5">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--od-surface-subtle)]">
                           <AccountIcon type={a.type} />
                         </div>
-                        <div>
-                          <p className="font-semibold leading-tight">{a.name}</p>
-                          <p className="text-xs capitalize text-muted-foreground">
+                        <div className="min-w-0">
+                          <p className="truncate text-[14px] font-semibold text-[var(--od-ink)]">
+                            {a.name}
+                          </p>
+                          <p className="od-caption capitalize">
                             {a.type.replaceAll("_", " ")}
                             {a.provider ? ` · ${a.provider}` : ""}
                           </p>
@@ -214,16 +229,14 @@ export default function Money() {
                       <StatusBadge value={a.is_active ? "active" : "inactive"} />
                     </div>
                     {showBalance && (
-                      <p className="mt-4 text-xl font-bold tabular-nums">
-                        {formatMoney(a.balance)}
-                      </p>
+                      <p className="od-kpi-value mt-4 text-[22px]">{formatMoney(a.balance)}</p>
                     )}
                     {a.account_number && (
-                      <p className="mt-1 text-xs text-muted-foreground">Acc: {a.account_number}</p>
+                      <p className="od-mono od-caption mt-1">Acc: {a.account_number}</p>
                     )}
                   </button>
 
-                  <div className="mt-4 flex flex-wrap items-center gap-2 border-t pt-3">
+                  <div className="flex flex-wrap items-center gap-1.5 border-t border-[var(--od-border)] pt-3">
                     {canTxns && (
                       <Button
                         size="sm"
@@ -251,17 +264,18 @@ export default function Money() {
                       </Button>
                     )}
                   </div>
-                </div>
+                </article>
               ))}
             </div>
           )}
         </TabsContent>
 
         <TabsContent value="transactions" className="space-y-4">
-          <div className="flex flex-wrap items-end gap-3 rounded-xl border bg-card p-3">
-            <div className="min-w-[11rem] flex-1">
-              <label className="mb-1 block text-xs text-muted-foreground">Account</label>
+          <FilterBar className="justify-between">
+            <div className="flex flex-1 flex-wrap items-center gap-2">
               <NativeSelect
+                aria-label="Account"
+                className="w-44"
                 value={txAccount}
                 onChange={(e) => {
                   setTxAccount(e.target.value);
@@ -275,55 +289,58 @@ export default function Money() {
                   </option>
                 ))}
               </NativeSelect>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">From</label>
               <Input
                 type="date"
+                aria-label="From date"
+                className="w-36"
                 value={txFrom}
                 onChange={(e) => {
                   setTxFrom(e.target.value);
                   setTxPage(1);
                 }}
               />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-muted-foreground">To</label>
               <Input
                 type="date"
+                aria-label="To date"
+                className="w-36"
                 value={txTo}
                 onChange={(e) => {
                   setTxTo(e.target.value);
                   setTxPage(1);
                 }}
               />
+              <div className="relative min-w-48 flex-1 sm:max-w-xs">
+                <Search
+                  size={15}
+                  className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
+                />
+                <Input
+                  aria-label="Search transactions"
+                  className="pl-9"
+                  placeholder="Description or reference…"
+                  value={txSearch}
+                  onChange={(e) => {
+                    setTxSearch(e.target.value);
+                    setTxPage(1);
+                  }}
+                />
+              </div>
+              {(txAccount || txFrom || txTo || txSearch) && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setTxAccount("");
+                    setTxFrom("");
+                    setTxTo("");
+                    setTxSearch("");
+                    setTxPage(1);
+                  }}
+                >
+                  Clear
+                </Button>
+              )}
             </div>
-            <div className="min-w-[12rem] flex-1">
-              <label className="mb-1 block text-xs text-muted-foreground">Search</label>
-              <Input
-                placeholder="Description or reference…"
-                value={txSearch}
-                onChange={(e) => {
-                  setTxSearch(e.target.value);
-                  setTxPage(1);
-                }}
-              />
-            </div>
-            {(txAccount || txFrom || txTo || txSearch) && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => {
-                  setTxAccount("");
-                  setTxFrom("");
-                  setTxTo("");
-                  setTxSearch("");
-                  setTxPage(1);
-                }}
-              >
-                Clear
-              </Button>
-            )}
             <Button
               variant="outline"
               size="sm"
@@ -332,7 +349,7 @@ export default function Money() {
             >
               <Download size={14} /> Export CSV
             </Button>
-          </div>
+          </FilterBar>
 
           <DataGrid
             rows={txns.data?.data}
@@ -340,15 +357,22 @@ export default function Money() {
             rowKey={(t) => t.id}
             empty="No movements match your filters"
             columns={[
-              { header: "Date", cell: (t) => formatDate(t.date) },
-              { header: "Account", cell: (t) => t.account },
+              {
+                header: "Date",
+                cell: (t) => (
+                  <span className="text-[var(--od-ink-secondary)]">{formatDate(t.date)}</span>
+                ),
+              },
+              { header: "Account", cell: (t) => <span className="font-medium">{t.account}</span> },
               { header: "Description", cell: (t) => t.description },
               {
                 header: "Money in",
                 align: "right",
                 cell: (t) =>
                   Number(t.in) ? (
-                    <span className="font-medium text-emerald-700">{formatMoney(t.in)}</span>
+                    <span className="font-semibold text-[var(--od-good)]">
+                      +{formatMoney(t.in)}
+                    </span>
                   ) : (
                     ""
                   ),
@@ -358,7 +382,9 @@ export default function Money() {
                 align: "right",
                 cell: (t) =>
                   Number(t.out) ? (
-                    <span className="font-medium text-rose-700">{formatMoney(t.out)}</span>
+                    <span className="font-semibold text-[var(--od-bad)]">
+                      −{formatMoney(t.out)}
+                    </span>
                   ) : (
                     ""
                   ),
@@ -463,10 +489,10 @@ export default function Money() {
             onChange={(e) => setTr((t) => ({ ...t, reference: e.target.value }))}
           />
         </Field>
-        <p className="text-xs text-muted-foreground">
+        <p className="od-caption">
           Any bank or mobile-money transfer charge should be recorded separately as an expense.
         </p>
       </FormDialog>
-    </>
+    </div>
   );
 }

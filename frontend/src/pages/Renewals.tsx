@@ -6,9 +6,10 @@ import { Input } from "@/components/ui/input";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
-  NativeSelect,
   PageHeader,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
 import { ConfirmDialog } from "@/components/shared/Display";
@@ -81,65 +82,78 @@ export default function Renewals() {
   );
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Renewals"
         description="Licences and annual fees coming due. Clients are reminded 30 and 7 days before."
         actions={
           manage && (
-            <Button onClick={() => setAdding(true)}>
-              <Plus size={16} /> New renewal
+            <Button size="sm" onClick={() => setAdding(true)}>
+              <Plus size={14} /> New renewal
             </Button>
           )
         }
       />
-      <div className="mb-4 flex flex-wrap gap-3">
-        <NativeSelect
-          aria-label="Status"
-          className="w-40"
+
+      <FilterBar className="justify-between">
+        <SegmentedChips
+          ariaLabel="Renewal status"
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
-        >
-          <option value="pending">Pending</option>
-          <option value="renewed">Renewed</option>
-          <option value="cancelled">Cancelled</option>
-          <option value="">All</option>
-        </NativeSelect>
-        <NativeSelect
-          aria-label="Due within"
-          className="w-44"
+          onChange={setStatus}
+          options={[
+            { value: "pending", label: "Pending" },
+            { value: "renewed", label: "Renewed" },
+            { value: "cancelled", label: "Cancelled" },
+            { value: "", label: "All" },
+          ]}
+        />
+        <SegmentedChips
+          ariaLabel="Due within"
           value={within}
-          onChange={(e) => setWithin(e.target.value)}
-        >
-          <option value="">Any date</option>
-          <option value="7">Next 7 days</option>
-          <option value="30">Next 30 days</option>
-          <option value="90">Next 90 days</option>
-        </NativeSelect>
-      </div>
+          onChange={setWithin}
+          options={[
+            { value: "", label: "Any date" },
+            { value: "7", label: "7 days" },
+            { value: "30", label: "30 days" },
+            { value: "90", label: "90 days" },
+          ]}
+        />
+      </FilterBar>
+
       <DataGrid
         rows={renewals.data}
         loading={renewals.isLoading}
         rowKey={(r) => r.id}
         empty="Nothing to renew"
         columns={[
-          { header: "Client", cell: (r) => <span className="font-medium">{r.client_name}</span> },
-          { header: "Item", cell: (r) => r.item },
-          { header: "Due", cell: (r) => formatDate(r.due_date) },
+          {
+            header: "Client",
+            sortValue: (r) => r.client_name,
+            cell: (r) => <span className="font-medium">{r.client_name}</span>,
+          },
+          { header: "Item", sortValue: (r) => r.item, cell: (r) => r.item },
+          {
+            header: "Due",
+            sortValue: (r) => r.due_date,
+            cell: (r) => (
+              <span className="text-[var(--od-ink-secondary)]">{formatDate(r.due_date)}</span>
+            ),
+          },
           {
             header: "Days left",
             align: "right",
+            sortValue: (r) => r.days_left,
             cell: (r) =>
               r.status !== "pending" ? (
-                "-"
+                "—"
               ) : (
                 <span
                   className={
                     r.days_left < 0
-                      ? "font-medium text-destructive"
+                      ? "font-semibold text-[var(--od-bad)]"
                       : r.days_left <= 7
-                        ? "font-medium text-amber-600"
-                        : ""
+                        ? "font-semibold text-[var(--od-warning)]"
+                        : "text-[var(--od-ink-secondary)]"
                   }
                 >
                   {r.days_left < 0 ? `${-r.days_left} late` : r.days_left}
@@ -149,7 +163,8 @@ export default function Renewals() {
           {
             header: "Fee",
             align: "right",
-            cell: (r) => (toNumber(r.amount) > 0 ? formatMoney(r.amount) : "-"),
+            sortValue: (r) => toNumber(r.amount),
+            cell: (r) => (toNumber(r.amount) > 0 ? formatMoney(r.amount) : "—"),
           },
           { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
           {
@@ -157,7 +172,7 @@ export default function Renewals() {
             className: "text-right",
             cell: (r) =>
               manage && r.status === "pending" ? (
-                <div className="flex justify-end gap-2">
+                <div className="flex justify-end gap-1.5">
                   <Button
                     size="sm"
                     variant="outline"
@@ -176,7 +191,7 @@ export default function Renewals() {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        <MessageCircle size={14} /> Open in WhatsApp
+                        <MessageCircle size={13} /> Open in WhatsApp
                       </a>
                     </Button>
                   )}
@@ -186,7 +201,7 @@ export default function Renewals() {
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="text-destructive"
+                    className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                     onClick={() => setCancelling(r)}
                   >
                     Cancel
@@ -196,6 +211,7 @@ export default function Renewals() {
           },
         ]}
       />
+
       <FormDialog
         open={adding}
         onOpenChange={setAdding}
@@ -250,6 +266,7 @@ export default function Renewals() {
           />
         </Field>
       </FormDialog>
+
       <FormDialog
         open={!!renewing}
         onOpenChange={(o) => !o && setRenewing(null)}
@@ -265,13 +282,16 @@ export default function Renewals() {
           <Input type="date" value={next} onChange={(e) => setNext(e.target.value)} />
         </Field>
       </FormDialog>
+
       <ConfirmDialog
         open={!!cancelling}
         onOpenChange={(o) => !o && setCancelling(null)}
         title="Cancel this renewal?"
         description="The client will not be reminded. Use this if they no longer need it."
+        confirmLabel="Cancel renewal"
+        destructive
         onConfirm={() => cancelling && cancel.mutate({ id: cancelling.id })}
       />
-    </>
+    </div>
   );
 }
