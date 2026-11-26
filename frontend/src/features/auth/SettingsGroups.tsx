@@ -534,11 +534,16 @@ export function NotificationsSettingsPanel() {
             <Field label="Channel">
               <NativeSelect value={testChannel} onChange={(e) => setTestChannel(e.target.value)}>
                 <option value="in_app">In-App notification</option>
-                <option value="sms">SMS (logged in-app in dev)</option>
-                <option value="email">Email (logged in-app in dev)</option>
+                <option value="sms">SMS</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="email">Email</option>
               </NativeSelect>
             </Field>
-            <Field label="Recipient phone or email (optional)">
+            <Field
+              label={
+                testChannel === "in_app" ? "Recipient (optional)" : "Recipient phone or email *"
+              }
+            >
               <Input
                 value={testRecipient}
                 onChange={(e) => setTestRecipient(e.target.value)}

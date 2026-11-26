@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Download, MessageCircle } from "lucide-react";
+import { Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -14,13 +14,24 @@ import {
 import { PageLoader } from "@/components/shared/Display";
 import { RecordHistoryTab } from "@/components/shared/RecordHistoryTab";
 import { AttachmentsSection } from "@/components/shared/AttachmentsSection";
+import { SendOutboundButton } from "@/components/shared/SendOutbound";
 import { useAuth } from "@/features/auth/auth";
-import { whatsappUrl } from "@/features/services/helpers";
 import { toast } from "sonner";
 import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
-import { download } from "@/lib/api";
+import { api, download } from "@/lib/api";
 import { formatDate, formatMoney, formatQty, toNumber } from "@/lib/formatters";
 import type { MoneyAccount, Sale, SaleItem } from "@/types";
+
+interface ReceiptPreview {
+  number?: string;
+  business_date?: string;
+  cashier_name?: string;
+  customer_name?: string;
+  copy?: boolean;
+  receipt_prints?: number;
+  receipt_footer?: string;
+  business?: { name?: string; address?: string; phone?: string; tax_number?: string };
+}
 
 interface SaleReturnRow {
   id: string;
@@ -37,6 +48,11 @@ export default function SaleDetail() {
   const { id = "" } = useParams();
   const { can, canAny, user } = useAuth();
   const { data: sale, isLoading, error } = useGet<Sale>(`/sales/${id}`);
+  const receiptPreview = useGet<ReceiptPreview>(`/sales/${id}/receipt`, undefined, {
+    enabled: Boolean(id),
+  });
+  const [printCopy, setPrintCopy] = useState<boolean | null>(null);
+  const [printingReceipt, setPrintingReceipt] = useState(false);
   const canViewReturns = canAny("shop.sale.view_all", "shop.return.create", "shop.return.approve");
   const saleReturns = useGetPage<SaleReturnRow>(
     `/sales/${id}/returns`,
@@ -130,6 +146,24 @@ export default function SaleDetail() {
   const canApproveReturn = can("shop.return.approve");
   const canManageReturn = canAny("shop.return.create", "shop.return.approve");
   const returnRows = saleReturns.data?.data ?? [];
+  const showCopyBanner = printCopy ?? Boolean(receiptPreview.data?.copy);
+
+  async function printThermalReceipt() {
+    setPrintingReceipt(true);
+    try {
+      const res = await api.post<{ copy: boolean; receipt_prints: number }>(
+        `/sales/${id}/receipt/printed`,
+        {},
+      );
+      setPrintCopy(Boolean(res?.copy));
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      window.print();
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setPrintingReceipt(false);
+    }
+  }
 
   return (
     <>
@@ -171,26 +205,76 @@ export default function SaleDetail() {
             >
               Invoice PDF
             </Button>
-            <Button variant="outline" asChild>
-              <a
-                href={whatsappUrl(
-                  undefined,
-                  `Receipt ${sale.number}: Total ${formatMoney(sale.total)}, Paid ${formatMoney(sale.paid_total)}${
-                    toNumber(sale.balance) > 0 ? `, Balance ${formatMoney(sale.balance)}` : ""
-                  }.`,
-                )}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <MessageCircle size={14} /> WhatsApp
-              </a>
-            </Button>
-            <Button variant="outline" onClick={() => window.print()}>
-              Print
+            <SendOutboundButton
+              label="Send receipt"
+              title="Send receipt"
+              path={`/sales/${id}/send-receipt`}
+              successMessage="Receipt queued"
+              phone={sale.customer_phone}
+              whatsappText={`Receipt ${sale.number}: Total ${formatMoney(sale.total)}, Paid ${formatMoney(sale.paid_total)}${
+                toNumber(sale.balance) > 0 ? `, Balance ${formatMoney(sale.balance)}` : ""
+              }.`}
+            />
+            <Button
+              variant="outline"
+              disabled={printingReceipt}
+              onClick={() => void printThermalReceipt()}
+            >
+              {printingReceipt ? "Printing…" : "Print"}
             </Button>
           </>
         }
       />
+      {/* Thermal receipt print layout (visible only during window.print()) */}
+      <div className="print-document hidden print:block mx-auto max-w-xs space-y-2 p-4 font-mono text-xs text-black">
+        <div className="text-center">
+          <p className="text-sm font-bold">{receiptPreview.data?.business?.name || "Receipt"}</p>
+          {receiptPreview.data?.business?.address && <p>{receiptPreview.data.business.address}</p>}
+          {receiptPreview.data?.business?.phone && <p>{receiptPreview.data.business.phone}</p>}
+        </div>
+        {showCopyBanner && (
+          <p className="border-y border-dashed border-black py-1 text-center font-bold tracking-widest">
+            *** COPY ***
+          </p>
+        )}
+        <div className="space-y-0.5 border-b border-dashed border-black pb-2">
+          <p>Receipt: {sale.number}</p>
+          {sale.business_date && <p>Date: {formatDate(sale.business_date)}</p>}
+          {receiptPreview.data?.cashier_name && <p>Cashier: {receiptPreview.data.cashier_name}</p>}
+          <p>Customer: {receiptPreview.data?.customer_name || sale.customer_name || "Walk-in"}</p>
+        </div>
+        <ul className="space-y-1 border-b border-dashed border-black pb-2">
+          {sale.items.map((i) => (
+            <li key={i.id ?? i.product_id} className="flex justify-between gap-2">
+              <span>
+                {formatQty(i.qty)} × {i.product_name}
+              </span>
+              <span>{formatMoney(i.line_total)}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="space-y-0.5">
+          <div className="flex justify-between font-bold">
+            <span>TOTAL</span>
+            <span>{formatMoney(sale.total)}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>Paid</span>
+            <span>{formatMoney(sale.paid_total)}</span>
+          </div>
+          {toNumber(sale.balance) > 0 && (
+            <div className="flex justify-between">
+              <span>Balance</span>
+              <span>{formatMoney(sale.balance)}</span>
+            </div>
+          )}
+        </div>
+        <p className="pt-2 text-center">
+          {receiptPreview.data?.receipt_footer ||
+            sale.receipt_footer ||
+            "Thank you for your business"}
+        </p>
+      </div>
       <DataGrid<SaleItem>
         rows={sale.items}
         rowKey={(i) => i.id ?? i.product_id}

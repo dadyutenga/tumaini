@@ -65,18 +65,25 @@ export function PdfButton({
   filename,
   children = "PDF",
   query = {},
+  size = "default",
+  disabled = false,
 }: {
   path: string;
   filename: string;
   children?: ReactNode;
   query?: Record<string, string>;
+  size?: "default" | "sm" | "lg" | "icon";
+  disabled?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   return (
     <Button
+      type="button"
+      size={size}
       variant="outline"
-      disabled={busy}
-      onClick={async () => {
+      disabled={busy || disabled}
+      onClick={async (e) => {
+        e.stopPropagation();
         setBusy(true);
         try {
           await download(path, { format: "pdf", ...query }, filename);
@@ -87,7 +94,7 @@ export function PdfButton({
         }
       }}
     >
-      <FileDown size={16} /> {children}
+      <FileDown size={size === "sm" ? 14 : 16} /> {children}
     </Button>
   );
 }

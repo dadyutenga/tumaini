@@ -14,6 +14,7 @@ import {
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
+import { PdfButton } from "@/features/services/shared";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { MoneyAccount, Product } from "@/types";
@@ -199,6 +200,9 @@ function SuppliersTab() {
   const { can, canAny } = useAuth();
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
+  const [stmtFrom, setStmtFrom] = useState("");
+  const [stmtTo, setStmtTo] = useState("");
+  const invalidStmtRange = Boolean(stmtFrom && stmtTo && stmtTo < stmtFrom);
   const list = useGetPage<Supplier>("/suppliers", { q: q || undefined, page });
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
     enabled: canAny("finance.account.view", "finance.payment.make", "finance.payment.receive"),
@@ -232,22 +236,41 @@ function SuppliersTab() {
 
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <Input
-          aria-label="Search suppliers"
-          className="max-w-xs"
-          placeholder="Search suppliers…"
-          value={q}
-          onChange={(e) => {
-            setQ(e.target.value);
-            setPage(1);
-          }}
-        />
-        {can("shop.supplier.manage") && (
-          <Button onClick={() => setOpen(true)}>
-            <Plus size={16} /> New supplier
-          </Button>
-        )}
+      <div className="mb-4 space-y-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              aria-label="Search suppliers"
+              className="max-w-xs"
+              placeholder="Search suppliers…"
+              value={q}
+              onChange={(e) => {
+                setQ(e.target.value);
+                setPage(1);
+              }}
+            />
+            <Input
+              type="date"
+              aria-label="Statement from date"
+              className="w-40"
+              value={stmtFrom}
+              onChange={(e) => setStmtFrom(e.target.value)}
+            />
+            <Input
+              type="date"
+              aria-label="Statement to date"
+              className="w-40"
+              value={stmtTo}
+              onChange={(e) => setStmtTo(e.target.value)}
+            />
+          </div>
+          {can("shop.supplier.manage") && (
+            <Button onClick={() => setOpen(true)}>
+              <Plus size={16} /> New supplier
+            </Button>
+          )}
+        </div>
+        {invalidStmtRange && <p className="text-sm text-destructive">to must not be before from</p>}
       </div>
       <DataGrid
         rows={list.data?.data}
@@ -269,20 +292,32 @@ function SuppliersTab() {
           },
           {
             header: "",
-            cell: (s) =>
-              can("finance.payment.make") &&
-              toNumber(s.balance) > 0 && (
-                <Button
+            className: "text-right",
+            cell: (s) => (
+              <div className="flex justify-end gap-2">
+                <PdfButton
                   size="sm"
-                  variant="outline"
-                  onClick={() => {
-                    setPaying(s);
-                    setPay((p) => ({ ...p, amount: String(toNumber(s.balance)) }));
-                  }}
+                  disabled={invalidStmtRange}
+                  path={`/suppliers/${s.id}/statement`}
+                  query={{ from: stmtFrom, to: stmtTo }}
+                  filename={`supplier-statement-${s.name}.pdf`}
                 >
-                  Pay
-                </Button>
-              ),
+                  Statement
+                </PdfButton>
+                {can("finance.payment.make") && toNumber(s.balance) > 0 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setPaying(s);
+                      setPay((p) => ({ ...p, amount: String(toNumber(s.balance)) }));
+                    }}
+                  >
+                    Pay
+                  </Button>
+                )}
+              </div>
+            ),
           },
         ]}
       />

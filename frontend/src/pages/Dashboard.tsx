@@ -823,6 +823,17 @@ export default function Dashboard() {
                 </div>
               </div>
             </div>
+            {d.outstanding.salaries_due !== undefined && d.outstanding.salaries_due !== null && (
+              <Link
+                to="/payroll"
+                className="mt-3 flex items-center justify-between rounded-xl border bg-muted/25 px-4 py-2.5 text-sm transition hover:border-primary/40 hover:text-primary"
+              >
+                <span className="font-medium">Salaries due</span>
+                <span className="font-semibold tabular-nums">
+                  {formatMoney(d.outstanding.salaries_due)}
+                </span>
+              </Link>
+            )}
           </section>
         )}
       </div>
@@ -863,6 +874,21 @@ export default function Dashboard() {
                 Products
               </Link>
             </div>
+            {d.stock.value !== undefined && d.stock.value !== null && (
+              <Link
+                to={
+                  can("reports.business.view")
+                    ? "/reports?path=/reports/inventory/valuation"
+                    : "/products"
+                }
+                className="mt-2.5 flex items-center justify-between rounded-xl border bg-muted/25 px-3 py-2 text-xs transition hover:border-primary/40 hover:text-primary"
+              >
+                <span className="font-medium text-muted-foreground">Stock value</span>
+                <span className="font-bold tabular-nums text-foreground">
+                  {formatMoney(d.stock.value)}
+                </span>
+              </Link>
+            )}
             {(d.stock.items ?? []).length === 0 ? (
               <p className="mt-3 text-xs text-muted-foreground">Stock levels are healthy.</p>
             ) : (

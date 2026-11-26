@@ -33,6 +33,9 @@ func Forbidden(code, message string) *Error { return New(fiber.StatusForbidden, 
 func NotFound(code, message string) *Error  { return New(fiber.StatusNotFound, code, message) }
 func Conflict(code, message string) *Error  { return New(fiber.StatusConflict, code, message) }
 func TooMany(code, message string) *Error   { return New(fiber.StatusTooManyRequests, code, message) }
+func ServiceUnavailable(code, message string) *Error {
+	return New(fiber.StatusServiceUnavailable, code, message)
+}
 
 func Validation(err error) *Error {
 	fields := map[string]string{}

@@ -18,7 +18,7 @@ import { useAuth } from "@/features/auth/auth";
 import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { isPendingApproval, uploadFile } from "@/lib/api";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
-import type { MoneyAccount } from "@/types";
+import type { Branch, MoneyAccount } from "@/types";
 
 interface Category {
   id: string;
@@ -27,6 +27,8 @@ interface Category {
 interface Expense {
   id: string;
   number?: string;
+  branch_id?: string;
+  location_name?: string;
   status: string;
   amount?: string;
   description: string;
@@ -48,14 +50,21 @@ const STATUS_OPTIONS = [
 ];
 
 export default function Expenses() {
-  const { can, canAny, user } = useAuth();
+  const { can, canAny, user, branchId } = useAuth();
+  const isAllLocations = !branchId || branchId === "all";
   const categories = useGet<Category[]>("/expense-categories");
+  const branches = useGet<Branch[]>("/branches", undefined, { enabled: isAllLocations });
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
     enabled: canAny("finance.account.view", "finance.expense.enter", "finance.expense.pay"),
   });
   const [status, setStatus] = useState("");
+  const [locationId, setLocationId] = useState("");
   const [page, setPage] = useState(1);
-  const list = useGetPage<Expense>("/expenses", { status: status || undefined, page });
+  const list = useGetPage<Expense>("/expenses", {
+    status: status || undefined,
+    location_id: isAllLocations && locationId ? locationId : undefined,
+    page,
+  });
   const [open, setOpen] = useState(false);
   const [paying, setPaying] = useState<Expense | null>(null);
   const [account, setAccount] = useState("");
@@ -156,6 +165,7 @@ export default function Expenses() {
   }
 
   const usable = (accounts.data ?? []).filter((a) => a.is_active);
+  const activeLocations = (branches.data ?? []).filter((b) => b.is_active);
 
   return (
     <>
@@ -170,22 +180,42 @@ export default function Expenses() {
           )
         }
       />
-      <NativeSelect
-        aria-label="Filter by status"
-        className="mb-4 max-w-[13rem]"
-        value={status}
-        onChange={(e) => {
-          setStatus(e.target.value);
-          setPage(1);
-        }}
-      >
-        <option value="">All statuses</option>
-        {STATUS_OPTIONS.map(([v, label]) => (
-          <option key={v} value={v}>
-            {label}
-          </option>
-        ))}
-      </NativeSelect>
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <NativeSelect
+          aria-label="Filter by status"
+          className="max-w-[13rem]"
+          value={status}
+          onChange={(e) => {
+            setStatus(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="">All statuses</option>
+          {STATUS_OPTIONS.map(([v, label]) => (
+            <option key={v} value={v}>
+              {label}
+            </option>
+          ))}
+        </NativeSelect>
+        {isAllLocations && activeLocations.length > 1 && (
+          <NativeSelect
+            aria-label="Filter by location"
+            className="max-w-[14rem]"
+            value={locationId}
+            onChange={(e) => {
+              setLocationId(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">All locations</option>
+            {activeLocations.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </NativeSelect>
+        )}
+      </div>
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
@@ -194,6 +224,7 @@ export default function Expenses() {
         columns={[
           { header: "Number", cell: (e) => e.number ?? "-" },
           { header: "Date", cell: (e) => (e.date ? formatDate(e.date) : "-") },
+          { header: "Location", cell: (e) => e.location_name ?? "-" },
           { header: "Category", cell: (e) => e.category_name ?? "-" },
           {
             header: "Description",

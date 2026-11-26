@@ -8,6 +8,7 @@ export class ApiError extends Error {
     public status: number,
     public code = "error",
     public fields: Record<string, string> = {},
+    public data?: unknown,
   ) {
     super(message);
     this.name = "ApiError";
@@ -135,16 +136,17 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     if (response.ok) throw new ApiError("The server returned invalid JSON", response.status);
   }
   if (!response.ok) {
-    const err = (
-      json as {
-        error?: { code?: string; message?: string; fields?: Record<string, string> };
-      } | null
-    )?.error;
+    const body = json as {
+      error?: { code?: string; message?: string; fields?: Record<string, string> };
+      data?: unknown;
+    } | null;
+    const err = body?.error;
     throw new ApiError(
       err?.message ?? response.statusText ?? "Request failed",
       response.status,
       err?.code,
       err?.fields,
+      body?.data,
     );
   }
   return json as T;
@@ -268,7 +270,10 @@ export async function fetchFileBlob(
     throw new ApiError("Could not load the file preview", response.status);
   }
   const blob = await response.blob();
-  return { url: URL.createObjectURL(blob), mime: blob.type || response.headers.get("Content-Type") || "" };
+  return {
+    url: URL.createObjectURL(blob),
+    mime: blob.type || response.headers.get("Content-Type") || "",
+  };
 }
 
 /** Absolute URL for a public (no sign-in) endpoint, for use in img/iframe/link tags. */

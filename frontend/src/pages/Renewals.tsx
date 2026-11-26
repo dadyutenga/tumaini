@@ -16,6 +16,7 @@ import { useAuth } from "@/features/auth/auth";
 import { ClientSelect } from "@/features/services/shared";
 import { whatsappUrl } from "@/features/services/helpers";
 import { useGet, useWrite } from "@/hooks/useApi";
+import { ApiError } from "@/lib/api";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { Renewal } from "@/types/services";
 
@@ -32,6 +33,7 @@ export default function Renewals() {
   const [renewing, setRenewing] = useState<Renewal | null>(null);
   const [next, setNext] = useState("");
   const [cancelling, setCancelling] = useState<Renewal | null>(null);
+  const [waFallback, setWaFallback] = useState<Record<string, boolean>>({});
 
   const refresh = ["/renewals", "/services"];
   const add = useWrite("POST", "/renewals", {
@@ -60,16 +62,21 @@ export default function Renewals() {
     success: "Renewal cancelled",
     toBody: () => undefined,
   });
-  const remind = useWrite<{ id: string }, { delivered?: boolean }>(
+  const remind = useWrite<{ id: string }, { queued?: boolean; delivered?: boolean }>(
     "POST",
     (b) => `/renewals/${b.id}/remind`,
     {
       invalidate: refresh,
-      toBody: () => undefined,
+      toBody: () => ({ channel: "sms" }),
       onSuccess: (r) =>
-        r?.delivered === false
-          ? toast.warning("Reminder recorded. No SMS provider is set up, so it was not sent.")
-          : toast.success("Reminder sent to the client"),
+        r?.queued || r?.delivered
+          ? toast.success("Renewal reminder queued")
+          : toast.warning("Reminder could not be queued."),
+      onError: (err, vars) => {
+        if (err instanceof ApiError && err.status === 503) {
+          setWaFallback((m) => ({ ...m, [vars.id]: true }));
+        }
+      },
     },
   );
 
@@ -151,21 +158,28 @@ export default function Renewals() {
             cell: (r) =>
               manage && r.status === "pending" ? (
                 <div className="flex justify-end gap-2">
-                  <Button size="sm" variant="outline" onClick={() => remind.mutate({ id: r.id })}>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={remind.isPending}
+                    onClick={() => remind.mutate({ id: r.id })}
+                  >
                     Remind
                   </Button>
-                  <Button size="sm" variant="outline" asChild>
-                    <a
-                      href={whatsappUrl(
-                        undefined,
-                        `Hello ${r.client_name}, reminder: ${r.item} is due on ${formatDate(r.due_date)}.`,
-                      )}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <MessageCircle size={14} /> WhatsApp
-                    </a>
-                  </Button>
+                  {waFallback[r.id] && (
+                    <Button size="sm" variant="outline" asChild>
+                      <a
+                        href={whatsappUrl(
+                          r.client_phone ?? undefined,
+                          `Hello ${r.client_name}, reminder: ${r.item} is due on ${formatDate(r.due_date)}.`,
+                        )}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <MessageCircle size={14} /> Open in WhatsApp
+                      </a>
+                    </Button>
+                  )}
                   <Button size="sm" variant="outline" onClick={() => setRenewing(r)}>
                     Renewed
                   </Button>

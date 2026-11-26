@@ -2,10 +2,15 @@ package services
 
 import (
 	"context"
+	"fmt"
+	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/shopspring/decimal"
 
+	"bms/internal/kernel/outbound"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/export"
 	"bms/internal/platform/httpx"
@@ -266,7 +271,7 @@ func (s *Service) DeactivateClient(ctx context.Context, p *auth.Principal, id uu
 func (s *Service) ClientStatement(ctx context.Context, p *auth.Principal, id uuid.UUID, from, to string) (map[string]any, error) {
 	var out map[string]any
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		c, err := one(ctx, tx, "Client", `SELECT id, full_name::text AS name, phone::text AS phone FROM app.customers WHERE tenant_id = $1 AND id = $2 AND client_status IS NOT NULL`, p.TenantID, id)
+		c, err := one(ctx, tx, "Client", `SELECT id, full_name::text AS name, phone::text AS phone, email::text AS email FROM app.customers WHERE tenant_id = $1 AND id = $2 AND client_status IS NOT NULL`, p.TenantID, id)
 		if err != nil {
 			return err
 		}
@@ -322,4 +327,133 @@ func statementPDF(m map[string]any) []byte {
 	d.Rule()
 	d.KV("Closing balance", export.Cell(m["closing_balance"]))
 	return d.Bytes()
+}
+
+// SendClientStatement queues the client's statement summary into app.outbound_messages.
+func (s *Service) SendClientStatement(ctx context.Context, p *auth.Principal, id uuid.UUID, channel, from, to, idemKey string) (map[string]any, error) {
+	if clean(channel) == "" {
+		channel = "sms"
+	}
+	ch, err := s.Outbound.CheckAvailable(channel)
+	if err != nil {
+		return nil, err
+	}
+	if from != "" {
+		if _, err := time.Parse("2006-01-02", from); err != nil {
+			return nil, httpx.BadRequest("invalid_query", "from must be YYYY-MM-DD")
+		}
+	}
+	if to != "" {
+		if _, err := time.Parse("2006-01-02", to); err != nil {
+			return nil, httpx.BadRequest("invalid_query", "to must be YYYY-MM-DD")
+		}
+	}
+	if from != "" && to != "" && to < from {
+		return nil, httpx.BadRequest("invalid_query", "to must not be before from")
+	}
+	stmt, err := s.ClientStatement(ctx, p, id, from, to)
+	if err != nil {
+		return nil, err
+	}
+	c := stmt["client"].(map[string]any)
+	recipient := ""
+	if ch == "email" {
+		recipient, _ = c["email"].(string)
+	} else {
+		recipient, _ = c["phone"].(string)
+	}
+	if len(strings.TrimSpace(recipient)) < 5 {
+		return nil, httpx.BadRequest("no_recipient", "Client has no phone number or email for this channel")
+	}
+	closing := stmt["closing_balance"].(decimal.Decimal)
+	period := "all dates"
+	if from != "" && to != "" {
+		period = from + " to " + to
+	} else if from != "" {
+		period = "from " + from
+	} else if to != "" {
+		period = "up to " + to
+	}
+	name, _ := c["name"].(string)
+	body := fmt.Sprintf("Statement for %s (%s): closing balance %s.", name, period, closing.StringFixed(2))
+	suffix := clean(idemKey)
+	if suffix == "" {
+		suffix = ids.New().String()
+	}
+	key := fmt.Sprintf("client-stmt:%s:%s:%s:%s:%s", id.String(), ch, from, to, suffix)
+	var out map[string]any
+	err = s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+			Channel:        ch,
+			Recipient:      recipient,
+			Subject:        "Client statement",
+			Body:           body,
+			IdempotencyKey: key,
+			CustomerID:     &id,
+		})
+		if err != nil {
+			return err
+		}
+		out = map[string]any{"id": row.ID, "status": row.Status}
+		return nil
+	})
+	return out, err
+}
+
+// SendClientDebtReminder queues a debt reminder for a service client with an unpaid invoice balance.
+func (s *Service) SendClientDebtReminder(ctx context.Context, p *auth.Principal, id uuid.UUID, channel string) (map[string]any, error) {
+	if clean(channel) == "" {
+		channel = "sms"
+	}
+	ch, err := s.Outbound.CheckAvailable(channel)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	err = s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		c, err := one(ctx, tx, "Client", `SELECT `+clientCols+clientFrom+` WHERE c.tenant_id = $1 AND c.id = $2 AND c.client_status IS NOT NULL`, p.TenantID, id)
+		if err != nil {
+			return err
+		}
+		bal := num(c, "balance")
+		if !bal.IsPositive() {
+			return httpx.Conflict("nothing_due", "This client has no outstanding balance")
+		}
+		recipient := ""
+		if ch == "email" {
+			recipient, _ = c["email"].(string)
+		} else {
+			recipient, _ = c["phone"].(string)
+		}
+		if len(strings.TrimSpace(recipient)) < 5 {
+			return httpx.BadRequest("no_recipient", "Client has no phone number or email for this channel")
+		}
+		today, err := s.bizDate(ctx, tx)
+		if err != nil {
+			return err
+		}
+		name, _ := c["name"].(string)
+		body := outbound.RenderTemplate(ctx, tx, "notifications.sms_template_debt",
+			"Reminder: {{name}}, your outstanding balance is {{balance}}.",
+			map[string]string{
+				"name":    name,
+				"balance": bal.StringFixed(2),
+			},
+		)
+		key := fmt.Sprintf("debt-reminder:client:%s:%s:%s", id.String(), ch, today)
+		row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+			Channel:        ch,
+			Recipient:      recipient,
+			Subject:        "Payment reminder",
+			Body:           body,
+			IdempotencyKey: key,
+			CustomerID:     &id,
+		})
+		if err != nil {
+			return err
+		}
+		out = map[string]any{"id": row.ID, "status": row.Status}
+		return nil
+	})
+	return out, err
 }

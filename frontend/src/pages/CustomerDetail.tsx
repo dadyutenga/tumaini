@@ -12,10 +12,11 @@ import {
 } from "@/components/shared/kit";
 import { PageLoader } from "@/components/shared/Display";
 import { AttachmentsSection } from "@/components/shared/AttachmentsSection";
+import { SendOutboundButton } from "@/components/shared/SendOutbound";
+import { PdfButton } from "@/features/services/shared";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useWrite } from "@/hooks/useApi";
-import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
-import { today } from "@/lib/formatters";
+import { formatDate, formatMoney, today, toNumber } from "@/lib/formatters";
 import type { Customer, MoneyAccount } from "@/types";
 
 interface Line {
@@ -37,10 +38,17 @@ interface Statement {
 export default function CustomerDetail() {
   const { id = "" } = useParams();
   const { can, canAny } = useAuth();
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const invalidRange = Boolean(from && to && to < from);
   const customer = useGet<Customer>(`/customers/${id}`);
-  const statement = useGet<Statement>(`/customers/${id}/statement`, undefined, {
-    enabled: can("finance.debt.view"),
-  });
+  const statement = useGet<Statement>(
+    `/customers/${id}/statement`,
+    { from: from || undefined, to: to || undefined },
+    {
+      enabled: can("finance.debt.view") && !invalidRange,
+    },
+  );
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
     enabled: canAny("finance.account.view", "finance.payment.receive", "shop.sale.create"),
   });
@@ -125,15 +133,54 @@ export default function CustomerDetail() {
         ))}
       </div>
       {can("finance.debt.view") && (
-        <>
-          <h2 className="mb-3 text-lg font-semibold">Statement</h2>
+        <section className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="text-lg font-semibold">Statement</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                type="date"
+                aria-label="Statement from date"
+                className="w-40"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+              />
+              <Input
+                type="date"
+                aria-label="Statement to date"
+                className="w-40"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+              />
+              {!invalidRange && (
+                <>
+                  <PdfButton
+                    path={`/customers/${id}/statement`}
+                    query={{ from, to }}
+                    filename={`statement-${c.name}.pdf`}
+                  >
+                    Print statement
+                  </PdfButton>
+                  <SendOutboundButton
+                    label="Send statement"
+                    title="Send customer statement"
+                    path={`/customers/${id}/statement/send`}
+                    extraBody={{ from: from || undefined, to: to || undefined }}
+                    successMessage="Statement queued"
+                    phone={c.phone}
+                    whatsappText={`Statement for ${c.name}: closing balance ${formatMoney(statement.data?.closing_balance ?? c.balance)}.`}
+                  />
+                </>
+              )}
+            </div>
+          </div>
+          {invalidRange && <p className="text-sm text-destructive">to must not be before from</p>}
           <DataGrid
-            rows={statement.data?.lines}
-            loading={statement.isLoading}
+            rows={invalidRange ? [] : statement.data?.lines}
+            loading={!invalidRange && statement.isLoading}
             rowKey={(l) =>
               `${l.date}-${l.created_at ?? ""}-${l.number}-${l.type}-${l.debit}-${l.credit}`
             }
-            empty="No activity yet"
+            empty={invalidRange ? "Fix the date range to view the statement" : "No activity yet"}
             columns={[
               { header: "Date", cell: (l) => formatDate(l.date) },
               { header: "Document", cell: (l) => l.number || "-" },
@@ -158,7 +205,7 @@ export default function CustomerDetail() {
               { header: "Balance", align: "right", cell: (l) => formatMoney(l.balance) },
             ]}
           />
-        </>
+        </section>
       )}
 
       {id && (

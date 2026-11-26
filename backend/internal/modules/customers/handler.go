@@ -161,6 +161,38 @@ func statementPDF(m map[string]any) []byte {
 	return d.Bytes()
 }
 
+func (h *Handler) SendStatement(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Channel string `json:"channel"`
+		From    string `json:"from"`
+		To      string `json:"to"`
+	}
+	if err := httpx.BindOptional(c, &body); err != nil {
+		return err
+	}
+	out, err := h.Svc.SendStatement(c.Context(), middleware.Principal(c), id, body.Channel, body.From, body.To, c.Get("Idempotency-Key"))
+	return httpx.OK(c, out, err)
+}
+
+func (h *Handler) DebtReminder(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Channel string `json:"channel"`
+	}
+	if err := httpx.BindOptional(c, &body); err != nil {
+		return err
+	}
+	out, err := h.Svc.SendDebtReminder(c.Context(), middleware.Principal(c), id, body.Channel)
+	return httpx.OK(c, out, err)
+}
+
 func (h *Handler) Debts(c fiber.Ctx) error {
 	list, err := h.Svc.Debts(c.Context(), middleware.Principal(c), "customers.view")
 	return httpx.OK(c, list, err)
@@ -178,4 +210,6 @@ func Register(r fiber.Router, h *Handler) {
 	r.Post("/customers/:id/payments", middleware.Require("finance.payment.receive"), middleware.Idempotent(), h.Pay)
 	r.Post("/customers/:id/write-off", middleware.Require("finance.transaction.correct"), middleware.Idempotent(), h.WriteOff)
 	r.Get("/customers/:id/statement", middleware.Require("finance.debt.view"), h.Statement)
+	r.Post("/customers/:id/statement/send", middleware.Require("finance.debt.view"), h.SendStatement)
+	r.Post("/customers/:id/debt-reminder", middleware.Require("finance.debt.view"), h.DebtReminder)
 }

@@ -4,7 +4,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CloudOff,
   Download,
-  MessageCircle,
   Minus,
   Package,
   Plus,
@@ -19,8 +18,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FormDialog, NativeSelect, PageHeader } from "@/components/shared/kit";
 import { ProductImage } from "@/components/shared/ProductImage";
+import { SendOutboundButton } from "@/components/shared/SendOutbound";
 import { useAuth } from "@/features/auth/auth";
-import { whatsappUrl } from "@/features/services/helpers";
 import { useDebounce } from "@/hooks/useDebounce";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { api, download, get, isPendingApproval, newIdempotencyKey } from "@/lib/api";
@@ -1088,9 +1087,33 @@ function Row({ label, value }: { label: string; value: unknown }) {
 }
 
 function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
+  const [isCopy, setIsCopy] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const summaryText = `Receipt ${sale.number ?? ""}\nTotal: ${formatMoney(sale.total)}\nPaid: ${formatMoney(sale.paid_total)}${
     toNumber(sale.balance) > 0 ? `\nBalance: ${formatMoney(sale.balance)}` : ""
   }\nThank you for your business!`;
+
+  async function printReceipt() {
+    if (!sale.id) {
+      window.print();
+      return;
+    }
+    setPrinting(true);
+    try {
+      const res = await api.post<{ copy: boolean; receipt_prints: number }>(
+        `/sales/${sale.id}/receipt/printed`,
+        {},
+      );
+      setIsCopy(Boolean(res?.copy));
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      window.print();
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setPrinting(false);
+    }
+  }
+
   return (
     <FormDialog
       open
@@ -1099,7 +1122,16 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
       submitLabel="New sale"
       onSubmit={onClose}
     >
-      <div id="receipt" className="space-y-2 text-sm">
+      <div id="receipt" className="print-document space-y-2 text-sm">
+        {isCopy && (
+          <p className="rounded-md border border-dashed py-1 text-center text-xs font-bold tracking-widest uppercase">
+            *** COPY ***
+          </p>
+        )}
+        <div className="flex justify-between text-xs text-muted-foreground">
+          <span>Receipt {sale.number ?? ""}</span>
+          <span>{sale.customer_name || "Walk-in"}</span>
+        </div>
         <ul className="divide-y">
           {sale.items.map((i) => (
             <li
@@ -1135,14 +1167,24 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
           </div>
         )}
         {sale.id && (
-          <Link className="text-primary underline" to={`/sales/${sale.id}`} onClick={onClose}>
+          <Link
+            className="text-primary underline print:hidden"
+            to={`/sales/${sale.id}`}
+            onClick={onClose}
+          >
             Open sale
           </Link>
         )}
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={() => window.print()}>
-          Print
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={printing}
+          onClick={() => void printReceipt()}
+        >
+          {printing ? "Printing…" : "Print"}
         </Button>
         {sale.id && (
           <Button
@@ -1160,11 +1202,17 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
             <Download size={14} /> Receipt PDF
           </Button>
         )}
-        <Button type="button" variant="outline" size="sm" asChild>
-          <a href={whatsappUrl(undefined, summaryText)} target="_blank" rel="noreferrer">
-            <MessageCircle size={14} /> WhatsApp
-          </a>
-        </Button>
+        {sale.id && (
+          <SendOutboundButton
+            label="Send receipt"
+            title="Send receipt"
+            path={`/sales/${sale.id}/send-receipt`}
+            successMessage="Receipt queued"
+            phone={sale.customer_phone}
+            whatsappText={summaryText}
+            size="sm"
+          />
+        )}
       </div>
     </FormDialog>
   );

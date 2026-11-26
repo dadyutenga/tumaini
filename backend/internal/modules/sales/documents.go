@@ -3,13 +3,17 @@ package sales
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"bms/internal/kernel/outbound"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/export"
+	"bms/internal/platform/httpx"
+	"bms/internal/platform/ids"
 	"bms/internal/platform/pdf"
 	"bms/internal/platform/setting"
 )
@@ -26,27 +30,37 @@ func businessHeader(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (map[str
 	return map[string]any{"name": name, "legal_name": name, "tax_number": taxNo, "reg_number": regNo, "phone": phone, "email": email, "address": address, "currency": currency}, nil
 }
 
-// Receipt returns print data. The first print is the original; later prints are marked COPY.
-func (s *Service) Receipt(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
+// Receipt returns print data. When recordPrint is true (PDF download), it records a
+// sale.receipt_printed audit row: the first print is original (copy=false) and every
+// subsequent print is marked copy=true. A JSON preview (recordPrint=false) does not
+// record a print and reports copy=true once at least one print has already occurred.
+func (s *Service) Receipt(ctx context.Context, p *auth.Principal, id uuid.UUID, recordPrint bool) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		m, err := s.loadSale(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
-		if err := s.Audit.Record(ctx, tx, p, "sale.receipt_printed", "sale", id, nil, nil); err != nil {
-			return err
+		if recordPrint {
+			if err := s.Audit.Record(ctx, tx, p, "sale.receipt_printed", "sale", id, nil, nil); err != nil {
+				return err
+			}
 		}
 		var prints int
 		_ = tx.QueryRow(ctx, `
 			SELECT count(*) FROM audit.audit_log
 			WHERE tenant_id = $1 AND entity_table = 'sale' AND entity_id = $2 AND action = 'sale.receipt_printed'`,
 			p.TenantID, id).Scan(&prints)
-		if prints < 1 {
-			prints = 1
+		if recordPrint {
+			if prints < 1 {
+				prints = 1
+			}
+			m["receipt_prints"] = prints
+			m["copy"] = prints > 1
+		} else {
+			m["receipt_prints"] = prints
+			m["copy"] = prints >= 1
 		}
-		m["receipt_prints"] = prints
-		m["copy"] = prints > 1
 		if m["payments"], err = salePayments(ctx, tx, p.TenantID, id); err != nil {
 			return err
 		}
@@ -61,6 +75,30 @@ func (s *Service) Receipt(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 			"show_tax":     setting.Bool(ctx, tx, "receipt.show_tax", true),
 		}
 		out = m
+		return nil
+	})
+	return out, err
+}
+
+// RecordReceiptPrint records one on-screen receipt print and reports whether this print is a copy.
+func (s *Service) RecordReceiptPrint(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
+	var out map[string]any
+	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		if _, err := s.loadSale(ctx, tx, p, id); err != nil {
+			return err
+		}
+		if err := s.Audit.Record(ctx, tx, p, "sale.receipt_printed", "sale", id, nil, nil); err != nil {
+			return err
+		}
+		var prints int
+		_ = tx.QueryRow(ctx, `
+			SELECT count(*) FROM audit.audit_log
+			WHERE tenant_id = $1 AND entity_table = 'sale' AND entity_id = $2 AND action = 'sale.receipt_printed'`,
+			p.TenantID, id).Scan(&prints)
+		if prints < 1 {
+			prints = 1
+		}
+		out = map[string]any{"copy": prints > 1, "receipt_prints": prints}
 		return nil
 	})
 	return out, err
@@ -282,6 +320,76 @@ func InvoicePDF(m map[string]any) []byte {
 		d.Text(f)
 	}
 	return d.Bytes()
+}
+
+// SendReceipt queues a receipt message in app.outbound_messages for the sale's customer.
+func (s *Service) SendReceipt(ctx context.Context, p *auth.Principal, id uuid.UUID, channel, idemKey string) (map[string]any, error) {
+	if strings.TrimSpace(channel) == "" {
+		channel = "sms"
+	}
+	ch, err := s.Outbound.CheckAvailable(channel)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		m, err := s.loadSale(ctx, tx, p, id)
+		if err != nil {
+			return err
+		}
+		cid, _ := m["customer_id"].(*uuid.UUID)
+		if cid == nil {
+			return httpx.BadRequest("no_recipient", "Walk-in sale has no customer phone or email")
+		}
+		var phone, email *string
+		if err := tx.QueryRow(ctx, `SELECT phone::text, email::text FROM app.customers WHERE tenant_id = $1 AND id = $2`, p.TenantID, *cid).Scan(&phone, &email); err != nil {
+			return err
+		}
+		recipient := ""
+		if ch == "email" {
+			if email != nil {
+				recipient = *email
+			}
+		} else if phone != nil {
+			recipient = *phone
+		}
+		if len(strings.TrimSpace(recipient)) < 5 {
+			return httpx.BadRequest("no_recipient", "Customer has no phone number or email for this channel")
+		}
+		custName := str(m["customer_name"])
+		if custName == "" {
+			custName = "Customer"
+		}
+		body := outbound.RenderTemplate(ctx, tx, "notifications.sms_template_receipt",
+			"Receipt {{number}}: Total {{total}}, Balance {{balance}}. Thank you, {{customer}}.",
+			map[string]string{
+				"number":   str(m["number"]),
+				"total":    amountText(m["total"]),
+				"balance":  amountText(m["balance"]),
+				"customer": custName,
+			},
+		)
+		suffix := strings.TrimSpace(idemKey)
+		if suffix == "" {
+			suffix = ids.New().String()
+		}
+		key := fmt.Sprintf("receipt:%s:%s:%s", id.String(), ch, suffix)
+		row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+			Channel:        ch,
+			Recipient:      recipient,
+			Subject:        "Receipt " + str(m["number"]),
+			Body:           body,
+			IdempotencyKey: key,
+			SaleID:         &id,
+			CustomerID:     cid,
+		})
+		if err != nil {
+			return err
+		}
+		out = map[string]any{"id": row.ID, "status": row.Status}
+		return nil
+	})
+	return out, err
 }
 
 func amountText(v any) string {

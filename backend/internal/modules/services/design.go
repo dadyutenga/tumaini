@@ -14,12 +14,12 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/kernel/notify"
+	"bms/internal/kernel/outbound"
 	"bms/internal/kernel/sequence"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/ids"
 	"bms/internal/platform/money"
-	"bms/internal/platform/sender"
 	"bms/internal/platform/sqlq"
 )
 
@@ -763,17 +763,37 @@ func tokenHashBytes(t string) []byte {
 	return h[:]
 }
 
-// SendForApproval creates a single-use approval link valid for 14 days and registers it in iam.public_tokens.
-func (s *Service) SendForApproval(ctx context.Context, p *auth.Principal, jobID, versionID uuid.UUID, baseURL string) (map[string]any, error) {
+// SendForApproval creates a single-use approval link valid for 14 days, registers it in iam.public_tokens,
+// and writes an outbound_messages row in the same transaction when the chosen channel is configured.
+// If the caller explicitly requested a channel that is not configured, the link is still committed
+// and channelUnavailable is returned true so the handler can respond 503 with approval_path intact.
+func (s *Service) SendForApproval(ctx context.Context, p *auth.Principal, jobID, versionID uuid.UUID, baseURL, channel string) (map[string]any, bool, error) {
+	requested := clean(strings.ToLower(channel))
+	sentVia := requested
+	if sentVia == "" {
+		sentVia = "sms"
+	}
+	var err error
+	if sentVia, err = outbound.ValidateChannel(sentVia); err != nil {
+		return nil, false, err
+	}
 	raw := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, raw); err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	token := base64.RawURLEncoding.EncodeToString(raw)
 	hash := tokenHashBytes(token)
 	expires := s.Clock.Now().Add(14 * 24 * time.Hour)
-	var phoneStr, title, number string
-	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+	path := "/approve/" + token
+	fullURL := path
+	if baseURL != "" {
+		fullURL = strings.TrimRight(baseURL, "/") + path
+	}
+	var number string
+	queued := false
+	channelUnavailable := false
+	var outboundID *uuid.UUID
+	err = s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		j, err := s.jobRow(ctx, tx, p, jobID, true)
 		if err != nil {
 			return err
@@ -811,8 +831,8 @@ func (s *Service) SendForApproval(ctx context.Context, p *auth.Principal, jobID,
 		linkID := ids.New()
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO app.design_approval_links (id, tenant_id, design_job_id, design_version_id, token_hash, expires_at, sent_via)
-			VALUES ($1,$2,$3,$4,$5,$6,'sms')`,
-			linkID, p.TenantID, jobID, versionID, hash, expires); err != nil {
+			VALUES ($1,$2,$3,$4,$5,$6,$7::app.message_channel)`,
+			linkID, p.TenantID, jobID, versionID, hash, expires, sentVia); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
@@ -822,25 +842,61 @@ func (s *Service) SendForApproval(ctx context.Context, p *auth.Principal, jobID,
 			return err
 		}
 		number, _ = j["number"].(string)
-		title, _ = j["title"].(string)
-		var ph *string
-		if err := tx.QueryRow(ctx, `SELECT phone::text FROM app.customers WHERE tenant_id = $1 AND id = $2`, p.TenantID, j["client_id"]).Scan(&ph); err != nil {
+		title, _ := j["title"].(string)
+		clientID := j["client_id"].(uuid.UUID)
+		var ph, email *string
+		if err := tx.QueryRow(ctx, `SELECT phone::text, email::text FROM app.customers WHERE tenant_id = $1 AND id = $2`, p.TenantID, clientID).Scan(&ph, &email); err != nil {
 			return err
 		}
-		if ph != nil {
-			phoneStr = *ph
+		recipient := ""
+		if sentVia == "email" {
+			if email != nil {
+				recipient = *email
+			}
+		} else if ph != nil {
+			recipient = *ph
 		}
-		return s.Audit.Record(ctx, tx, p, "design_version.sent", "design_job", jobID, nil, map[string]any{"version_id": versionID, "expires_at": expires})
+		if s.Outbound != nil && s.Outbound.Channels.Available(sentVia) {
+			if len(strings.TrimSpace(recipient)) >= 5 {
+				row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+					Channel:        sentVia,
+					Recipient:      recipient,
+					Subject:        "Design approval: " + title,
+					Body:           `Please review your design "` + title + `": ` + fullURL,
+					IdempotencyKey: "design-approval:" + linkID.String(),
+					DesignJobID:    &jobID,
+					CustomerID:     &clientID,
+				})
+				if err != nil {
+					return err
+				}
+				queued = true
+				idCopy := row.ID
+				outboundID = &idCopy
+			} else if requested != "" {
+				return httpx.BadRequest("no_recipient", "Client has no phone number or email for this channel")
+			}
+		} else if requested != "" {
+			channelUnavailable = true
+		}
+		return s.Audit.Record(ctx, tx, p, "design_version.sent", "design_job", jobID, nil, map[string]any{"version_id": versionID, "expires_at": expires, "sent_via": sentVia})
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	path := "/approve/" + token
-	delivered := false
-	if s.SMS != nil && phoneStr != "" && baseURL != "" {
-		delivered = s.SMS.Send(ctx, sender.Message{To: phoneStr, Body: "Please review your design \"" + title + "\": " + strings.TrimRight(baseURL, "/") + path}) == nil
+	res := map[string]any{
+		"job":           number,
+		"approval_path": path,
+		"expires_at":    expires,
+		"delivered":     queued,
+		"queued":        queued,
+		"sent_via":      sentVia,
 	}
-	return map[string]any{"job": number, "approval_path": path, "expires_at": expires, "delivered": delivered}, nil
+	if outboundID != nil {
+		res["id"] = *outboundID
+		res["status"] = "queued"
+	}
+	return res, channelUnavailable, nil
 }
 
 // ---------- public approval page ----------

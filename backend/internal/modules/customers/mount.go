@@ -10,6 +10,7 @@ import (
 // approval hooks and background jobs.
 func Mount(r fiber.Router, d deps.Deps) *Service {
 	svc := New(d.DB, d.Audit, d.Clock)
+	svc.Outbound = d.Outbound
 	Register(r, &Handler{Svc: svc})
 	return svc
 }

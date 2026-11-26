@@ -23,7 +23,7 @@ import { CostDialog } from "@/features/services/CostDialog";
 import { PaymentDialog, ReasonDialog, StaffSelect, Tile } from "@/features/services/shared";
 import { daysUntil, label, whatsappUrl } from "@/features/services/helpers";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
-import { download, uploadFile } from "@/lib/api";
+import { ApiError, download, uploadFile } from "@/lib/api";
 import { formatDate, formatDateTime, formatMoney, today, toNumber } from "@/lib/formatters";
 import {
   JOB_TYPES,
@@ -258,6 +258,8 @@ export default function ProjectDetail() {
   const [voiding, setVoiding] = useState<string | null>(null);
   const [voidingCost, setVoidingCost] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [msgChannel, setMsgChannel] = useState<"sms" | "whatsapp" | "email">("sms");
+  const [msgUnavailable, setMsgUnavailable] = useState(false);
   const [edit, setEdit] = useState({ name: "", status: "in_progress", total_price: "", notes: "" });
   const [newStage, setNewStage] = useState({ name: "", deadline: "" });
   const [note, setNote] = useState({ kind: "call", body: "" });
@@ -284,23 +286,23 @@ export default function ProjectDetail() {
     success: "Note added",
     onSuccess: () => setNote((n) => ({ ...n, body: "" })),
   });
-  const sendUpdate = useWrite<{ message: string }, { delivered: boolean; has_phone: boolean }>(
-    "POST",
-    `/projects/${id}/updates`,
-    {
-      invalidate: ["/projects", "/clients"],
-      onSuccess: (r) => {
-        setMessaging(false);
-        setMessage("");
-        if (r.delivered) toast.success("Update sent to the client");
-        else if (!r.has_phone) toast.warning("Saved, but the client has no phone number");
-        else
-          toast.warning(
-            "Saved in the client's history. No SMS provider is set up, so it was not sent.",
-          );
-      },
+  const sendUpdate = useWrite<
+    { message: string; channel: string },
+    { queued?: boolean; delivered?: boolean; has_phone?: boolean }
+  >("POST", `/projects/${id}/updates`, {
+    invalidate: ["/projects", "/clients"],
+    onSuccess: () => {
+      setMessaging(false);
+      setMessage("");
+      setMsgUnavailable(false);
+      toast.success("Update queued for the client");
     },
-  );
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 503) {
+        setMsgUnavailable(true);
+      }
+    },
+  });
   const markDoc = useWrite<{ docId: string; status: string; file_id?: string }>(
     "PUT",
     (b) => `/client-documents/${b.docId}`,
@@ -835,13 +837,32 @@ export default function ProjectDetail() {
       />
       <FormDialog
         open={messaging}
-        onOpenChange={setMessaging}
+        onOpenChange={(o) => {
+          setMessaging(o);
+          if (!o) setMsgUnavailable(false);
+        }}
         title="Send update to client"
-        description="Sent by SMS and saved in the client's history."
+        description="Queued through the business outbox and saved in the client's history."
         submitLabel="Send"
         busy={sendUpdate.isPending}
-        onSubmit={() => sendUpdate.mutate({ message })}
+        onSubmit={() => {
+          setMsgUnavailable(false);
+          sendUpdate.mutate({ message, channel: msgChannel });
+        }}
       >
+        <Field label="Channel">
+          <NativeSelect
+            value={msgChannel}
+            onChange={(e) => {
+              setMsgChannel(e.target.value as "sms" | "whatsapp" | "email");
+              setMsgUnavailable(false);
+            }}
+          >
+            <option value="sms">SMS</option>
+            <option value="whatsapp">WhatsApp</option>
+            <option value="email">Email</option>
+          </NativeSelect>
+        </Field>
         <div className="flex flex-wrap gap-2">
           {[
             "Your TIN is ready.",
@@ -862,8 +883,11 @@ export default function ProjectDetail() {
             onChange={(e) => setMessage(e.target.value)}
           />
         </Field>
-        {message.trim() && (
-          <div className="flex justify-end">
+        {msgUnavailable && message.trim() && (
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
+            <span className="text-amber-800 dark:text-amber-300">
+              Channel not configured. Send manually via WhatsApp:
+            </span>
             <Button type="button" size="sm" variant="outline" asChild>
               <a
                 href={whatsappUrl(undefined, `${p.name}: ${message}`)}

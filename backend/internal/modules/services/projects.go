@@ -10,12 +10,12 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/kernel/notify"
+	"bms/internal/kernel/outbound"
 	"bms/internal/kernel/sequence"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/ids"
 	"bms/internal/platform/money"
-	"bms/internal/platform/sender"
 	"bms/internal/platform/sqlq"
 )
 
@@ -760,38 +760,85 @@ func (s *Service) ListNotes(ctx context.Context, p *auth.Principal, projectID uu
 
 type UpdateIn struct {
 	Message string `json:"message" validate:"required,max=480"`
+	Channel string `json:"channel"`
 }
 
-// SendUpdate sends an SMS to the client and records it as a message interaction.
+// SendUpdate queues a project update in app.outbound_messages and records it as a message interaction
+// in the same transaction.
 func (s *Service) SendUpdate(ctx context.Context, p *auth.Principal, projectID uuid.UUID, in UpdateIn) (map[string]any, error) {
-	var phoneStr, number string
-	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+	channel := clean(in.Channel)
+	if channel == "" {
+		channel = "sms"
+	}
+	ch, err := s.Outbound.CheckAvailable(channel)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	err = s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		pr, err := s.projectRow(ctx, tx, p, projectID, false)
 		if err != nil {
 			return err
 		}
-		number, _ = pr["number"].(string)
-		var ph *string
-		if err := tx.QueryRow(ctx, `SELECT phone::text FROM app.customers WHERE tenant_id = $1 AND id = $2`, p.TenantID, pr["client_id"]).Scan(&ph); err != nil {
+		number, _ := pr["number"].(string)
+		clientID := pr["client_id"].(uuid.UUID)
+		var ph, email *string
+		var clientName string
+		if err := tx.QueryRow(ctx, `SELECT full_name::text, phone::text, email::text FROM app.customers WHERE tenant_id = $1 AND id = $2`, p.TenantID, clientID).Scan(&clientName, &ph, &email); err != nil {
 			return err
 		}
-		if ph != nil {
-			phoneStr = *ph
+		recipient := ""
+		if ch == "email" {
+			if email != nil {
+				recipient = *email
+			}
+		} else if ph != nil {
+			recipient = *ph
 		}
-		_, err = tx.Exec(ctx, `
+		if len(strings.TrimSpace(recipient)) < 5 {
+			return httpx.BadRequest("no_recipient", "Client has no phone number or email for this channel")
+		}
+		body := clean(in.Message)
+		if ch == "whatsapp" {
+			body = outbound.RenderTemplate(ctx, tx, "notifications.whatsapp_template_update",
+				"{{message}}",
+				map[string]string{
+					"client":  clientName,
+					"project": number,
+					"message": clean(in.Message),
+				},
+			)
+		}
+		interactionID := ids.New()
+		if _, err := tx.Exec(ctx, `
 			INSERT INTO app.client_interactions (id, tenant_id, customer_id, project_id, kind, summary, occurred_at)
 			VALUES ($1,$2,$3,$4,'message',$5,$6)`,
-			ids.New(), p.TenantID, pr["client_id"], projectID, clean(in.Message), s.Clock.Now())
-		return err
+			interactionID, p.TenantID, clientID, projectID, clean(in.Message), s.Clock.Now()); err != nil {
+			return err
+		}
+		row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+			Channel:        ch,
+			Recipient:      recipient,
+			Subject:        "Project update " + number,
+			Body:           body,
+			IdempotencyKey: "project-update:" + interactionID.String(),
+			ProjectID:      &projectID,
+			CustomerID:     &clientID,
+		})
+		if err != nil {
+			return err
+		}
+		out = map[string]any{
+			"id":        row.ID,
+			"status":    row.Status,
+			"project":   number,
+			"queued":    true,
+			"delivered": true,
+			"has_phone": true,
+		}
+		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	delivered := false
-	if s.SMS != nil && phoneStr != "" {
-		delivered = s.SMS.Send(ctx, sender.Message{To: phoneStr, Body: clean(in.Message)}) == nil
-	}
-	return map[string]any{"project": number, "delivered": delivered, "has_phone": phoneStr != ""}, nil
+	return out, err
 }
 
 // projectsByStage counts open projects by current stage, for the services dashboard.

@@ -4,7 +4,7 @@ import { ArrowLeft, BarChart3, Download, Printer } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { BarChartView } from "@/components/shared/Charts";
+import { BarChartView, LineChartView } from "@/components/shared/Charts";
 import { ChartCard } from "@/components/shared/Display";
 import { DataGrid, Field, NativeSelect, PageHeader } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
@@ -18,6 +18,9 @@ interface Catalogue {
   group: string;
   permission: ("reports.operations.view" | "reports.business.view")[];
   dated?: boolean;
+  amountKeys: string[];
+  labelKey?: string;
+  chartType?: "bar" | "line";
 }
 
 const OPS: Catalogue["permission"] = ["reports.operations.view", "reports.business.view"];
@@ -30,6 +33,8 @@ const catalogue: Catalogue[] = [
     path: "/reports/sales/summary",
     permission: OPS,
     dated: true,
+    amountKeys: ["net_sales", "gross_sales", "total"],
+    chartType: "line",
   },
   {
     group: "Sales",
@@ -37,6 +42,7 @@ const catalogue: Catalogue[] = [
     path: "/reports/sales/by-product",
     permission: OPS,
     dated: true,
+    amountKeys: ["net_sales", "gross_sales", "total", "qty"],
   },
   {
     group: "Sales",
@@ -44,6 +50,7 @@ const catalogue: Catalogue[] = [
     path: "/reports/sales/by-category",
     permission: OPS,
     dated: true,
+    amountKeys: ["net_sales", "gross_sales", "total"],
   },
   {
     group: "Sales",
@@ -51,6 +58,7 @@ const catalogue: Catalogue[] = [
     path: "/reports/sales/by-cashier",
     permission: OPS,
     dated: true,
+    amountKeys: ["net_sales", "gross_sales", "total"],
   },
   {
     group: "Sales",
@@ -58,6 +66,7 @@ const catalogue: Catalogue[] = [
     path: "/reports/sales/by-customer",
     permission: OPS,
     dated: true,
+    amountKeys: ["net_sales", "gross_sales", "total"],
   },
   {
     group: "Sales",
@@ -65,6 +74,7 @@ const catalogue: Catalogue[] = [
     path: "/reports/sales/by-payment-method",
     permission: OPS,
     dated: true,
+    amountKeys: ["net", "amount_in"],
   },
   {
     group: "Profit & Loss",
@@ -72,6 +82,8 @@ const catalogue: Catalogue[] = [
     path: "/reports/profit-loss",
     permission: BIZ,
     dated: true,
+    amountKeys: ["amount"],
+    labelKey: "name",
   },
   {
     group: "Cash Flow & Finance",
@@ -79,12 +91,16 @@ const catalogue: Catalogue[] = [
     path: "/reports/cash-flow",
     permission: BIZ,
     dated: true,
+    amountKeys: ["closing", "money_in", "net"],
+    chartType: "line",
   },
   {
     group: "Cash Flow & Finance",
     label: "Balance sheet",
     path: "/reports/balance-sheet",
     permission: BIZ,
+    amountKeys: ["amount"],
+    labelKey: "name",
   },
   {
     group: "Cash Flow & Finance",
@@ -92,6 +108,8 @@ const catalogue: Catalogue[] = [
     path: "/reports/tax",
     permission: BIZ,
     dated: true,
+    amountKeys: ["net_tax", "output_tax", "taxable_sales"],
+    chartType: "line",
   },
   {
     group: "Projects & Design",
@@ -99,6 +117,8 @@ const catalogue: Catalogue[] = [
     path: "/reports/projects",
     permission: OPS,
     dated: true,
+    amountKeys: ["profit", "total_price", "paid"],
+    labelKey: "client_name",
   },
   {
     group: "Projects & Design",
@@ -106,14 +126,31 @@ const catalogue: Catalogue[] = [
     path: "/reports/design-jobs",
     permission: OPS,
     dated: true,
+    amountKeys: ["profit", "income", "jobs"],
+    labelKey: "designer",
   },
-  { group: "Expenses", label: "Expenses", path: "/reports/expenses", permission: BIZ, dated: true },
-  { group: "Stock", label: "Stock on hand", path: "/reports/inventory/on-hand", permission: OPS },
+  {
+    group: "Expenses",
+    label: "Expenses",
+    path: "/reports/expenses",
+    permission: BIZ,
+    dated: true,
+    amountKeys: ["amount", "paid"],
+  },
+  {
+    group: "Stock",
+    label: "Stock on hand",
+    path: "/reports/inventory/on-hand",
+    permission: OPS,
+    amountKeys: ["value", "qty_on_hand"],
+    labelKey: "product",
+  },
   {
     group: "Stock",
     label: "Stock valuation",
     path: "/reports/inventory/valuation",
     permission: BIZ,
+    amountKeys: ["value", "qty_on_hand"],
   },
   {
     group: "Stock",
@@ -121,25 +158,66 @@ const catalogue: Catalogue[] = [
     path: "/reports/inventory/movements",
     permission: OPS,
     dated: true,
+    amountKeys: ["value", "qty"],
+    chartType: "line",
   },
-  { group: "Stock", label: "Low stock", path: "/reports/inventory/low-stock", permission: OPS },
-  { group: "Stock", label: "Dead stock", path: "/reports/inventory/dead-stock", permission: OPS },
+  {
+    group: "Stock",
+    label: "Low stock",
+    path: "/reports/inventory/low-stock",
+    permission: OPS,
+    amountKeys: ["suggested_qty", "qty_on_hand"],
+    labelKey: "product",
+  },
+  {
+    group: "Stock",
+    label: "Dead stock",
+    path: "/reports/inventory/dead-stock",
+    permission: OPS,
+    amountKeys: ["value", "qty_on_hand"],
+    labelKey: "product",
+  },
   {
     group: "Stock",
     label: "Losses and adjustments",
     path: "/reports/inventory/losses",
     permission: OPS,
     dated: true,
+    amountKeys: ["value", "qty"],
+    labelKey: "product",
   },
-  { group: "Stock", label: "Purchases", path: "/reports/purchases", permission: OPS, dated: true },
-  { group: "Debts", label: "Customer debts", path: "/reports/customer-debt", permission: OPS },
-  { group: "Debts", label: "Supplier debts", path: "/reports/supplier-debt", permission: OPS },
+  {
+    group: "Stock",
+    label: "Purchases",
+    path: "/reports/purchases",
+    permission: OPS,
+    dated: true,
+    amountKeys: ["total", "amount", "qty"],
+  },
+  {
+    group: "Debts",
+    label: "Customer debts",
+    path: "/reports/customer-debt",
+    permission: OPS,
+    amountKeys: ["balance", "overdue"],
+    labelKey: "customer",
+  },
+  {
+    group: "Debts",
+    label: "Supplier debts",
+    path: "/reports/supplier-debt",
+    permission: OPS,
+    amountKeys: ["balance", "overdue"],
+    labelKey: "supplier",
+  },
   {
     group: "Staff & Payroll",
     label: "Payroll summary",
     path: "/reports/payroll/summary",
     permission: BIZ,
     dated: true,
+    amountKeys: ["net", "gross", "paid"],
+    labelKey: "run",
   },
   {
     group: "Staff & Payroll",
@@ -147,12 +225,16 @@ const catalogue: Catalogue[] = [
     path: "/reports/payroll/deductions",
     permission: BIZ,
     dated: true,
+    amountKeys: ["amount"],
+    labelKey: "label",
   },
   {
     group: "Staff & Payroll",
     label: "Staff advances & loans",
     path: "/reports/payroll/loans",
     permission: BIZ,
+    amountKeys: ["balance", "principal"],
+    labelKey: "employee",
   },
   {
     group: "Staff & Payroll",
@@ -160,6 +242,8 @@ const catalogue: Catalogue[] = [
     path: "/reports/staff-performance",
     permission: BIZ,
     dated: true,
+    amountKeys: ["net_sales", "commission", "sales_count"],
+    labelKey: "employee",
   },
   {
     group: "Staff & Payroll",
@@ -167,6 +251,7 @@ const catalogue: Catalogue[] = [
     path: "/reports/branches",
     permission: BIZ,
     dated: true,
+    amountKeys: ["net_profit", "net_sales", "sales", "total"],
   },
 ];
 
@@ -244,22 +329,96 @@ export default function Reports() {
   const columns = useMemo(() => report.data?.columns ?? [], [report.data?.columns]);
   const rows = useMemo(() => report.data?.rows ?? [], [report.data?.rows]);
 
-  // Derive a chart automatically from the first label column + first numeric column.
-  const chartSeries = useMemo(() => {
-    if (columns.length < 2 || rows.length === 0) return [];
-    const labelCol = columns[0].key;
-    const numCol = columns.slice(1).find((c) =>
-      rows.some((r) => {
-        const v = r[c.key];
-        return typeof v === "number" || (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v));
-      }),
-    );
-    if (!numCol) return [];
-    return rows.slice(0, 10).map((r) => ({
-      name: String(r[labelCol] ?? "-").slice(0, 18),
-      value: toNumber(r[numCol.key]),
-    }));
-  }, [columns, rows]);
+  const chartConfig = useMemo(() => {
+    if (!current || !report.data) {
+      return { kind: "bar" as const, data: [] as { name: string; value: number }[], subtitle: "" };
+    }
+    // Profit & Loss: chart Business A, Business B, Operating expenses, and Net profit (plus previous when comparing).
+    if (isPL && report.data.businesses) {
+      const b = report.data.businesses;
+      const items = [
+        { name: "Shop income", value: toNumber(b.shop.income) },
+        { name: "Services income", value: toNumber(b.services.income) },
+        { name: "Operating exp.", value: toNumber(b.shared.operating_expenses) },
+        { name: "Net profit", value: toNumber(b.total.net_profit) },
+      ];
+      if (compare && report.data.previous?.net_profit !== undefined) {
+        items.push({
+          name: "Prev net profit",
+          value: toNumber(report.data.previous.net_profit),
+        });
+      }
+      const hasAny = items.some((i) => i.value !== 0);
+      return {
+        kind: "bar" as const,
+        data: hasAny ? items : [],
+        subtitle:
+          compare && report.data.previous?.net_profit !== undefined
+            ? `Previous net profit: ${formatMoney(report.data.previous.net_profit)}`
+            : "Shop, services, expenses and net profit",
+      };
+    }
+
+    if (columns.length < 2 || rows.length === 0) {
+      return { kind: "bar" as const, data: [] as { name: string; value: number }[], subtitle: "" };
+    }
+
+    const colKeys = new Set(columns.map((c) => c.key));
+    const labelCol =
+      current.labelKey && colKeys.has(current.labelKey) ? current.labelKey : columns[0].key;
+
+    // Pick the first explicit amount key still present in columns (respecting backend stripCost).
+    let amountCol = columns.find((c) => current.amountKeys.includes(c.key) && c.key !== labelCol);
+    if (!amountCol) {
+      // Fallback: prefer money-like numeric columns over id/count columns.
+      const numericCols = columns.filter(
+        (c) =>
+          c.key !== labelCol &&
+          !/(_id|^id$)/i.test(c.key) &&
+          rows.some((r) => {
+            const v = r[c.key];
+            return typeof v === "number" || (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v));
+          }),
+      );
+      amountCol =
+        numericCols.find((c) => moneyKey.test(c.key) && !countKey.test(c.key)) ?? numericCols[0];
+    }
+    if (!amountCol) {
+      return { kind: "bar" as const, data: [] as { name: string; value: number }[], subtitle: "" };
+    }
+
+    const looksLikeDates =
+      current.chartType === "line" ||
+      /^(date|day|month|period)/i.test(labelCol) ||
+      rows.every((r) => /^\d{4}-\d{2}/.test(String(r[labelCol] ?? "")));
+
+    const mapped = rows.map((r) => {
+      const rawLabel = String(r[labelCol] ?? "-");
+      return {
+        name: looksLikeDates ? rawLabel.slice(0, 10) : rawLabel.slice(0, 22),
+        value: toNumber(r[amountCol.key]),
+      };
+    });
+
+    if (mapped.every((pt) => pt.value === 0)) {
+      return { kind: "bar" as const, data: [] as { name: string; value: number }[], subtitle: "" };
+    }
+
+    if (looksLikeDates) {
+      return {
+        kind: "line" as const,
+        data: mapped,
+        subtitle: amountCol.label,
+      };
+    }
+
+    const top10 = [...mapped].sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 10);
+    return {
+      kind: "bar" as const,
+      data: top10,
+      subtitle: rows.length > 10 ? `Top 10 by ${amountCol.label}` : `By ${amountCol.label}`,
+    };
+  }, [columns, compare, current, isPL, report.data, rows]);
 
   if (available.length === 0) {
     return <PageHeader title="Reports" description="You do not have access to any reports." />;
@@ -431,11 +590,18 @@ export default function Reports() {
         </div>
       )}
 
-      {chartSeries.length > 0 && (
-        <ChartCard title={`${current.label} chart`} description="Top 10 entries">
-          <BarChartView data={chartSeries} label={current.label} />
-        </ChartCard>
-      )}
+      {!report.isLoading &&
+        (chartConfig.data.length > 0 ? (
+          <ChartCard title={`${current.label} chart`} description={chartConfig.subtitle}>
+            {chartConfig.kind === "line" ? (
+              <LineChartView data={chartConfig.data} label={current.label} />
+            ) : (
+              <BarChartView data={chartConfig.data} label={current.label} />
+            )}
+          </ChartCard>
+        ) : (
+          <p className="text-sm text-muted-foreground">No amounts to chart for this period.</p>
+        ))}
 
       <DataGrid
         rows={

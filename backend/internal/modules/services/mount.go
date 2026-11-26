@@ -11,7 +11,7 @@ import (
 // group and the private routes after it.
 func Build(d deps.Deps) *Handler {
 	_, sms := sender.FromConfig(d.Config)
-	svc := &Service{DB: d.DB, Audit: d.Audit, Notify: d.Notify, Clock: d.Clock, Store: d.Store, SMS: sms}
+	svc := &Service{DB: d.DB, Audit: d.Audit, Notify: d.Notify, Outbound: d.Outbound, Clock: d.Clock, Store: d.Store, SMS: sms}
 	base := ""
 	if len(d.Config.CORSOrigins) > 0 {
 		base = d.Config.CORSOrigins[0]

@@ -77,12 +77,12 @@ func TestServicesFlow(t *testing.T) {
 	require.Equal(t, 200, doc.code, doc.raw)
 	require.Equal(t, "received", str(doc.data["status"]))
 
-	// Notes and an SMS update (no provider configured, so not delivered).
+	// Notes and an SMS update (no provider configured, so 503 channel_unavailable).
 	note := o.call(t, http.MethodPost, "/api/v1/projects/"+projectID+"/notes", map[string]any{"kind": "call", "body": "Client confirmed the names"}, "")
 	require.Equal(t, 201, note.code, note.raw)
 	upd := o.call(t, http.MethodPost, "/api/v1/projects/"+projectID+"/updates", map[string]any{"message": "Your TIN is ready"}, "")
-	require.Equal(t, 200, upd.code, upd.raw)
-	require.Equal(t, false, upd.data["delivered"])
+	require.Equal(t, 503, upd.code, upd.raw)
+	require.Contains(t, upd.raw, "channel_unavailable")
 
 	// A deposit before any invoice is held as a client deposit.
 	pay1 := o.call(t, http.MethodPost, "/api/v1/projects/"+projectID+"/payments", map[string]any{"amount": "100000", "method": "cash", "money_account_id": cash}, key())
@@ -260,14 +260,23 @@ func TestServicesFlow(t *testing.T) {
 	require.Equal(t, 409, o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/status", map[string]any{"status": "in_design"}, "").code)
 	jobPay := o.call(t, http.MethodPost, "/api/v1/design-jobs/"+djID+"/payments", map[string]any{"amount": "20000", "method": "cash", "money_account_id": cash}, key())
 	require.Equal(t, 201, jobPay.code, jobPay.raw)
-	// Service payment receipt (JSON + PDF) and party_name resolution on /payments.
+	// Service payment receipt (JSON + PDF) with Copy marking on reprint, and party_name resolution on /payments.
 	rcpt := o.call(t, http.MethodGet, "/api/v1/service-payments/"+str(jobPay.data["id"])+"/receipt", nil, "")
 	require.Equal(t, 200, rcpt.code, rcpt.raw)
 	require.Equal(t, "Mama Amina Shop", str(rcpt.data["client_name"]))
 	require.NotEmpty(t, str(rcpt.data["purpose"]))
+	require.Equal(t, false, rcpt.data["copy"])
 	rcptPDF := o.call(t, http.MethodGet, "/api/v1/service-payments/"+str(jobPay.data["id"])+"/receipt?format=pdf", nil, "")
 	require.Equal(t, 200, rcptPDF.code)
 	require.True(t, strings.HasPrefix(rcptPDF.raw, "%PDF-"))
+	require.NotContains(t, rcptPDF.raw, "*** COPY ***")
+	rcptAfter := o.call(t, http.MethodGet, "/api/v1/service-payments/"+str(jobPay.data["id"])+"/receipt", nil, "")
+	require.Equal(t, 200, rcptAfter.code, rcptAfter.raw)
+	require.Equal(t, true, rcptAfter.data["copy"])
+	rcptPDF2 := o.call(t, http.MethodGet, "/api/v1/service-payments/"+str(jobPay.data["id"])+"/receipt?format=pdf", nil, "")
+	require.Equal(t, 200, rcptPDF2.code)
+	require.True(t, strings.HasPrefix(rcptPDF2.raw, "%PDF-"))
+	require.Contains(t, rcptPDF2.raw, "COPY")
 	allPays := o.call(t, http.MethodGet, "/api/v1/payments?party_type=customer", nil, "")
 	require.Equal(t, 200, allPays.code, allPays.raw)
 	require.NotEmpty(t, asList(allPays.body["data"]))

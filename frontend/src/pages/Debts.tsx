@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Download, MessageCircle } from "lucide-react";
+import { Download, MessageCircle, Send } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataGrid, NativeSelect, PageHeader } from "@/components/shared/kit";
 import { whatsappUrl } from "@/features/services/helpers";
-import { useGet } from "@/hooks/useApi";
+import { useGet, useWrite } from "@/hooks/useApi";
+import { ApiError } from "@/lib/api";
 import { downloadCsv } from "@/lib/csv";
 import { formatMoney } from "@/lib/formatters";
 
@@ -41,6 +42,24 @@ export default function Debts() {
   const [tab, setTab] = useState("owed");
   const [sourceFilter, setSourceFilter] = useState("");
   const [search, setSearch] = useState("");
+  const [waFallback, setWaFallback] = useState<Record<string, boolean>>({});
+
+  const remind = useWrite<{ id: string; source: "shop_customer" | "service_client" }>(
+    "POST",
+    (b) =>
+      b.source === "service_client"
+        ? `/clients/${b.id}/debt-reminder`
+        : `/customers/${b.id}/debt-reminder`,
+    {
+      success: "Debt reminder queued",
+      toBody: () => ({ channel: "sms" }),
+      onError: (err, vars) => {
+        if (err instanceof ApiError && err.status === 503) {
+          setWaFallback((m) => ({ ...m, [`${vars.source}-${vars.id}`]: true }));
+        }
+      },
+    },
+  );
 
   const owedToUs = res.data?.owed_to_us ?? [];
   const weOwe = res.data?.we_owe ?? [];
@@ -229,21 +248,38 @@ export default function Debts() {
               {
                 header: "",
                 cell: (r) => {
-                  const wa = r.phone
+                  const rowKey = `${r.source}-${r.id}`;
+                  const canRemind =
+                    (r.source === "shop_customer" || r.source === "service_client") &&
+                    Boolean(r.phone);
+                  const showWa = canRemind && Boolean(waFallback[rowKey]);
+                  const wa = showWa
                     ? whatsappUrl(
                         r.phone,
                         `Hello ${r.name}, friendly reminder of your outstanding balance of ${formatMoney(r.total)}. Thank you!`,
                       )
                     : null;
                   return (
-                    <div
-                      className="flex justify-end gap-1"
-                      onClick={(e) => e.stopPropagation()}
-                    >
+                    <div className="flex justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+                      {canRemind && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={remind.isPending}
+                          onClick={() =>
+                            remind.mutate({
+                              id: r.id,
+                              source: r.source as "shop_customer" | "service_client",
+                            })
+                          }
+                        >
+                          <Send size={13} /> Remind
+                        </Button>
+                      )}
                       {wa && (
                         <Button size="sm" variant="outline" asChild>
                           <a href={wa} target="_blank" rel="noreferrer">
-                            <MessageCircle size={13} /> Remind
+                            <MessageCircle size={13} /> Open in WhatsApp
                           </a>
                         </Button>
                       )}

@@ -14,6 +14,7 @@ import (
 
 	"bms/internal/kernel/approval"
 	"bms/internal/kernel/audit"
+	"bms/internal/kernel/outbound"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
@@ -21,6 +22,7 @@ import (
 	"bms/internal/platform/idem"
 	"bms/internal/platform/ids"
 	"bms/internal/platform/jobs"
+	"bms/internal/platform/sender"
 	"bms/internal/platform/setting"
 	"bms/internal/platform/sqlq"
 )
@@ -29,6 +31,7 @@ type Service struct {
 	DB       *db.DB
 	Approval *approval.Service
 	Audit    *audit.Service
+	Outbound *outbound.Service
 	Clock    clock.Clock
 }
 
@@ -364,9 +367,9 @@ func (s *Service) SendTestNotification(ctx context.Context, p *auth.Principal, c
 		channel = "in_app"
 	}
 	switch channel {
-	case "in_app", "email", "sms":
+	case "in_app", "email", "sms", "whatsapp":
 	default:
-		return nil, httpx.BadRequest("invalid_body", "channel must be in_app, email, or sms")
+		return nil, httpx.BadRequest("invalid_body", "channel must be in_app, email, sms, or whatsapp")
 	}
 	msg := strings.TrimSpace(message)
 	if msg == "" {
@@ -375,7 +378,32 @@ func (s *Service) SendTestNotification(ctx context.Context, p *auth.Principal, c
 	if len(msg) > 1000 {
 		msg = msg[:1000]
 	}
+	rec := strings.TrimSpace(recipient)
 	id := ids.New()
+	if channel != "in_app" {
+		if s.Outbound == nil {
+			return nil, httpx.ServiceUnavailable("channel_unavailable", "This channel is not set up. Ask an administrator to configure it.")
+		}
+		if _, err := s.Outbound.CheckAvailable(channel); err != nil {
+			return nil, err
+		}
+		if len(rec) < 5 {
+			return nil, httpx.BadRequest("no_recipient", "Enter a valid phone number or email address for this test message")
+		}
+		snd, _ := s.Outbound.Channels.For(channel)
+		if err := snd.Send(ctx, sender.Message{To: rec, Subject: "Test notification", Body: msg}); err != nil {
+			return nil, httpx.ServiceUnavailable("delivery_failed", "Test delivery failed: "+err.Error())
+		}
+		err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+			return s.Audit.Record(ctx, tx, p, "notification.test_sent", "notifications", id, nil, map[string]any{
+				"channel": channel, "recipient": rec,
+			})
+		})
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"id": id, "channel": channel, "recipient": rec, "message": msg, "ok": true}, nil
+	}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO app.notifications (id, tenant_id, recipient_id, notification_type, title, body, link_path, dedupe_key, created_at)
@@ -384,13 +412,13 @@ func (s *Service) SendTestNotification(ctx context.Context, p *auth.Principal, c
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "notification.test_sent", "notifications", id, nil, map[string]any{
-			"channel": channel, "recipient": strings.TrimSpace(recipient),
+			"channel": channel, "recipient": rec,
 		})
 	})
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"id": id, "channel": channel, "recipient": strings.TrimSpace(recipient), "message": msg, "ok": true}, nil
+	return map[string]any{"id": id, "channel": channel, "recipient": rec, "message": msg, "ok": true}, nil
 }
 
 // ---------- audit ----------

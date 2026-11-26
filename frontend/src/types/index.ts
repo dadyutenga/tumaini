@@ -142,6 +142,9 @@ export interface Sale {
   id?: string;
   number?: string;
   status: string;
+  customer_id?: string | null;
+  customer_name?: string | null;
+  customer_phone?: string | null;
   subtotal: Decimal;
   discount_total: Decimal;
   tax_total: Decimal;

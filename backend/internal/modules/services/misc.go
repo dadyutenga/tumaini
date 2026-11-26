@@ -12,12 +12,12 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/kernel/notify"
+	"bms/internal/kernel/outbound"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/export"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/ids"
 	"bms/internal/platform/money"
-	"bms/internal/platform/sender"
 	"bms/internal/platform/sqlq"
 )
 
@@ -570,10 +570,18 @@ func (s *Service) CancelRenewal(ctx context.Context, p *auth.Principal, id uuid.
 	return out, err
 }
 
-// RemindClient sends the renewal reminder to the client now.
-func (s *Service) RemindClient(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
-	var phoneStr, item, due string
-	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+// RemindClient queues a renewal reminder in app.outbound_messages and records app.renewal_reminders
+// when the days-before slot is free.
+func (s *Service) RemindClient(ctx context.Context, p *auth.Principal, id uuid.UUID, channel string) (map[string]any, error) {
+	if clean(channel) == "" {
+		channel = "sms"
+	}
+	ch, err := s.Outbound.CheckAvailable(channel)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	err = s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		today, err := s.bizDate(ctx, tx)
 		if err != nil {
 			return err
@@ -585,43 +593,87 @@ func (s *Service) RemindClient(ctx context.Context, p *auth.Principal, id uuid.U
 		if r["status"] != "pending" {
 			return httpx.Conflict("invalid_status", "Only a pending renewal can be reminded")
 		}
-		phoneStr, _ = r["client_phone"].(string)
-		item, _ = r["item"].(string)
-		due, _ = r["due_date"].(string)
+		clientID := r["client_id"].(uuid.UUID)
+		var ph, email *string
+		if err := tx.QueryRow(ctx, `SELECT phone::text, email::text FROM app.customers WHERE tenant_id = $1 AND id = $2`, p.TenantID, clientID).Scan(&ph, &email); err != nil {
+			return err
+		}
+		recipient := ""
+		if ch == "email" {
+			if email != nil {
+				recipient = *email
+			}
+		} else if ph != nil {
+			recipient = *ph
+		}
+		if len(strings.TrimSpace(recipient)) < 5 {
+			return httpx.BadRequest("no_recipient", "Client has no phone number or email for this channel")
+		}
+		item, _ := r["item"].(string)
+		due, _ := r["due_date"].(string)
+		body := outbound.RenderTemplate(ctx, tx, "notifications.sms_template_renewal",
+			"Reminder: {{service}} is due on {{date}}.",
+			map[string]string{
+				"service": item,
+				"date":    due,
+			},
+		)
+		key := fmt.Sprintf("renewal-remind:%s:%s:%s", id.String(), ch, today)
+		row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+			Channel:        ch,
+			Recipient:      recipient,
+			Subject:        "Renewal reminder: " + item,
+			Body:           body,
+			IdempotencyKey: key,
+			RenewalID:      &id,
+			CustomerID:     &clientID,
+		})
+		if err != nil {
+			return err
+		}
+		daysLeft := asInt(r["days_left"])
+		if daysLeft >= 0 && daysLeft <= 365 {
+			_, _ = tx.Exec(ctx, `
+				INSERT INTO app.renewal_reminders (tenant_id, renewal_id, days_before, outbound_message_id)
+				VALUES ($1, $2, $3, $4)
+				ON CONFLICT (tenant_id, renewal_id, days_before) DO NOTHING`,
+				p.TenantID, id, daysLeft, row.ID)
+		}
+		out = map[string]any{
+			"id":        row.ID,
+			"status":    row.Status,
+			"queued":    true,
+			"delivered": true,
+			"has_phone": true,
+		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	delivered := false
-	if s.SMS != nil && phoneStr != "" {
-		delivered = s.SMS.Send(ctx, sender.Message{To: phoneStr, Body: fmt.Sprintf("Reminder: %s is due on %s.", item, due)}) == nil
-	}
-	return map[string]any{"delivered": delivered, "has_phone": phoneStr != ""}, nil
+	return out, err
 }
 
 // ---------- daily reminders (job) ----------
 
-// RunReminders notifies staff about upcoming renewals, design deadlines in 2 days, and tasks due today.
+// RunReminders notifies staff about upcoming renewals, design deadlines in 2 days, and tasks due today,
+// and queues client renewal reminders in app.outbound_messages when SMS is configured.
 func (s *Service) RunReminders(ctx context.Context, tenantID uuid.UUID, _ json.RawMessage) error {
-	type sms struct{ phone, body string }
-	var texts []sms
-	err := s.tenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.tenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
 		date, err := s.bizDate(ctx, tx)
 		if err != nil {
 			return err
 		}
 		lead := s.Notify.DaysBefore(ctx, tx, "renewal_due", 30)
 		list, err := rows(ctx, tx, `
-			SELECT r.id, r.description::text AS item, r.due_date, c.full_name::text AS client_name, c.phone::text AS client_phone, (r.due_date - $2::date) AS days
+			SELECT r.id, r.customer_id, r.description::text AS item, r.due_date, c.full_name::text AS client_name, c.phone::text AS client_phone, (r.due_date - $2::date) AS days
 			FROM app.renewals r JOIN app.customers c ON c.tenant_id = r.tenant_id AND c.id = r.customer_id
 			WHERE r.tenant_id = $1 AND r.status = 'upcoming' AND (r.due_date - $2::date) IN ($3, 7, 0)`, tenantID, date, lead)
 		if err != nil {
 			return err
 		}
+		smsReady := s.Outbound != nil && s.Outbound.Channels.Available("sms")
 		for _, r := range list {
 			days := asInt(r["days"])
 			id := r["id"].(uuid.UUID)
+			clientID := r["customer_id"].(uuid.UUID)
 			eid := id
 			body := fmt.Sprintf("%s for %s is due on %v (%d days)", r["item"], r["client_name"], r["due_date"], days)
 			if err := s.Notify.ToPermission(ctx, tx, tenantID, nil, "services.renewal.manage", notify.Message{
@@ -629,8 +681,32 @@ func (s *Service) RunReminders(ctx context.Context, tenantID uuid.UUID, _ json.R
 			}); err != nil {
 				return err
 			}
-			if ph, _ := r["client_phone"].(string); ph != "" {
-				texts = append(texts, sms{ph, fmt.Sprintf("Reminder: %s is due on %v.", r["item"], r["due_date"])})
+			if ph, _ := r["client_phone"].(string); smsReady && len(strings.TrimSpace(ph)) >= 5 {
+				item, _ := r["item"].(string)
+				due := fmt.Sprint(r["due_date"])
+				msg := outbound.RenderTemplate(ctx, tx, "notifications.sms_template_renewal",
+					"Reminder: {{service}} is due on {{date}}.",
+					map[string]string{"service": item, "date": due},
+				)
+				row, err := s.Outbound.Enqueue(ctx, tx, tenantID, outbound.Message{
+					Channel:        "sms",
+					Recipient:      ph,
+					Subject:        "Renewal reminder: " + item,
+					Body:           msg,
+					IdempotencyKey: fmt.Sprintf("renewal-auto:%s:sms:%d", id.String(), days),
+					RenewalID:      &id,
+					CustomerID:     &clientID,
+				})
+				if err != nil {
+					return err
+				}
+				if days >= 0 && days <= 365 {
+					_, _ = tx.Exec(ctx, `
+						INSERT INTO app.renewal_reminders (tenant_id, renewal_id, days_before, outbound_message_id)
+						VALUES ($1, $2, $3, $4)
+						ON CONFLICT (tenant_id, renewal_id, days_before) DO NOTHING`,
+						tenantID, id, days, row.ID)
+				}
 			}
 		}
 		jobs, err := rows(ctx, tx, `
@@ -669,15 +745,6 @@ func (s *Service) RunReminders(ctx context.Context, tenantID uuid.UUID, _ json.R
 		}
 		return nil
 	})
-	if err != nil {
-		return err
-	}
-	if s.SMS != nil {
-		for _, t := range texts {
-			_ = s.SMS.Send(ctx, sender.Message{To: t.phone, Body: t.body})
-		}
-	}
-	return nil
 }
 
 // ---------- dashboard ----------

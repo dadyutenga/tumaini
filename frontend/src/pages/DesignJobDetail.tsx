@@ -22,7 +22,7 @@ import { CostDialog } from "@/features/services/CostDialog";
 import { PaymentDialog, StaffSelect, Tile } from "@/features/services/shared";
 import { label, whatsappUrl } from "@/features/services/helpers";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
-import { download, uploadFile } from "@/lib/api";
+import { ApiError, download, uploadFile } from "@/lib/api";
 import { formatDate, formatDateTime, formatMoney, toNumber } from "@/lib/formatters";
 import {
   DESIGN_NEXT,
@@ -397,15 +397,26 @@ export default function DesignJobDetail() {
     invalidate: refresh,
     success: "Status updated",
   });
-  const send = useWrite<{ versionId: string }, { approval_path: string; delivered: boolean }>(
-    "POST",
-    (b) => `/design-jobs/${id}/versions/${b.versionId}/send`,
-    {
-      invalidate: refresh,
-      toBody: () => undefined,
-      onSuccess: (r) => setLink({ path: r.approval_path, delivered: r.delivered }),
+  const send = useWrite<
+    { versionId: string; channel?: string },
+    { approval_path: string; delivered?: boolean; queued?: boolean }
+  >("POST", (b) => `/design-jobs/${id}/versions/${b.versionId}/send`, {
+    invalidate: refresh,
+    toBody: (b) => ({ channel: b.channel ?? "sms" }),
+    onSuccess: (r) => {
+      const sent = Boolean(r.queued ?? r.delivered);
+      setLink({ path: r.approval_path, delivered: sent });
+      if (sent) toast.success("Approval link queued for the client");
     },
-  );
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 503) {
+        const d = err.data as { approval_path?: string } | undefined;
+        if (d?.approval_path) {
+          setLink({ path: d.approval_path, delivered: false });
+        }
+      }
+    },
+  });
   const feedback = useWrite<{ comment: string; version_id?: string }>(
     "POST",
     `/design-jobs/${id}/feedback`,
@@ -528,24 +539,26 @@ export default function DesignJobDetail() {
         <div className="mb-4 rounded-xl border bg-card p-4 text-sm">
           <p className="mb-2 font-medium">
             {link.delivered
-              ? "Link sent to the client by SMS."
+              ? "Approval link queued for the client (valid for 14 days)."
               : "Share this private link with the client (valid for 14 days)."}
           </p>
           <div className="flex flex-wrap items-center gap-2">
             <code className="flex-1 break-all rounded bg-muted px-2 py-1">{`${window.location.origin}${link.path}`}</code>
             <CopyButton text={`${window.location.origin}${link.path}`} />
-            <Button size="sm" variant="outline" asChild>
-              <a
-                href={whatsappUrl(
-                  undefined,
-                  `Design ready for your approval (${job.title}): ${window.location.origin}${link.path}`,
-                )}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <MessageCircle size={14} /> WhatsApp
-              </a>
-            </Button>
+            {!link.delivered && (
+              <Button size="sm" variant="outline" asChild>
+                <a
+                  href={whatsappUrl(
+                    undefined,
+                    `Design ready for your approval (${job.title}): ${window.location.origin}${link.path}`,
+                  )}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <MessageCircle size={14} /> Open in WhatsApp
+                </a>
+              </Button>
+            )}
           </div>
         </div>
       )}

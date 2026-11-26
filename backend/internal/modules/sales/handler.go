@@ -78,18 +78,44 @@ func (h *Handler) Receipt(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	out, err := h.Svc.Receipt(c.Context(), middleware.Principal(c), id)
-	if err != nil {
-		return err
-	}
-	switch strings.ToLower(c.Query("format")) {
-	case "", "json":
-		return c.JSON(httpx.Data(out))
-	case "pdf":
-		return export.File(c, "receipt-"+str(out["number"])+".pdf", "application/pdf", ReceiptPDF(out))
+	format := strings.ToLower(c.Query("format"))
+	switch format {
+	case "", "json", "pdf":
 	default:
 		return httpx.BadRequest("invalid_query", "format must be json or pdf")
 	}
+	out, err := h.Svc.Receipt(c.Context(), middleware.Principal(c), id, format == "pdf")
+	if err != nil {
+		return err
+	}
+	if format == "pdf" {
+		return export.File(c, "receipt-"+str(out["number"])+".pdf", "application/pdf", ReceiptPDF(out))
+	}
+	return c.JSON(httpx.Data(out))
+}
+
+func (h *Handler) RecordReceiptPrint(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	out, err := h.Svc.RecordReceiptPrint(c.Context(), middleware.Principal(c), id)
+	return httpx.OK(c, out, err)
+}
+
+func (h *Handler) SendReceipt(c fiber.Ctx) error {
+	id, err := httpx.UUIDParam(c, "id")
+	if err != nil {
+		return err
+	}
+	var body struct {
+		Channel string `json:"channel"`
+	}
+	if err := httpx.BindOptional(c, &body); err != nil {
+		return err
+	}
+	out, err := h.Svc.SendReceipt(c.Context(), middleware.Principal(c), id, body.Channel, c.Get("Idempotency-Key"))
+	return httpx.OK(c, out, err)
 }
 
 func (h *Handler) Invoice(c fiber.Ctx) error {
@@ -410,6 +436,8 @@ func Register(r fiber.Router, h *Handler) {
 	r.Get("/sales", middleware.RequireAny("shop.sale.view_all", "shop.sale.create"), h.List)
 	r.Get("/sales/:id", middleware.RequireAny("shop.sale.view_all", "shop.sale.create"), h.Get)
 	r.Get("/sales/:id/receipt", middleware.RequireAny("shop.sale.view_all", "shop.sale.create"), h.Receipt)
+	r.Post("/sales/:id/receipt/printed", middleware.RequireAny("shop.sale.view_all", "shop.sale.create"), h.RecordReceiptPrint)
+	r.Post("/sales/:id/send-receipt", middleware.RequireAny("shop.sale.view_all", "shop.sale.create"), h.SendReceipt)
 	r.Get("/sales/:id/invoice", middleware.RequireAny("shop.sale.view_all", "shop.sale.create"), h.Invoice)
 	r.Post("/sales/:id/void", middleware.RequireAny("shop.sale.void", "shop.sale.request_void"), middleware.Idempotent(), h.Void)
 	r.Post("/sales/:id/payments", middleware.Require("finance.payment.receive"), middleware.Idempotent(), h.Pay)

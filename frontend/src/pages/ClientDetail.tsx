@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataGrid, FormDialog, PageHeader, StatusBadge } from "@/components/shared/kit";
 import { ConfirmDialog, PageLoader } from "@/components/shared/Display";
+import { SendOutboundButton } from "@/components/shared/SendOutbound";
 import { useAuth } from "@/features/auth/auth";
 import { NewProjectDialog } from "@/features/services/NewProjectDialog";
 import { PdfButton, Tile } from "@/features/services/shared";
@@ -97,9 +98,19 @@ export default function ClientDetail() {
               </Button>
             )}
             {canAny("services.invoice.manage", "services.invoice.draft", "finance.debt.view") && (
-              <PdfButton path={`/clients/${id}/statement`} filename={`statement-${c.name}.pdf`}>
-                Statement
-              </PdfButton>
+              <>
+                <PdfButton path={`/clients/${id}/statement`} filename={`statement-${c.name}.pdf`}>
+                  Statement
+                </PdfButton>
+                <SendOutboundButton
+                  label="Send statement"
+                  title="Send client statement"
+                  path={`/clients/${id}/statement/send`}
+                  successMessage="Statement queued"
+                  phone={c.phone}
+                  whatsappText={`Statement for ${c.name}: current balance ${formatMoney(c.balance)}.`}
+                />
+              </>
             )}
             {can("services.project.manage") && (
               <Button onClick={() => setStarting(true)}>New project</Button>

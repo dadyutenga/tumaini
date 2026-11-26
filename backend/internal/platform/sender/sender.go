@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -119,7 +120,11 @@ type Webhook struct {
 func (w *Webhook) Send(ctx context.Context, m Message) error {
 	text := m.Subject
 	if m.Body != "" {
-		text += ": " + m.Body
+		if text != "" {
+			text += ": " + m.Body
+		} else {
+			text = m.Body
+		}
 	}
 	if len(text) > 480 {
 		text = text[:480]
@@ -152,7 +157,56 @@ func (w *Webhook) Send(ctx context.Context, m Message) error {
 	return nil
 }
 
-// FromConfig builds the configured senders. A channel without configuration is nil.
+// LogSender logs outbound messages to slog for local development when OUTBOUND_LOG=1.
+type LogSender struct {
+	Channel string
+}
+
+func (l *LogSender) Send(_ context.Context, m Message) error {
+	slog.Info("outbound message logged", "channel", l.Channel, "to", m.To, "subject", m.Subject, "body", m.Body)
+	return nil
+}
+
+// Channels holds the configured customer outbound senders per channel.
+type Channels struct {
+	Email    Sender
+	SMS      Sender
+	WhatsApp Sender
+}
+
+// For returns the configured sender and provider label for a channel.
+func (ch Channels) For(channel string) (Sender, string) {
+	var s Sender
+	switch channel {
+	case "email":
+		s = ch.Email
+	case "sms":
+		s = ch.SMS
+	case "whatsapp":
+		s = ch.WhatsApp
+	}
+	if s == nil {
+		return nil, ""
+	}
+	switch s.(type) {
+	case *SMTP:
+		return s, "smtp"
+	case *Webhook:
+		return s, "webhook"
+	case *LogSender:
+		return s, "log"
+	default:
+		return s, "custom"
+	}
+}
+
+// Available reports whether a sender is configured for channel.
+func (ch Channels) Available(channel string) bool {
+	s, _ := ch.For(channel)
+	return s != nil
+}
+
+// FromConfig builds the configured email and SMS senders. A channel without configuration is nil.
 func FromConfig(c config.Config) (email, sms Sender) {
 	if c.SMTPHost != "" {
 		email = &SMTP{Host: c.SMTPHost, Port: c.SMTPPort, User: c.SMTPUser, Password: c.SMTPPassword, From: c.SMTPFrom, Timeout: 15 * time.Second}
@@ -161,4 +215,26 @@ func FromConfig(c config.Config) (email, sms Sender) {
 		sms = &Webhook{URL: c.SMSWebhookURL, APIKey: c.SMSAPIKey, From: c.SMSSender}
 	}
 	return email, sms
+}
+
+// OutboundFromConfig builds customer outbound senders from config.
+// When OUTBOUND_LOG=1, any unconfigured channel uses LogSender for local dev.
+func OutboundFromConfig(c config.Config) Channels {
+	email, sms := FromConfig(c)
+	var wa Sender
+	if c.WhatsAppWebhookURL != "" {
+		wa = &Webhook{URL: c.WhatsAppWebhookURL, APIKey: c.WhatsAppAPIKey, From: c.WhatsAppSender}
+	}
+	if c.OutboundLog {
+		if email == nil {
+			email = &LogSender{Channel: "email"}
+		}
+		if sms == nil {
+			sms = &LogSender{Channel: "sms"}
+		}
+		if wa == nil {
+			wa = &LogSender{Channel: "whatsapp"}
+		}
+	}
+	return Channels{Email: email, SMS: sms, WhatsApp: wa}
 }
