@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { AlertCircle, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -8,9 +8,11 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
@@ -135,17 +137,17 @@ function Calendar({ tasks }: { tasks: Task[] }) {
   const pad = (n: number) => String(n).padStart(2, "0");
   const key = (d: number) => `${month.getFullYear()}-${pad(month.getMonth() + 1)}-${pad(d)}`;
   return (
-    <div>
-      <div className="mb-3 flex items-center gap-2">
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
         <Button
           variant="outline"
           size="icon"
           aria-label="Previous month"
           onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}
         >
-          <ChevronLeft size={16} />
+          <ChevronLeft size={15} />
         </Button>
-        <h2 className="w-44 text-center font-semibold">
+        <h2 className="w-44 text-center text-[14px] font-semibold">
           {month.toLocaleString("en-US", { month: "long", year: "numeric" })}
         </h2>
         <Button
@@ -154,42 +156,63 @@ function Calendar({ tasks }: { tasks: Task[] }) {
           aria-label="Next month"
           onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}
         >
-          <ChevronRight size={16} />
+          <ChevronRight size={15} />
         </Button>
       </div>
-      <div className="grid grid-cols-7 gap-px overflow-hidden rounded-2xl border bg-border text-xs">
+      <div className="od-card-flush grid grid-cols-7 gap-px overflow-hidden bg-[var(--od-border-strong)] text-xs">
         {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
-          <div key={d} className="bg-muted px-2 py-1.5 font-medium">
+          <div
+            key={d}
+            className="bg-[var(--od-surface-subtle)] px-2.5 py-2 text-[11px] font-semibold text-[var(--od-ink-muted)]"
+          >
             {d}
           </div>
         ))}
         {cells.map((d, i) => {
           const inMonth = d >= 1 && d <= days;
+          const isToday = inMonth && key(d) === today();
           const items = inMonth ? (byDay.get(key(d)) ?? []) : [];
           return (
-            <div key={i} className={cn("min-h-20 bg-card p-1.5", !inMonth && "bg-muted/40")}>
+            <div
+              key={i}
+              className={cn(
+                "min-h-24 bg-[var(--od-surface)] p-2",
+                !inMonth && "bg-[var(--od-surface-subtle)]/50",
+              )}
+            >
               {inMonth && (
                 <>
-                  <p className={cn("mb-1", key(d) === today() && "font-bold text-primary")}>{d}</p>
-                  {items.slice(0, 3).map((t) => (
-                    <p
-                      key={t.id}
-                      title={t.title}
+                  <p className="mb-1.5">
+                    <span
                       className={cn(
-                        "mb-0.5 truncate rounded px-1 py-0.5",
-                        t.status === "done"
-                          ? "bg-emerald-500/15 line-through"
-                          : t.overdue
-                            ? "bg-red-500/15 text-red-700 dark:text-red-400"
-                            : "bg-amber-500/15",
+                        "od-tabular inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[11px] font-medium",
+                        isToday
+                          ? "bg-[var(--od-app-primary)] font-semibold text-[var(--od-app-primary-foreground)]"
+                          : "text-[var(--od-ink-secondary)]",
                       )}
                     >
-                      {t.title}
-                    </p>
-                  ))}
-                  {items.length > 3 && (
-                    <p className="text-muted-foreground">+{items.length - 3} more</p>
-                  )}
+                      {d}
+                    </span>
+                  </p>
+                  <div className="space-y-1">
+                    {items.slice(0, 3).map((t) => (
+                      <p
+                        key={t.id}
+                        title={t.title}
+                        className={cn(
+                          "truncate rounded px-1.5 py-0.5 text-[11px] font-medium",
+                          t.status === "done"
+                            ? "bg-[color-mix(in_srgb,var(--od-good-mark)_12%,transparent)] text-[var(--od-good)] line-through"
+                            : t.overdue
+                              ? "bg-[color-mix(in_srgb,var(--od-bad-mark)_12%,transparent)] text-[var(--od-bad)]"
+                              : "bg-[var(--od-warning-soft)] text-[var(--od-warning)]",
+                        )}
+                      >
+                        {t.title}
+                      </p>
+                    ))}
+                    {items.length > 3 && <p className="od-caption">+{items.length - 3} more</p>}
+                  </div>
                 </>
               )}
             </div>
@@ -220,60 +243,69 @@ export default function ServiceTasks() {
   const manage = can("services.task.manage");
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Tasks and calendar"
-        description="Who needs to do what, and by when. Late tasks show in red."
+        description="Assign follow-ups, track deadlines and view monthly workload."
         actions={
           manage && (
-            <Button onClick={() => setAdding(true)}>
-              <Plus size={16} /> New task
+            <Button size="sm" onClick={() => setAdding(true)}>
+              <Plus size={14} /> New task
             </Button>
           )
         }
       />
+
       <Tabs defaultValue="list">
-        <TabsList className="mb-4">
-          <TabsTrigger value="list">List</TabsTrigger>
-          <TabsTrigger value="calendar">Calendar</TabsTrigger>
-        </TabsList>
-        <div className="mb-4 flex flex-wrap items-center gap-3">
-          <NativeSelect
-            aria-label="Status"
-            className="w-40"
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-          >
-            <option value="">All statuses</option>
-            <option value="todo">To do</option>
-            <option value="in_progress">In progress</option>
-            <option value="done">Done</option>
-            <option value="cancelled">Cancelled</option>
-          </NativeSelect>
-          {staff.length > 0 && (
-            <NativeSelect
-              aria-label="Person"
-              className="w-44"
-              value={assignee}
-              onChange={(e) => setAssignee(e.target.value)}
-            >
-              <option value="">Everyone</option>
-              {staff.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-            </NativeSelect>
-          )}
-          <label className="flex items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={overdue}
-              onChange={(e) => setOverdue(e.target.checked)}
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <TabsList>
+            <TabsTrigger value="list">List</TabsTrigger>
+            <TabsTrigger value="calendar">Calendar</TabsTrigger>
+          </TabsList>
+
+          <FilterBar className="mb-0">
+            <SegmentedChips
+              ariaLabel="Task status"
+              value={status}
+              onChange={setStatus}
+              options={[
+                { value: "", label: "All" },
+                { value: "todo", label: "To do" },
+                { value: "in_progress", label: "In progress" },
+                { value: "done", label: "Done" },
+                { value: "cancelled", label: "Cancelled" },
+              ]}
             />
-            Overdue only
-          </label>
+            {staff.length > 0 && (
+              <NativeSelect
+                aria-label="Person"
+                className="w-40"
+                value={assignee}
+                onChange={(e) => setAssignee(e.target.value)}
+              >
+                <option value="">Everyone</option>
+                {staff.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {u.name}
+                  </option>
+                ))}
+              </NativeSelect>
+            )}
+            <button
+              type="button"
+              onClick={() => setOverdue((v) => !v)}
+              className={cn(
+                "inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[var(--od-app-radius,10px)] border px-3 text-[13px] font-medium transition-colors",
+                overdue
+                  ? "border-transparent bg-[color-mix(in_srgb,var(--od-bad-mark)_12%,transparent)] text-[var(--od-bad)]"
+                  : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
+              )}
+            >
+              <AlertCircle size={14} /> Overdue only
+            </button>
+          </FilterBar>
         </div>
+
         <TabsContent value="list">
           <DataGrid
             rows={tasks.data}
@@ -283,19 +315,20 @@ export default function ServiceTasks() {
             columns={[
               {
                 header: "Task",
+                sortValue: (t) => t.title,
                 cell: (t) => (
                   <div>
                     <p
                       className={cn(
                         "font-medium",
-                        t.status === "done" && "text-muted-foreground line-through",
+                        t.status === "done" && "text-[var(--od-ink-muted)] line-through",
                       )}
                     >
                       {t.title}
                     </p>
                     {t.project_id && (
                       <Link
-                        className="text-xs text-muted-foreground underline"
+                        className="od-mono od-caption underline underline-offset-4 hover:text-[var(--od-ink)]"
                         to={`/projects/${t.project_id}`}
                       >
                         {t.project_number}
@@ -304,25 +337,31 @@ export default function ServiceTasks() {
                   </div>
                 ),
               },
-              { header: "Assigned to", cell: (t) => t.assignee_name ?? "-" },
+              { header: "Assigned to", cell: (t) => t.assignee_name ?? "—" },
               {
                 header: "Due",
+                sortValue: (t) => t.due_date ?? "",
                 cell: (t) => (
-                  <span className={t.overdue ? "font-medium text-destructive" : ""}>
-                    {t.due_date ? formatDate(t.due_date) : "-"}
+                  <span className={t.overdue ? "font-semibold text-[var(--od-bad)]" : undefined}>
+                    {t.due_date ? formatDate(t.due_date) : "—"}
                   </span>
                 ),
               },
               {
                 header: "Priority",
-                cell: (t) => (t.priority === "urgent" ? <StatusBadge value="urgent" /> : "Normal"),
+                cell: (t) =>
+                  t.priority === "urgent" ? (
+                    <StatusBadge value="urgent" />
+                  ) : (
+                    <span className="text-[var(--od-ink-secondary)]">Normal</span>
+                  ),
               },
               {
                 header: "Status",
                 cell: (t) => (
                   <NativeSelect
                     aria-label={`Status of ${t.title}`}
-                    className="h-8 w-36"
+                    className="h-8 w-36 text-xs"
                     value={t.status}
                     onChange={(e) => setTaskStatus.mutate({ id: t.id, status: e.target.value })}
                   >
@@ -341,7 +380,8 @@ export default function ServiceTasks() {
           <Calendar tasks={tasks.data ?? []} />
         </TabsContent>
       </Tabs>
+
       {adding && <TaskForm onClose={() => setAdding(false)} />}
-    </>
+    </div>
   );
 }

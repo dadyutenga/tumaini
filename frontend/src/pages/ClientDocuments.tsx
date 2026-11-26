@@ -1,17 +1,21 @@
 import { useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Download, Eye, FolderOpen, List, Plus, Upload } from "lucide-react";
+import { Download, Eye, FolderOpen, Plus, Search, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
+  SectionCard,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
+import { EmptyState } from "@/components/shared/Display";
 import { FilePreviewDialog } from "@/components/shared/FilePreview";
 import { useAuth } from "@/features/auth/auth";
 import { ClientSelect } from "@/features/services/shared";
@@ -143,7 +147,7 @@ function AddDialog({
           >
             <Upload size={14} /> {uploading ? "Uploading…" : "Choose file"}
           </Button>
-          <span className="text-sm text-muted-foreground">{fileName}</span>
+          <span className="od-caption">{fileName}</span>
         </div>
       </Field>
     </FormDialog>
@@ -192,95 +196,102 @@ export default function ClientDocuments() {
   }, [docs.data]);
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Client documents"
-        description="Every document, by client and project. Final design files are kept here too."
+        description="Client paperwork and final design deliverables organized by client and project."
         actions={
-          <div className="flex gap-2">
-            <div className="inline-flex rounded-lg border bg-card p-0.5">
-              <Button
-                size="sm"
-                variant={view === "folders" ? "default" : "ghost"}
-                onClick={() => setView("folders")}
-              >
-                <FolderOpen size={14} /> Folders
-              </Button>
-              <Button
-                size="sm"
-                variant={view === "table" ? "default" : "ghost"}
-                onClick={() => setView("table")}
-              >
-                <List size={14} /> Table
-              </Button>
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <SegmentedChips
+              ariaLabel="View mode"
+              value={view}
+              onChange={setView}
+              options={[
+                { value: "folders", label: "Folders" },
+                { value: "table", label: "Table" },
+              ]}
+            />
             {manage && (
-              <Button onClick={() => setAdding(true)}>
-                <Plus size={16} /> Add document
+              <Button size="sm" onClick={() => setAdding(true)}>
+                <Plus size={14} /> Add document
               </Button>
             )}
           </div>
         }
       />
-      <div className="mb-4 flex flex-wrap gap-3">
-        <Input
-          aria-label="Search documents"
-          className="max-w-xs"
-          placeholder="Search name or client…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <div className="w-60">
-          <ClientSelect value={client} onChange={setClient} />
+
+      <FilterBar className="justify-between">
+        <div className="flex flex-1 flex-wrap items-center gap-2.5">
+          <div className="relative min-w-60 flex-1 sm:max-w-xs">
+            <Search
+              size={15}
+              className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
+            />
+            <Input
+              aria-label="Search documents"
+              className="pl-9"
+              placeholder="Search name or client…"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+          </div>
+          <div className="w-56">
+            <ClientSelect value={client} onChange={setClient} />
+          </div>
+          {client && (
+            <Button size="sm" variant="ghost" onClick={() => setClient("")}>
+              Clear client
+            </Button>
+          )}
         </div>
-        <NativeSelect
-          aria-label="Status"
-          className="w-40"
+        <SegmentedChips
+          ariaLabel="Document status"
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
-        >
-          <option value="">All</option>
-          <option value="received">Received</option>
-          <option value="missing">Missing</option>
-        </NativeSelect>
-        {client && (
-          <Button variant="ghost" onClick={() => setClient("")}>
-            Clear client
-          </Button>
-        )}
-      </div>
+          onChange={setStatus}
+          options={[
+            { value: "", label: "All" },
+            { value: "received", label: "Received" },
+            { value: "missing", label: "Missing" },
+          ]}
+        />
+      </FilterBar>
+
       {view === "folders" ? (
         <div className="space-y-4">
           {folders.length === 0 && !docs.isLoading && (
-            <p className="rounded-2xl border bg-card p-8 text-center text-sm text-muted-foreground">
-              No documents match
-            </p>
+            <SectionCard>
+              <EmptyState title="No documents match" />
+            </SectionCard>
           )}
           {folders.map(([ckey, group]) => (
-            <section key={ckey} className="rounded-2xl border bg-card p-4">
-              <h2 className="mb-3 flex items-center gap-2 font-semibold">
-                <FolderOpen size={16} className="text-primary" /> {group.name}
+            <SectionCard key={ckey}>
+              <h2 className="od-card-title flex items-center gap-2">
+                <FolderOpen size={15} className="text-[var(--od-ink-secondary)]" />
+                <span>{group.name}</span>
               </h2>
-              <div className="space-y-3 pl-2 sm:pl-4">
+              <div className="space-y-3">
                 {[...group.projects.entries()].map(([folderName, list]) => (
-                  <div key={folderName} className="rounded-xl border bg-muted/20 p-3">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <div
+                    key={folderName}
+                    className="rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-3.5"
+                  >
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--od-ink-muted)]">
                       {folderName} ({list.length})
                     </p>
-                    <ul className="divide-y">
+                    <ul className="divide-y divide-[var(--od-border)]">
                       {list.map((d) => (
                         <li
                           key={d.id}
-                          className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm"
+                          className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-[13px]"
                         >
                           <div className="min-w-0">
-                            <p className="font-medium">{d.name}</p>
-                            <p className="text-xs text-muted-foreground">
+                            <p className="font-medium text-[var(--od-ink)]">{d.name}</p>
+                            <p className="od-caption">
                               {label(d.doc_type)}
                               {d.received_at ? ` · Received ${formatDate(d.received_at)}` : ""}
                             </p>
                           </div>
-                          <div className="flex flex-wrap items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-1.5">
                             <StatusBadge value={d.status} />
                             {d.file_id && (
                               <>
@@ -291,7 +302,7 @@ export default function ClientDocuments() {
                                     setPreview({ id: d.file_id!, name: d.file_name ?? d.name })
                                   }
                                 >
-                                  <Eye size={14} /> Preview
+                                  <Eye size={13} /> Preview
                                 </Button>
                                 <Button
                                   size="sm"
@@ -304,7 +315,7 @@ export default function ClientDocuments() {
                                     ).catch((e) => toast.error(errorMessage(e)))
                                   }
                                 >
-                                  <Download size={14} /> Download
+                                  <Download size={13} /> Download
                                 </Button>
                               </>
                             )}
@@ -329,7 +340,7 @@ export default function ClientDocuments() {
                   </div>
                 ))}
               </div>
-            </section>
+            </SectionCard>
           ))}
         </div>
       ) : (
@@ -341,15 +352,22 @@ export default function ClientDocuments() {
           columns={[
             { header: "Document", cell: (d) => <span className="font-medium">{d.name}</span> },
             { header: "Client", cell: (d) => d.client_name },
-            { header: "Project", cell: (d) => d.project_number ?? "-" },
+            {
+              header: "Project",
+              cell: (d) => (
+                <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
+                  {d.project_number ?? "—"}
+                </span>
+              ),
+            },
             { header: "Type", cell: (d) => label(d.doc_type) },
             { header: "Status", cell: (d) => <StatusBadge value={d.status} /> },
-            { header: "Received", cell: (d) => (d.received_at ? formatDate(d.received_at) : "-") },
+            { header: "Received", cell: (d) => (d.received_at ? formatDate(d.received_at) : "—") },
             {
               header: "",
               className: "text-right",
               cell: (d) => (
-                <div className="flex justify-end gap-2">
+                <div className="flex justify-end gap-1.5">
                   {d.file_id && (
                     <>
                       <Button
@@ -357,7 +375,7 @@ export default function ClientDocuments() {
                         variant="outline"
                         onClick={() => setPreview({ id: d.file_id!, name: d.file_name ?? d.name })}
                       >
-                        <Eye size={14} /> Preview
+                        <Eye size={13} /> Preview
                       </Button>
                       <Button
                         size="sm"
@@ -368,7 +386,7 @@ export default function ClientDocuments() {
                           )
                         }
                       >
-                        <Download size={14} /> Download
+                        <Download size={13} /> Download
                       </Button>
                     </>
                   )}
@@ -392,12 +410,13 @@ export default function ClientDocuments() {
           ]}
         />
       )}
+
       <AddDialog key={client} open={adding} onOpenChange={setAdding} clientId={client} />
       <FilePreviewDialog
         fileId={preview?.id ?? null}
         fileName={preview?.name}
         onClose={() => setPreview(null)}
       />
-    </>
+    </div>
   );
 }
