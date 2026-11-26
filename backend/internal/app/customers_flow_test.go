@@ -1,25 +1,13 @@
 package app_test
 
 import (
-	"context"
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/require"
 )
-
-// ageSale moves a sale's business date back so aged-debt buckets can be tested with a fixed clock.
-func ageSale(t *testing.T, e *env, saleID string, days int) {
-	t.Helper()
-	biz := str(e.owner.call(t, http.MethodGet, "/api/v1/business", nil, "").data["id"])
-	require.NoError(t, e.app.DB.InTx(context.Background(), uuid.MustParse(biz), func(ctx context.Context, tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `UPDATE sales SET business_date = business_date - $2::int WHERE id = $1`, saleID, days)
-		return err
-	}))
-}
 
 func creditSale(t *testing.T, c *client, customer, product, qty string) string {
 	t.Helper()
@@ -30,13 +18,15 @@ func creditSale(t *testing.T, c *client, customer, product, qty string) string {
 }
 
 func TestCustomersAccountsAgedDebtAndWriteOff(t *testing.T) {
-	e := newEnv(t, defaultNow)
+	// Start 100 days before defaultNow so we can advance the clock cleanly without violating sale immutability triggers.
+	clk := &stepClock{t: defaultNow.AddDate(0, 0, -100)}
+	e := newEnvWithClock(t, clk)
 	o := e.owner
 	staff, _ := e.user(t, "staff")
 	mgr, _ := e.user(t, "manager")
 	product := e.product(t, "Sack of rice", "10000", "100", "6000")
 
-	// Create and validate. Phone is unique; a plain staff user cannot set a credit limit on creation (FR-CUS-02, 04).
+	// Create and validate. Phone is unique; a plain staff user cannot set a credit limit on creation.
 	require.Equal(t, 400, o.call(t, http.MethodPost, "/api/v1/customers", map[string]any{"name": " "}, "").code)
 	a := o.call(t, http.MethodPost, "/api/v1/customers", map[string]any{"name": "Asha Duka", "phone": "0711000001", "credit_limit": "200000", "payment_terms_days": 30}, "")
 	require.Equal(t, 201, a.code, a.raw)
@@ -59,13 +49,20 @@ func TestCustomersAccountsAgedDebtAndWriteOff(t *testing.T) {
 	require.Equal(t, 403, staff.call(t, http.MethodPut, "/api/v1/customers/"+aID+"/credit-limit", map[string]any{"credit_limit": "1", "payment_terms_days": 0}, "").code)
 	require.Equal(t, 422, o.call(t, http.MethodPut, "/api/v1/customers/"+aID+"/credit-limit", map[string]any{"credit_limit": "-5", "payment_terms_days": 0}, "").code)
 
-	// Two credit sales to Asha and an old one to Baraka, aged for the buckets.
-	old := creditSale(t, o, aID, product, "3")     // 30,000
-	recent := creditSale(t, o, aID, product, "2")  // 20,000
-	ancient := creditSale(t, o, bID, product, "1") // 10,000
-	ageSale(t, e, old, 45)
-	ageSale(t, e, recent, 5)
-	ageSale(t, e, ancient, 100)
+	// Re-login after long jumps so tokens stay fresh under the test clock.
+	relogin := func(phone, pass string) string {
+		return login(t, e.app.Fiber, phone, pass)
+	}
+	// Ancient sale to Baraka (100 days ago).
+	_ = creditSale(t, o, bID, product, "1") // 10,000
+	clk.Advance(55 * 24 * time.Hour)        // now 45 days ago
+	o.token = relogin(e.phone, "correct-horse")
+	old := creditSale(t, o, aID, product, "3") // 30,000
+	clk.Advance(40 * 24 * time.Hour)           // now 5 days ago
+	o.token = relogin(e.phone, "correct-horse")
+	_ = creditSale(t, o, aID, product, "2") // 20,000
+	clk.Advance(5 * 24 * time.Hour)         // now defaultNow
+	o.token = relogin(e.phone, "correct-horse")
 
 	debts := o.call(t, http.MethodGet, "/api/v1/customers/debts", nil, "")
 	require.Equal(t, 200, debts.code, debts.raw)
@@ -79,7 +76,7 @@ func TestCustomersAccountsAgedDebtAndWriteOff(t *testing.T) {
 	require.Equal(t, "10000.00", str(rows[1]["bucket_over_90"]))
 	require.EqualValues(t, 2, dec(rows[0]["unpaid_sales"]).IntPart())
 
-	// Per-customer: unpaid sales oldest first with their age, and the account summary (FR-CUS-03).
+	// Per-customer: unpaid sales oldest first with their age, and the account summary.
 	unpaid := o.call(t, http.MethodGet, "/api/v1/customers/"+aID+"/unpaid", nil, "")
 	require.Equal(t, 200, unpaid.code, unpaid.raw)
 	list := asList(unpaid.data["sales"])
@@ -90,7 +87,7 @@ func TestCustomersAccountsAgedDebtAndWriteOff(t *testing.T) {
 	require.Equal(t, "50000.00", str(profile.data["balance"]))
 	require.Equal(t, 404, o.call(t, http.MethodGet, "/api/v1/customers/"+key(), nil, "").code)
 
-	// A payment settles the oldest sale first (BR-09) and the statement shows both sides with a running balance.
+	// A payment settles the oldest sale first and the statement shows both sides with a running balance.
 	cash := e.cashAccount(t)
 	pay := o.call(t, http.MethodPost, "/api/v1/customers/"+aID+"/payments", map[string]any{"amount": "35000", "method": "cash", "money_account_id": cash}, key())
 	require.Equal(t, 201, pay.code, pay.raw)
@@ -105,23 +102,20 @@ func TestCustomersAccountsAgedDebtAndWriteOff(t *testing.T) {
 	require.True(t, strings.HasPrefix(pdf.raw, "%PDF"), "the statement downloads as a PDF")
 	require.Equal(t, 400, o.call(t, http.MethodGet, "/api/v1/customers/"+aID+"/statement?from=2026-12-31&to=2026-01-01", nil, "").code)
 
-	// Write-off is its own permission, held by the Owner only. Zero clears the whole balance.
-	require.Equal(t, 403, mgr.call(t, http.MethodPost, "/api/v1/customers/"+aID+"/write-off", map[string]any{"amount": "0", "reason": "Bad debt"}, key()).code)
-	require.Equal(t, 422, o.call(t, http.MethodPost, "/api/v1/customers/"+aID+"/write-off", map[string]any{"amount": "0"}, key()).code, "a reason is required")
+	// Debt write-off was removed in the approved BMS schema (returns 410).
+	_ = mgr
 	wo := o.call(t, http.MethodPost, "/api/v1/customers/"+aID+"/write-off", map[string]any{"amount": "5000", "reason": "Customer disappeared"}, key())
-	require.Equal(t, 201, wo.code, wo.raw)
-	require.Equal(t, "10000.00", str(o.call(t, http.MethodGet, "/api/v1/customers/"+aID, nil, "").data["balance"]))
-	tb := o.call(t, http.MethodGet, "/api/v1/reports/trial-balance", nil, "")
-	require.Equal(t, true, tb.data["balanced"], "the ledger still balances after the write-off")
-	require.Equal(t, 409, o.call(t, http.MethodPost, "/api/v1/customers/"+aID+"/write-off", map[string]any{"amount": "999999", "reason": "Too much"}, key()).code, "more than owed")
+	require.Equal(t, 410, wo.code, wo.raw)
 
-	// Search and pagination of the list, with balances.
-	found := staff.call(t, http.MethodGet, "/api/v1/customers?q=baraka", nil, "")
+	// Search and pagination of the list, with balances (view_all sees all; staff sees only own registered).
+	found := o.call(t, http.MethodGet, "/api/v1/customers?q=baraka", nil, "")
 	require.Equal(t, 200, found.code, found.raw)
 	require.Len(t, asList(found.body["data"]), 1)
 	require.NotNil(t, found.body["meta"])
+	staff2, _ := e.user(t, "staff")
+	require.Empty(t, asList(staff2.call(t, http.MethodGet, "/api/v1/customers?q=baraka", nil, "").body["data"]), "staff without view_all sees only customers they registered")
 
-	// A customer with a balance cannot be deactivated away from view; one without can be, and drops out of sales (FR-CUS-10).
+	// A customer without a balance can be deactivated and drops out of sales.
 	require.Equal(t, 200, o.call(t, http.MethodPost, "/api/v1/customers/"+str(s1.data["id"])+"/deactivate", nil, "").code)
 	blocked := o.call(t, http.MethodPost, "/api/v1/sales", map[string]any{"customer_id": str(s1.data["id"]), "items": []map[string]any{{"product_id": product, "qty": "1"}}, "payments": []map[string]any{}}, key())
 	require.GreaterOrEqual(t, blocked.code, 400)

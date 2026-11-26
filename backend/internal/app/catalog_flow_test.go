@@ -28,8 +28,11 @@ func TestCatalogProductsLookupFiltersAndCost(t *testing.T) {
 	require.NotEmpty(t, str(rice.data["sku"]), "a SKU is generated when left empty")
 	sugar := o.call(t, http.MethodPost, "/api/v1/products", map[string]any{"name": "Sugar", "sku": "SUG-1", "sell_price": "3000", "barcode": "6002"}, "")
 	require.Equal(t, 201, sugar.code, sugar.raw)
+	// Services belong to the services catalogue, not products.
 	service := o.call(t, http.MethodPost, "/api/v1/products", map[string]any{"name": "Delivery", "sell_price": "1000", "kind": "service"}, "")
-	require.Equal(t, 201, service.code, service.raw)
+	require.Equal(t, 400, service.code, service.raw)
+	flour := o.call(t, http.MethodPost, "/api/v1/products", map[string]any{"name": "Flour", "sell_price": "1000"}, "")
+	require.Equal(t, 201, flour.code, flour.raw)
 
 	// SKU and barcode are unique within the business.
 	require.Equal(t, 409, o.call(t, http.MethodPost, "/api/v1/products", map[string]any{"name": "Clash", "sku": "SUG-1", "sell_price": "1"}, "").code)
@@ -43,7 +46,7 @@ func TestCatalogProductsLookupFiltersAndCost(t *testing.T) {
 	require.Equal(t, "Sugar", str(staff.call(t, http.MethodGet, "/api/v1/products/lookup?barcode=SUG-1", nil, "").data["name"]))
 	require.Equal(t, 404, staff.call(t, http.MethodGet, "/api/v1/products/lookup?barcode=000", nil, "").code)
 
-	// Stock arrives at a cost. Cost and margin are only for users with products.view_cost (FR-INV-08).
+	// Stock arrives at a cost. Cost and margin are only for users with shop.product.view_cost (FR-INV-08).
 	in := o.call(t, http.MethodPost, "/api/v1/stock-entries", map[string]any{"direction": "in", "reason": "opening", "items": []map[string]any{{"product_id": rice.data["id"], "qty": "3", "unit_cost": "1200"}}}, key())
 	require.Equal(t, 201, in.code, in.raw)
 	own := o.call(t, http.MethodGet, "/api/v1/products/lookup?barcode=6001", nil, "")
@@ -62,7 +65,7 @@ func TestCatalogProductsLookupFiltersAndCost(t *testing.T) {
 	require.Len(t, asList(staff.call(t, http.MethodGet, "/api/v1/products?category_id="+str(cat.data["id"]), nil, "").body["data"]), 1)
 	low := staff.call(t, http.MethodGet, "/api/v1/products?low_stock=true", nil, "")
 	require.Equal(t, 200, low.code, low.raw)
-	require.Len(t, asList(low.body["data"]), 1, "3 on hand is at or below the reorder level of 5")
+	require.NotEmpty(t, find(asList(low.body["data"]), "id", str(rice.data["id"])), "3 on hand is at or below the reorder level of 5")
 	paged := staff.call(t, http.MethodGet, "/api/v1/products?per_page=2&page=2", nil, "")
 	require.Equal(t, 200, paged.code, paged.raw)
 	require.Len(t, asList(paged.body["data"]), 1)
@@ -83,8 +86,8 @@ func TestCatalogProductsLookupFiltersAndCost(t *testing.T) {
 	require.Equal(t, "2500.00", str(rows[0]["old_price"]))
 	require.Equal(t, "2800.00", str(rows[0]["new_price"]))
 
-	// A product with stock history cannot switch between stock and service.
-	require.Equal(t, 409, o.call(t, http.MethodPut, "/api/v1/products/"+str(rice.data["id"]), map[string]any{"kind": "service"}, "").code)
+	// Switching a product to kind=service is refused.
+	require.Equal(t, 400, o.call(t, http.MethodPut, "/api/v1/products/"+str(rice.data["id"]), map[string]any{"kind": "service"}, "").code)
 
 	// Deactivating hides it from sale: it cannot be priced or sold, but history stays.
 	require.Equal(t, 200, o.call(t, http.MethodPost, "/api/v1/products/"+str(sugar.data["id"])+"/deactivate", nil, "").code)
@@ -104,31 +107,19 @@ func TestCatalogProductsLookupFiltersAndCost(t *testing.T) {
 func TestCatalogBranchPricesCategoriesAndUnits(t *testing.T) {
 	e := newEnv(t, defaultNow)
 	o := e.owner
-	branchB := o.call(t, http.MethodPost, "/api/v1/branches", map[string]any{"name": "Kariakoo", "code": "KRK"}, "")
+	branchB := o.call(t, http.MethodPost, "/api/v1/branches", map[string]any{"name": "Kariakoo"}, "")
 	require.Equal(t, 201, branchB.code, branchB.raw)
 	bID := str(branchB.data["id"])
 	p := o.call(t, http.MethodPost, "/api/v1/products", map[string]any{"name": "Soap", "sell_price": "1000"}, "")
 	require.Equal(t, 201, p.code, p.raw)
 	pid := str(p.data["id"])
 
-	// A branch price overrides the base price in that branch only (FR-INV-04).
+	// Per-branch prices were removed in the approved BMS schema (returns 410).
 	set := o.call(t, http.MethodPut, "/api/v1/products/"+pid+"/branch-prices", map[string]any{"prices": []map[string]any{{"branch_id": bID, "sell_price": "1200"}}}, "")
-	require.Equal(t, 200, set.code, set.raw)
+	require.Equal(t, 410, set.code, set.raw)
 	atMain := o.call(t, http.MethodPost, "/api/v1/sales/preview", map[string]any{"items": []map[string]any{{"product_id": pid, "qty": "1"}}}, "")
 	require.Equal(t, 200, atMain.code, atMain.raw)
 	require.Equal(t, "1000.00", str(atMain.data["total"]))
-	b := &client{app: e.app.Fiber, token: o.token, branch: bID}
-	atB := b.call(t, http.MethodPost, "/api/v1/sales/preview", map[string]any{"items": []map[string]any{{"product_id": pid, "qty": "1"}}}, "")
-	require.Equal(t, 200, atB.code, atB.raw)
-	require.Equal(t, "1200.00", str(atB.data["total"]))
-	require.Equal(t, 400, o.call(t, http.MethodPut, "/api/v1/products/"+pid+"/branch-prices", map[string]any{"prices": []map[string]any{{"branch_id": bID, "sell_price": "-5"}}}, "").code)
-	require.Equal(t, 404, o.call(t, http.MethodPut, "/api/v1/products/"+pid+"/branch-prices", map[string]any{"prices": []map[string]any{{"branch_id": key(), "sell_price": "5"}}}, "").code)
-	hist := o.call(t, http.MethodGet, "/api/v1/products/"+pid+"/price-history", nil, "")
-	require.NotEmpty(t, asList(hist.body["data"]), "branch price changes are logged too")
-
-	// A manager of the main branch cannot set prices for a branch they are not in.
-	mgr, _ := e.user(t, "manager")
-	require.Equal(t, 404, mgr.call(t, http.MethodPut, "/api/v1/products/"+pid+"/branch-prices", map[string]any{"prices": []map[string]any{{"branch_id": bID, "sell_price": "1"}}}, "").code)
 
 	// Categories nest, names are unique, a category with products cannot be deleted (FR-INV-10).
 	parent := o.call(t, http.MethodPost, "/api/v1/categories", map[string]any{"name": "Household"}, "")
@@ -165,23 +156,13 @@ func TestCatalogBranchPricesCategoriesAndUnits(t *testing.T) {
 	require.Equal(t, 403, staff.call(t, http.MethodPost, "/api/v1/categories", map[string]any{"name": "Nope"}, "").code)
 	require.Equal(t, 200, staff.call(t, http.MethodGet, "/api/v1/categories", nil, "").code)
 
-	// Units are a managed list; the defaults exist.
+	// Units are stateless short codes in the approved BMS schema; the defaults exist.
 	units := o.call(t, http.MethodGet, "/api/v1/units", nil, "")
 	require.GreaterOrEqual(t, len(asList(units.body["data"])), 5)
 	unit := o.call(t, http.MethodPost, "/api/v1/units", map[string]any{"name": "bundle", "short_name": "bdl", "allow_decimal": false}, "")
 	require.Equal(t, 201, unit.code, unit.raw)
-	up := o.call(t, http.MethodPut, "/api/v1/units/"+str(unit.data["id"]), map[string]any{"name": "bundle of 10", "short_name": "bdl", "allow_decimal": false}, "")
-	require.Equal(t, 200, up.code, up.raw)
-	require.Equal(t, "bundle of 10", str(up.data["name"]))
-	dec1 := o.call(t, http.MethodPost, "/api/v1/units", map[string]any{"name": "sack", "short_name": "sk", "allow_decimal": true}, "")
-	require.Equal(t, 201, dec1.code, dec1.raw)
-	renamed := o.call(t, http.MethodPut, "/api/v1/units/"+str(dec1.data["id"]), map[string]any{"name": "big sack"}, "")
-	require.Equal(t, 200, renamed.code, renamed.raw)
-	require.Equal(t, true, renamed.data["allow_decimal"], "renaming a unit must not reset allow_decimal")
-	require.Equal(t, "sk", str(renamed.data["short_name"]))
-	require.Equal(t, 404, o.call(t, http.MethodPut, "/api/v1/units/"+key(), map[string]any{"name": "ghost"}, "").code)
-	require.Equal(t, 409, o.call(t, http.MethodPost, "/api/v1/units", map[string]any{"name": "big sack", "short_name": "bs"}, "").code)
-	require.Equal(t, 400, o.call(t, http.MethodPost, "/api/v1/units", map[string]any{"name": " ", "short_name": "x"}, "").code)
+	require.Equal(t, "bdl", str(unit.data["short_name"]))
+	require.Equal(t, 400, o.call(t, http.MethodPost, "/api/v1/units", map[string]any{"name": " ", "short_name": "123!"}, "").code)
 	require.Equal(t, 403, staff.call(t, http.MethodPost, "/api/v1/units", map[string]any{"name": "x", "short_name": "x"}, "").code)
 }
 

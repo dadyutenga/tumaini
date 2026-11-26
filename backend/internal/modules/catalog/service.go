@@ -482,7 +482,7 @@ func (s *Service) SaveCategory(ctx context.Context, p *auth.Principal, id *uuid.
 		tag, err := tx.Exec(ctx, `
 			UPDATE app.product_categories SET name = coalesce(NULLIF($2,''), name),
 			  parent_id = CASE WHEN $3 THEN $4::uuid ELSE parent_id END,
-			  status = coalesce(CASE WHEN $5::boolean THEN 'active' ELSE 'inactive' END::app.record_status, status)
+			  status = CASE WHEN $5::boolean IS NULL THEN status WHEN $5::boolean THEN 'active'::app.record_status ELSE 'inactive'::app.record_status END
 			WHERE id = $1`, outID, name, parentSet, parent, in.IsActive)
 		if db.IsUnique(err) {
 			return httpx.Conflict("duplicate", "That category already exists")

@@ -114,11 +114,13 @@ func (s *Service) StockCard(ctx context.Context, p *auth.Principal, productID uu
 		if err := tx.QueryRow(ctx, `SELECT name::text FROM app.products WHERE tenant_id = $1 AND id = $2`, p.TenantID, productID).Scan(&name); err != nil {
 			return httpx.NotFound("not_found", "Product not found")
 		}
-		if err := tx.QueryRow(ctx, `
-			SELECT coalesce(sum(quantity_delta), 0) FROM app.stock_movements
-			WHERE tenant_id = $1 AND product_id = $2 AND ($3::uuid IS NULL OR location_id = $3)
-			  AND ($4 = '' OR occurred_at < $4::date)`, p.TenantID, productID, locationFilter(p), from).Scan(&opening); err != nil {
-			return err
+		if from != "" {
+			if err := tx.QueryRow(ctx, `
+				SELECT coalesce(sum(quantity_delta), 0) FROM app.stock_movements
+				WHERE tenant_id = $1 AND product_id = $2 AND ($3::uuid IS NULL OR location_id = $3)
+				  AND occurred_at < $4::date`, p.TenantID, productID, locationFilter(p), from).Scan(&opening); err != nil {
+				return err
+			}
 		}
 		rows, err := tx.Query(ctx, `
 			SELECT m.id, m.movement_type::text, m.quantity_delta, coalesce(m.unit_cost, 0), `+sourceType+`, `+sourceID+`, m.occurred_at
