@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Eye, KeyRound, Plus, Printer, Trash2, Upload, UserX } from "lucide-react";
+import { useParams } from "react-router-dom";
+import { Eye, KeyRound, Plus, Printer, Trash2, Upload, UserX } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,11 +9,13 @@ import {
   DataGrid,
   Field,
   FormDialog,
+  MetaGrid,
   NativeSelect,
   PageHeader,
+  SectionCard,
   StatusBadge,
 } from "@/components/shared/kit";
-import { PageLoader } from "@/components/shared/Display";
+import { PageLoader, StatCard } from "@/components/shared/Display";
 import { FilePreviewDialog } from "@/components/shared/FilePreview";
 import { RecordHistoryTab } from "@/components/shared/RecordHistoryTab";
 import { AttachmentsSection } from "@/components/shared/AttachmentsSection";
@@ -321,20 +323,15 @@ export default function EmployeeDetail() {
   const e = emp.data;
 
   return (
-    <>
-      <Link
-        to="/people"
-        className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft size={14} /> People
-      </Link>
-
+    <div className="space-y-6">
       <PageHeader
+        backTo="/people"
+        backLabel="People"
         title={`${e.name} (${e.employee_no})`}
         description={`${e.position || e.position_name || "No position"}${e.branch_name ? ` · ${e.branch_name}` : ""}`}
+        badge={<StatusBadge value={e.status} />}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge value={e.status} />
             {canViewStatement && (
               <Button variant="outline" size="sm" onClick={() => window.print()}>
                 <Printer size={14} /> Print statement
@@ -354,7 +351,7 @@ export default function EmployeeDetail() {
               <Button
                 variant="outline"
                 size="sm"
-                className="text-destructive hover:text-destructive"
+                className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                 onClick={() => setTermOpen(true)}
               >
                 <UserX size={14} /> Terminate
@@ -377,108 +374,146 @@ export default function EmployeeDetail() {
 
         <TabsContent value="profile" className="space-y-6">
           <div className="grid gap-4 md:grid-cols-2">
-            <div className="space-y-2 rounded-2xl border bg-card p-5 text-sm">
-              <h3 className="font-semibold">Contact &amp; Employment</h3>
-              <div className="grid grid-cols-2 gap-y-2 pt-2">
-                <span className="text-muted-foreground">Phone</span>
-                <span>{e.phone || "-"}</span>
-                <span className="text-muted-foreground">Email</span>
-                <span>{e.email || "-"}</span>
-                <span className="text-muted-foreground">Position</span>
-                <span>{e.position || e.position_name || "-"}</span>
-                <span className="text-muted-foreground">Hire date</span>
-                <span>{e.hire_date ? formatDate(e.hire_date) : "-"}</span>
-                <span className="text-muted-foreground">Emergency contact</span>
-                <span>
-                  {[e.emergency_contact, e.emergency_contact_phone].filter(Boolean).join(" · ") ||
-                    "-"}
-                </span>
-                <span className="text-muted-foreground">System login</span>
-                <span>{e.user_id ? "Linked" : "Not linked"}</span>
-              </div>
-            </div>
+            <SectionCard title="Contact & Employment">
+              <MetaGrid
+                items={[
+                  { label: "Phone", value: e.phone || "-" },
+                  { label: "Email", value: e.email || "-" },
+                  { label: "Position", value: e.position || e.position_name || "-" },
+                  { label: "Hire date", value: e.hire_date ? formatDate(e.hire_date) : "-" },
+                  {
+                    label: "Emergency contact",
+                    value:
+                      [e.emergency_contact, e.emergency_contact_phone]
+                        .filter(Boolean)
+                        .join(" · ") || "-",
+                  },
+                  { label: "System login", value: e.user_id ? "Linked" : "Not linked" },
+                ]}
+              />
+            </SectionCard>
 
             {canViewComp && (
-              <div className="space-y-2 rounded-2xl border bg-card p-5 text-sm">
-                <h3 className="font-semibold">Compensation &amp; Payout Details</h3>
-                <div className="grid grid-cols-2 gap-y-2 pt-2">
-                  <span className="text-muted-foreground">Monthly basic salary</span>
-                  <span className="font-semibold">{formatMoney(e.base_pay)}</span>
-                  <span className="text-muted-foreground">Pay method</span>
-                  <span className="capitalize">
-                    {(e.pay_method ?? "cash").replaceAll("_", " ")}
-                  </span>
-                  <span className="text-muted-foreground">Payout provider</span>
-                  <span>{e.pay_provider || "-"}</span>
-                  <span className="text-muted-foreground">Payout account</span>
-                  <span>{e.pay_account_last4 ? `**** ${e.pay_account_last4}` : "-"}</span>
-                  {statement.data?.totals?.loan_balance && (
-                    <>
-                      <span className="text-muted-foreground">Advance balance</span>
-                      <span className="font-semibold text-amber-700">
-                        {formatMoney(statement.data.totals.loan_balance)}
-                      </span>
-                    </>
-                  )}
-                </div>
-              </div>
+              <SectionCard title="Compensation & Payout Details">
+                <MetaGrid
+                  items={[
+                    {
+                      label: "Monthly basic salary",
+                      value: (
+                        <span className="od-tabular font-semibold text-[var(--od-ink)]">
+                          {formatMoney(e.base_pay)}
+                        </span>
+                      ),
+                    },
+                    {
+                      label: "Pay method",
+                      value: (
+                        <span className="capitalize">
+                          {(e.pay_method ?? "cash").replaceAll("_", " ")}
+                        </span>
+                      ),
+                    },
+                    { label: "Payout provider", value: e.pay_provider || "-" },
+                    {
+                      label: "Payout account",
+                      value: e.pay_account_last4 ? (
+                        <span className="od-mono">**** {e.pay_account_last4}</span>
+                      ) : (
+                        "-"
+                      ),
+                    },
+                    ...(statement.data?.totals?.loan_balance
+                      ? [
+                          {
+                            label: "Advance balance",
+                            value: (
+                              <span className="od-tabular font-semibold text-[var(--od-warning)]">
+                                {formatMoney(statement.data.totals.loan_balance)}
+                              </span>
+                            ),
+                          },
+                        ]
+                      : []),
+                  ]}
+                />
+              </SectionCard>
             )}
           </div>
 
           {canViewStatement && statement.data && (
-            <div className="space-y-4">
+            <div className="space-y-5">
               {statement.data.totals && (
-                <div className="grid gap-3 sm:grid-cols-4">
-                  {(
-                    [
-                      ["Gross", statement.data.totals.gross],
-                      ["Deductions", statement.data.totals.deductions],
-                      ["Net pay", statement.data.totals.net],
-                      ["Paid", statement.data.totals.paid],
-                    ] as const
-                  ).map(([label, val]) => (
-                    <div key={label} className="rounded-xl border bg-card p-3">
-                      <p className="text-xs text-muted-foreground">{label}</p>
-                      <p className="mt-1 text-base font-semibold tabular-nums">
-                        {formatMoney(val)}
-                      </p>
-                    </div>
-                  ))}
+                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <StatCard label="Gross" value={formatMoney(statement.data.totals.gross)} />
+                  <StatCard
+                    label="Deductions"
+                    value={formatMoney(statement.data.totals.deductions)}
+                  />
+                  <StatCard
+                    label="Net pay"
+                    value={formatMoney(statement.data.totals.net)}
+                    tone="good"
+                  />
+                  <StatCard label="Paid" value={formatMoney(statement.data.totals.paid)} />
                 </div>
               )}
 
-              <div className="space-y-2">
-                <h3 className="font-semibold">Payslips</h3>
+              <div className="space-y-2.5">
+                <h3 className="od-section-title">Payslips</h3>
                 <DataGrid
                   rows={statement.data.payslips ?? []}
                   rowKey={(p) => p.id}
                   empty="No payslips in this period"
                   columns={[
-                    { header: "Payslip", cell: (p) => p.number || "-" },
+                    {
+                      header: "Payslip",
+                      cell: (p) => <span className="od-mono">{p.number || "-"}</span>,
+                    },
                     {
                       header: "Period",
-                      cell: (p) => `${p.period_year}-${String(p.period_month).padStart(2, "0")}`,
+                      cell: (p) => (
+                        <span className="od-mono">
+                          {p.period_year}-{String(p.period_month).padStart(2, "0")}
+                        </span>
+                      ),
                     },
-                    { header: "Gross", align: "right", cell: (p) => formatMoney(p.gross) },
+                    {
+                      header: "Gross",
+                      align: "right",
+                      cell: (p) => <span className="od-tabular">{formatMoney(p.gross)}</span>,
+                    },
                     {
                       header: "Deductions",
                       align: "right",
-                      cell: (p) => formatMoney(p.total_deductions),
+                      cell: (p) => (
+                        <span className="od-tabular">{formatMoney(p.total_deductions)}</span>
+                      ),
                     },
-                    { header: "Net", align: "right", cell: (p) => formatMoney(p.net) },
+                    {
+                      header: "Net",
+                      align: "right",
+                      cell: (p) => (
+                        <span className="od-tabular font-semibold text-[var(--od-ink)]">
+                          {formatMoney(p.net)}
+                        </span>
+                      ),
+                    },
                     { header: "Status", cell: (p) => <StatusBadge value={p.run_status} /> },
                   ]}
                 />
               </div>
 
               {(statement.data.payments?.length ?? 0) > 0 && (
-                <div className="space-y-2">
-                  <h3 className="font-semibold">Payments</h3>
+                <div className="space-y-2.5">
+                  <h3 className="od-section-title">Payments</h3>
                   <DataGrid
                     rows={statement.data.payments ?? []}
                     rowKey={(p) => p.id}
                     columns={[
-                      { header: "Number", cell: (p) => p.number },
+                      {
+                        header: "Number",
+                        cell: (p) => <span className="od-mono">{p.number}</span>,
+                      },
                       { header: "Date", cell: (p) => formatDate(p.payment_date) },
                       {
                         header: "Method",
@@ -489,7 +524,15 @@ export default function EmployeeDetail() {
                           </span>
                         ),
                       },
-                      { header: "Amount", align: "right", cell: (p) => formatMoney(p.amount) },
+                      {
+                        header: "Amount",
+                        align: "right",
+                        cell: (p) => (
+                          <span className="od-tabular font-medium text-[var(--od-ink)]">
+                            {formatMoney(p.amount)}
+                          </span>
+                        ),
+                      },
                       { header: "Status", cell: (p) => <StatusBadge value={p.status} /> },
                     ]}
                   />
@@ -502,29 +545,27 @@ export default function EmployeeDetail() {
         {(canViewComp || canManageAdj) && (
           <TabsContent value="salary" className="space-y-6">
             {canManageAdj && (
-              <div className="flex items-center justify-between rounded-2xl border bg-card p-4">
-                <div>
-                  <h3 className="font-semibold">One-off Bonus or Deduction</h3>
-                  <p className="text-xs text-muted-foreground">
-                    Included automatically in the next payroll calculation for that period.
-                  </p>
-                </div>
-                <Button size="sm" onClick={() => setAdjOpen(true)}>
-                  <Plus size={14} /> Add bonus / deduction
-                </Button>
-              </div>
+              <SectionCard
+                title="One-off Bonus or Deduction"
+                subtitle="Included automatically in the next payroll calculation for that period."
+                actions={
+                  <Button size="sm" onClick={() => setAdjOpen(true)}>
+                    <Plus size={14} /> Add bonus / deduction
+                  </Button>
+                }
+              >
+                <p className="od-caption">
+                  Record ad-hoc performance bonuses, overtime corrections, or one-time deductions.
+                </p>
+              </SectionCard>
             )}
 
             {canViewComp && (
-              <div className="space-y-3 rounded-2xl border bg-card p-5">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <h3 className="font-semibold">Recurring Allowances</h3>
-                    <p className="text-xs text-muted-foreground">
-                      Monthly allowances paid alongside base salary (e.g. Housing, Transport).
-                    </p>
-                  </div>
-                  {canManageComp && (
+              <SectionCard
+                title="Recurring Allowances"
+                subtitle="Monthly allowances paid alongside base salary (e.g. Housing, Transport)."
+                actions={
+                  canManageComp ? (
                     <div className="flex gap-2">
                       <Button
                         size="sm"
@@ -555,16 +596,19 @@ export default function EmployeeDetail() {
                         Save allowances
                       </Button>
                     </div>
-                  )}
-                </div>
+                  ) : undefined
+                }
+              >
                 {allowances.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No active allowances configured.</p>
+                  <p className="text-sm text-[var(--od-ink-muted)]">
+                    No active allowances configured.
+                  </p>
                 ) : (
-                  <div className="space-y-2">
+                  <div className="space-y-2.5">
                     {allowances.map((a, idx) => (
                       <div
                         key={idx}
-                        className="grid grid-cols-[1fr_8rem_9rem_2rem] items-center gap-2"
+                        className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[1fr_8rem_9rem_2.25rem]"
                       >
                         <Input
                           disabled={!canManageComp}
@@ -581,6 +625,7 @@ export default function EmployeeDetail() {
                         <Input
                           disabled={!canManageComp}
                           inputMode="decimal"
+                          className="od-tabular"
                           placeholder="Amount"
                           value={a.amount}
                           onChange={(ev) =>
@@ -608,7 +653,7 @@ export default function EmployeeDetail() {
                             type="button"
                             size="icon"
                             variant="ghost"
-                            className="h-8 w-8 text-destructive"
+                            className="h-8 w-8 text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                             onClick={() =>
                               setAllowances((prev) => prev.filter((_, i) => i !== idx))
                             }
@@ -620,14 +665,14 @@ export default function EmployeeDetail() {
                     ))}
                   </div>
                 )}
-              </div>
+              </SectionCard>
             )}
           </TabsContent>
         )}
 
         <TabsContent value="leave" className="space-y-6">
-          <div className="space-y-2">
-            <h3 className="font-semibold">Leave Balance (This Year)</h3>
+          <div className="space-y-2.5">
+            <h3 className="od-section-title">Leave Balance (This Year)</h3>
             <DataGrid
               rows={leaveBal.data}
               loading={leaveBal.isLoading}
@@ -636,22 +681,38 @@ export default function EmployeeDetail() {
               columns={[
                 {
                   header: "Leave type",
-                  cell: (l) => <span className="font-medium">{l.name ?? l.leave_type}</span>,
+                  cell: (l) => (
+                    <span className="font-medium text-[var(--od-ink)]">
+                      {l.name ?? l.leave_type}
+                    </span>
+                  ),
                 },
-                { header: "Entitled", align: "right", cell: (l) => l.allowed ?? l.entitled ?? "0" },
-                { header: "Used", align: "right", cell: (l) => l.taken ?? l.used ?? "0" },
+                {
+                  header: "Entitled",
+                  align: "right",
+                  cell: (l) => <span className="od-tabular">{l.allowed ?? l.entitled ?? "0"}</span>,
+                },
+                {
+                  header: "Used",
+                  align: "right",
+                  cell: (l) => <span className="od-tabular">{l.taken ?? l.used ?? "0"}</span>,
+                },
                 {
                   header: "Remaining",
                   align: "right",
-                  cell: (l) => <span className="font-semibold">{l.remaining}</span>,
+                  cell: (l) => (
+                    <span className="od-tabular font-semibold text-[var(--od-ink)]">
+                      {l.remaining}
+                    </span>
+                  ),
                 },
               ]}
             />
           </div>
 
           {canViewLoans && (
-            <div className="space-y-2">
-              <h3 className="font-semibold">Advances &amp; Loans</h3>
+            <div className="space-y-2.5">
+              <h3 className="od-section-title">Advances &amp; Loans</h3>
               <DataGrid
                 rows={loans.data}
                 loading={loans.isLoading}
@@ -660,7 +721,9 @@ export default function EmployeeDetail() {
                 columns={[
                   {
                     header: "Type",
-                    cell: (l) => <span className="font-medium capitalize">{l.kind}</span>,
+                    cell: (l) => (
+                      <span className="font-medium capitalize text-[var(--od-ink)]">{l.kind}</span>
+                    ),
                   },
                   {
                     header: "Issued",
@@ -669,9 +732,19 @@ export default function EmployeeDetail() {
                   {
                     header: "Amount",
                     align: "right",
-                    cell: (l) => formatMoney(l.principal ?? l.amount),
+                    cell: (l) => (
+                      <span className="od-tabular">{formatMoney(l.principal ?? l.amount)}</span>
+                    ),
                   },
-                  { header: "Balance", align: "right", cell: (l) => formatMoney(l.balance) },
+                  {
+                    header: "Balance",
+                    align: "right",
+                    cell: (l) => (
+                      <span className="od-tabular font-semibold text-[var(--od-ink)]">
+                        {formatMoney(l.balance)}
+                      </span>
+                    ),
+                  },
                   { header: "Status", cell: (l) => <StatusBadge value={l.status} /> },
                 ]}
               />
@@ -681,9 +754,10 @@ export default function EmployeeDetail() {
 
         <TabsContent value="documents" className="space-y-6">
           {canManage && (
-            <div className="space-y-3 rounded-2xl border bg-card p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <h3 className="font-semibold">Official HR Documents</h3>
+            <SectionCard
+              title="Official HR Documents"
+              subtitle="Contracts, ID copies, certificates and signed agreements."
+              actions={
                 <div className="flex flex-wrap items-center gap-2">
                   <NativeSelect
                     className="h-8 w-36 text-xs"
@@ -701,7 +775,7 @@ export default function EmployeeDetail() {
                     value={docName}
                     onChange={(ev) => setDocName(ev.target.value)}
                   />
-                  <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 text-xs font-medium shadow-sm hover:bg-accent">
+                  <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-3 text-xs font-medium text-[var(--od-ink)] transition hover:bg-[var(--od-surface-subtle)]">
                     <Upload size={13} />
                     <span>{uploadingDoc ? "Uploading…" : "Upload"}</span>
                     <input
@@ -715,7 +789,8 @@ export default function EmployeeDetail() {
                     />
                   </label>
                 </div>
-              </div>
+              }
+            >
               <DataGrid
                 rows={docs.data}
                 loading={docs.isLoading}
@@ -726,7 +801,10 @@ export default function EmployeeDetail() {
                     header: "Type",
                     cell: (d) => <span className="capitalize">{d.kind.replace("_", " ")}</span>,
                   },
-                  { header: "Name", cell: (d) => <span className="font-medium">{d.name}</span> },
+                  {
+                    header: "Name",
+                    cell: (d) => <span className="font-medium text-[var(--od-ink)]">{d.name}</span>,
+                  },
                   { header: "Uploaded", cell: (d) => formatDate(d.created_at) },
                   {
                     header: "",
@@ -742,7 +820,7 @@ export default function EmployeeDetail() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="text-destructive"
+                          className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                           onClick={() => deleteDoc.mutate(d.id)}
                         >
                           <Trash2 size={13} />
@@ -752,7 +830,7 @@ export default function EmployeeDetail() {
                   },
                 ]}
               />
-            </div>
+            </SectionCard>
           )}
 
           {id && <AttachmentsSection entityType="employee" entityId={id} />}
@@ -835,8 +913,8 @@ export default function EmployeeDetail() {
           </Field>
         </div>
         {canManageComp && (
-          <div className="space-y-3 rounded-xl border p-3">
-            <label className="flex items-center gap-2 text-sm font-medium">
+          <div className="space-y-3 rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-3.5">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-[var(--od-ink)]">
               <input
                 type="checkbox"
                 checked={updateComp}
@@ -850,6 +928,7 @@ export default function EmployeeDetail() {
                   <Input
                     required
                     inputMode="decimal"
+                    className="od-tabular"
                     value={form.base_pay}
                     onChange={(ev) => setForm((f) => ({ ...f, base_pay: ev.target.value }))}
                   />
@@ -985,7 +1064,7 @@ export default function EmployeeDetail() {
         busy={addAdj.isPending}
         onSubmit={() => addAdj.mutate({ ...adjForm, employee_id: id })}
       >
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Field label="Kind">
             <NativeSelect
               value={adjForm.kind}
@@ -999,6 +1078,7 @@ export default function EmployeeDetail() {
             <Input
               required
               inputMode="decimal"
+              className="od-tabular"
               value={adjForm.amount}
               onChange={(ev) => setAdjForm((a) => ({ ...a, amount: ev.target.value }))}
             />
@@ -1026,6 +1106,6 @@ export default function EmployeeDetail() {
         fileName={preview?.name}
         onClose={() => setPreview(null)}
       />
-    </>
+    </div>
   );
 }
