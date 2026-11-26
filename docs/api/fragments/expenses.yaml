@@ -1656,3 +1656,27 @@ paths:
                   message: Check the highlighted fields
                   fields:
                     amount: dpos
+  /expenses/{id}/cancel:
+    post:
+      summary: Cancel a submitted or approved expense before it is paid
+      operationId: post_expenses_id_cancel
+      tags:
+      - Expenses
+      x-permission: finance.expense.submit, finance.expense.enter or finance.expense.approve
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: The expense is already paid or cancelled

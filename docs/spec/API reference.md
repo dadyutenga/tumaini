@@ -30,9 +30,7 @@ In the tables below the Permission column is the key checked by the route. Scope
 | POST `/auth/login` | public | Return access token, set refresh cookie |
 | POST `/auth/refresh` | cookie | Rotate refresh token, return new access token |
 | POST `/auth/logout` | any | End current session |
-| POST `/auth/pin` | any | Exchange PIN for a fresh access token on a known device |
 | PUT `/auth/password` | any | Change own password |
-| PUT `/auth/pin` | any | Set or change own PIN |
 | GET `/me` | any | Profile, role, permission map with scopes and limits, branches, business settings needed by the UI |
 | PUT `/me` | any | Update own name, language |
 | GET `/me/sessions` | any | List own sessions |
