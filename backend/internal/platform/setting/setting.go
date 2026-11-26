@@ -7,12 +7,14 @@
 package setting
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/shopspring/decimal"
 
 	"bms/internal/platform/db"
 )
@@ -136,6 +138,31 @@ func Float(ctx context.Context, q db.Querier, key string, def float64) float64 {
 		return def
 	}
 	return v
+}
+
+// Decimal decodes a numeric setting directly into a decimal.Decimal without binary float conversion.
+func Decimal(ctx context.Context, q db.Querier, key string, def decimal.Decimal) decimal.Decimal {
+	raw, err := Raw(ctx, q, key)
+	if err != nil {
+		return def
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var n json.Number
+	if err := dec.Decode(&n); err != nil {
+		var s string
+		if json.Unmarshal(raw, &s) == nil {
+			if d, err := decimal.NewFromString(strings.TrimSpace(s)); err == nil {
+				return d
+			}
+		}
+		return def
+	}
+	d, err := decimal.NewFromString(n.String())
+	if err != nil {
+		return def
+	}
+	return d
 }
 
 // Strings reads a JSON array of strings; a missing or malformed value is empty.

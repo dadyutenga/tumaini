@@ -251,8 +251,8 @@ type settings struct {
 func loadSettings(ctx context.Context, tx pgx.Tx) settings {
 	return settings{
 		workingDays:     setting.Int(ctx, tx, "payroll.working_days", 26),
-		standardHours:   decimal.NewFromFloat(setting.Float(ctx, tx, "payroll.standard_hours", 8)),
-		multiplier:      decimal.NewFromFloat(setting.Float(ctx, tx, "payroll.overtime_multiplier", 1.5)),
+		standardHours:   setting.Decimal(ctx, tx, "payroll.standard_hours", decimal.NewFromInt(8)),
+		multiplier:      setting.Decimal(ctx, tx, "payroll.overtime_multiplier", decimal.NewFromFloat(1.5)),
 		latenessDeducts: setting.Bool(ctx, tx, "payroll.lateness_deducts", false),
 	}
 }

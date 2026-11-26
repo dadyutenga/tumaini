@@ -107,14 +107,14 @@ func (s *Service) pl(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, f Filte
 		}
 		f.branch(pq, "pr.location_id")
 		payRow, err := one(ctx, tx, `
-			SELECT COALESCE(SUM(pl.gross_pay), 0)
-			     + COALESCE((SELECT SUM(psi.employer_amount) FROM app.payroll_statutory_items psi
-			                 JOIN app.payroll_lines pl2 ON pl2.tenant_id = psi.tenant_id AND pl2.id = psi.payroll_line_id
-			                 JOIN app.payroll_runs pr2 ON pr2.tenant_id = pl2.tenant_id AND pr2.id = pl2.payroll_run_id
-			                 WHERE pr2.id = pr.id), 0) AS amt
+			SELECT COALESCE(SUM(pl.gross_pay), 0) + COALESCE(SUM(si.employer_total), 0) AS amt
 			FROM app.payroll_runs pr
-			JOIN app.payroll_lines pl ON pl.tenant_id = pr.tenant_id AND pl.payroll_run_id = pr.id`+pq.Where()+`
-			GROUP BY pr.id`, pq.Args...)
+			JOIN app.payroll_lines pl ON pl.tenant_id = pr.tenant_id AND pl.payroll_run_id = pr.id
+			LEFT JOIN (
+				SELECT tenant_id, payroll_line_id, SUM(employer_amount) AS employer_total
+				FROM app.payroll_statutory_items
+				GROUP BY tenant_id, payroll_line_id
+			) si ON si.tenant_id = pl.tenant_id AND si.payroll_line_id = pl.id`+pq.Where(), pq.Args...)
 		if err != nil {
 			return r, err
 		}
@@ -440,9 +440,11 @@ func (s *Service) Tax(ctx context.Context, p *auth.Principal, f Filter) (export.
 				FROM app.sales s WHERE `+sc+`
 				UNION ALL
 				SELECT date_trunc('month', r.business_date)::date,
-				       -(ROUND(sl.line_total * rl.quantity / sl.quantity, 2) - ROUND(sl.tax_amount * rl.quantity / sl.quantity, 2)),
-				       -ROUND(sl.tax_amount * rl.quantity / sl.quantity, 2), 0
+				       -(ROUND(sl.line_total * (CASE WHEN s.subtotal > 0 THEN s.total / s.subtotal ELSE 1 END) * rl.quantity / sl.quantity, 2)
+				       - ROUND(sl.tax_amount * (CASE WHEN s.subtotal > 0 THEN s.total / s.subtotal ELSE 1 END) * rl.quantity / sl.quantity, 2)),
+				       -ROUND(sl.tax_amount * (CASE WHEN s.subtotal > 0 THEN s.total / s.subtotal ELSE 1 END) * rl.quantity / sl.quantity, 2), 0
 				FROM app.sale_returns r
+				JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id
 				JOIN app.sale_return_lines rl ON rl.tenant_id = r.tenant_id AND rl.sale_return_id = r.id
 				JOIN app.sale_lines sl ON sl.tenant_id = rl.tenant_id AND sl.id = rl.sale_line_id
 				WHERE `+rc+`

@@ -213,19 +213,25 @@ func linesSQL(q *sqlq.Q, tenantID uuid.UUID, f Filter) string {
 	}
 	return `(
 		SELECT s.id AS sale_id, s.business_date AS d, s.location_id AS branch_id, sl.product_id, s.customer_id, s.sold_by,
-		       sl.quantity AS qty, sl.quantity * sl.unit_price AS gross, sl.line_discount AS disc, sl.tax_amount AS tax,
-		       sl.line_total AS total, sl.line_total - sl.tax_amount AS net, sl.quantity * COALESCE(sl.unit_cost, 0) AS cost, 0::numeric AS ret
+		       sl.quantity AS qty, sl.quantity * sl.unit_price AS gross,
+		       sl.line_discount + CASE WHEN s.subtotal > 0 THEN s.discount_amount * sl.line_total / s.subtotal ELSE 0 END AS disc,
+		       CASE WHEN s.subtotal > 0 THEN sl.tax_amount * s.total / s.subtotal ELSE sl.tax_amount END AS tax,
+		       sl.line_total - CASE WHEN s.subtotal > 0 THEN s.discount_amount * sl.line_total / s.subtotal ELSE 0 END AS total,
+		       (sl.line_total - CASE WHEN s.subtotal > 0 THEN s.discount_amount * sl.line_total / s.subtotal ELSE 0 END)
+		         - CASE WHEN s.subtotal > 0 THEN sl.tax_amount * s.total / s.subtotal ELSE sl.tax_amount END AS net,
+		       sl.quantity * COALESCE(sl.unit_cost, 0) AS cost, 0::numeric AS ret
 		FROM app.sales s
 		JOIN app.sale_lines sl ON sl.tenant_id = s.tenant_id AND sl.sale_id = s.id
 		WHERE ` + sc + `
 		UNION ALL
 		SELECT s.id, r.business_date, r.location_id, sl.product_id, s.customer_id, s.sold_by,
 		       -rl.quantity, 0, 0,
-		       -ROUND(sl.tax_amount * rl.quantity / sl.quantity, 2),
-		       -ROUND(sl.line_total * rl.quantity / sl.quantity, 2),
-		       -(ROUND(sl.line_total * rl.quantity / sl.quantity, 2) - ROUND(sl.tax_amount * rl.quantity / sl.quantity, 2)),
+		       -ROUND(sl.tax_amount * (CASE WHEN s.subtotal > 0 THEN s.total / s.subtotal ELSE 1 END) * rl.quantity / sl.quantity, 2),
+		       -ROUND(sl.line_total * (CASE WHEN s.subtotal > 0 THEN s.total / s.subtotal ELSE 1 END) * rl.quantity / sl.quantity, 2),
+		       -(ROUND(sl.line_total * (CASE WHEN s.subtotal > 0 THEN s.total / s.subtotal ELSE 1 END) * rl.quantity / sl.quantity, 2)
+		         - ROUND(sl.tax_amount * (CASE WHEN s.subtotal > 0 THEN s.total / s.subtotal ELSE 1 END) * rl.quantity / sl.quantity, 2)),
 		       -(CASE WHEN rl.restock THEN rl.quantity * COALESCE(sl.unit_cost, 0) ELSE 0 END),
-		       ROUND(sl.line_total * rl.quantity / sl.quantity, 2)
+		       ROUND(sl.line_total * (CASE WHEN s.subtotal > 0 THEN s.total / s.subtotal ELSE 1 END) * rl.quantity / sl.quantity, 2)
 		FROM app.sale_returns r
 		JOIN app.sale_return_lines rl ON rl.tenant_id = r.tenant_id AND rl.sale_return_id = r.id
 		JOIN app.sale_lines sl ON sl.tenant_id = rl.tenant_id AND sl.id = rl.sale_line_id

@@ -96,6 +96,14 @@ func (s *Service) TopUp(ctx context.Context, p *auth.Principal, id uuid.UUID, in
 			}
 			return err
 		}
+		// Lock both accounts in deterministic UUID order to prevent deadlocks with concurrent transfers.
+		firstID, secondID := in.FromAccountID, id
+		if secondID.String() < firstID.String() {
+			firstID, secondID = secondID, firstID
+		}
+		if _, err := tx.Exec(ctx, `SELECT id FROM app.financial_accounts WHERE tenant_id = $1 AND id IN ($2, $3) ORDER BY id FOR UPDATE`, p.TenantID, firstID, secondID); err != nil {
+			return err
+		}
 		petty, branch, err := s.pettyAccount(ctx, tx, p, id)
 		if err != nil {
 			return err
@@ -103,8 +111,13 @@ func (s *Service) TopUp(ctx context.Context, p *auth.Principal, id uuid.UUID, in
 		if !petty.Active {
 			return httpx.Conflict("account_inactive", "That petty cash account is inactive")
 		}
-		if _, err := payments.ActiveFin(ctx, tx, in.FromAccountID); err != nil {
+		fromAcc, err := payments.ActiveFin(ctx, tx, in.FromAccountID)
+		if err != nil {
 			return err
+		}
+		amt := money.Money(in.Amount)
+		if !fromAcc.AllowNegative && fromAcc.Balance.LessThan(amt) {
+			return httpx.Conflict("insufficient_funds", "Not enough balance in "+fromAcc.Name)
 		}
 		date := strings.TrimSpace(in.Date)
 		if date == "" {
@@ -120,7 +133,6 @@ func (s *Service) TopUp(ctx context.Context, p *auth.Principal, id uuid.UUID, in
 		if ref := strings.TrimSpace(in.Reference); ref != "" {
 			note = strings.TrimSpace(note + " " + ref)
 		}
-		amt := money.Money(in.Amount)
 		var tid uuid.UUID
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO app.account_transfers (tenant_id, transfer_no, from_account_id, to_account_id, amount, location_id, business_date, note)

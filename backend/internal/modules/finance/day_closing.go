@@ -200,16 +200,53 @@ func (s *Service) CloseDay(ctx context.Context, p *auth.Principal, in CloseDayIn
 		if _, err := tx.Exec(ctx, `DELETE FROM app.day_closing_lines WHERE tenant_id = $1 AND day_closing_id = $2`, p.TenantID, id); err != nil {
 			return err
 		}
-		// One line per account: cash accounts share the counted figure in proportion to what each should hold;
-		// other accounts are not counted at day end, so they are recorded as matching.
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.day_closing_lines (tenant_id, day_closing_id, account_id, expected_amount, counted_amount)
-			SELECT $1, $2, e.account_id, e.expected,
-			       CASE WHEN e.kind IN ('cash', 'petty_cash') AND $5::numeric <> 0 THEN round($4::numeric * e.expected / $5::numeric, 2)
-			            WHEN e.kind IN ('cash', 'petty_cash') AND (SELECT count(*) FROM app.expected_account_balances($3, $6::date) WHERE kind IN ('cash','petty_cash')) = 1 THEN $4::numeric
-			            ELSE e.expected END
-			FROM app.expected_account_balances($3, $6::date) e`, p.TenantID, id, *p.BranchID, counted, expectedCash, d); err != nil {
+		// One line per account: cash accounts share the counted figure in proportion to what each should hold,
+		// assigning any rounding remainder to the final cash account so SUM(cash counted_amount) == counted_cash.
+		// Non-cash accounts are recorded as matching expected.
+		type expAcc struct {
+			id       uuid.UUID
+			kind     string
+			expected decimal.Decimal
+		}
+		accRows, err := tx.Query(ctx, `SELECT account_id, kind::text, expected FROM app.expected_account_balances($1, $2::date) ORDER BY account_id`, *p.BranchID, d)
+		if err != nil {
 			return err
+		}
+		var accs []expAcc
+		lastCashIdx := -1
+		for accRows.Next() {
+			var a expAcc
+			if err := accRows.Scan(&a.id, &a.kind, &a.expected); err != nil {
+				accRows.Close()
+				return err
+			}
+			if a.kind == "cash" || a.kind == "petty_cash" {
+				lastCashIdx = len(accs)
+			}
+			accs = append(accs, a)
+		}
+		accRows.Close()
+		if err := accRows.Err(); err != nil {
+			return err
+		}
+		cashAllocated := money.Zero
+		for idx, a := range accs {
+			lineCounted := a.expected
+			if a.kind == "cash" || a.kind == "petty_cash" {
+				if idx == lastCashIdx {
+					lineCounted = counted.Sub(cashAllocated)
+				} else if !expectedCash.IsZero() {
+					lineCounted = money.Money(counted.Mul(a.expected).Div(expectedCash))
+				} else {
+					lineCounted = money.Zero
+				}
+				cashAllocated = cashAllocated.Add(lineCounted)
+			}
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO app.day_closing_lines (tenant_id, day_closing_id, account_id, expected_amount, counted_amount)
+				VALUES ($1, $2, $3, $4, $5)`, p.TenantID, id, a.id, a.expected, lineCounted); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE app.day_closings SET status = 'closed', expected_cash = $2, counted_cash = $3, note = NULLIF($4,''),

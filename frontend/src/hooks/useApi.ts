@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiError, api, get, getPage, isPendingApproval, newIdempotencyKey } from "@/lib/api";
@@ -45,23 +46,36 @@ interface BodyOption<B> {
   toBody?: (variables: B) => unknown;
 }
 
-/** POST, PUT, or DELETE with toast feedback, approval handling, and idempotency keys. */
+/** POST, PUT, or DELETE with toast feedback, approval handling, and retry-safe idempotency keys. */
 export function useWrite<B = unknown, R = unknown>(
   method: "POST" | "PUT" | "DELETE",
   path: string | ((body: B) => string),
   options: MutateOptions<R, B> & BodyOption<B> = {},
 ) {
   const queryClient = useQueryClient();
+  // Keep the same Idempotency-Key across network/5xx retries of the exact same request so a
+  // dropped response never results in duplicate financial postings when the user retries.
+  const pendingKey = useRef<{ sig: string; key: string } | null>(null);
   return useMutation({
     mutationFn: (body: B) => {
       const target = typeof path === "function" ? path(body) : path;
-      const key = options.idempotent ? newIdempotencyKey() : undefined;
       const payload = options.toBody ? options.toBody(body) : body;
+      let key: string | undefined;
+      if (options.idempotent) {
+        const sig = `${method}:${target}:${JSON.stringify(payload ?? null)}`;
+        if (pendingKey.current?.sig === sig) {
+          key = pendingKey.current.key;
+        } else {
+          key = newIdempotencyKey();
+          pendingKey.current = { sig, key };
+        }
+      }
       if (method === "POST") return api.post<R>(target, payload, { idempotencyKey: key });
       if (method === "PUT") return api.put<R>(target, payload);
       return api.del<R>(target);
     },
     onSuccess: (result) => {
+      pendingKey.current = null;
       if (isPendingApproval(result)) {
         toast.info("Sent for approval. A manager must approve it before it completes.");
       } else if (options.success) {
@@ -75,6 +89,11 @@ export function useWrite<B = unknown, R = unknown>(
       options.onSuccess?.(result);
     },
     onError: (error, variables) => {
+      // Clear key on deterministic 4xx errors (server rolled back), but retain it on network
+      // timeouts (status 0) or 5xx responses where the write may have committed on the server.
+      if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+        pendingKey.current = null;
+      }
       toast.error(errorMessage(error));
       options.onError?.(error, variables);
     },

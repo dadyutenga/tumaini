@@ -76,11 +76,11 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uu
 		}
 		var locID uuid.UUID
 		var number string
-		var paid decimal.Decimal
+		var subtotal, saleTotal, paid decimal.Decimal
 		if err := tx.QueryRow(ctx, `
-			SELECT location_id, COALESCE(receipt_no, ''), amount_paid
+			SELECT location_id, COALESCE(receipt_no, ''), subtotal, total, amount_paid
 			FROM app.sales WHERE tenant_id = $1 AND id = $2 AND status = 'completed' FOR UPDATE`, p.TenantID, saleID).
-			Scan(&locID, &number, &paid); err != nil {
+			Scan(&locID, &number, &subtotal, &saleTotal, &paid); err != nil {
 			return httpx.NotFound("not_found", "Completed sale not found")
 		}
 		amount := money.Zero
@@ -127,7 +127,11 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uu
 			}
 			part := money.Zero
 			if resolution == "refund" {
-				part = money.Money(lineTotal.Mul(it.Qty).Div(qty))
+				netLine := lineTotal
+				if subtotal.IsPositive() && saleTotal.LessThan(subtotal) {
+					netLine = lineTotal.Mul(saleTotal).Div(subtotal)
+				}
+				part = money.Money(netLine.Mul(it.Qty).Div(qty))
 			}
 			rets = append(rets, retLine{
 				saleLineID: it.SaleItemID, qty: it.Qty, amt: part, condition: cond,
@@ -135,8 +139,20 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uu
 			})
 			amount = amount.Add(part)
 		}
-		if resolution == "refund" && amount.LessThanOrEqual(money.Zero) {
-			return httpx.BadRequest("invalid_body", "Refund amount must be greater than zero")
+		if resolution == "refund" {
+			if amount.LessThanOrEqual(money.Zero) {
+				return httpx.BadRequest("invalid_body", "Refund amount must be greater than zero")
+			}
+			var existingRefunds decimal.Decimal
+			if err := tx.QueryRow(ctx, `
+				SELECT COALESCE(SUM(refund_amount), 0) FROM app.sale_returns
+				WHERE tenant_id = $1 AND sale_id = $2 AND status IN ('requested','approved','completed')`,
+				p.TenantID, saleID).Scan(&existingRefunds); err != nil {
+				return err
+			}
+			if existingRefunds.Add(amount).GreaterThan(paid) {
+				return httpx.Conflict("refund_exceeds_paid", "Refund amount cannot exceed the amount paid on this sale")
+			}
 		}
 		date, err := s.bizDate(ctx, tx)
 		if err != nil {
@@ -265,7 +281,7 @@ func (s *Service) CompleteReturn(ctx context.Context, p *auth.Principal, id uuid
 		err := tx.QueryRow(ctx, `
 			SELECT r.sale_id, r.location_id, s.customer_id, r.status::text, r.resolution::text, r.return_no, r.refund_amount
 			FROM app.sale_returns r JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id
-			WHERE r.tenant_id = $1 AND r.id = $2 FOR UPDATE OF r`, p.TenantID, id).
+			WHERE r.tenant_id = $1 AND r.id = $2 FOR UPDATE OF r, s`, p.TenantID, id).
 			Scan(&saleID, &locID, &custID, &st, &resolution, &retNo, &refundAmt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFound("not_found", "Return not found")

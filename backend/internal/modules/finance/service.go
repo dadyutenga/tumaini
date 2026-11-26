@@ -57,6 +57,7 @@ type Account struct {
 	ID             uuid.UUID        `json:"id"`
 	Name           string           `json:"name"`
 	Type           string           `json:"type"`
+	Currency       string           `json:"currency"`
 	BranchID       *uuid.UUID       `json:"branch_id"`
 	Provider       *string          `json:"provider"`
 	AccountNumber  *string          `json:"account_number"`
@@ -69,13 +70,13 @@ type Account struct {
 	CreatedAt      time.Time        `json:"created_at"`
 }
 
-const accountCols = `fa.id, fa.name::text, fa.kind::text, fa.location_id, fa.provider, fa.account_number_masked, fa.allow_negative,
+const accountCols = `fa.id, fa.name::text, fa.kind::text, fa.currency::text, fa.location_id, fa.provider, fa.account_number_masked, fa.allow_negative,
 	fa.show_on_invoices, fa.status = 'active', fa.created_at, fa.current_balance`
 
 func scanAccount(row pgx.Row, p *auth.Principal) (Account, error) {
 	var a Account
 	var bal decimal.Decimal
-	if err := row.Scan(&a.ID, &a.Name, &a.Type, &a.BranchID, &a.Provider, &a.AccountNumber, &a.AllowOverdraft, &a.ShowOnInvoices, &a.IsActive, &a.CreatedAt, &bal); err != nil {
+	if err := row.Scan(&a.ID, &a.Name, &a.Type, &a.Currency, &a.BranchID, &a.Provider, &a.AccountNumber, &a.AllowOverdraft, &a.ShowOnInvoices, &a.IsActive, &a.CreatedAt, &bal); err != nil {
 		return a, err
 	}
 	if canSeeBalance(p) {
@@ -131,7 +132,7 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 		if err := tx.QueryRow(ctx, `SELECT max(period_end)::text FROM app.petty_cash_reconciliations WHERE tenant_id = $1 AND account_id = $2`, p.TenantID, id).Scan(&last); err != nil {
 			return err
 		}
-		out = map[string]any{"id": a.ID, "name": a.Name, "type": a.Type, "branch_id": a.BranchID, "branch_name": branch,
+		out = map[string]any{"id": a.ID, "name": a.Name, "type": a.Type, "currency": a.Currency, "branch_id": a.BranchID, "branch_name": branch,
 			"provider": a.Provider, "account_number": a.AccountNumber, "custodian_id": nil, "custodian_name": nil,
 			"ledger_code": "", "allow_overdraft": a.AllowOverdraft, "show_on_invoices": a.ShowOnInvoices, "is_active": a.IsActive,
 			"created_at": a.CreatedAt, "last_reconciled": last}
@@ -191,8 +192,8 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in AccountIn) (
 		}
 		id := uuid.New()
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.financial_accounts (id, tenant_id, name, kind, provider, account_number_masked, location_id, business_unit_id, allow_negative, show_on_invoices)
-			VALUES ($1,$2,$3,$4::app.account_kind,NULLIF($5,''),NULLIF($6,''),$7,$8,$9,$10)`,
+			INSERT INTO app.financial_accounts (id, tenant_id, name, kind, currency, provider, account_number_masked, location_id, business_unit_id, allow_negative, show_on_invoices)
+			VALUES ($1,$2,$3,$4::app.account_kind,COALESCE((SELECT currency FROM app.tenant_settings WHERE tenant_id = $2), 'TZS'),NULLIF($5,''),NULLIF($6,''),$7,$8,$9,$10)`,
 			id, p.TenantID, in.Name, in.Type, in.Provider, maskAccountNumber(in.AccountNumber), branch, unit, in.AllowOverdraft, in.ShowOnInvoices); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "An account with that name already exists")
@@ -412,12 +413,20 @@ func (s *Service) Transfer(ctx context.Context, p *auth.Principal, in TransferIn
 			}
 			return err
 		}
+		// Lock both accounts in deterministic UUID order to prevent deadlocks when A->B and B->A run concurrently.
+		firstID, secondID := in.FromAccountID, in.ToAccountID
+		if secondID.String() < firstID.String() {
+			firstID, secondID = secondID, firstID
+		}
+		if _, err := tx.Exec(ctx, `SELECT id FROM app.financial_accounts WHERE tenant_id = $1 AND id IN ($2, $3) ORDER BY id FOR UPDATE`, p.TenantID, firstID, secondID); err != nil {
+			return err
+		}
 		var fromBal decimal.Decimal
 		var allowNeg, fromActive bool
 		var fromLoc *uuid.UUID
 		if err := tx.QueryRow(ctx, `
 			SELECT current_balance, allow_negative, status = 'active', location_id
-			FROM app.financial_accounts WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+			FROM app.financial_accounts WHERE tenant_id = $1 AND id = $2`,
 			p.TenantID, in.FromAccountID).Scan(&fromBal, &allowNeg, &fromActive, &fromLoc); err != nil {
 			return httpx.NotFound("not_found", "Money account not found")
 		}
@@ -432,7 +441,7 @@ func (s *Service) Transfer(ctx context.Context, p *auth.Principal, in TransferIn
 		var toLoc *uuid.UUID
 		if err := tx.QueryRow(ctx, `
 			SELECT status = 'active', location_id
-			FROM app.financial_accounts WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+			FROM app.financial_accounts WHERE tenant_id = $1 AND id = $2`,
 			p.TenantID, in.ToAccountID).Scan(&toActive, &toLoc); err != nil {
 			return httpx.NotFound("not_found", "Destination money account not found")
 		}

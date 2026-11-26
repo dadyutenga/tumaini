@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -337,9 +338,16 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, customerID uui
 		var targets []payments.Alloc
 		allocated := money.Zero
 		if len(in.Allocations) > 0 {
-			for _, a := range in.Allocations {
+			sorted := append([]Allocation(nil), in.Allocations...)
+			sort.Slice(sorted, func(i, j int) bool { return sorted[i].SaleID.String() < sorted[j].SaleID.String() })
+			seen := make(map[uuid.UUID]bool, len(sorted))
+			for _, a := range sorted {
+				if seen[a.SaleID] {
+					return httpx.BadRequest("invalid_body", "A sale cannot be allocated more than once")
+				}
+				seen[a.SaleID] = true
 				var bal decimal.Decimal
-				if err := tx.QueryRow(ctx, `SELECT balance_due FROM app.sales WHERE tenant_id=$1 AND id=$2 AND customer_id=$3 AND status='completed'`, p.TenantID, a.SaleID, customerID).Scan(&bal); err != nil {
+				if err := tx.QueryRow(ctx, `SELECT balance_due FROM app.sales WHERE tenant_id=$1 AND id=$2 AND customer_id=$3 AND status='completed' FOR UPDATE`, p.TenantID, a.SaleID, customerID).Scan(&bal); err != nil {
 					return httpx.NotFound("not_found", "One of the sales was not found for this customer")
 				}
 				amt := money.Money(a.Amount)
