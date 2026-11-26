@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { DataGrid, Field, NativeSelect, PageHeader, StatusBadge } from "@/components/shared/kit";
@@ -61,16 +62,21 @@ export default function Profile() {
       <PageHeader
         title="My profile"
         description={`${user?.role_name ?? ""}${me?.is_owner ? " · Owner" : ""}`}
+        badge={me?.is_owner ? <Badge variant="secondary">Owner</Badge> : undefined}
       />
-      <div className="grid max-w-4xl gap-6 md:grid-cols-2">
+
+      <div className="grid max-w-4xl gap-5 md:grid-cols-2">
         <form
-          className="space-y-4 rounded-2xl border bg-card p-6"
+          className="od-card space-y-4 p-6"
           onSubmit={(e) => {
             e.preventDefault();
             update.mutate({ name, language: lang });
           }}
         >
-          <h2 className="font-semibold">Profile details</h2>
+          <div>
+            <h2 className="od-card-title text-[var(--od-ink)]">Profile details</h2>
+            <p className="od-card-subtitle">Update your display name and interface language.</p>
+          </div>
           <Field label="Name *">
             <Input required value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
@@ -79,7 +85,7 @@ export default function Profile() {
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Phone">
-              <Input disabled value={user?.phone ?? "-"} />
+              <Input disabled className="od-mono" value={user?.phone ?? "-"} />
             </Field>
             <Field label="Email">
               <Input disabled value={user?.email ?? "-"} />
@@ -91,20 +97,25 @@ export default function Profile() {
               <option value="sw">Kiswahili (Swahili)</option>
             </NativeSelect>
           </Field>
-          <Button type="submit" disabled={update.isPending}>
-            Save changes
-          </Button>
+          <div className="border-t border-[var(--od-border)] pt-3">
+            <Button type="submit" disabled={update.isPending}>
+              Save changes
+            </Button>
+          </div>
         </form>
 
         <form
           id="password"
-          className="space-y-4 rounded-2xl border bg-card p-6"
+          className="od-card space-y-4 p-6"
           onSubmit={(e) => {
             e.preventDefault();
             change.mutate(pw);
           }}
         >
-          <h2 className="font-semibold">Change password</h2>
+          <div>
+            <h2 className="od-card-title text-[var(--od-ink)]">Change password</h2>
+            <p className="od-card-subtitle">Use at least 8 characters for a strong password.</p>
+          </div>
           <Field label="Current password *">
             <Input
               required
@@ -124,14 +135,19 @@ export default function Profile() {
               onChange={(e) => setPw({ ...pw, new_password: e.target.value })}
             />
           </Field>
-          <Button type="submit" disabled={change.isPending}>
-            Change password
-          </Button>
+          <div className="border-t border-[var(--od-border)] pt-3">
+            <Button type="submit" disabled={change.isPending}>
+              Change password
+            </Button>
+          </div>
         </form>
       </div>
 
-      <section className="max-w-4xl">
-        <h2 className="mb-3 text-base font-semibold">Active sessions</h2>
+      <section className="max-w-4xl space-y-3">
+        <div>
+          <h2 className="od-section-title">Active sessions</h2>
+          <p className="od-caption mt-0.5">Devices currently signed into your account.</p>
+        </div>
         <DataGrid
           rows={sessions.data}
           loading={sessions.isLoading}
@@ -141,52 +157,81 @@ export default function Profile() {
             {
               header: "Device",
               cell: (s) => (
-                <span className="line-clamp-1 max-w-xs text-xs" title={s.user_agent ?? ""}>
+                <span
+                  className="line-clamp-1 max-w-xs text-xs text-[var(--od-ink)]"
+                  title={s.user_agent ?? ""}
+                >
                   {s.user_agent || "Browser session"}
                 </span>
               ),
             },
-            { header: "IP", cell: (s) => s.ip ?? "-" },
-            { header: "Last active", cell: (s) => formatDateTime(s.last_used_at) },
+            {
+              header: "IP",
+              cell: (s) => (
+                <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
+                  {s.ip ?? "-"}
+                </span>
+              ),
+            },
+            {
+              header: "Last active",
+              cell: (s) => <span className="od-tabular">{formatDateTime(s.last_used_at)}</span>,
+            },
             {
               header: "",
               className: "text-right",
-              cell: (s) =>
-                s.current ? (
-                  <span className="text-xs text-muted-foreground">Current</span>
-                ) : (
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="text-destructive"
-                    onClick={() => endSession.mutate({ id: s.id })}
-                  >
-                    Sign out
-                  </Button>
-                ),
+              cell: (s) => (
+                <div className="flex justify-end">
+                  {s.current ? (
+                    <Badge variant="secondary">Current</Badge>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
+                      onClick={() => endSession.mutate({ id: s.id })}
+                    >
+                      Sign out
+                    </Button>
+                  )}
+                </div>
+              ),
             },
           ]}
         />
       </section>
 
-      <section className="max-w-4xl">
-        <h2 className="mb-3 text-base font-semibold">Recent logins</h2>
+      <section className="max-w-4xl space-y-3">
+        <div>
+          <h2 className="od-section-title">Recent logins</h2>
+          <p className="od-caption mt-0.5">Latest 10 sign-in attempts on your account.</p>
+        </div>
         <DataGrid
           rows={logins.data}
           loading={logins.isLoading}
           rowKey={(l) => l.id}
           empty="No recent logins recorded"
           columns={[
-            { header: "Time", cell: (l) => formatDateTime(l.created_at) },
+            {
+              header: "Time",
+              cell: (l) => <span className="od-tabular">{formatDateTime(l.created_at)}</span>,
+            },
             {
               header: "Result",
               cell: (l) => <StatusBadge value={l.success ? "active" : "rejected"} />,
             },
-            { header: "IP", cell: (l) => l.ip ?? "-" },
+            {
+              header: "IP",
+              cell: (l) => (
+                <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
+                  {l.ip ?? "-"}
+                </span>
+              ),
+            },
             {
               header: "Device",
               cell: (l) => (
-                <span className="line-clamp-1 max-w-xs text-xs text-muted-foreground">
+                <span className="line-clamp-1 max-w-xs text-xs text-[var(--od-ink-muted)]">
                   {l.user_agent || "-"}
                 </span>
               ),
