@@ -3,8 +3,6 @@ package payments
 // Writers for the approved payment tables. The database posts the money (app.financial_transactions),
 // applies allocations to sales, invoices, purchases and bills, and refuses what is not allowed (voided
 // payments, over-allocation, a payee that does not match the document). These helpers only insert.
-// They sit beside the older Insert/Transfer helpers, which are removed when the last module that calls
-// them has been ported.
 
 import (
 	"context"

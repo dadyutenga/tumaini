@@ -14,7 +14,6 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/kernel/audit"
-	"bms/internal/kernel/ledger"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
@@ -25,15 +24,14 @@ import (
 )
 
 type Service struct {
-	DB     *db.DB
-	Audit  *audit.Service
-	Ledger *ledger.Service
-	Store  storage.Store
-	Clock  clock.Clock
+	DB    *db.DB
+	Audit *audit.Service
+	Store storage.Store
+	Clock clock.Clock
 }
 
-func New(database *db.DB, aud *audit.Service, led *ledger.Service, store storage.Store, clk clock.Clock) *Service {
-	return &Service{DB: database, Audit: aud, Ledger: led, Store: store, Clock: clk}
+func New(database *db.DB, aud *audit.Service, store storage.Store, clk clock.Clock) *Service {
+	return &Service{DB: database, Audit: aud, Store: store, Clock: clk}
 }
 
 type Business struct {

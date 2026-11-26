@@ -317,7 +317,6 @@ func (s *Service) CalculateJob(ctx context.Context, tenantID uuid.UUID, payload 
 	}
 	p := &auth.Principal{
 		TenantID:     tenantID,
-		BusinessID:   tenantID,
 		UserID:       in.UserID,
 		MembershipID: in.MembershipID,
 		IsOwner:      true,

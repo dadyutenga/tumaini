@@ -7,9 +7,7 @@ import (
 	"bms/internal/config"
 	"bms/internal/kernel/approval"
 	"bms/internal/kernel/audit"
-	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/notify"
-	"bms/internal/kernel/stock"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
@@ -20,8 +18,6 @@ import (
 type Deps struct {
 	Config   config.Config
 	DB       *db.DB
-	Ledger   *ledger.Service
-	Stock    *stock.Service
 	Audit    *audit.Service
 	Notify   *notify.Service
 	Approval *approval.Service

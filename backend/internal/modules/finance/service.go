@@ -12,7 +12,6 @@ import (
 
 	"bms/internal/kernel/approval"
 	"bms/internal/kernel/audit"
-	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/sequence"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
@@ -26,14 +25,13 @@ import (
 
 type Service struct {
 	DB       *db.DB
-	Ledger   *ledger.Service
 	Audit    *audit.Service
 	Approval *approval.Service
 	Clock    clock.Clock
 }
 
-func New(database *db.DB, led *ledger.Service, aud *audit.Service, ap *approval.Service, clk clock.Clock) *Service {
-	return &Service{DB: database, Ledger: led, Audit: aud, Approval: ap, Clock: clk}
+func New(database *db.DB, aud *audit.Service, ap *approval.Service, clk clock.Clock) *Service {
+	return &Service{DB: database, Audit: aud, Approval: ap, Clock: clk}
 }
 
 func (s *Service) bizDate(ctx context.Context, tx pgx.Tx) (string, error) {

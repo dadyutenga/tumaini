@@ -508,7 +508,7 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 		return nil, httpx.Unauthorized("invalid_token", "Sign in again")
 	}
 	now := s.Clock.Now()
-	p := &auth.Principal{UserID: userID, TenantID: claims.TenantID, BusinessID: claims.TenantID,
+	p := &auth.Principal{UserID: userID, TenantID: claims.TenantID,
 		MembershipID: claims.MembershipID, SessionID: claims.SessionID, Perms: map[string]auth.Grant{}, Limits: map[string]decimal.Decimal{}}
 
 	var idle bool

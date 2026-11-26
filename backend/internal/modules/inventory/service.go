@@ -12,10 +12,8 @@ import (
 
 	"bms/internal/kernel/approval"
 	"bms/internal/kernel/audit"
-	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/notify"
 	"bms/internal/kernel/sequence"
-	"bms/internal/kernel/stock"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
@@ -28,16 +26,14 @@ import (
 
 type Service struct {
 	DB       *db.DB
-	Stock    *stock.Service
-	Ledger   *ledger.Service
 	Audit    *audit.Service
 	Notify   *notify.Service
 	Approval *approval.Service
 	Clock    clock.Clock
 }
 
-func New(database *db.DB, st *stock.Service, led *ledger.Service, aud *audit.Service, n *notify.Service, ap *approval.Service, clk clock.Clock) *Service {
-	return &Service{DB: database, Stock: st, Ledger: led, Audit: aud, Notify: n, Approval: ap, Clock: clk}
+func New(database *db.DB, aud *audit.Service, n *notify.Service, ap *approval.Service, clk clock.Clock) *Service {
+	return &Service{DB: database, Audit: aud, Notify: n, Approval: ap, Clock: clk}
 }
 
 // bizDate is today's business date in the business timezone (BR-15).

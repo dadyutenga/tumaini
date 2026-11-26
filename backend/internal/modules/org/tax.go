@@ -224,6 +224,6 @@ func (s *Service) UpdatePaymentMethods(ctx context.Context, p *auth.Principal, b
 		if err := s.writeSetting(ctx, tx, p, "payment.methods", json.RawMessage(out)); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "payment_methods.updated", "settings", p.BusinessID, json.RawMessage(before), json.RawMessage(out))
+		return s.Audit.Record(ctx, tx, p, "payment_methods.updated", "settings", p.TenantID, json.RawMessage(before), json.RawMessage(out))
 	})
 }

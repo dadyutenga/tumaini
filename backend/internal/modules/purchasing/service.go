@@ -12,11 +12,9 @@ import (
 
 	"bms/internal/kernel/approval"
 	"bms/internal/kernel/audit"
-	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/notify"
 	"bms/internal/kernel/payments"
 	"bms/internal/kernel/sequence"
-	"bms/internal/kernel/stock"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
@@ -29,16 +27,14 @@ import (
 
 type Service struct {
 	DB       *db.DB
-	Stock    *stock.Service
-	Ledger   *ledger.Service
 	Audit    *audit.Service
 	Approval *approval.Service
 	Notify   *notify.Service
 	Clock    clock.Clock
 }
 
-func New(database *db.DB, st *stock.Service, led *ledger.Service, aud *audit.Service, ap *approval.Service, n *notify.Service, clk clock.Clock) *Service {
-	return &Service{DB: database, Stock: st, Ledger: led, Audit: aud, Approval: ap, Notify: n, Clock: clk}
+func New(database *db.DB, aud *audit.Service, ap *approval.Service, n *notify.Service, clk clock.Clock) *Service {
+	return &Service{DB: database, Audit: aud, Approval: ap, Notify: n, Clock: clk}
 }
 
 func (s *Service) bizDate(ctx context.Context, tx pgx.Tx) string {

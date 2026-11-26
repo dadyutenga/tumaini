@@ -26,9 +26,9 @@ import (
 )
 
 type Request struct {
-	ID         uuid.UUID
-	BusinessID uuid.UUID
-	BranchID   *uuid.UUID
+	ID       uuid.UUID
+	TenantID uuid.UUID
+	BranchID *uuid.UUID
 	// Kind is the app.approval_type value.
 	Kind        string
 	SubjectType string
@@ -245,7 +245,7 @@ func (s *Service) read(ctx context.Context, tx pgx.Tx, id uuid.UUID, suffix stri
 		       a.requested_by, m.user_id, a.sale_id, a.project_id, a.design_job_id, a.financial_transaction_id,
 		       a.payment_received_id, a.payment_made_id, a.day_closing_id, a.product_id
 		FROM app.approval_requests a JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.requested_by
-		WHERE a.id = $1`+suffix, id).Scan(&r.ID, &r.BusinessID, &r.Kind, &r.Amount, &r.Percent, &r.Summary, &r.Status,
+		WHERE a.id = $1`+suffix, id).Scan(&r.ID, &r.TenantID, &r.Kind, &r.Amount, &r.Percent, &r.Summary, &r.Status,
 		&r.RequestedByMembership, &r.RequestedBy, &sale, &project, &job, &txn, &pr, &pm, &day, &product)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Request{}, httpx.NotFound("not_found", "Approval request not found")

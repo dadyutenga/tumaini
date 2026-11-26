@@ -11,7 +11,6 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/kernel/audit"
-	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/payments"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
@@ -25,14 +24,13 @@ import (
 )
 
 type Service struct {
-	DB     *db.DB
-	Ledger *ledger.Service
-	Audit  *audit.Service
-	Clock  clock.Clock
+	DB    *db.DB
+	Audit *audit.Service
+	Clock clock.Clock
 }
 
-func New(database *db.DB, led *ledger.Service, aud *audit.Service, clk clock.Clock) *Service {
-	return &Service{DB: database, Ledger: led, Audit: aud, Clock: clk}
+func New(database *db.DB, aud *audit.Service, clk clock.Clock) *Service {
+	return &Service{DB: database, Audit: aud, Clock: clk}
 }
 
 // Customer is a person or business that buys from the shop (app.customers with is_shop_customer).

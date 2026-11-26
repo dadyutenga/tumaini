@@ -172,10 +172,7 @@ type Principal struct {
 	UserID       uuid.UUID
 	TenantID     uuid.UUID
 	MembershipID uuid.UUID
-	// BusinessID equals TenantID. It exists only so modules not yet ported to the new schema keep
-	// compiling; the port of each module replaces it with TenantID, and this field is then removed.
-	BusinessID uuid.UUID
-	RoleID     uuid.UUID
+	RoleID       uuid.UUID
 	// RoleRank is the rank of the caller's role (app.roles.rank, 100 = Admin). A delegated administrator
 	// may not change an account or hand out a role that outranks their own.
 	RoleRank   int

@@ -11,7 +11,6 @@ import (
 
 	"bms/internal/kernel/approval"
 	"bms/internal/kernel/audit"
-	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/notify"
 	"bms/internal/kernel/payments"
 	"bms/internal/kernel/sequence"
@@ -27,15 +26,14 @@ import (
 
 type Service struct {
 	DB       *db.DB
-	Ledger   *ledger.Service
 	Audit    *audit.Service
 	Approval *approval.Service
 	Notify   *notify.Service
 	Clock    clock.Clock
 }
 
-func New(database *db.DB, led *ledger.Service, aud *audit.Service, ap *approval.Service, n *notify.Service, clk clock.Clock) *Service {
-	return &Service{DB: database, Ledger: led, Audit: aud, Approval: ap, Notify: n, Clock: clk}
+func New(database *db.DB, aud *audit.Service, ap *approval.Service, n *notify.Service, clk clock.Clock) *Service {
+	return &Service{DB: database, Audit: aud, Approval: ap, Notify: n, Clock: clk}
 }
 
 type Input struct {

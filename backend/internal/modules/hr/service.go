@@ -11,7 +11,6 @@ import (
 
 	"bms/internal/kernel/approval"
 	"bms/internal/kernel/audit"
-	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/notify"
 	"bms/internal/kernel/sequence"
 	"bms/internal/modules/hr/hrkit"
@@ -29,7 +28,6 @@ import (
 
 type Service struct {
 	DB       *db.DB
-	Ledger   *ledger.Service
 	Audit    *audit.Service
 	Approval *approval.Service
 	Notify   *notify.Service
@@ -38,8 +36,8 @@ type Service struct {
 	Store    storage.Store
 }
 
-func New(database *db.DB, led *ledger.Service, aud *audit.Service, ap *approval.Service, n *notify.Service, clk clock.Clock, hash auth.Params, store storage.Store) *Service {
-	return &Service{DB: database, Ledger: led, Audit: aud, Approval: ap, Notify: n, Clock: clk, Hash: hash, Store: store}
+func New(database *db.DB, aud *audit.Service, ap *approval.Service, n *notify.Service, clk clock.Clock, hash auth.Params, store storage.Store) *Service {
+	return &Service{DB: database, Audit: aud, Approval: ap, Notify: n, Clock: clk, Hash: hash, Store: store}
 }
 
 func removed(what string) error {

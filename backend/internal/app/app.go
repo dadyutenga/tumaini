@@ -17,9 +17,7 @@ import (
 	"bms/internal/kernel/approval"
 	"bms/internal/kernel/audit"
 	"bms/internal/kernel/deps"
-	"bms/internal/kernel/ledger"
 	"bms/internal/kernel/notify"
-	"bms/internal/kernel/stock"
 	"bms/internal/modules/attendance"
 	"bms/internal/modules/catalog"
 	"bms/internal/modules/customers"
@@ -67,8 +65,6 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	}
 	aud := audit.New()
 	n := notify.New()
-	led := ledger.New()
-	st := stock.New()
 	ap := approval.New(n)
 	pepper := sha256.Sum256([]byte("auth-events:" + cfg.JWTSecret))
 	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, TTL: cfg.RefreshTokenTTL, IdleTimeout: cfg.SessionIdleTimeout, Pepper: pepper[:]}
@@ -79,7 +75,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	worker := jobs.New(jobPool)
 	worker.SetClock(clk.Now)
 	d := deps.Deps{
-		Config: cfg, DB: database, Ledger: led, Stock: st, Audit: aud, Notify: n, Approval: ap,
+		Config: cfg, DB: database, Audit: aud, Notify: n, Approval: ap,
 		Clock: clk, Store: store, Jobs: worker,
 		Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads},
 	}

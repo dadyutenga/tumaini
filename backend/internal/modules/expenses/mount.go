@@ -11,7 +11,7 @@ import (
 // Expense approvals live directly on app.expenses (submitted -> approved/rejected -> paid), not in
 // app.approval_requests.
 func Mount(r fiber.Router, d deps.Deps) *Service {
-	svc := New(d.DB, d.Ledger, d.Audit, d.Approval, d.Notify, d.Clock)
+	svc := New(d.DB, d.Audit, d.Approval, d.Notify, d.Clock)
 	Register(r, &Handler{Svc: svc})
 	d.Jobs.Register(jobs.RecurringExpenses, svc.RunRecurring)
 	d.Jobs.Daily(jobs.RecurringExpenses, "00:30")
