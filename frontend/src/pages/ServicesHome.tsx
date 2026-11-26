@@ -1,26 +1,10 @@
 import { Link } from "react-router-dom";
-import { PageHeader } from "@/components/shared/kit";
+import { PageHeader, SectionCard } from "@/components/shared/kit";
 import { PageLoader } from "@/components/shared/Display";
 import { Tile } from "@/features/services/shared";
 import { useGet } from "@/hooks/useApi";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { ServicesDashboard } from "@/types/services";
-
-function Card({ title, to, children }: { title: string; to?: string; children: React.ReactNode }) {
-  return (
-    <section className="rounded-2xl border bg-card p-5">
-      <div className="mb-3 flex items-center justify-between">
-        <h2 className="font-semibold">{title}</h2>
-        {to && (
-          <Link className="text-xs text-primary underline" to={to}>
-            Open
-          </Link>
-        )}
-      </div>
-      {children}
-    </section>
-  );
-}
 
 /** Business B at a glance. Each card appears only when the signed-in role may see that part. */
 export default function ServicesHome() {
@@ -31,12 +15,13 @@ export default function ServicesHome() {
   const max = Math.max(1, ...stages.map((s) => s.projects));
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Services"
-        description="Projects, design work, money owed and what is due next."
+        description="Projects, design work, receivables and upcoming renewals."
       />
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {d.late_projects !== undefined && (
           <Tile
             label="Late projects"
@@ -72,62 +57,106 @@ export default function ServicesHome() {
           />
         )}
       </div>
-      <div className="grid gap-4 lg:grid-cols-2">
+
+      <div className="grid gap-5 lg:grid-cols-2">
         {d.projects_by_stage && (
-          <Card title="Projects by stage" to="/projects">
+          <SectionCard
+            title="Projects by stage"
+            subtitle="Open work distribution"
+            actions={
+              <Link
+                className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
+                to="/projects"
+              >
+                Open board
+              </Link>
+            }
+          >
             {stages.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No open projects.</p>
+              <p className="od-caption py-2">No open projects.</p>
             ) : (
-              <ul className="space-y-2">
+              <ul className="space-y-3 pt-1 text-[13px]">
                 {stages.map((s) => (
-                  <li key={s.stage} className="text-sm">
-                    <div className="mb-1 flex justify-between">
-                      <span>{s.stage}</span>
-                      <span className="tabular-nums text-muted-foreground">{s.projects}</span>
+                  <li key={s.stage}>
+                    <div className="mb-1.5 flex justify-between text-xs">
+                      <span className="font-medium text-[var(--od-ink)]">{s.stage}</span>
+                      <span className="od-tabular font-semibold text-[var(--od-ink-secondary)]">
+                        {s.projects}
+                      </span>
                     </div>
-                    <div className="h-2 rounded-full bg-muted">
+                    <div className="h-2 overflow-hidden rounded-full bg-[var(--od-neutral-soft)]">
                       <div
-                        className="h-2 rounded-full bg-primary"
-                        style={{ width: `${(s.projects / max) * 100}%` }}
+                        className="h-full rounded-full"
+                        style={{
+                          width: `${(s.projects / max) * 100}%`,
+                          backgroundColor: "var(--od-series-1)",
+                        }}
                       />
                     </div>
                   </li>
                 ))}
               </ul>
             )}
-          </Card>
+          </SectionCard>
         )}
+
         {d.overdue_tasks && (
-          <Card title="Overdue tasks" to="/service-tasks">
+          <SectionCard
+            title="Overdue tasks"
+            subtitle="Tasks past their due date"
+            actions={
+              <Link
+                className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
+                to="/service-tasks"
+              >
+                Open tasks
+              </Link>
+            }
+          >
             {d.overdue_tasks.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nothing is late.</p>
+              <p className="od-caption py-2">Nothing is late.</p>
             ) : (
-              <ul className="divide-y text-sm">
+              <ul className="divide-y divide-[var(--od-border)] text-[13px]">
                 {d.overdue_tasks.map((t) => (
-                  <li key={t.id} className="flex items-center justify-between gap-3 py-2">
-                    <span className="font-medium">{t.title}</span>
-                    <span className="shrink-0 text-xs text-destructive">
+                  <li key={t.id} className="flex items-center justify-between gap-3 py-2.5">
+                    <span className="truncate font-medium text-[var(--od-ink)]">{t.title}</span>
+                    <span className="shrink-0 text-xs font-medium text-[var(--od-bad)]">
                       {t.assignee_name ? `${t.assignee_name} · ` : ""}due {formatDate(t.due_date)}
                     </span>
                   </li>
                 ))}
               </ul>
             )}
-          </Card>
+          </SectionCard>
         )}
+
         {d.renewals_due && (
-          <Card title="Renewals due in 30 days" to="/renewals">
+          <SectionCard
+            title="Renewals due in 30 days"
+            subtitle="Upcoming recurring service renewals"
+            actions={
+              <Link
+                className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
+                to="/renewals"
+              >
+                Open renewals
+              </Link>
+            }
+          >
             {d.renewals_due.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nothing is due soon.</p>
+              <p className="od-caption py-2">Nothing is due soon.</p>
             ) : (
-              <ul className="divide-y text-sm">
+              <ul className="divide-y divide-[var(--od-border)] text-[13px]">
                 {d.renewals_due.map((r) => (
-                  <li key={r.id} className="flex items-center justify-between gap-3 py-2">
-                    <span>
-                      <span className="font-medium">{r.client_name}</span> · {r.item}
+                  <li key={r.id} className="flex items-center justify-between gap-3 py-2.5">
+                    <span className="min-w-0 truncate">
+                      <span className="font-medium text-[var(--od-ink)]">{r.client_name}</span>
+                      <span className="text-[var(--od-ink-secondary)]"> · {r.item}</span>
                     </span>
                     <span
-                      className={`shrink-0 text-xs ${r.days_left <= 7 ? "text-destructive" : "text-muted-foreground"}`}
+                      className={`od-tabular shrink-0 text-xs font-medium ${
+                        r.days_left <= 7 ? "text-[var(--od-bad)]" : "text-[var(--od-ink-muted)]"
+                      }`}
                     >
                       {r.days_left < 0 ? `${-r.days_left} days late` : `${r.days_left} days`}
                     </span>
@@ -135,9 +164,9 @@ export default function ServicesHome() {
                 ))}
               </ul>
             )}
-          </Card>
+          </SectionCard>
         )}
       </div>
-    </>
+    </div>
   );
 }

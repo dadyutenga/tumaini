@@ -260,12 +260,20 @@ export function Tile({
 }: {
   label: string;
   value: ReactNode;
-  tone?: "bad";
+  tone?: "bad" | "good";
 }) {
   return (
-    <section className="rounded-2xl border bg-card p-5">
-      <p className="text-sm text-muted-foreground">{text}</p>
-      <p className={`mt-2 text-2xl font-semibold ${tone === "bad" ? "text-destructive" : ""}`}>
+    <section className="od-card justify-between gap-2.5">
+      <p className="od-kpi-label">{text}</p>
+      <p
+        className={`od-kpi-value ${
+          tone === "bad"
+            ? "text-[var(--od-bad)]"
+            : tone === "good"
+              ? "text-[var(--od-good)]"
+              : "text-[var(--od-ink)]"
+        }`}
+      >
         {value}
       </p>
     </section>
