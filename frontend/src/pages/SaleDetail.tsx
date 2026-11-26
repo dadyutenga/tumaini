@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Download } from "lucide-react";
+import { Download, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -9,9 +9,10 @@ import {
   FormDialog,
   NativeSelect,
   PageHeader,
+  SectionCard,
   StatusBadge,
 } from "@/components/shared/kit";
-import { PageLoader } from "@/components/shared/Display";
+import { PageLoader, StatCard } from "@/components/shared/Display";
 import { RecordHistoryTab } from "@/components/shared/RecordHistoryTab";
 import { AttachmentsSection } from "@/components/shared/AttachmentsSection";
 import { SendOutboundButton } from "@/components/shared/SendOutbound";
@@ -132,12 +133,14 @@ export default function SaleDetail() {
   if (isLoading) return <PageLoader />;
   if (error || !sale)
     return (
-      <p className="text-destructive">
-        This sale could not be loaded.{" "}
-        <Link className="underline" to="/sales">
-          Back to sales
-        </Link>
-      </p>
+      <div className="od-card items-center py-10 text-center">
+        <p className="text-[14px] font-semibold text-[var(--od-bad)]">
+          This sale could not be loaded.
+        </p>
+        <Button asChild variant="outline" size="sm" className="mt-3">
+          <Link to="/sales">Back to sales</Link>
+        </Button>
+      </div>
     );
 
   const lines = Object.entries(qtys).filter(([, q]) => toNumber(q) > 0);
@@ -166,25 +169,34 @@ export default function SaleDetail() {
   }
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
+        backTo="/sales"
+        backLabel="Sales & returns"
         title={`Sale ${sale.number}`}
-        description={sale.business_date ? formatDate(sale.business_date) : undefined}
+        badge={<StatusBadge value={sale.status} />}
+        description={[
+          sale.business_date ? formatDate(sale.business_date) : null,
+          sale.customer_name ? `Customer: ${sale.customer_name}` : "Walk-in customer",
+          receiptPreview.data?.cashier_name ? `Cashier: ${receiptPreview.data.cashier_name}` : null,
+        ]
+          .filter(Boolean)
+          .join(" · ")}
         actions={
           <>
-            <StatusBadge value={sale.status} />
             {can("shop.return.create") && sale.status === "completed" && (
-              <Button variant="outline" onClick={() => setReturning(true)}>
+              <Button variant="outline" size="sm" onClick={() => setReturning(true)}>
                 Return items
               </Button>
             )}
             {canVoid && sale.status === "completed" && (
-              <Button variant="outline" onClick={() => setVoiding(true)}>
+              <Button variant="outline" size="sm" onClick={() => setVoiding(true)}>
                 {can("shop.sale.void") ? "Void sale" : "Request void"}
               </Button>
             )}
             <Button
               variant="outline"
+              size="sm"
               onClick={() =>
                 download(
                   `/sales/${id}/receipt`,
@@ -197,6 +209,7 @@ export default function SaleDetail() {
             </Button>
             <Button
               variant="outline"
+              size="sm"
               onClick={() =>
                 download(`/sales/${id}/invoice`, { format: "pdf" }, `${sale.number}.pdf`).catch(
                   (e) => toast.error(errorMessage(e)),
@@ -211,22 +224,49 @@ export default function SaleDetail() {
               path={`/sales/${id}/send-receipt`}
               successMessage="Receipt queued"
               phone={sale.customer_phone}
+              size="sm"
               whatsappText={`Receipt ${sale.number}: Total ${formatMoney(sale.total)}, Paid ${formatMoney(sale.paid_total)}${
                 toNumber(sale.balance) > 0 ? `, Balance ${formatMoney(sale.balance)}` : ""
               }.`}
             />
             <Button
               variant="outline"
+              size="sm"
               disabled={printingReceipt}
               onClick={() => void printThermalReceipt()}
             >
-              {printingReceipt ? "Printing…" : "Print"}
+              <Printer size={14} /> {printingReceipt ? "Printing…" : "Print"}
             </Button>
           </>
         }
       />
+
+      {/* Summary KPIs */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Total" value={formatMoney(sale.total)} />
+        <StatCard
+          label="Paid"
+          value={formatMoney(sale.paid_total)}
+          tone={toNumber(sale.paid_total) > 0 ? "good" : "neutral"}
+        />
+        <StatCard
+          label="Balance due"
+          value={formatMoney(sale.balance)}
+          tone={toNumber(sale.balance) > 0 ? "bad" : "neutral"}
+        />
+        {sale.profit !== undefined ? (
+          <StatCard
+            label="Profit"
+            value={formatMoney(sale.profit)}
+            tone={toNumber(sale.profit) >= 0 ? "good" : "bad"}
+          />
+        ) : (
+          <StatCard label="Items" value={sale.items.length} />
+        )}
+      </div>
+
       {/* Thermal receipt print layout (visible only during window.print()) */}
-      <div className="print-document hidden print:block mx-auto max-w-xs space-y-2 p-4 font-mono text-xs text-black">
+      <div className="print-document mx-auto hidden max-w-xs space-y-2 p-4 font-mono text-xs text-black print:block">
         <div className="text-center">
           <p className="text-sm font-bold">{receiptPreview.data?.business?.name || "Receipt"}</p>
           {receiptPreview.data?.business?.address && <p>{receiptPreview.data.business.address}</p>}
@@ -275,56 +315,82 @@ export default function SaleDetail() {
             "Thank you for your business"}
         </p>
       </div>
-      <DataGrid<SaleItem>
-        rows={sale.items}
-        rowKey={(i) => i.id ?? i.product_id}
-        columns={[
-          { header: "Product", cell: (i) => i.product_name },
-          { header: "Qty", align: "right", cell: (i) => formatQty(i.qty) },
-          { header: "Returned", align: "right", cell: (i) => formatQty(i.qty_returned) },
-          { header: "Unit price", align: "right", cell: (i) => formatMoney(i.unit_price) },
-          { header: "Total", align: "right", cell: (i) => formatMoney(i.line_total) },
-        ]}
-      />
-      <dl className="ml-auto mt-4 w-full max-w-xs space-y-1 text-sm">
-        {(
-          [
-            ["Subtotal", sale.subtotal],
-            ["Discount", sale.discount_total],
-            ["Tax included", sale.tax_total],
-            ["Total", sale.total],
-            ["Paid", sale.paid_total],
-            ["Balance due", sale.balance],
-          ] as const
-        ).map(([l, v]) => (
-          <div key={l} className="flex justify-between">
-            <dt className="text-muted-foreground">{l}</dt>
-            <dd className="tabular-nums">{formatMoney(v)}</dd>
-          </div>
-        ))}
-        {sale.profit !== undefined && (
-          <div className="flex justify-between border-t pt-1 font-medium">
-            <dt>Profit</dt>
-            <dd className="tabular-nums">{formatMoney(sale.profit)}</dd>
-          </div>
-        )}
-      </dl>
+
+      {/* Line Items + Financial Breakdown */}
+      <div className="space-y-4">
+        <DataGrid<SaleItem>
+          rows={sale.items}
+          rowKey={(i) => i.id ?? i.product_id}
+          columns={[
+            {
+              header: "Product",
+              cell: (i) => <span className="font-medium">{i.product_name}</span>,
+            },
+            { header: "Qty", align: "right", cell: (i) => formatQty(i.qty) },
+            { header: "Returned", align: "right", cell: (i) => formatQty(i.qty_returned) },
+            { header: "Unit price", align: "right", cell: (i) => formatMoney(i.unit_price) },
+            {
+              header: "Total",
+              align: "right",
+              cell: (i) => <span className="font-medium">{formatMoney(i.line_total)}</span>,
+            },
+          ]}
+        />
+
+        <div className="flex justify-end">
+          <SectionCard className="w-full max-w-sm">
+            <dl className="space-y-2 text-[13px]">
+              {(
+                [
+                  ["Subtotal", sale.subtotal],
+                  ["Discount", sale.discount_total],
+                  ["Tax included", sale.tax_total],
+                  ["Total", sale.total],
+                  ["Paid", sale.paid_total],
+                  ["Balance due", sale.balance],
+                ] as const
+              ).map(([l, v]) => (
+                <div
+                  key={l}
+                  className={
+                    l === "Total"
+                      ? "flex justify-between border-t border-[var(--od-border)] pt-2 font-semibold"
+                      : "flex justify-between"
+                  }
+                >
+                  <dt className="text-[var(--od-ink-secondary)]">{l}</dt>
+                  <dd className="od-tabular font-medium text-[var(--od-ink)]">{formatMoney(v)}</dd>
+                </div>
+              ))}
+              {sale.profit !== undefined && (
+                <div className="flex justify-between border-t border-[var(--od-border)] pt-2 font-semibold">
+                  <dt>Profit</dt>
+                  <dd className="od-tabular text-[var(--od-good)]">{formatMoney(sale.profit)}</dd>
+                </div>
+              )}
+            </dl>
+          </SectionCard>
+        </div>
+      </div>
 
       {canViewReturns && returnRows.length > 0 && (
-        <section className="mt-8 space-y-3">
-          <h2 className="text-base font-semibold">Returns</h2>
+        <section className="space-y-3">
+          <h2 className="od-section-title">Returns</h2>
           <DataGrid
             rows={returnRows}
             loading={saleReturns.isLoading}
             rowKey={(r) => r.id}
             columns={[
-              { header: "Return #", cell: (r) => <span className="font-medium">{r.number}</span> },
+              {
+                header: "Return #",
+                cell: (r) => <span className="od-mono font-medium">{r.number}</span>,
+              },
               { header: "Date", cell: (r) => formatDate(r.created_at) },
               {
                 header: "Resolution",
                 cell: (r) => <span className="capitalize">{r.resolution}</span>,
               },
-              { header: "Reason", cell: (r) => r.reason || "-" },
+              { header: "Reason", cell: (r) => r.reason || "—" },
               { header: "Refund", align: "right", cell: (r) => formatMoney(r.refund_total) },
               { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
               {
@@ -413,10 +479,10 @@ export default function SaleDetail() {
           const itemId = i.id ?? "";
           const cond = conditions[itemId] ?? "resellable";
           return (
-            <div key={i.id} className="grid grid-cols-[1fr_6rem_7.5rem] items-center gap-2">
-              <span className="text-sm">
-                {i.product_name}{" "}
-                <span className="text-muted-foreground">
+            <div key={i.id} className="grid grid-cols-[1fr_5.5rem_7.5rem] items-center gap-2">
+              <span className="text-[13px]">
+                <span className="font-medium">{i.product_name}</span>{" "}
+                <span className="od-caption">
                   (max {formatQty(toNumber(i.qty) - toNumber(i.qty_returned))})
                 </span>
               </span>
@@ -461,9 +527,7 @@ export default function SaleDetail() {
             onChange={(e) => setReason(e.target.value)}
           />
         </Field>
-        {lines.length === 0 && (
-          <p className="text-xs text-muted-foreground">Enter at least one quantity.</p>
-        )}
+        {lines.length === 0 && <p className="od-caption">Enter at least one quantity.</p>}
       </FormDialog>
 
       <FormDialog
@@ -491,8 +555,11 @@ export default function SaleDetail() {
         completing.resolution === "refund" &&
         toNumber(completing.refund_total) > 0 ? (
           <>
-            <p className="text-sm text-muted-foreground">
-              Refund amount: <strong>{formatMoney(completing.refund_total)}</strong>
+            <p className="rounded-[var(--od-radius-sm,8px)] bg-[var(--od-surface-subtle)] px-3 py-2 text-[13px] text-[var(--od-ink-secondary)]">
+              Refund amount:{" "}
+              <strong className="od-tabular text-[var(--od-ink)]">
+                {formatMoney(completing.refund_total)}
+              </strong>
             </p>
             <Field label="Refund method">
               <NativeSelect value={refundMethod} onChange={(e) => setRefundMethod(e.target.value)}>
@@ -516,7 +583,7 @@ export default function SaleDetail() {
             </Field>
           </>
         ) : (
-          <p className="text-sm text-muted-foreground">
+          <p className="text-[13px] text-[var(--od-ink-secondary)]">
             Confirm completion of this exchange return. Eligible resellable items will be restocked.
           </p>
         )}
@@ -530,7 +597,7 @@ export default function SaleDetail() {
         busy={voidSale.isPending}
         onSubmit={() => voidSale.mutate({ reason: voidReason })}
       >
-        <p className="text-sm text-muted-foreground">
+        <p className="text-[13px] text-[var(--od-ink-secondary)]">
           Stock goes back and the money is reversed. Only same-day sales can be voided without
           approval.
         </p>
@@ -538,15 +605,16 @@ export default function SaleDetail() {
           <Input required value={voidReason} onChange={(e) => setVoidReason(e.target.value)} />
         </Field>
       </FormDialog>
+
       {id && (
-        <section className="mt-8">
+        <SectionCard title="Attachments">
           <AttachmentsSection entityType="sale" entityId={id} />
-        </section>
+        </SectionCard>
       )}
-      <section className="mt-8">
-        <h2 className="mb-3 text-base font-semibold">History</h2>
+
+      <SectionCard title="History" subtitle="Audit trail for this sale">
         <RecordHistoryTab entityType="sale" entityId={id} />
-      </section>
-    </>
+      </SectionCard>
+    </div>
   );
 }

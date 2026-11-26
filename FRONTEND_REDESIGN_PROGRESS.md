@@ -3,8 +3,8 @@
 ## Overview
 - **Design System**: OpenDashboards (`od`, `od-app`, `od-mkt`)
 - **Total Pages Discovered**: 52 routed pages (53 page source files including `MoneyExtras.tsx` sub-tab)
-- **Completed Pages**: 3 / 52
-- **Current Batch**: Batch 2 — `SaleDetail`, `Products`, `ProductDetail`
+- **Completed Pages**: 6 / 52
+- **Current Batch**: Batch 3 — `Stock`, `Purchasing`, `PurchaseOrderDetail`
 
 ## Design System Improvements
 - [x] Copied OpenDashboards bundled assets (`od-tokens.css`, `od-components.css`, `od-tokens.json`) into `frontend/src/styles/`
@@ -18,9 +18,9 @@
 
 | Batch | Pages | Status | Commit | Validation |
 | --- | --- | --- | --- | --- |
-| 1 | `Dashboard`, `Pos`, `Sales` (+ Design System Foundation) | Completed | Pending hash | ESLint 0 errors, 37/37 tests, build passed |
-| 2 | `SaleDetail`, `Products`, `ProductDetail` | In Progress | — | Pending |
-| 3 | `Stock`, `Purchasing`, `PurchaseOrderDetail` | Remaining | — | Pending |
+| 1 | `Dashboard`, `Pos`, `Sales` (+ Design System Foundation) | Completed | `12fb5c4` | ESLint 0 errors, 37/37 tests, build passed |
+| 2 | `SaleDetail`, `Products`, `ProductDetail` | Completed | Pending hash | ESLint 0 errors, 37/37 tests, build passed |
+| 3 | `Stock`, `Purchasing`, `PurchaseOrderDetail` | In Progress | — | Pending |
 | 4 | `StockOps`, `Customers`, `CustomerDetail` | Remaining | — | Pending |
 | 5 | `ServicesHome`, `Clients`, `ClientDetail` | Remaining | — | Pending |
 | 6 | `Projects`, `ProjectDetail`, `ServiceCatalog` | Remaining | — | Pending |
@@ -39,9 +39,10 @@
 
 ## Completed Pages
 - `Dashboard`, `Pos`, `Sales`
+- `SaleDetail`, `Products`, `ProductDetail`
 
 ## Remaining Pages
-`SaleDetail`, `Products`, `ProductDetail`, `Stock`, `Purchasing`, `PurchaseOrderDetail`, `StockOps`, `Customers`, `CustomerDetail`, `ServicesHome`, `Clients`, `ClientDetail`, `Projects`, `ProjectDetail`, `ServiceCatalog`, `ServiceQuotations`, `ServiceInvoices`, `DesignJobs`, `DesignJobDetail`, `ClientDocuments`, `ServiceTasks`, `Renewals`, `Contractors`, `Money`, `Debts`, `DayClosing`, `Expenses`, `ExpenseSetup`, `People`, `EmployeeDetail`, `AttendanceAdmin`, `HrSetup`, `Payroll`, `PayrollSetup`, `PayrollRun`, `Reports`, `Approvals`, `Notifications`, `Team`, `Audit`, `LoginHistory`, `Backups`, `Settings`, `MyWork`, `Profile`, `Auth`, `ForgotPassword`, `ClientApproval`, `Status`
+`Stock`, `Purchasing`, `PurchaseOrderDetail`, `StockOps`, `Customers`, `CustomerDetail`, `ServicesHome`, `Clients`, `ClientDetail`, `Projects`, `ProjectDetail`, `ServiceCatalog`, `ServiceQuotations`, `ServiceInvoices`, `DesignJobs`, `DesignJobDetail`, `ClientDocuments`, `ServiceTasks`, `Renewals`, `Contractors`, `Money`, `Debts`, `DayClosing`, `Expenses`, `ExpenseSetup`, `People`, `EmployeeDetail`, `AttendanceAdmin`, `HrSetup`, `Payroll`, `PayrollSetup`, `PayrollRun`, `Reports`, `Approvals`, `Notifications`, `Team`, `Audit`, `LoginHistory`, `Backups`, `Settings`, `MyWork`, `Profile`, `Auth`, `ForgotPassword`, `ClientApproval`, `Status`
 
 ## Blockers & Resolutions
 - Pre-existing prettier formatting errors detected in `Backups.tsx`, `LoginHistory.tsx`, `Notifications.tsx` during baseline lint; will be resolved as those batches are redesigned and formatted with Prettier.

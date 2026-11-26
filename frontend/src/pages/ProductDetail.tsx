@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Barcode, ShoppingCart } from "lucide-react";
+import { Barcode, ShoppingCart } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataGrid, PageHeader, StatusBadge } from "@/components/shared/kit";
-import { PageLoader } from "@/components/shared/Display";
+import { PageLoader, StatCard } from "@/components/shared/Display";
 import { FilePreviewDialog, FileThumbnail } from "@/components/shared/FilePreview";
 import { RecordHistoryTab } from "@/components/shared/RecordHistoryTab";
 import { useAuth } from "@/features/auth/auth";
@@ -53,12 +53,12 @@ export default function ProductDetail() {
   const pr = detail.data?.product;
   if (!pr) {
     return (
-      <p className="text-destructive">
-        Product not found.{" "}
-        <Link className="underline" to="/products">
-          Back to products
-        </Link>
-      </p>
+      <div className="od-card items-center py-10 text-center">
+        <p className="text-[14px] font-semibold text-[var(--od-bad)]">Product not found.</p>
+        <Button asChild variant="outline" size="sm" className="mt-3">
+          <Link to="/products">Back to products</Link>
+        </Button>
+      </div>
     );
   }
 
@@ -70,15 +70,22 @@ export default function ProductDetail() {
   return (
     <div className="space-y-6">
       <PageHeader
+        backTo="/products"
+        backLabel="Products"
         title={pr.name}
+        badge={
+          <div className="flex items-center gap-2">
+            <StatusBadge value={pr.is_active ? "active" : "inactive"} />
+            {pr.track_serial && (
+              <span className="rounded-full bg-[var(--od-neutral-soft)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--od-ink-secondary)]">
+                Serial / IMEI tracked
+              </span>
+            )}
+          </div>
+        }
         description={`SKU ${pr.sku}${pr.barcode ? ` · Barcode ${pr.barcode}` : ""}${pr.warranty_months ? ` · ${pr.warranty_months} months warranty` : ""}`}
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" asChild>
-              <Link to="/products">
-                <ArrowLeft size={14} /> Products
-              </Link>
-            </Button>
             <Button
               variant="outline"
               size="sm"
@@ -101,42 +108,44 @@ export default function ProductDetail() {
         }
       />
 
-      <div className="flex flex-wrap items-start gap-6">
+      <div className="flex flex-wrap items-start gap-5">
         {pr.photo_file && (
-          <FileThumbnail
-            fileId={pr.photo_file}
-            fileName={pr.name}
-            mimeType="image/*"
-            onOpen={() => setPreviewOpen(true)}
-          />
+          <div className="od-card-flush overflow-hidden p-1.5">
+            <FileThumbnail
+              fileId={pr.photo_file}
+              fileName={pr.name}
+              mimeType="image/*"
+              onOpen={() => setPreviewOpen(true)}
+            />
+          </div>
         )}
         <div className="grid flex-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs text-muted-foreground">Selling price</p>
-            <p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(pr.sell_price)}</p>
-          </div>
-          <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs text-muted-foreground">Stock across locations</p>
-            <p className="mt-1 text-xl font-bold">
-              {formatQty(totalQty)} {pr.unit}
-            </p>
-          </div>
+          <StatCard label="Selling price" value={formatMoney(pr.sell_price)} />
+          <StatCard
+            label="Stock across locations"
+            value={`${formatQty(totalQty)} ${pr.unit}`}
+            trend={
+              totalQty <= 0
+                ? "Out of stock"
+                : totalQty <= toNumber(pr.reorder_level)
+                  ? `Below reorder (${formatQty(pr.reorder_level)})`
+                  : `Reorder level ${formatQty(pr.reorder_level)}`
+            }
+            tone={totalQty <= toNumber(pr.reorder_level) ? "bad" : "neutral"}
+          />
           {can("shop.product.view_cost") && unitProfit !== null && (
-            <div className="rounded-2xl border bg-card p-4">
-              <p className="text-xs text-muted-foreground">Profit per unit</p>
-              <p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(unitProfit)}</p>
-              <p className="text-xs text-muted-foreground">Avg cost {formatMoney(avgCost)}</p>
-            </div>
+            <StatCard
+              label="Profit per unit"
+              value={formatMoney(unitProfit)}
+              trend={`Avg cost ${formatMoney(avgCost)}`}
+              tone={unitProfit >= 0 ? "good" : "bad"}
+            />
           )}
-          <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs text-muted-foreground">Status</p>
-            <div className="mt-2 flex items-center gap-2">
-              <StatusBadge value={pr.is_active ? "active" : "inactive"} />
-              {pr.track_serial && (
-                <span className="rounded bg-muted px-2 py-0.5 text-xs">Serial/IMEI tracked</span>
-              )}
-            </div>
-          </div>
+          <StatCard
+            label="SKU / unit"
+            value={<span className="od-mono text-[20px]">{pr.sku}</span>}
+            trend={pr.warranty_months ? `${pr.warranty_months}m warranty` : `Unit: ${pr.unit}`}
+          />
         </div>
       </div>
 
@@ -155,14 +164,18 @@ export default function ProductDetail() {
             empty="No location stock records"
             columns={[
               { header: "Location", cell: (b) => <span className="font-medium">{b.branch}</span> },
-              { header: "On hand", align: "right", cell: (b) => formatQty(b.qty_on_hand) },
+              {
+                header: "On hand",
+                align: "right",
+                cell: (b) => <span className="font-medium">{formatQty(b.qty_on_hand)}</span>,
+              },
               ...(can("shop.product.view_cost")
                 ? [
                     {
                       header: "Avg cost",
                       align: "right" as const,
                       cell: (b: { avg_cost?: string }) =>
-                        b.avg_cost ? formatMoney(b.avg_cost) : "-",
+                        b.avg_cost ? formatMoney(b.avg_cost) : "—",
                     },
                   ]
                 : []),
@@ -180,9 +193,30 @@ export default function ProductDetail() {
               { header: "When", cell: (m) => formatDateTime(m.created_at) },
               {
                 header: "Type",
-                cell: (m) => <span className="capitalize">{m.type.replaceAll("_", " ")}</span>,
+                cell: (m) => (
+                  <span className="font-medium capitalize">{m.type.replaceAll("_", " ")}</span>
+                ),
               },
-              { header: "Change", align: "right", cell: (m) => formatQty(m.qty) },
+              {
+                header: "Change",
+                align: "right",
+                cell: (m) => {
+                  const n = toNumber(m.qty);
+                  return (
+                    <span
+                      className={
+                        n > 0
+                          ? "font-semibold text-[var(--od-good)]"
+                          : n < 0
+                            ? "font-semibold text-[var(--od-bad)]"
+                            : undefined
+                      }
+                    >
+                      {n > 0 ? `+${formatQty(m.qty)}` : formatQty(m.qty)}
+                    </span>
+                  );
+                },
+              },
               {
                 header: "Balance",
                 align: "right",
@@ -192,9 +226,11 @@ export default function ProductDetail() {
                 header: "Source",
                 cell: (m) =>
                   m.source_type ? (
-                    <span className="capitalize">{m.source_type.replaceAll("_", " ")}</span>
+                    <span className="capitalize text-[var(--od-ink-secondary)]">
+                      {m.source_type.replaceAll("_", " ")}
+                    </span>
                   ) : (
-                    "-"
+                    "—"
                   ),
               },
             ]}
@@ -210,8 +246,12 @@ export default function ProductDetail() {
             columns={[
               { header: "When", cell: (p) => formatDateTime(p.changed_at) },
               { header: "Old price", align: "right", cell: (p) => formatMoney(p.old_price) },
-              { header: "New price", align: "right", cell: (p) => formatMoney(p.new_price) },
-              { header: "Reason", cell: (p) => p.reason || "-" },
+              {
+                header: "New price",
+                align: "right",
+                cell: (p) => <span className="font-medium">{formatMoney(p.new_price)}</span>,
+              },
+              { header: "Reason", cell: (p) => p.reason || "—" },
             ]}
           />
         </TabsContent>
