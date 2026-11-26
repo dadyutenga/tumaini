@@ -3,8 +3,8 @@
 ## Overview
 - **Design System**: OpenDashboards (`od`, `od-app`, `od-mkt`)
 - **Total Pages Discovered**: 52 routed pages (53 page source files including `MoneyExtras.tsx` sub-tab)
-- **Completed Pages**: 48 / 52
-- **Current Batch**: Batch 17 — `Auth`, `ForgotPassword`, `ClientApproval`
+- **Completed Pages**: 51 / 52
+- **Current Batch**: Batch 18 (Final) — `Status` (+ Final QA)
 
 ## Design System Improvements
 - [x] Copied OpenDashboards bundled assets (`od-tokens.css`, `od-components.css`, `od-tokens.json`) into `frontend/src/styles/`
@@ -33,9 +33,9 @@
 | 13 | `PayrollSetup`, `PayrollRun`, `Reports` | Completed | `3065177` | ESLint 0 errors, 37/37 tests, build passed |
 | 14 | `Approvals`, `Notifications`, `Team` | Completed | `c17b95a` | ESLint 0 errors, 37/37 tests, build passed |
 | 15 | `Audit`, `LoginHistory`, `Backups` | Completed | `725aeca` | ESLint 0 errors, 37/37 tests, build passed |
-| 16 | `Settings`, `MyWork`, `Profile` (+ `SettingsGroups`) | Completed | Pending hash | ESLint 0 errors, 37/37 tests, build passed |
-| 17 | `Auth`, `ForgotPassword`, `ClientApproval` | In Progress | — | Pending |
-| 18 | `Status` (+ Final QA) | Remaining | — | Pending |
+| 16 | `Settings`, `MyWork`, `Profile` (+ `SettingsGroups`) | Completed | `286e014` | ESLint 0 errors, 37/37 tests, build passed |
+| 17 | `Auth`, `ForgotPassword`, `ClientApproval` | Completed | Pending hash | ESLint 0 errors, 37/37 tests, build passed |
+| 18 | `Status` (+ Final QA) | In Progress | — | Pending |
 
 ## Completed Pages
 - `Dashboard`, `Pos`, `Sales`
@@ -54,9 +54,10 @@
 - `Approvals`, `Notifications`, `Team`
 - `Audit`, `LoginHistory`, `Backups`
 - `Settings`, `MyWork`, `Profile`
+- `Auth`, `ForgotPassword`, `ClientApproval`
 
 ## Remaining Pages
-`Auth`, `ForgotPassword`, `ClientApproval`, `Status`
+`Status`
 
 ## Blockers & Resolutions
 - Pre-existing prettier formatting errors in `Backups.tsx`, `LoginHistory.tsx`, `Notifications.tsx` were resolved as Batches 14–15 were redesigned and formatted.

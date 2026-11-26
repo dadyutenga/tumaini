@@ -1,7 +1,9 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { AlertCircle, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { AuthLayout } from "@/components/layout/AuthLayout";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/shared/kit";
@@ -52,12 +54,22 @@ export default function ForgotPassword() {
 
   return (
     <AuthLayout>
-      <h1 className="mt-6 text-2xl font-semibold">Reset your password</h1>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {step === "request"
-          ? "Enter your phone or email. We will send a 6 digit code."
-          : "Enter the code we sent and choose a new password."}
-      </p>
+      <div>
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <h1 className="text-[22px] font-semibold tracking-tight text-[var(--od-ink)]">
+            Reset your password
+          </h1>
+          <Badge variant="secondary" className="od-tabular text-[11px]">
+            Step {step === "request" ? "1" : "2"} of 2
+          </Badge>
+        </div>
+        <p className="text-sm text-[var(--od-ink-secondary)]">
+          {step === "request"
+            ? "Enter your phone or email. We will send a 6 digit code."
+            : "Enter the code we sent and choose a new password."}
+        </p>
+      </div>
+
       <form onSubmit={step === "request" ? request : reset} className="mt-6 space-y-4" noValidate>
         <Field label="Phone or email" error={error?.fields.identifier}>
           <Input
@@ -76,6 +88,7 @@ export default function ForgotPassword() {
                 required
                 inputMode="numeric"
                 maxLength={6}
+                className="od-mono tracking-[0.2em]"
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 autoComplete="one-time-code"
@@ -94,17 +107,25 @@ export default function ForgotPassword() {
           </>
         )}
         {error && (
-          <p role="alert" className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-            {error.message}
-          </p>
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-xl border border-[var(--od-bad-mark)]/30 bg-[var(--od-bad-soft,rgba(239,68,68,0.08))] p-3 text-sm text-[var(--od-bad)]"
+          >
+            <AlertCircle size={16} className="mt-0.5 shrink-0" />
+            <span>{error.message}</span>
+          </div>
         )}
         <Button type="submit" className="w-full" disabled={busy}>
           {busy ? "Please wait…" : step === "request" ? "Send code" : "Change password"}
         </Button>
       </form>
-      <p className="mt-6 text-center text-sm text-muted-foreground">
-        <Link className="text-primary underline" to="/login">
-          Back to sign in
+
+      <p className="mt-6 border-t border-[var(--od-border)] pt-5 text-center text-sm">
+        <Link
+          className="inline-flex items-center gap-1.5 font-medium text-[var(--od-ink-secondary)] transition hover:text-[var(--od-ink)]"
+          to="/login"
+        >
+          <ArrowLeft size={14} /> Back to sign in
         </Link>
       </p>
     </AuthLayout>
