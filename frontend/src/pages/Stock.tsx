@@ -1,9 +1,17 @@
-import { useState } from "react";
-import { ArrowDownToLine, ArrowUpFromLine } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ArrowDownToLine, ArrowUpFromLine, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DataGrid, Field, FormDialog, NativeSelect, PageHeader } from "@/components/shared/kit";
+import { StatCard } from "@/components/shared/Display";
+import {
+  DataGrid,
+  Field,
+  FilterBar,
+  FormDialog,
+  NativeSelect,
+  PageHeader,
+} from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatMoney, formatQty, toNumber } from "@/lib/formatters";
@@ -41,6 +49,7 @@ export default function Stock() {
   const { can } = useAuth();
   const levels = useGet<Level[]>("/stock/levels");
   const low = useGet<LowRow[]>("/stock/low");
+  const [q, setQ] = useState("");
   const [direction, setDirection] = useState<Direction | null>(null);
   const [form, setForm] = useState({
     product_id: "",
@@ -49,7 +58,6 @@ export default function Stock() {
     reason: "",
     note: "",
   });
-  const productList = levels;
 
   const post = useWrite<unknown>("POST", "/stock-entries", {
     idempotent: true,
@@ -68,45 +76,130 @@ export default function Stock() {
 
   const showCost = can("shop.product.view_cost");
   const canManage = can("shop.stock.manage");
+
+  const filteredLevels = useMemo(() => {
+    const term = q.trim().toLowerCase();
+    const rows = levels.data ?? [];
+    if (!term) return rows;
+    return rows.filter(
+      (r) => r.name.toLowerCase().includes(term) || r.sku.toLowerCase().includes(term),
+    );
+  }, [levels.data, q]);
+
+  const totalValue = useMemo(
+    () => (levels.data ?? []).reduce((sum, r) => sum + toNumber(r.value), 0),
+    [levels.data],
+  );
+  const outCount = useMemo(
+    () => (levels.data ?? []).filter((r) => toNumber(r.qty_on_hand) <= 0).length,
+    [levels.data],
+  );
+
   const columns = [
-    { header: "Product", cell: (r: Level) => <span className="font-medium">{r.name}</span> },
-    { header: "SKU", cell: (r: Level) => r.sku },
-    { header: "On hand", align: "right" as const, cell: (r: Level) => formatQty(r.qty_on_hand) },
+    {
+      header: "Product",
+      sortValue: (r: Level) => r.name,
+      cell: (r: Level) => <span className="font-medium">{r.name}</span>,
+    },
+    {
+      header: "SKU",
+      sortValue: (r: Level) => r.sku,
+      cell: (r: Level) => (
+        <span className="od-mono text-xs text-[var(--od-ink-secondary)]">{r.sku}</span>
+      ),
+    },
+    {
+      header: "On hand",
+      align: "right" as const,
+      sortValue: (r: Level) => toNumber(r.qty_on_hand),
+      cell: (r: Level) => {
+        const qty = toNumber(r.qty_on_hand);
+        const isLow = qty <= toNumber(r.reorder_level);
+        return (
+          <span
+            className={
+              qty <= 0
+                ? "font-semibold text-[var(--od-bad)]"
+                : isLow
+                  ? "font-semibold text-[var(--od-warning)]"
+                  : "font-medium"
+            }
+          >
+            {formatQty(r.qty_on_hand)}
+          </span>
+        );
+      },
+    },
     {
       header: "Reorder at",
       align: "right" as const,
-      cell: (r: Level) => formatQty(r.reorder_level),
+      sortValue: (r: Level) => toNumber(r.reorder_level),
+      cell: (r: Level) => (
+        <span className="text-[var(--od-ink-secondary)]">{formatQty(r.reorder_level)}</span>
+      ),
     },
   ];
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Stock"
-        description="Quantities at the active location."
+        description="Inventory quantities and valuation at the active location."
         actions={
           canManage && (
             <>
-              <Button onClick={() => openDialog("in")}>
-                <ArrowDownToLine size={16} /> Stock in
+              <Button size="sm" onClick={() => openDialog("in")}>
+                <ArrowDownToLine size={14} /> Stock in
               </Button>
-              <Button variant="outline" onClick={() => openDialog("out")}>
-                <ArrowUpFromLine size={16} /> Stock out
+              <Button size="sm" variant="outline" onClick={() => openDialog("out")}>
+                <ArrowUpFromLine size={14} /> Stock out
               </Button>
             </>
           )
         }
       />
+
+      <div
+        className={`grid gap-4 sm:grid-cols-2 ${showCost ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}
+      >
+        <StatCard label="Tracked items" value={levels.data?.length ?? 0} />
+        <StatCard
+          label="Low stock"
+          value={low.data?.length ?? 0}
+          tone={(low.data?.length ?? 0) > 0 ? "bad" : "good"}
+          trend={(low.data?.length ?? 0) > 0 ? "Below reorder threshold" : "All levels healthy"}
+        />
+        <StatCard label="Out of stock" value={outCount} tone={outCount > 0 ? "bad" : "neutral"} />
+        {showCost && <StatCard label="Total stock value" value={formatMoney(totalValue)} />}
+      </div>
+
       <Tabs defaultValue="levels">
         <TabsList>
           <TabsTrigger value="levels">Levels</TabsTrigger>
           <TabsTrigger value="low">Low stock {low.data ? `(${low.data.length})` : ""}</TabsTrigger>
         </TabsList>
-        <TabsContent value="levels">
+
+        <TabsContent value="levels" className="space-y-4">
+          <FilterBar>
+            <div className="relative min-w-60 flex-1 sm:max-w-sm">
+              <Search
+                size={15}
+                className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
+              />
+              <Input
+                aria-label="Filter stock levels"
+                className="pl-9"
+                placeholder="Search by product name or SKU…"
+                value={q}
+                onChange={(e) => setQ(e.target.value)}
+              />
+            </div>
+          </FilterBar>
           <DataGrid
-            rows={levels.data}
+            rows={filteredLevels}
             loading={levels.isLoading}
             rowKey={(r) => r.product_id}
+            empty="No stock items match your filter"
             columns={[
               ...columns,
               ...(showCost
@@ -114,26 +207,35 @@ export default function Stock() {
                     {
                       header: "Avg cost",
                       align: "right" as const,
+                      sortValue: (r: Level) => toNumber(r.avg_cost),
                       cell: (r: Level) => formatMoney(r.avg_cost),
                     },
                     {
                       header: "Value",
                       align: "right" as const,
-                      cell: (r: Level) => formatMoney(r.value),
+                      sortValue: (r: Level) => toNumber(r.value),
+                      cell: (r: Level) => (
+                        <span className="font-medium">{formatMoney(r.value)}</span>
+                      ),
                     },
                   ]
                 : []),
             ]}
+            totals={
+              showCost && filteredLevels.length > 0
+                ? [
+                    "Total",
+                    "",
+                    "",
+                    "",
+                    "",
+                    formatMoney(filteredLevels.reduce((sum, r) => sum + toNumber(r.value), 0)),
+                  ]
+                : undefined
+            }
           />
-          {showCost && levels.data && (
-            <p className="mt-3 text-right text-sm text-muted-foreground">
-              Total value:{" "}
-              <strong>
-                {formatMoney(levels.data.reduce((sum, r) => sum + toNumber(r.value), 0))}
-              </strong>
-            </p>
-          )}
         </TabsContent>
+
         <TabsContent value="low">
           <DataGrid
             rows={low.data}
@@ -145,7 +247,12 @@ export default function Stock() {
               {
                 header: "Suggested order",
                 align: "right",
-                cell: (r) => formatQty(r.suggested_qty),
+                sortValue: (r) => toNumber(r.suggested_qty),
+                cell: (r) => (
+                  <span className="font-semibold text-[var(--od-info)]">
+                    {formatQty(r.suggested_qty)}
+                  </span>
+                ),
               },
             ]}
           />
@@ -176,7 +283,7 @@ export default function Stock() {
         <Field label="Product">
           <NativeSelect required value={form.product_id} onChange={set("product_id")}>
             <option value="">Choose…</option>
-            {productList.data?.map((p) => (
+            {levels.data?.map((p) => (
               <option key={p.product_id} value={p.product_id}>
                 {p.name} ({p.sku})
               </option>
@@ -212,6 +319,6 @@ export default function Stock() {
           <Input value={form.note} onChange={set("note")} />
         </Field>
       </FormDialog>
-    </>
+    </div>
   );
 }

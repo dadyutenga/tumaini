@@ -1,10 +1,16 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import { ArrowLeft } from "lucide-react";
+import { useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DataGrid, Field, FormDialog, PageHeader, StatusBadge } from "@/components/shared/kit";
-import { PageLoader } from "@/components/shared/Display";
+import {
+  DataGrid,
+  Field,
+  FormDialog,
+  PageHeader,
+  SectionCard,
+  StatusBadge,
+} from "@/components/shared/kit";
+import { PageLoader, StatCard } from "@/components/shared/Display";
 import { AttachmentsSection } from "@/components/shared/AttachmentsSection";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useWrite } from "@/hooks/useApi";
@@ -64,36 +70,38 @@ export default function PurchaseOrderDetail() {
   const manage = can("shop.purchase.manage");
   const receivable = ["ordered", "approved", "partially_received"].includes(o.status);
 
+  const orderedQty = o.items.reduce((s, l) => s + toNumber(l.qty_ordered), 0);
+  const receivedQty = o.items.reduce((s, l) => s + toNumber(l.qty_received), 0);
+  const outstandingQty = o.items.reduce((s, l) => s + toNumber(l.qty_outstanding), 0);
+
   return (
-    <>
-      <Link
-        to="/purchasing"
-        className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft size={14} /> Purchasing
-      </Link>
+    <div className="space-y-6">
       <PageHeader
+        backTo="/purchasing"
+        backLabel="Purchasing"
         title={o.number}
-        description={`${o.supplier} · ${formatDate(o.order_date)} · ${formatMoney(o.total)}`}
+        badge={<StatusBadge value={o.status} />}
+        description={`${o.supplier} · Ordered ${formatDate(o.order_date)}`}
         actions={
-          <div className="flex items-center gap-2">
-            <StatusBadge value={o.status} />
+          <div className="flex flex-wrap items-center gap-2">
             {o.status === "draft" && manage && (
               <>
                 <Button
+                  size="sm"
                   variant="outline"
                   onClick={() => cancel.mutate({})}
                   disabled={cancel.isPending}
                 >
                   Cancel
                 </Button>
-                <Button onClick={() => submit.mutate({})} disabled={submit.isPending}>
+                <Button size="sm" onClick={() => submit.mutate({})} disabled={submit.isPending}>
                   Submit
                 </Button>
               </>
             )}
             {receivable && manage && (
               <Button
+                size="sm"
                 onClick={() => {
                   setQtys(
                     Object.fromEntries(o.items.map((l) => [l.product_id, l.qty_outstanding])),
@@ -107,22 +115,72 @@ export default function PurchaseOrderDetail() {
           </div>
         }
       />
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Order total" value={formatMoney(o.total)} />
+        <StatCard label="Line items" value={o.items.length} />
+        <StatCard
+          label="Received"
+          value={`${formatQty(receivedQty)} / ${formatQty(orderedQty)}`}
+          tone={outstandingQty === 0 && orderedQty > 0 ? "good" : "neutral"}
+        />
+        <StatCard
+          label="Outstanding"
+          value={formatQty(outstandingQty)}
+          tone={outstandingQty > 0 ? "bad" : "good"}
+        />
+      </div>
+
       <DataGrid
         rows={o.items}
         rowKey={(l) => l.id}
         columns={[
-          { header: "Product", cell: (l) => l.product_name },
+          {
+            header: "Product",
+            cell: (l) => <span className="font-medium">{l.product_name}</span>,
+          },
           { header: "Ordered", align: "right", cell: (l) => formatQty(l.qty_ordered) },
           { header: "Received", align: "right", cell: (l) => formatQty(l.qty_received) },
-          { header: "Outstanding", align: "right", cell: (l) => formatQty(l.qty_outstanding) },
+          {
+            header: "Outstanding",
+            align: "right",
+            cell: (l) => (
+              <span
+                className={
+                  toNumber(l.qty_outstanding) > 0 ? "font-semibold text-[var(--od-warning)]" : ""
+                }
+              >
+                {formatQty(l.qty_outstanding)}
+              </span>
+            ),
+          },
           { header: "Unit cost", align: "right", cell: (l) => formatMoney(l.unit_cost) },
-          { header: "Total", align: "right", cell: (l) => formatMoney(l.line_total) },
+          {
+            header: "Total",
+            align: "right",
+            cell: (l) => <span className="font-medium">{formatMoney(l.line_total)}</span>,
+          },
+        ]}
+        totals={[
+          "Total",
+          formatQty(orderedQty),
+          formatQty(receivedQty),
+          formatQty(outstandingQty),
+          "",
+          formatMoney(o.total),
         ]}
       />
-      {o.note && <p className="mt-3 text-sm text-muted-foreground">{o.note}</p>}
-      <section className="mt-6">
+
+      {o.note && (
+        <SectionCard title="Order note">
+          <p className="text-[13px] leading-relaxed text-[var(--od-ink-secondary)]">{o.note}</p>
+        </SectionCard>
+      )}
+
+      <SectionCard title="Attachments">
         <AttachmentsSection entityType="purchase_order" entityId={o.id} />
-      </section>
+      </SectionCard>
+
       <FormDialog
         open={receiving}
         onOpenChange={setReceiving}
@@ -156,6 +214,6 @@ export default function PurchaseOrderDetail() {
           </Field>
         ))}
       </FormDialog>
-    </>
+    </div>
   );
 }

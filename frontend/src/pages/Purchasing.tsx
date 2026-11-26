@@ -1,16 +1,18 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
   Pager,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
@@ -70,29 +72,30 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
 
   return (
     <>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <NativeSelect
-          aria-label="Filter by status"
-          className="max-w-[12rem]"
+      <FilterBar className="justify-between">
+        <SegmentedChips
+          ariaLabel="Filter by status"
           value={status}
-          onChange={(e) => {
-            setStatus(e.target.value);
+          onChange={(v) => {
+            setStatus(v);
             setPage(1);
           }}
-        >
-          <option value="">All statuses</option>
-          {["draft", "ordered", "partially_received", "received", "cancelled"].map((v) => (
-            <option key={v} value={v}>
-              {v.replaceAll("_", " ")}
-            </option>
-          ))}
-        </NativeSelect>
+          options={[
+            { value: "", label: "All" },
+            { value: "draft", label: "Draft" },
+            { value: "ordered", label: "Ordered" },
+            { value: "partially_received", label: "Partial" },
+            { value: "received", label: "Received" },
+            { value: "cancelled", label: "Cancelled" },
+          ]}
+        />
         {can("shop.purchase.manage") && (
-          <Button onClick={() => setOpen(true)}>
-            <Plus size={16} /> New order
+          <Button size="sm" onClick={() => setOpen(true)}>
+            <Plus size={14} /> New order
           </Button>
         )}
-      </div>
+      </FilterBar>
+
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
@@ -100,10 +103,25 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
         empty="No purchase orders yet"
         onRowClick={(o) => navigate(`/purchasing/${o.id}`)}
         columns={[
-          { header: "Number", cell: (o) => <span className="font-medium">{o.number}</span> },
-          { header: "Supplier", cell: (o) => o.supplier },
-          { header: "Date", cell: (o) => formatDate(o.order_date) },
-          { header: "Total", align: "right", cell: (o) => formatMoney(o.total) },
+          {
+            header: "Number",
+            sortValue: (o) => o.number,
+            cell: (o) => <span className="od-mono font-medium">{o.number}</span>,
+          },
+          { header: "Supplier", sortValue: (o) => o.supplier, cell: (o) => o.supplier },
+          {
+            header: "Date",
+            sortValue: (o) => o.order_date,
+            cell: (o) => (
+              <span className="text-[var(--od-ink-secondary)]">{formatDate(o.order_date)}</span>
+            ),
+          },
+          {
+            header: "Total",
+            align: "right",
+            sortValue: (o) => toNumber(o.total),
+            cell: (o) => <span className="font-medium">{formatMoney(o.total)}</span>,
+          },
           {
             header: "Received",
             align: "right",
@@ -113,6 +131,7 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
         ]}
       />
       <Pager meta={list.data?.meta} onPage={setPage} />
+
       <FormDialog
         open={open}
         onOpenChange={setOpen}
@@ -140,7 +159,7 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
         </Field>
         <div className="space-y-2">
           {lines.map((l, i) => (
-            <div key={i} className="grid grid-cols-[1fr_5rem_7rem_2rem] items-end gap-2">
+            <div key={i} className="grid grid-cols-[1fr_5rem_7rem_2.25rem] items-end gap-2">
               <Field label={i === 0 ? "Product" : ""}>
                 <NativeSelect
                   value={l.product_id}
@@ -176,7 +195,7 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
                 disabled={lines.length === 1}
                 onClick={() => setLines((all) => all.filter((_, n) => n !== i))}
               >
-                <Trash2 size={16} />
+                <Trash2 size={15} />
               </Button>
             </div>
           ))}
@@ -188,7 +207,7 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
               setLines((all) => [...all, { product_id: "", qty: "1", unit_cost: "0" }])
             }
           >
-            Add line
+            <Plus size={13} /> Add line
           </Button>
         </div>
       </FormDialog>
@@ -237,55 +256,83 @@ function SuppliersTab() {
   return (
     <>
       <div className="mb-4 space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <Input
-              aria-label="Search suppliers"
-              className="max-w-xs"
-              placeholder="Search suppliers…"
-              value={q}
-              onChange={(e) => {
-                setQ(e.target.value);
-                setPage(1);
-              }}
-            />
+        <FilterBar className="mb-0 justify-between">
+          <div className="flex flex-1 flex-wrap items-center gap-2">
+            <div className="relative min-w-[200px] flex-1 sm:max-w-xs">
+              <Search
+                size={15}
+                className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
+              />
+              <Input
+                aria-label="Search suppliers"
+                className="pl-9"
+                placeholder="Search suppliers…"
+                value={q}
+                onChange={(e) => {
+                  setQ(e.target.value);
+                  setPage(1);
+                }}
+              />
+            </div>
             <Input
               type="date"
               aria-label="Statement from date"
-              className="w-40"
+              className="w-36"
               value={stmtFrom}
               onChange={(e) => setStmtFrom(e.target.value)}
             />
             <Input
               type="date"
               aria-label="Statement to date"
-              className="w-40"
+              className="w-36"
               value={stmtTo}
               onChange={(e) => setStmtTo(e.target.value)}
             />
           </div>
           {can("shop.supplier.manage") && (
-            <Button onClick={() => setOpen(true)}>
-              <Plus size={16} /> New supplier
+            <Button size="sm" onClick={() => setOpen(true)}>
+              <Plus size={14} /> New supplier
             </Button>
           )}
-        </div>
-        {invalidStmtRange && <p className="text-sm text-destructive">to must not be before from</p>}
+        </FilterBar>
+        {invalidStmtRange && (
+          <p className="text-xs font-medium text-[var(--od-bad)]">to must not be before from</p>
+        )}
       </div>
+
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(s) => s.id}
         empty="No suppliers yet"
         columns={[
-          { header: "Name", cell: (s) => <span className="font-medium">{s.name}</span> },
-          { header: "Contact", cell: (s) => s.contact_person ?? s.phone ?? "-" },
-          { header: "Terms", cell: (s) => `${s.payment_terms_days} days` },
+          {
+            header: "Name",
+            sortValue: (s) => s.name,
+            cell: (s) => <span className="font-medium">{s.name}</span>,
+          },
+          {
+            header: "Contact",
+            cell: (s) => (
+              <span className="text-[var(--od-ink-secondary)]">
+                {s.contact_person ?? s.phone ?? "—"}
+              </span>
+            ),
+          },
+          {
+            header: "Terms",
+            cell: (s) => (
+              <span className="od-tabular text-[var(--od-ink-secondary)]">
+                {s.payment_terms_days} days
+              </span>
+            ),
+          },
           {
             header: "We owe",
             align: "right",
+            sortValue: (s) => toNumber(s.balance),
             cell: (s) => (
-              <span className={toNumber(s.balance) > 0 ? "font-medium text-destructive" : ""}>
+              <span className={toNumber(s.balance) > 0 ? "font-semibold text-[var(--od-bad)]" : ""}>
                 {formatMoney(s.balance)}
               </span>
             ),
@@ -322,6 +369,7 @@ function SuppliersTab() {
         ]}
       />
       <Pager meta={list.data?.meta} onPage={setPage} />
+
       <FormDialog
         open={open}
         onOpenChange={setOpen}
@@ -360,6 +408,7 @@ function SuppliersTab() {
           />
         </Field>
       </FormDialog>
+
       <FormDialog
         open={paying !== null}
         onOpenChange={(o) => !o && setPaying(null)}
@@ -414,13 +463,20 @@ function ReceiptsTab() {
         rowKey={(r) => r.id}
         empty="No goods received yet"
         columns={[
-          { header: "Number", cell: (r) => <span className="font-medium">{r.number}</span> },
-          { header: "Supplier", cell: (r) => r.supplier ?? "-" },
+          {
+            header: "Number",
+            cell: (r) => <span className="od-mono font-medium">{r.number}</span>,
+          },
+          { header: "Supplier", cell: (r) => r.supplier ?? "—" },
           {
             header: "Received",
-            cell: (r) => (r.received_date ? formatDate(r.received_date) : "-"),
+            cell: (r) => (r.received_date ? formatDate(r.received_date) : "—"),
           },
-          { header: "Value", align: "right", cell: (r) => formatMoney(r.total_value) },
+          {
+            header: "Value",
+            align: "right",
+            cell: (r) => <span className="font-medium">{formatMoney(r.total_value)}</span>,
+          },
         ]}
       />
       <Pager meta={list.data?.meta} onPage={setPage} />
@@ -439,13 +495,13 @@ export default function Purchasing() {
   );
   const suppliers = useGet<Supplier[]>("/suppliers", { per_page: 100 }, { enabled: canSuppliers });
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Purchasing"
-        description="Suppliers, orders, goods received and what you owe."
+        description="Suppliers, purchase orders, goods received and balances owed."
       />
       <Tabs defaultValue={canOrders ? "orders" : "suppliers"}>
-        <TabsList className="mb-4">
+        <TabsList>
           {canOrders && <TabsTrigger value="orders">Orders</TabsTrigger>}
           {canSuppliers && <TabsTrigger value="suppliers">Suppliers</TabsTrigger>}
           {canOrders && <TabsTrigger value="receipts">Receipts</TabsTrigger>}
@@ -466,6 +522,6 @@ export default function Purchasing() {
           </TabsContent>
         )}
       </Tabs>
-    </>
+    </div>
   );
 }
