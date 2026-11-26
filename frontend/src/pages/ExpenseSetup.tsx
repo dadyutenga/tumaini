@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { Plus } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
@@ -66,19 +68,30 @@ function CategoriesTab() {
     }),
   });
   return (
-    <>
-      <div className="mb-4 flex justify-end">
+    <div className="space-y-4">
+      <FilterBar className="justify-end">
         <Button onClick={() => setOpen(true)}>
           <Plus size={16} /> New category
         </Button>
-      </div>
+      </FilterBar>
       <DataGrid
         rows={list.data}
         loading={list.isLoading}
         rowKey={(c) => c.id}
         columns={[
-          { header: "Name", cell: (c) => <span className="font-medium">{c.name}</span> },
-          { header: "Project cost", cell: (c) => (c.is_project_cost ? "Yes" : "No") },
+          {
+            header: "Name",
+            cell: (c) => <span className="font-medium text-[var(--od-ink)]">{c.name}</span>,
+          },
+          {
+            header: "Project cost",
+            cell: (c) =>
+              c.is_project_cost ? (
+                <Badge variant="secondary">Direct cost</Badge>
+              ) : (
+                <span className="text-[var(--od-ink-muted)]">No</span>
+              ),
+          },
           {
             header: "Status",
             cell: (c) => <StatusBadge value={c.is_active ? "active" : "inactive"} />,
@@ -86,13 +99,15 @@ function CategoriesTab() {
           {
             header: "",
             cell: (c) => (
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => toggle.mutate({ ...c, is_active: !c.is_active })}
-              >
-                {c.is_active ? "Deactivate" : "Activate"}
-              </Button>
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => toggle.mutate({ ...c, is_active: !c.is_active })}
+                >
+                  {c.is_active ? "Deactivate" : "Activate"}
+                </Button>
+              </div>
             ),
           },
         ]}
@@ -107,7 +122,7 @@ function CategoriesTab() {
         <Field label="Name">
           <Input required value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3.5 py-2.5 text-sm text-[var(--od-ink)]">
           <input
             type="checkbox"
             checked={isProjectCost}
@@ -116,7 +131,7 @@ function CategoriesTab() {
           Counts as a direct project cost
         </label>
       </FormDialog>
-    </>
+    </div>
   );
 }
 
@@ -147,12 +162,12 @@ function RecurringTab() {
     { invalidate: ["/recurring-expenses"], success: "Updated", toBody: () => ({}) },
   );
   return (
-    <>
-      <div className="mb-4 flex justify-end">
+    <div className="space-y-4">
+      <FilterBar className="justify-end">
         <Button onClick={() => setOpen(true)}>
           <Plus size={16} /> New recurring expense
         </Button>
-      </div>
+      </FilterBar>
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
@@ -161,15 +176,27 @@ function RecurringTab() {
         columns={[
           {
             header: "Description",
-            cell: (r) => <span className="font-medium">{r.description}</span>,
+            cell: (r) => <span className="font-medium text-[var(--od-ink)]">{r.description}</span>,
           },
           { header: "Category", cell: (r) => r.category_name },
           {
             header: "Schedule",
-            cell: (r) => (r.day_of_month ? `Monthly (day ${r.day_of_month})` : "Monthly"),
+            cell: (r) => (
+              <Badge variant="secondary">
+                {r.day_of_month ? `Monthly (day ${r.day_of_month})` : "Monthly"}
+              </Badge>
+            ),
           },
           { header: "Next run", cell: (r) => (r.next_run ? formatDate(r.next_run) : "-") },
-          { header: "Amount", align: "right", cell: (r) => formatMoney(r.amount) },
+          {
+            header: "Amount",
+            align: "right",
+            cell: (r) => (
+              <span className="od-tabular font-medium text-[var(--od-ink)]">
+                {formatMoney(r.amount)}
+              </span>
+            ),
+          },
           {
             header: "Status",
             cell: (r) => <StatusBadge value={r.is_active ? "active" : "paused"} />,
@@ -177,9 +204,11 @@ function RecurringTab() {
           {
             header: "",
             cell: (r) => (
-              <Button size="sm" variant="ghost" onClick={() => toggle.mutate(r)}>
-                {r.is_active ? "Pause" : "Resume"}
-              </Button>
+              <div className="flex justify-end">
+                <Button size="sm" variant="ghost" onClick={() => toggle.mutate(r)}>
+                  {r.is_active ? "Pause" : "Resume"}
+                </Button>
+              </div>
             ),
           },
         ]}
@@ -221,11 +250,12 @@ function RecurringTab() {
             onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
           />
         </Field>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Field label="Amount">
             <Input
               required
               inputMode="decimal"
+              className="od-tabular"
               value={draft.amount}
               onChange={(e) => setDraft((d) => ({ ...d, amount: e.target.value }))}
             />
@@ -236,6 +266,7 @@ function RecurringTab() {
               type="number"
               min={1}
               max={28}
+              className="od-tabular"
               value={draft.day_of_month}
               onChange={(e) => setDraft((d) => ({ ...d, day_of_month: e.target.value }))}
             />
@@ -250,7 +281,7 @@ function RecurringTab() {
           </Field>
         </div>
       </FormDialog>
-    </>
+    </div>
   );
 }
 
@@ -281,25 +312,36 @@ function PettyTab() {
     },
   });
   return (
-    <>
+    <div className="space-y-4">
       <DataGrid
         rows={list.data}
         loading={list.isLoading}
         rowKey={(p) => p.id}
         empty="No petty cash accounts. Add one in Money with the type petty cash."
         columns={[
-          { header: "Account", cell: (p) => <span className="font-medium">{p.name}</span> },
+          {
+            header: "Account",
+            cell: (p) => <span className="font-medium text-[var(--od-ink)]">{p.name}</span>,
+          },
           { header: "Location", cell: (p) => p.branch_name },
           { header: "Custodian", cell: (p) => p.custodian_name ?? "-" },
           {
             header: "Last counted",
             cell: (p) => (p.last_reconciled ? formatDate(p.last_reconciled) : "Never"),
           },
-          { header: "Balance", align: "right", cell: (p) => formatMoney(p.balance) },
+          {
+            header: "Balance",
+            align: "right",
+            cell: (p) => (
+              <span className="od-tabular font-semibold text-[var(--od-ink)]">
+                {formatMoney(p.balance)}
+              </span>
+            ),
+          },
           {
             header: "",
             cell: (p) => (
-              <div className="flex gap-2">
+              <div className="flex justify-end gap-2">
                 {can("finance.account.manage") && (
                   <Button size="sm" onClick={() => setTopUp(p)}>
                     Top up
@@ -338,6 +380,7 @@ function PettyTab() {
           <Input
             required
             inputMode="decimal"
+            className="od-tabular"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
@@ -351,20 +394,24 @@ function PettyTab() {
         busy={reconcile.isPending}
         onSubmit={() => reconcile.mutate({ actual_balance: actual })}
       >
-        <p className="text-sm text-muted-foreground">
-          The system expects {formatMoney(recon?.balance)}. Any difference is posted as an over or
-          short.
-        </p>
+        <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3.5 py-2.5 text-sm text-[var(--od-ink-secondary)]">
+          The system expects{" "}
+          <strong className="od-tabular font-semibold text-[var(--od-ink)]">
+            {formatMoney(recon?.balance)}
+          </strong>
+          . Any difference is posted as an over or short.
+        </div>
         <Field label="Cash actually in the box">
           <Input
             required
             inputMode="decimal"
+            className="od-tabular"
             value={actual}
             onChange={(e) => setActual(e.target.value)}
           />
         </Field>
       </FormDialog>
-    </>
+    </div>
   );
 }
 
@@ -379,7 +426,7 @@ export default function ExpenseSetup() {
   const canPetty = canAny("finance.account.view", "finance.account.manage", "finance.expense.pay");
   const firstTab = canCategories ? "categories" : canRecurring ? "recurring" : "petty";
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader title="Expense setup" description="Categories, repeating bills and petty cash." />
       <Tabs defaultValue={firstTab}>
         <TabsList className="mb-4">
@@ -403,6 +450,6 @@ export default function ExpenseSetup() {
           </TabsContent>
         )}
       </Tabs>
-    </>
+    </div>
   );
 }

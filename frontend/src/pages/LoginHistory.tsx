@@ -1,8 +1,15 @@
 import { useState } from "react";
-import { Download } from "lucide-react";
+import { Download, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DataGrid, Field, PageHeader, Pager, StatusBadge } from "@/components/shared/kit";
+import {
+  DataGrid,
+  Field,
+  FilterBar,
+  PageHeader,
+  Pager,
+  StatusBadge,
+} from "@/components/shared/kit";
 import { useGetPage } from "@/hooks/useApi";
 import { downloadCsv } from "@/lib/csv";
 import { formatDateTime } from "@/lib/formatters";
@@ -39,7 +46,7 @@ export default function LoginHistory() {
   }
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Login history"
         description="Every sign-in attempt, including device, IP address and failures."
@@ -51,7 +58,7 @@ export default function LoginHistory() {
           )
         }
       />
-      <div className="mb-4 flex flex-wrap items-end gap-3">
+      <FilterBar className="items-end">
         <Field label="From">
           <Input
             type="date"
@@ -72,31 +79,64 @@ export default function LoginHistory() {
             }}
           />
         </Field>
-      </div>
+        {(from || to) && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setFrom("");
+              setTo("");
+              setPage(1);
+            }}
+          >
+            <RotateCcw size={13} /> Clear
+          </Button>
+        )}
+      </FilterBar>
       <DataGrid
         rows={rows}
         loading={query.isLoading}
         rowKey={(e) => e.id}
         empty="No sign-in attempts recorded"
         columns={[
-          { header: "Time", cell: (e) => formatDateTime(e.created_at) },
-          { header: "User / identifier", cell: (e) => <span className="font-medium">{e.identifier}</span> },
+          {
+            header: "Time",
+            cell: (e) => (
+              <span className="od-tabular text-xs text-[var(--od-ink-secondary)]">
+                {formatDateTime(e.created_at)}
+              </span>
+            ),
+          },
+          {
+            header: "User / identifier",
+            cell: (e) => (
+              <span className="od-mono font-medium text-[var(--od-ink)]">{e.identifier}</span>
+            ),
+          },
           {
             header: "Result",
             cell: (e) => (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge value={e.success ? "active" : "rejected"} />
                 {!e.success && e.reason && (
-                  <span className="text-xs text-muted-foreground">{e.reason}</span>
+                  <span className="text-xs text-[var(--od-bad)]">{e.reason}</span>
                 )}
               </div>
             ),
           },
-          { header: "IP address", cell: (e) => e.ip ?? "-" },
+          {
+            header: "IP address",
+            cell: (e) => (
+              <span className="od-mono text-xs text-[var(--od-ink-secondary)]">{e.ip ?? "-"}</span>
+            ),
+          },
           {
             header: "Device",
             cell: (e) => (
-              <span className="line-clamp-1 max-w-xs text-xs text-muted-foreground" title={e.user_agent ?? ""}>
+              <span
+                className="line-clamp-1 max-w-xs text-xs text-[var(--od-ink-muted)]"
+                title={e.user_agent ?? ""}
+              >
                 {e.user_agent || "-"}
               </span>
             ),
@@ -104,6 +144,6 @@ export default function LoginHistory() {
         ]}
       />
       <Pager meta={query.data?.meta} onPage={setPage} />
-    </>
+    </div>
   );
 }

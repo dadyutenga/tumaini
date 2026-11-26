@@ -296,31 +296,32 @@ func (s *Service) Reverse(ctx context.Context, p *auth.Principal, id uuid.UUID, 
 	return 0, nil, &httpx.Error{Status: 410, Code: "feature_removed", Message: "Reversing a paid expense is not part of the approved model; use a transaction correction instead"}
 }
 
-const expenseCols = `e.id, e.expense_no, e.location_id, e.category_id, ec.name::text, e.expense_date::text, e.amount, e.description::text,
+const expenseCols = `e.id, e.expense_no, e.location_id, COALESCE(l.name::text, ''), e.category_id, ec.name::text, e.expense_date::text, e.amount, e.description::text,
 	e.status::text, e.account_id, e.receipt_file_id, e.recurring_expense_id, e.project_id, e.design_job_id,
 	e.requested_by, COALESCE(m.user_id, e.requested_by), COALESCE(u.full_name::text, ''),
 	e.decided_by, e.decided_at, e.paid_at, e.paid_business_date::text, COALESCE(e.rejection_reason, ''), e.created_at`
 
 const expenseFrom = ` FROM app.expenses e
+	LEFT JOIN app.locations l ON l.tenant_id = e.tenant_id AND l.id = e.location_id
 	JOIN app.expense_categories ec ON ec.tenant_id = e.tenant_id AND ec.id = e.category_id
 	LEFT JOIN app.memberships m ON m.tenant_id = e.tenant_id AND m.id = e.requested_by
 	LEFT JOIN iam.users u ON u.id = m.user_id`
 
 func scanExpense(row pgx.Row) (map[string]any, error) {
 	var id, branch, category, requestedBy, submitterUser uuid.UUID
-	var number, catName, date, desc, status, submitterName, reject string
+	var number, locationName, catName, date, desc, status, submitterName, reject string
 	var amount decimal.Decimal
 	var account, receiptFile, recurring, project, designJob, decidedBy *uuid.UUID
 	var decidedAt, paidAt *time.Time
 	var paidDate *string
 	var created time.Time
-	if err := row.Scan(&id, &number, &branch, &category, &catName, &date, &amount, &desc, &status, &account,
+	if err := row.Scan(&id, &number, &branch, &locationName, &category, &catName, &date, &amount, &desc, &status, &account,
 		&receiptFile, &recurring, &project, &designJob, &requestedBy, &submitterUser, &submitterName,
 		&decidedBy, &decidedAt, &paidAt, &paidDate, &reject, &created); err != nil {
 		return nil, err
 	}
 	return map[string]any{
-		"id": id, "number": number, "branch_id": branch, "category_id": category, "category_name": catName,
+		"id": id, "number": number, "branch_id": branch, "location_name": locationName, "category_id": category, "category_name": catName,
 		"date": date, "expense_date": date, "amount": amount, "description": desc, "status": status,
 		"money_account_id": account, "receipt_file_id": receiptFile, "recurring_id": recurring,
 		"project_id": project, "design_job_id": designJob,
@@ -360,18 +361,30 @@ type ListFilter struct {
 	CategoryID  *uuid.UUID
 	SubmittedBy *uuid.UUID
 	ProjectID   *uuid.UUID
+	LocationID  *uuid.UUID
 	From, To    string
 	Q           string
 	Sort        string
 }
 
 func (s *Service) List(ctx context.Context, p *auth.Principal, f ListFilter, page httpx.Page) ([]map[string]any, int, error) {
+	if p.BranchID != nil && f.LocationID != nil && *f.LocationID != *p.BranchID {
+		return nil, 0, httpx.BadRequest("invalid_query", "That location is not the one selected in the header")
+	}
 	out := []map[string]any{}
 	total := 0
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New(p.TenantID)
 		q.Add("e.tenant_id = $1")
-		q.If(p.BranchID != nil, "e.location_id = ?", p.BranchID)
+		if p.BranchID != nil {
+			q.Add("e.location_id = ?", p.BranchID)
+		} else if f.LocationID != nil {
+			var active bool
+			if err := tx.QueryRow(ctx, `SELECT status = 'active' FROM app.locations WHERE tenant_id = $1 AND id = $2`, p.TenantID, *f.LocationID).Scan(&active); err != nil || !active {
+				return httpx.NotFound("not_found", "Branch not found")
+			}
+			q.Add("e.location_id = ?", f.LocationID)
+		}
 		q.If(!canViewAllExpenses(p), "e.requested_by = ?", p.MembershipID)
 		q.If(f.Status != "", "e.status = ?::app.expense_status", f.Status)
 		q.If(f.CategoryID != nil, "e.category_id = ?", f.CategoryID)

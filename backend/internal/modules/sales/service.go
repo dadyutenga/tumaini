@@ -14,6 +14,7 @@ import (
 	"bms/internal/kernel/approval"
 	"bms/internal/kernel/audit"
 	"bms/internal/kernel/notify"
+	"bms/internal/kernel/outbound"
 	"bms/internal/kernel/payments"
 	"bms/internal/kernel/sequence"
 	"bms/internal/platform/auth"
@@ -31,6 +32,7 @@ type Service struct {
 	Audit    *audit.Service
 	Approval *approval.Service
 	Notify   *notify.Service
+	Outbound *outbound.Service
 	Clock    clock.Clock
 }
 

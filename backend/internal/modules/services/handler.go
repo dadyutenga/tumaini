@@ -174,6 +174,36 @@ func (h *Handler) Register(r fiber.Router) {
 		}
 		return httpx.BadRequest("invalid_query", "format must be json or pdf")
 	})
+	r.Post("/clients/:id/statement/send", middleware.RequireAny("services.invoice.manage", "services.invoice.draft", "services.client.view_all", "finance.debt.view"), func(c fiber.Ctx) error {
+		id, err := idp(c)
+		if err != nil {
+			return err
+		}
+		var body struct {
+			Channel string `json:"channel"`
+			From    string `json:"from"`
+			To      string `json:"to"`
+		}
+		if err := httpx.BindOptional(c, &body); err != nil {
+			return err
+		}
+		out, err := s.SendClientStatement(c.Context(), middleware.Principal(c), id, body.Channel, body.From, body.To, c.Get("Idempotency-Key"))
+		return httpx.OK(c, out, err)
+	})
+	r.Post("/clients/:id/debt-reminder", middleware.Require("finance.debt.view"), func(c fiber.Ctx) error {
+		id, err := idp(c)
+		if err != nil {
+			return err
+		}
+		var body struct {
+			Channel string `json:"channel"`
+		}
+		if err := httpx.BindOptional(c, &body); err != nil {
+			return err
+		}
+		out, err := s.SendClientDebtReminder(c.Context(), middleware.Principal(c), id, body.Channel)
+		return httpx.OK(c, out, err)
+	})
 
 	// Service catalog
 	r.Get("/service-catalog", anyService, h.paged(func(c fiber.Ctx, p *auth.Principal, page httpx.Page) ([]map[string]any, int, error) {
@@ -367,9 +397,20 @@ func (h *Handler) Register(r fiber.Router) {
 	r.Post("/renewals/:id/cancel", middleware.Require("services.renewal.manage"), withIDOnly(func(c fiber.Ctx, p *auth.Principal, id uuid.UUID) (any, error) {
 		return s.CancelRenewal(c.Context(), p, id)
 	}))
-	r.Post("/renewals/:id/remind", middleware.Require("services.renewal.manage"), withIDOnly(func(c fiber.Ctx, p *auth.Principal, id uuid.UUID) (any, error) {
-		return s.RemindClient(c.Context(), p, id)
-	}))
+	r.Post("/renewals/:id/remind", middleware.Require("services.renewal.manage"), func(c fiber.Ctx) error {
+		id, err := idp(c)
+		if err != nil {
+			return err
+		}
+		var body struct {
+			Channel string `json:"channel"`
+		}
+		if err := httpx.BindOptional(c, &body); err != nil {
+			return err
+		}
+		out, err := s.RemindClient(c.Context(), middleware.Principal(c), id, body.Channel)
+		return httpx.OK(c, out, err)
+	})
 
 	// Quotations
 	quotRead := middleware.RequireAny("services.quotation.manage", "services.quotation.draft")
@@ -478,17 +519,20 @@ func (h *Handler) Register(r fiber.Router) {
 		if err != nil {
 			return err
 		}
-		data, err := s.PaymentReceipt(c.Context(), middleware.Principal(c), id)
+		format := strings.ToLower(c.Query("format"))
+		switch format {
+		case "", "json", "pdf":
+		default:
+			return httpx.BadRequest("invalid_query", "format must be json or pdf")
+		}
+		data, err := s.PaymentReceipt(c.Context(), middleware.Principal(c), id, format == "pdf")
 		if err != nil {
 			return err
 		}
-		switch strings.ToLower(c.Query("format")) {
-		case "", "json":
-			return c.JSON(httpx.Data(data))
-		case "pdf":
+		if format == "pdf" {
 			return export.File(c, "service-receipt-"+export.Cell(data["number"])+".pdf", "application/pdf", serviceReceiptPDF(data))
 		}
-		return httpx.BadRequest("invalid_query", "format must be json or pdf")
+		return c.JSON(httpx.Data(data))
 	})
 	r.Post("/service-payments/:id/void", middleware.Require("finance.payment.void"), withID(func(c fiber.Ctx, p *auth.Principal, id uuid.UUID, in reasonIn) (any, error) {
 		return s.VoidPayment(c.Context(), p, id, in.Reason)
@@ -614,17 +658,39 @@ func (h *Handler) Register(r fiber.Router) {
 		out, err := s.AddVersion(c.Context(), middleware.Principal(c), id, in)
 		return httpx.Created(c, out, err)
 	})
-	r.Post("/design-jobs/:id/versions/:version_id/send", middleware.Require("services.design.manage"), call(func(c fiber.Ctx, p *auth.Principal) (any, error) {
+	// POST /design-jobs/:id/versions/:version_id/send creates the approval link and queues outbound
+	// delivery when configured. If a channel was explicitly requested and is unconfigured, the link
+	// is still committed and HTTP 503 returns {error: {code: "channel_unavailable", ...}, data: {approval_path, ...}}.
+	r.Post("/design-jobs/:id/versions/:version_id/send", middleware.Require("services.design.manage"), func(c fiber.Ctx) error {
 		id, err := idp(c)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		v, err := httpx.UUIDParam(c, "version_id")
 		if err != nil {
-			return nil, err
+			return err
 		}
-		return s.SendForApproval(c.Context(), p, id, v, h.BaseURL)
-	}))
+		var body struct {
+			Channel string `json:"channel"`
+		}
+		if err := httpx.BindOptional(c, &body); err != nil {
+			return err
+		}
+		out, unavail, err := s.SendForApproval(c.Context(), middleware.Principal(c), id, v, h.BaseURL, body.Channel)
+		if err != nil {
+			return err
+		}
+		if unavail {
+			return c.Status(fiber.StatusServiceUnavailable).JSON(fiber.Map{
+				"error": fiber.Map{
+					"code":    "channel_unavailable",
+					"message": "This channel is not set up. Ask an administrator to configure it.",
+				},
+				"data": out,
+			})
+		}
+		return httpx.OK(c, out, nil)
+	})
 	r.Post("/design-jobs/:id/feedback", designRead, func(c fiber.Ctx) error {
 		id, err := idp(c)
 		if err != nil {

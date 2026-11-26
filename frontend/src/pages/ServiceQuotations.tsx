@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -14,9 +14,11 @@ import {
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
 import { ConfirmDialog, PageLoader } from "@/components/shared/Display";
@@ -148,7 +150,7 @@ function AcceptDialog({ quote, onClose }: { quote: Quotation; onClose: () => voi
         })
       }
     >
-      <label className="flex items-center gap-2 text-sm">
+      <label className="flex items-center gap-2 text-[13px] text-[var(--od-ink-secondary)]">
         <input
           type="checkbox"
           checked={createProject}
@@ -217,42 +219,59 @@ function Detail({
           <PageLoader />
         ) : (
           <div className="space-y-4">
-            <div className="flex flex-wrap items-center gap-3 text-sm">
+            <div className="flex flex-wrap items-center gap-3 text-[13px]">
               <StatusBadge value={q.status} />
               {q.valid_until && (
-                <span className="text-muted-foreground">
-                  Valid until {formatDate(q.valid_until)}
-                </span>
+                <span className="od-caption">Valid until {formatDate(q.valid_until)}</span>
               )}
             </div>
             <LinesTable lines={q.lines ?? []} />
-            <div className="text-right text-sm">
-              {toNumber(q.discount) > 0 && <p>Discount {formatMoney(q.discount)}</p>}
-              <p className="text-lg font-semibold">Total {formatMoney(q.total)}</p>
+            <div className="ml-auto w-full max-w-xs space-y-1 rounded-[var(--od-radius-md,12px)] bg-[var(--od-surface-subtle)] p-4 text-[13px]">
+              {toNumber(q.discount) > 0 && (
+                <p className="flex justify-between text-[var(--od-ink-secondary)]">
+                  <span>Discount</span>
+                  <span className="od-tabular">{formatMoney(q.discount)}</span>
+                </p>
+              )}
+              <p className="flex justify-between text-[15px] font-semibold text-[var(--od-ink)]">
+                <span>Total</span>
+                <span className="od-tabular">{formatMoney(q.total)}</span>
+              </p>
             </div>
-            {q.notes && <p className="rounded-xl bg-muted/50 p-3 text-sm">{q.notes}</p>}
-            <div className="flex flex-wrap justify-end gap-2">
-              <PdfButton path={`/service-quotations/${id}/pdf`} filename={`${q.number}.pdf`} />
+            {q.notes && (
+              <p className="rounded-[var(--od-radius-sm,8px)] bg-[var(--od-surface-subtle)] p-3 text-[13px] text-[var(--od-ink-secondary)]">
+                {q.notes}
+              </p>
+            )}
+            <div className="flex flex-wrap justify-end gap-2 pt-1">
+              <PdfButton
+                size="sm"
+                path={`/service-quotations/${id}/pdf`}
+                filename={`${q.number}.pdf`}
+              />
               {canDraft && q.status === "draft" && (
-                <Button variant="outline" onClick={() => onEdit(q)}>
+                <Button size="sm" variant="outline" onClick={() => onEdit(q)}>
                   Edit
                 </Button>
               )}
               {manage && q.status === "draft" && (
-                <Button onClick={() => send.mutate(undefined)} disabled={send.isPending}>
+                <Button size="sm" onClick={() => send.mutate(undefined)} disabled={send.isPending}>
                   Mark as sent
                 </Button>
               )}
               {manage && (q.status === "draft" || q.status === "sent") && (
                 <>
-                  <Button variant="outline" onClick={() => setRejecting(true)}>
+                  <Button size="sm" variant="outline" onClick={() => setRejecting(true)}>
                     Rejected
                   </Button>
-                  <Button onClick={() => setAccepting(true)}>Accepted</Button>
+                  <Button size="sm" onClick={() => setAccepting(true)}>
+                    Accepted
+                  </Button>
                 </>
               )}
               {q.invoice_id && (
                 <Button
+                  size="sm"
                   variant="outline"
                   onClick={() => navigate(`/service-invoices?open=${q.invoice_id}`)}
                 >
@@ -260,7 +279,11 @@ function Detail({
                 </Button>
               )}
               {q.project_id && (
-                <Button variant="outline" onClick={() => navigate(`/projects/${q.project_id}`)}>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => navigate(`/projects/${q.project_id}`)}
+                >
                   Open project
                 </Button>
               )}
@@ -312,39 +335,47 @@ export default function ServiceQuotations() {
   }
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Quotations"
-        description="Price a job for a client. When they agree, accept it to get the invoice and project."
+        description="Price a job for a client. Accept to generate a draft invoice and project."
         actions={
           canCreate && (
-            <Button onClick={() => setForm(blank)}>
-              <Plus size={16} /> New quotation
+            <Button size="sm" onClick={() => setForm(blank)}>
+              <Plus size={14} /> New quotation
             </Button>
           )
         }
       />
-      <div className="mb-4 flex flex-wrap gap-3">
-        <Input
-          aria-label="Search"
-          className="max-w-xs"
-          placeholder="Search number or client…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-        />
-        <NativeSelect
-          aria-label="Status"
-          className="w-40"
+
+      <FilterBar className="justify-between">
+        <div className="relative min-w-60 flex-1 sm:max-w-xs">
+          <Search
+            size={15}
+            className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
+          />
+          <Input
+            aria-label="Search"
+            className="pl-9"
+            placeholder="Search number or client…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+        <SegmentedChips
+          ariaLabel="Quotation status"
           value={status}
-          onChange={(e) => setStatus(e.target.value)}
-        >
-          <option value="">All</option>
-          <option value="draft">Draft</option>
-          <option value="sent">Sent</option>
-          <option value="accepted">Accepted</option>
-          <option value="rejected">Rejected</option>
-        </NativeSelect>
-      </div>
+          onChange={setStatus}
+          options={[
+            { value: "", label: "All" },
+            { value: "draft", label: "Draft" },
+            { value: "sent", label: "Sent" },
+            { value: "accepted", label: "Accepted" },
+            { value: "rejected", label: "Rejected" },
+          ]}
+        />
+      </FilterBar>
+
       <DataGrid
         rows={list.data}
         loading={list.isLoading}
@@ -352,16 +383,39 @@ export default function ServiceQuotations() {
         empty="No quotations yet"
         onRowClick={(r) => setOpenId(r.id)}
         columns={[
-          { header: "Number", cell: (r) => <span className="font-medium">{r.number}</span> },
-          { header: "Client", cell: (r) => r.client_name },
-          { header: "Date", cell: (r) => formatDate(r.created_at) },
-          { header: "Valid until", cell: (r) => (r.valid_until ? formatDate(r.valid_until) : "-") },
+          {
+            header: "Number",
+            sortValue: (r) => r.number,
+            cell: (r) => <span className="od-mono font-medium">{r.number}</span>,
+          },
+          { header: "Client", sortValue: (r) => r.client_name, cell: (r) => r.client_name },
+          {
+            header: "Date",
+            sortValue: (r) => r.created_at,
+            cell: (r) => (
+              <span className="text-[var(--od-ink-secondary)]">{formatDate(r.created_at)}</span>
+            ),
+          },
+          {
+            header: "Valid until",
+            cell: (r) => (
+              <span className="text-[var(--od-ink-secondary)]">
+                {r.valid_until ? formatDate(r.valid_until) : "—"}
+              </span>
+            ),
+          },
           { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
-          { header: "Total", align: "right", cell: (r) => formatMoney(r.total) },
+          {
+            header: "Total",
+            align: "right",
+            sortValue: (r) => toNumber(r.total),
+            cell: (r) => <span className="font-medium">{formatMoney(r.total)}</span>,
+          },
         ]}
       />
+
       {form && <QuotationForm key={form.id ?? "new"} draft={form} onClose={() => setForm(null)} />}
       {openId && <Detail id={openId} onClose={() => setOpenId(null)} onEdit={edit} />}
-    </>
+    </div>
   );
 }

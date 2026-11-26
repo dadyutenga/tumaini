@@ -3,8 +3,6 @@ import { useNavigate } from "react-router-dom";
 import {
   AlertCircle,
   Download,
-  Grid2x2,
-  List,
   Package,
   Pencil,
   Plus,
@@ -19,10 +17,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
   Pager,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
 import { ProductImage } from "@/components/shared/ProductImage";
@@ -31,6 +31,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { download, session, uploadFile } from "@/lib/api";
 import { formatMoney, formatQty, toNumber } from "@/lib/formatters";
+import { cn } from "@/lib/utils";
 import type { Category, Product, Unit } from "@/types";
 
 interface Draft {
@@ -192,7 +193,7 @@ export default function Products() {
   }
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Products"
         description={
@@ -201,23 +202,16 @@ export default function Products() {
             : "Product catalog: search, check stock and tap Sell to add to POS."
         }
         actions={
-          <div className="flex flex-wrap gap-2">
-            <div className="inline-flex rounded-lg border bg-card p-0.5">
-              <Button
-                size="sm"
-                variant={view === "catalog" ? "default" : "ghost"}
-                onClick={() => setView("catalog")}
-              >
-                <Grid2x2 size={14} /> Catalog
-              </Button>
-              <Button
-                size="sm"
-                variant={view === "table" ? "default" : "ghost"}
-                onClick={() => setView("table")}
-              >
-                <List size={14} /> Table
-              </Button>
-            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <SegmentedChips
+              ariaLabel="View mode"
+              value={view}
+              onChange={setView}
+              options={[
+                { value: "catalog", label: "Catalog" },
+                { value: "table", label: "Table" },
+              ]}
+            />
             {canImport && (
               <>
                 <input
@@ -254,7 +248,7 @@ export default function Products() {
             </Button>
             {manage && (
               <Button size="sm" onClick={() => open("new")}>
-                <Plus size={16} /> New product
+                <Plus size={14} /> New product
               </Button>
             )}
           </div>
@@ -263,24 +257,23 @@ export default function Products() {
 
       <Tabs defaultValue="products">
         {canCategories && (
-          <TabsList className="mb-4">
+          <TabsList>
             <TabsTrigger value="products">Products</TabsTrigger>
             <TabsTrigger value="categories">Categories</TabsTrigger>
           </TabsList>
         )}
 
         <TabsContent value="products" className="space-y-4">
-          {/* Search + Quick Filters */}
-          <div className="flex flex-wrap items-center gap-3">
+          <FilterBar>
             <div className="relative min-w-60 flex-1 sm:max-w-md">
               <Search
-                size={16}
-                className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-muted-foreground"
+                size={15}
+                className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
               />
               <Input
                 aria-label="Search products"
                 placeholder="Search products by name, SKU or barcode…"
-                className="h-10 rounded-xl bg-card pl-10 shadow-xs"
+                className="pl-9"
                 value={q}
                 onChange={(e) => {
                   setQ(e.target.value);
@@ -294,31 +287,32 @@ export default function Products() {
                 setLow((v) => !v);
                 setPage(1);
               }}
-              className={`inline-flex h-10 items-center gap-1.5 rounded-xl border px-3.5 text-sm font-medium transition ${
+              className={cn(
+                "inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[var(--od-app-radius,10px)] border px-3 text-[13px] font-medium transition-colors",
                 low
-                  ? "border-amber-500/40 bg-amber-500/12 text-amber-700 dark:text-amber-400"
-                  : "bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground"
-              }`}
+                  ? "border-transparent bg-[var(--od-warning-soft)] text-[var(--od-warning)]"
+                  : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
+              )}
             >
-              <AlertCircle size={15} />
+              <AlertCircle size={14} />
               Low stock only
             </button>
-          </div>
+          </FilterBar>
 
-          {/* Horizontal Scrollable Category Pills */}
           {(categories.data ?? []).length > 0 && (
-            <div className="no-scrollbar flex items-center gap-2 overflow-x-auto pb-1">
+            <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto pb-0.5">
               <button
                 type="button"
                 onClick={() => {
                   setCatFilter("");
                   setPage(1);
                 }}
-                className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                className={cn(
+                  "shrink-0 cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                   catFilter === ""
-                    ? "bg-primary text-primary-foreground shadow-xs"
-                    : "border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                }`}
+                    ? "border-transparent bg-[var(--od-app-primary)] text-[var(--od-app-primary-foreground)]"
+                    : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
+                )}
               >
                 All items
               </button>
@@ -330,11 +324,12 @@ export default function Products() {
                     setCatFilter(c.id);
                     setPage(1);
                   }}
-                  className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                  className={cn(
+                    "shrink-0 cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                     catFilter === c.id
-                      ? "bg-primary text-primary-foreground shadow-xs"
-                      : "border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                  }`}
+                      ? "border-transparent bg-[var(--od-app-primary)] text-[var(--od-app-primary-foreground)]"
+                      : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
+                  )}
                 >
                   {c.name}
                 </button>
@@ -346,33 +341,30 @@ export default function Products() {
             isLoading ? (
               <div className="grid grid-cols-2 gap-4 md:grid-cols-3 xl:grid-cols-4">
                 {Array.from({ length: 8 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className="overflow-hidden rounded-2xl border bg-card shadow-xs animate-pulse"
-                  >
-                    <div className="aspect-[4/3] bg-muted" />
+                  <div key={i} className="od-card-flush animate-pulse overflow-hidden">
+                    <div className="aspect-[4/3] bg-[var(--od-surface-subtle)]" />
                     <div className="space-y-2 p-4">
-                      <div className="h-4 w-3/4 rounded bg-muted" />
-                      <div className="h-3 w-1/3 rounded bg-muted" />
-                      <div className="mt-3 h-6 w-1/2 rounded bg-muted" />
+                      <div className="h-4 w-3/4 rounded bg-[var(--od-surface-subtle)]" />
+                      <div className="h-3 w-1/3 rounded bg-[var(--od-surface-subtle)]" />
+                      <div className="mt-3 h-5 w-1/2 rounded bg-[var(--od-surface-subtle)]" />
                     </div>
                   </div>
                 ))}
               </div>
             ) : (data?.data ?? []).length === 0 ? (
-              <div className="flex flex-col items-center justify-center rounded-2xl border bg-card py-16 text-center shadow-xs">
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10 text-primary">
-                  <Package size={26} />
+              <div className="od-card items-center py-14 text-center">
+                <div className="grid h-11 w-11 place-items-center rounded-full bg-[var(--od-surface-subtle)] text-[var(--od-ink-muted)]">
+                  <Package size={20} />
                 </div>
-                <p className="mt-4 text-base font-semibold">No products found</p>
-                <p className="mt-1 text-sm text-muted-foreground">
+                <p className="mt-3 text-[14px] font-semibold">No products found</p>
+                <p className="od-caption mt-1">
                   {q || catFilter || low
                     ? "Try clearing your search or category filter."
                     : "Add your first product to start selling from the catalog."}
                 </p>
                 {manage && !q && !catFilter && !low && (
                   <Button className="mt-4" size="sm" onClick={() => open("new")}>
-                    <Plus size={15} /> New product
+                    <Plus size={14} /> New product
                   </Button>
                 )}
               </div>
@@ -386,30 +378,30 @@ export default function Products() {
                   return (
                     <article
                       key={p.id}
-                      className="group flex flex-col overflow-hidden rounded-2xl border bg-card shadow-xs transition duration-200 hover:-translate-y-0.5 hover:border-primary/45 hover:shadow-md"
+                      className="od-card-flush group flex flex-col overflow-hidden transition-colors hover:border-[var(--od-ink-muted)]"
                     >
-                      {/* E-Commerce Photo Header */}
                       <button
                         type="button"
                         onClick={() => navigate(`/products/${p.id}`)}
-                        className="relative aspect-[4/3] w-full overflow-hidden bg-muted text-left focus:outline-none"
+                        className="relative aspect-[4/3] w-full cursor-pointer overflow-hidden bg-[var(--od-surface-subtle)] text-left focus:outline-none"
                       >
                         <ProductImage fileId={p.photo_file} name={p.name} />
                         {categoryName && (
-                          <span className="absolute top-2.5 left-2.5 max-w-[55%] truncate rounded-full bg-background/90 px-2.5 py-0.5 text-[11px] font-semibold text-foreground shadow-xs backdrop-blur">
+                          <span className="absolute top-2.5 left-2.5 max-w-[55%] truncate rounded-full bg-[var(--od-surface)]/90 px-2.5 py-0.5 text-[11px] font-medium text-[var(--od-ink)] ring-1 ring-[var(--od-border-strong)] backdrop-blur">
                             {categoryName}
                           </span>
                         )}
                         <span
-                          className={`absolute top-2.5 right-2.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold shadow-xs backdrop-blur ${
+                          className={cn(
+                            "od-tabular absolute top-2.5 right-2.5 rounded-full px-2.5 py-0.5 text-[11px] font-semibold backdrop-blur",
                             !p.is_active
-                              ? "bg-muted/95 text-muted-foreground"
+                              ? "bg-[var(--od-surface)]/90 text-[var(--od-ink-muted)]"
                               : outOfStock
-                                ? "bg-destructive text-destructive-foreground"
+                                ? "bg-[var(--od-bad-mark)] text-white"
                                 : isLow
-                                  ? "bg-amber-500 text-white"
-                                  : "bg-primary text-primary-foreground"
-                          }`}
+                                  ? "bg-[var(--od-warning-mark)] text-[#0d0d0d]"
+                                  : "bg-[var(--od-good-mark)] text-white",
+                          )}
                         >
                           {!p.is_active
                             ? "Inactive"
@@ -419,29 +411,28 @@ export default function Products() {
                         </span>
                       </button>
 
-                      {/* Card Details & Actions */}
-                      <div className="flex flex-1 flex-col justify-between p-3.5 sm:p-4">
+                      <div className="flex flex-1 flex-col justify-between p-4">
                         <div>
                           <button
                             type="button"
                             onClick={() => navigate(`/products/${p.id}`)}
-                            className="line-clamp-2 text-left text-sm font-semibold leading-snug text-foreground transition group-hover:text-primary sm:text-[15px]"
+                            className="line-clamp-2 cursor-pointer text-left text-[14px] font-semibold leading-snug text-[var(--od-ink)] group-hover:underline"
                           >
                             {p.name}
                           </button>
-                          <p className="mt-1 truncate text-xs text-muted-foreground">
+                          <p className="od-mono mt-1 truncate text-[11px] text-[var(--od-ink-muted)]">
                             {p.sku}
                             {p.warranty_months ? ` · ${p.warranty_months}m warranty` : ""}
                           </p>
                         </div>
 
-                        <div className="mt-3 space-y-3 border-t pt-3">
+                        <div className="mt-3 space-y-3 border-t border-[var(--od-border)] pt-3">
                           <div className="flex items-baseline justify-between gap-2">
-                            <p className="text-base font-bold tracking-tight text-foreground tabular-nums sm:text-lg">
+                            <p className="od-tabular text-[16px] font-semibold tracking-tight text-[var(--od-ink)]">
                               {formatMoney(p.sell_price)}
                             </p>
                             {showCost && p.avg_cost && (
-                              <span className="truncate text-[11px] text-muted-foreground tabular-nums">
+                              <span className="od-tabular truncate text-[11px] text-[var(--od-ink-muted)]">
                                 Cost {formatMoney(p.avg_cost)}
                               </span>
                             )}
@@ -451,18 +442,18 @@ export default function Products() {
                             {can("shop.sale.create") && p.is_active ? (
                               <Button
                                 size="sm"
-                                className="flex-1 rounded-xl"
+                                className="flex-1"
                                 disabled={outOfStock}
                                 onClick={() => navigate(`/pos?add=${p.id}`)}
                               >
-                                <ShoppingCart size={14} />
+                                <ShoppingCart size={13} />
                                 {outOfStock ? "Out of stock" : "Sell"}
                               </Button>
                             ) : (
                               <Button
                                 size="sm"
                                 variant="outline"
-                                className="flex-1 rounded-xl"
+                                className="flex-1"
                                 onClick={() => navigate(`/products/${p.id}`)}
                               >
                                 View
@@ -472,11 +463,11 @@ export default function Products() {
                               <Button
                                 size="icon"
                                 variant="outline"
-                                className="h-8 w-8 shrink-0 rounded-xl"
+                                className="h-8 w-8 shrink-0"
                                 aria-label={`Edit ${p.name}`}
                                 onClick={() => open(p)}
                               >
-                                <Pencil size={14} />
+                                <Pencil size={13} />
                               </Button>
                             )}
                           </div>
@@ -497,36 +488,46 @@ export default function Products() {
               columns={[
                 {
                   header: "Product",
+                  sortValue: (p) => p.name,
                   cell: (p) => (
                     <div className="flex items-center gap-3">
-                      <div className="h-10 w-10 shrink-0 overflow-hidden rounded-xl border bg-muted">
+                      <div className="h-9 w-9 shrink-0 overflow-hidden rounded-[var(--od-radius-sm,8px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)]">
                         <ProductImage fileId={p.photo_file} name={p.name} size="thumb" />
                       </div>
                       <div className="min-w-0">
                         <p className="truncate font-medium">{p.name}</p>
                         {p.category_id && categoryNames.get(p.category_id) && (
-                          <p className="text-xs text-muted-foreground">
-                            {categoryNames.get(p.category_id)}
-                          </p>
+                          <p className="od-caption">{categoryNames.get(p.category_id)}</p>
                         )}
                       </div>
                     </div>
                   ),
                 },
-                { header: "SKU", cell: (p) => p.sku },
-                { header: "Price", align: "right", cell: (p) => formatMoney(p.sell_price) },
+                {
+                  header: "SKU",
+                  cell: (p) => (
+                    <span className="od-mono text-xs text-[var(--od-ink-secondary)]">{p.sku}</span>
+                  ),
+                },
+                {
+                  header: "Price",
+                  align: "right",
+                  sortValue: (p) => toNumber(p.sell_price),
+                  cell: (p) => <span className="font-medium">{formatMoney(p.sell_price)}</span>,
+                },
                 ...(showCost
                   ? [
                       {
                         header: "Avg cost",
                         align: "right" as const,
-                        cell: (p: Product) => (p.avg_cost ? formatMoney(p.avg_cost) : "-"),
+                        cell: (p: Product) => (p.avg_cost ? formatMoney(p.avg_cost) : "—"),
                       },
                     ]
                   : []),
                 {
                   header: "On hand",
                   align: "right",
+                  sortValue: (p) => toNumber(p.qty_on_hand),
                   cell: (p) => `${formatQty(p.qty_on_hand)} ${p.unit}`,
                 },
                 {
@@ -567,8 +568,8 @@ export default function Products() {
         </TabsContent>
 
         {canCategories && (
-          <TabsContent value="categories">
-            <div className="mb-3 flex justify-end">
+          <TabsContent value="categories" className="space-y-4">
+            <div className="flex justify-end">
               <Button
                 size="sm"
                 onClick={() => {
@@ -608,7 +609,7 @@ export default function Products() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="text-destructive"
+                        className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                         onClick={() => deleteCategory.mutate({ id: c.id })}
                       >
                         Delete
@@ -713,7 +714,7 @@ export default function Products() {
             />
           </Field>
         )}
-        <label className="flex items-center gap-2 text-sm">
+        <label className="flex items-center gap-2 text-[13px] text-[var(--od-ink-secondary)]">
           <input
             type="checkbox"
             checked={draft.track_serial}
@@ -743,7 +744,7 @@ export default function Products() {
               }
             }}
           />
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <Button
               type="button"
               size="sm"
@@ -754,7 +755,7 @@ export default function Products() {
               <Upload size={14} /> {uploadingPhoto ? "Uploading…" : "Upload photo"}
             </Button>
             {draft.photo_file && (
-              <span className="text-xs text-emerald-700 dark:text-emerald-400">Photo attached</span>
+              <span className="text-xs font-medium text-[var(--od-good)]">Photo attached</span>
             )}
           </div>
         </Field>
@@ -771,6 +772,6 @@ export default function Products() {
           <Input required value={catName} onChange={(e) => setCatName(e.target.value)} />
         </Field>
       </FormDialog>
-    </>
+    </div>
   );
 }

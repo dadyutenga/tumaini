@@ -8,6 +8,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
@@ -157,7 +158,7 @@ export default function Team() {
   }
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Team and roles"
         description="Every Manager or Staff member starts as an Employee first, then receives system access and a role here or from People."
@@ -182,15 +183,19 @@ export default function Team() {
         }
       />
       {resetResult && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/5 p-4 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--od-info-mark)]/30 bg-[var(--od-surface-subtle)] p-4 text-sm">
           <div>
-            <p className="font-medium">Temporary password for {resetResult.name}</p>
-            <p className="text-xs text-muted-foreground">
+            <p className="font-semibold text-[var(--od-ink)]">
+              Temporary password for {resetResult.name}
+            </p>
+            <p className="od-caption mt-0.5">
               Share this securely. They must change it when signing in.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <code className="rounded bg-muted px-2 py-1 font-mono">{resetResult.password}</code>
+            <code className="od-mono rounded-lg border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-2.5 py-1 text-xs font-medium text-[var(--od-ink)]">
+              {resetResult.password}
+            </code>
             <CopyButton text={resetResult.password} />
             <Button size="sm" variant="ghost" onClick={() => setResetResult(null)}>
               Dismiss
@@ -199,7 +204,7 @@ export default function Team() {
         </div>
       )}
       <Tabs defaultValue="users">
-        <TabsList>
+        <TabsList className="mb-4">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="roles">Roles</TabsTrigger>
         </TabsList>
@@ -209,8 +214,18 @@ export default function Team() {
             loading={users.isLoading}
             rowKey={(u) => u.id}
             columns={[
-              { header: "Name", cell: (u) => <span className="font-medium">{u.name}</span> },
-              { header: "Contact", cell: (u) => u.phone ?? u.email ?? "-" },
+              {
+                header: "Name",
+                cell: (u) => <span className="font-medium text-[var(--od-ink)]">{u.name}</span>,
+              },
+              {
+                header: "Contact",
+                cell: (u) => (
+                  <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
+                    {u.phone ?? u.email ?? "-"}
+                  </span>
+                ),
+              },
               {
                 header: "Employee profile",
                 cell: (u) => {
@@ -219,7 +234,7 @@ export default function Team() {
                     return (
                       <Link
                         to={`/employees/${u.employee_id}`}
-                        className="text-xs font-medium text-primary hover:underline"
+                        className="text-xs font-medium text-[var(--od-info)] hover:underline"
                       >
                         {emp
                           ? `${emp.employee_no} · ${emp.position || "Employee"}`
@@ -228,13 +243,16 @@ export default function Team() {
                     );
                   }
                   return (
-                    <Badge variant="outline" className="text-[11px] text-muted-foreground">
+                    <Badge variant="outline" className="text-[11px] text-[var(--od-ink-muted)]">
                       {u.role_slug === "admin" || u.role_slug === "owner" ? "Owner" : "Not linked"}
                     </Badge>
                   );
                 },
               },
-              { header: "Role", cell: (u) => u.role_name },
+              {
+                header: "Role",
+                cell: (u) => (u.role_name ? <Badge variant="secondary">{u.role_name}</Badge> : "-"),
+              },
               {
                 header: "Default location",
                 cell: (u) =>
@@ -251,7 +269,7 @@ export default function Team() {
                 className: "text-right",
                 cell: (u) =>
                   manage && (
-                    <div className="flex justify-end gap-1">
+                    <div className="flex flex-wrap justify-end gap-1">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -268,7 +286,7 @@ export default function Team() {
                           setEditingUser(u);
                         }}
                       >
-                        <Pencil size={14} /> Edit
+                        <Pencil size={13} /> Edit
                       </Button>
                       <Button
                         variant="ghost"
@@ -278,15 +296,15 @@ export default function Team() {
                           setResetTarget(u);
                         }}
                       >
-                        <KeyRound size={14} /> Reset PW
+                        <KeyRound size={13} /> Reset PW
                       </Button>
                       {u.role_slug !== "admin" && u.role_slug !== "owner" && (
                         <Button variant="ghost" size="sm" onClick={() => setPermTarget(u)}>
-                          <Shield size={14} /> Perms
+                          <Shield size={13} /> Perms
                         </Button>
                       )}
                       <Button variant="ghost" size="sm" onClick={() => setKickTarget(u)}>
-                        <LogOut size={14} /> Sign out
+                        <LogOut size={13} /> Sign out
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => toggle.mutate(u)}>
                         {u.is_active ? "Deactivate" : "Activate"}
@@ -298,22 +316,36 @@ export default function Team() {
           />
           <Pager meta={users.data?.meta} onPage={setPage} />
         </TabsContent>
-        <TabsContent value="roles">
+        <TabsContent value="roles" className="space-y-4">
           {manage && (
-            <div className="mb-4 flex justify-end">
+            <FilterBar className="justify-end">
               <Button onClick={() => setEditingRole(null)}>
                 <Plus size={16} /> New role
               </Button>
-            </div>
+            </FilterBar>
           )}
           <DataGrid
             rows={roles.data}
             loading={roles.isLoading}
             rowKey={(r) => r.id}
             columns={[
-              { header: "Role", cell: (r) => <span className="font-medium">{r.name}</span> },
-              { header: "Rank", align: "right", cell: (r) => r.rank ?? "-" },
-              { header: "Type", cell: (r) => (r.is_system ? "Built in" : "Custom") },
+              {
+                header: "Role",
+                cell: (r) => <span className="font-medium text-[var(--od-ink)]">{r.name}</span>,
+              },
+              {
+                header: "Rank",
+                align: "right",
+                cell: (r) => <span className="od-tabular">{r.rank ?? "-"}</span>,
+              },
+              {
+                header: "Type",
+                cell: (r) => (
+                  <Badge variant={r.is_system ? "secondary" : "outline"}>
+                    {r.is_system ? "Built in" : "Custom"}
+                  </Badge>
+                ),
+              },
               {
                 header: "",
                 cell: (r) => (
@@ -325,7 +357,7 @@ export default function Team() {
                       <Button
                         size="sm"
                         variant="ghost"
-                        className="text-destructive"
+                        className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                         onClick={() => setRetireRole(r)}
                       >
                         <Trash2 size={14} /> Retire
@@ -374,9 +406,11 @@ export default function Team() {
         }}
       >
         {unlinkedEmployees.length === 0 ? (
-          <div className="space-y-3 rounded-xl border border-dashed bg-muted/30 p-5 text-center">
-            <p className="text-sm font-medium">No employees waiting for a login</p>
-            <p className="text-xs text-muted-foreground">
+          <div className="space-y-3 rounded-xl border border-dashed border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] p-5 text-center">
+            <p className="text-sm font-semibold text-[var(--od-ink)]">
+              No employees waiting for a login
+            </p>
+            <p className="od-caption">
               Every active employee already has system access, or you haven&apos;t added an employee
               profile yet. Create the employee first, then assign their role.
             </p>
@@ -594,6 +628,6 @@ export default function Team() {
           onClose={() => setPermTarget(null)}
         />
       )}
-    </>
+    </div>
   );
 }

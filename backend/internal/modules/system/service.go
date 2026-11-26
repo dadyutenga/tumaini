@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,6 +20,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/kernel/notify"
+	"bms/internal/kernel/outbound"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
 	"bms/internal/platform/ids"
@@ -28,12 +30,13 @@ import (
 )
 
 type Service struct {
-	DB     *db.DB
-	Notify *notify.Service
-	Store  storage.Store
-	Clock  clock.Clock
-	Email  sender.Sender
-	SMS    sender.Sender
+	DB       *db.DB
+	Notify   *notify.Service
+	Outbound *outbound.Service
+	Store    storage.Store
+	Clock    clock.Clock
+	Email    sender.Sender
+	SMS      sender.Sender
 }
 
 // exportExcluded are tenant tables whose rows are transient queue/idempotency/backup state.
@@ -260,6 +263,79 @@ func (s *Service) DebtReminders(ctx context.Context, tenantID uuid.UUID, _ json.
 		if err := send(overdueN, overdueAmt, "finance.debt.view", "Customer invoices overdue",
 			"%d unpaid customer invoices are past due, total %s", "/customers/debts"); err != nil {
 			return err
+		}
+
+		// Optional customer outbound reminders only when the tenant explicitly enabled sms or whatsapp on debt_due.
+		if overdueN > 0 && s.Outbound != nil {
+			var ruleEnabled, ruleSMS, ruleWA bool
+			err := tx.QueryRow(ctx, `
+				SELECT enabled, sms, whatsapp FROM app.notification_rules
+				WHERE tenant_id = $1 AND notification_type = 'debt_due'::app.notification_type`,
+				tenantID).Scan(&ruleEnabled, &ruleSMS, &ruleWA)
+			if err == nil && ruleEnabled && (ruleSMS || ruleWA) {
+				var channels []string
+				if ruleSMS && s.Outbound.Channels.Available("sms") {
+					channels = append(channels, "sms")
+				}
+				if ruleWA && s.Outbound.Channels.Available("whatsapp") {
+					channels = append(channels, "whatsapp")
+				}
+				if len(channels) > 0 {
+					crows, err := tx.Query(ctx, `
+						SELECT c.id, c.full_name::text, c.phone::text, SUM(x.bal) AS due
+						FROM app.customers c
+						JOIN (
+							SELECT s.customer_id, s.balance_due AS bal FROM app.sales s
+							WHERE s.tenant_id = $1 AND s.customer_id IS NOT NULL AND s.status = 'completed' AND s.balance_due > 0 AND COALESCE(s.due_date, s.business_date) < $2::date
+							UNION ALL
+							SELECT i.customer_id, i.balance_due AS bal FROM app.invoices i
+							WHERE i.tenant_id = $1 AND i.status IN ('issued', 'partially_paid') AND i.balance_due > 0 AND i.due_date < $2::date
+						) x ON x.customer_id = c.id
+						WHERE c.tenant_id = $1 AND c.phone IS NOT NULL AND length(c.phone::text) >= 5
+						GROUP BY c.id, c.full_name, c.phone`, tenantID, today)
+					if err != nil {
+						return err
+					}
+					type dueCust struct {
+						id    uuid.UUID
+						name  string
+						phone string
+						bal   decimal.Decimal
+					}
+					var list []dueCust
+					for crows.Next() {
+						var dc dueCust
+						if err := crows.Scan(&dc.id, &dc.name, &dc.phone, &dc.bal); err != nil {
+							crows.Close()
+							return err
+						}
+						list = append(list, dc)
+					}
+					crows.Close()
+					if err := crows.Err(); err != nil {
+						return err
+					}
+					for _, dc := range list {
+						body := outbound.RenderTemplate(ctx, tx, "notifications.sms_template_debt",
+							"Reminder: {{name}}, your outstanding balance is {{balance}}.",
+							map[string]string{"name": dc.name, "balance": dc.bal.StringFixed(2)},
+						)
+						for _, ch := range channels {
+							cid := dc.id
+							if _, err := s.Outbound.Enqueue(ctx, tx, tenantID, outbound.Message{
+								Channel:        ch,
+								Recipient:      strings.TrimSpace(dc.phone),
+								Subject:        "Payment reminder",
+								Body:           body,
+								IdempotencyKey: fmt.Sprintf("auto-debt:%s:%s:%s", dc.id.String(), ch, today),
+								CustomerID:     &cid,
+							}); err != nil {
+								return err
+							}
+						}
+					}
+				}
+			}
 		}
 
 		// Customers at 90% or more of credit limit.

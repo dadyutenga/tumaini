@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Plus } from "lucide-react";
+import { Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { StatCard } from "@/components/shared/Display";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
-  NativeSelect,
   PageHeader,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
@@ -81,67 +83,109 @@ export default function Clients() {
       navigate(`/clients/${c.id}`);
     },
   });
-  const owed = (clients.data ?? []).reduce((sum, c) => sum + Math.max(0, toNumber(c.balance)), 0);
+
+  const rows = clients.data ?? [];
+  const owed = rows.reduce((sum, c) => sum + Math.max(0, toNumber(c.balance)), 0);
+  const leadsCount = rows.filter((c) => c.status === "lead").length;
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Clients and leads"
-        description={clients.data ? `Clients owe you ${formatMoney(owed)} in total.` : undefined}
+        description="Service clients, pipeline leads and outstanding receivables."
         actions={
           can("services.client.manage") && (
-            <Button onClick={() => setOpen(true)}>
-              <Plus size={16} /> New client
+            <Button size="sm" onClick={() => setOpen(true)}>
+              <Plus size={14} /> New client
             </Button>
           )
         }
       />
-      <div className="mb-4 flex flex-wrap gap-3">
-        <Input
-          aria-label="Search clients"
-          className="max-w-xs"
-          placeholder="Search name or phone…"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard label="Matching records" value={rows.length} />
+        <StatCard label="Leads in view" value={leadsCount} />
+        <StatCard
+          label="Clients owe us"
+          value={formatMoney(owed)}
+          tone={owed > 0 ? "bad" : "good"}
         />
-        <NativeSelect
-          aria-label="Status"
-          className="w-40"
-          value={status}
-          onChange={(e) => setStatus(e.target.value)}
-        >
-          <option value="">All</option>
-          <option value="lead">Leads</option>
-          <option value="active">Active</option>
-          <option value="completed">Completed</option>
-        </NativeSelect>
       </div>
+
+      <FilterBar className="justify-between">
+        <div className="relative min-w-60 flex-1 sm:max-w-xs">
+          <Search
+            size={15}
+            className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
+          />
+          <Input
+            aria-label="Search clients"
+            className="pl-9"
+            placeholder="Search name or phone…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+        <SegmentedChips
+          ariaLabel="Client status"
+          value={status}
+          onChange={setStatus}
+          options={[
+            { value: "", label: "All" },
+            { value: "lead", label: "Leads" },
+            { value: "active", label: "Active" },
+            { value: "completed", label: "Completed" },
+          ]}
+        />
+      </FilterBar>
+
       <DataGrid
-        rows={clients.data}
+        rows={rows}
         loading={clients.isLoading}
         rowKey={(c) => c.id}
         empty="No clients yet. Add the first one."
         onRowClick={(c) => navigate(`/clients/${c.id}`)}
         columns={[
-          { header: "Name", cell: (c) => <span className="font-medium">{c.name}</span> },
-          { header: "Phone", cell: (c) => c.phone ?? "-" },
+          {
+            header: "Name",
+            sortValue: (c) => c.name,
+            cell: (c) => <span className="font-medium">{c.name}</span>,
+          },
+          {
+            header: "Phone",
+            cell: (c) => (
+              <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
+                {c.phone ?? "—"}
+              </span>
+            ),
+          },
           {
             header: "Status",
             cell: (c) => <StatusBadge value={c.is_active ? c.status : "inactive"} />,
           },
-          { header: "Source", cell: (c) => c.source ?? "-" },
-          { header: "Projects", align: "right", cell: (c) => c.projects },
+          {
+            header: "Source",
+            cell: (c) => <span className="text-[var(--od-ink-secondary)]">{c.source ?? "—"}</span>,
+          },
+          {
+            header: "Projects",
+            align: "right",
+            sortValue: (c) => c.projects,
+            cell: (c) => c.projects,
+          },
           {
             header: "Owes",
             align: "right",
+            sortValue: (c) => toNumber(c.balance),
             cell: (c) => (
-              <span className={toNumber(c.balance) > 0 ? "font-medium text-destructive" : ""}>
+              <span className={toNumber(c.balance) > 0 ? "font-semibold text-[var(--od-bad)]" : ""}>
                 {formatMoney(c.balance)}
               </span>
             ),
           },
         ]}
       />
+
       <FormDialog
         open={open}
         onOpenChange={setOpen}
@@ -153,6 +197,6 @@ export default function Clients() {
       >
         <ClientFields draft={draft} setDraft={setDraft} />
       </FormDialog>
-    </>
+    </div>
   );
 }

@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Lock, LockOpen } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
+import { AlertTriangle, Calendar, CheckCircle2, Lock, LockOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,9 +9,10 @@ import {
   FormDialog,
   PageHeader,
   Pager,
+  SectionCard,
   StatusBadge,
 } from "@/components/shared/kit";
-import { ConfirmDialog } from "@/components/shared/Display";
+import { ConfirmDialog, PageLoader, StatCard } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { formatDate, formatDateTime, formatMoney, today } from "@/lib/formatters";
@@ -117,14 +117,17 @@ export default function DayClosing() {
   const totalSales = methods.reduce((s, [, v]) => s + Number(v || 0), 0);
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="End-of-Day Closing"
         description="Review daily sales, payments and expenses, count cash in drawer, and close the day."
         actions={
           <div className="flex items-center gap-2">
-            <label htmlFor="closing-date" className="text-xs text-muted-foreground">
-              Business date
+            <label
+              htmlFor="closing-date"
+              className="flex items-center gap-1.5 text-xs font-medium text-[var(--od-ink-secondary)]"
+            >
+              <Calendar size={14} /> Business date
             </label>
             <Input
               id="closing-date"
@@ -138,23 +141,23 @@ export default function DayClosing() {
       />
 
       {summary.isLoading ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Loading day summary…</p>
+        <PageLoader />
       ) : data ? (
-        <div className="mb-8 space-y-6">
+        <div className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-xl border bg-card p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-wider text-muted-foreground">
-                Sales ({formatDate(data.date)})
-              </p>
-              <p className="mt-1 text-2xl font-bold tabular-nums">{formatMoney(totalSales)}</p>
-              <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+            <div className="od-card p-5">
+              <p className="od-kpi-label">Sales ({formatDate(data.date)})</p>
+              <p className="od-kpi-value mt-1.5">{formatMoney(totalSales)}</p>
+              <div className="mt-3 space-y-1 border-t border-[var(--od-border)] pt-2.5 text-xs">
                 {methods.length === 0 ? (
-                  <p>No sales recorded</p>
+                  <p className="text-[var(--od-ink-muted)]">No sales recorded</p>
                 ) : (
                   methods.map(([m, v]) => (
-                    <div key={m} className="flex justify-between">
-                      <span className="capitalize">{m.replaceAll("_", " ")}</span>
-                      <span className="tabular-nums font-medium text-foreground">
+                    <div key={m} className="flex items-center justify-between gap-2">
+                      <span className="capitalize text-[var(--od-ink-secondary)]">
+                        {m.replaceAll("_", " ")}
+                      </span>
+                      <span className="od-tabular font-medium text-[var(--od-ink)]">
                         {formatMoney(v)}
                       </span>
                     </div>
@@ -163,82 +166,73 @@ export default function DayClosing() {
               </div>
             </div>
 
-            <div className="rounded-xl border bg-card p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-wider text-muted-foreground">
-                Total payments received
-              </p>
-              <p className="mt-1 text-2xl font-bold tabular-nums text-emerald-700">
-                {formatMoney(data.payments_received)}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Sales + debt payments + service receipts
-              </p>
-            </div>
+            <StatCard
+              label="Total payments received"
+              value={formatMoney(data.payments_received)}
+              trend="Sales + debt payments + service receipts"
+              tone="good"
+            />
 
-            <div className="rounded-xl border bg-card p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-wider text-muted-foreground">
-                Expenses recorded
-              </p>
-              <p className="mt-1 text-2xl font-bold tabular-nums text-rose-700">
-                {formatMoney(data.expenses_total)}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">Approved &amp; paid expenses</p>
-            </div>
+            <StatCard
+              label="Expenses recorded"
+              value={formatMoney(data.expenses_total)}
+              trend="Approved & paid expenses"
+              tone={Number(data.expenses_total) > 0 ? "bad" : "neutral"}
+            />
 
-            <div className="rounded-xl border bg-card p-4 shadow-sm">
-              <p className="text-xs uppercase tracking-wider text-muted-foreground">
-                Expected cash in drawer
-              </p>
-              <p className="mt-1 text-2xl font-bold tabular-nums">
-                {formatMoney(data.expected_cash)}
-              </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Opening float + cash in − cash out
-              </p>
-            </div>
+            <StatCard
+              label="Expected cash in drawer"
+              value={formatMoney(data.expected_cash)}
+              trend="Opening float + cash in − cash out"
+            />
           </div>
 
-          <div className="rounded-2xl border bg-card p-5 shadow-sm">
-            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+          <SectionCard
+            title={
+              isClosed
+                ? `Day closed — ${formatDate(data.date)}`
+                : `Cash count & closing — ${formatDate(data.date)}`
+            }
+            subtitle={
+              isClosed
+                ? "Daily cash drawer has been reconciled and locked."
+                : "Enter physical cash counted in the drawer to check variance before closing."
+            }
+            actions={
               <div className="flex items-center gap-2">
                 {isClosed ? (
-                  <Lock size={18} className="text-emerald-600" />
+                  <Lock size={15} className="text-[var(--od-good)]" />
                 ) : (
-                  <LockOpen size={18} className="text-amber-600" />
+                  <LockOpen size={15} className="text-[var(--od-warning)]" />
                 )}
-                <h2 className="text-lg font-semibold">
-                  {isClosed
-                    ? `Day closed — ${formatDate(data.date)}`
-                    : `Cash count & closing — ${formatDate(data.date)}`}
-                </h2>
+                {closing && <StatusBadge value={closing.status} />}
               </div>
-              {closing && <StatusBadge value={closing.status} />}
-            </div>
-
+            }
+          >
             {isClosed && closing ? (
-              <div className="space-y-4">
-                <div className="grid gap-4 sm:grid-cols-3">
-                  <div className="rounded-lg bg-muted/50 p-3">
-                    <p className="text-xs text-muted-foreground">Expected cash</p>
-                    <p className="mt-0.5 text-lg font-semibold tabular-nums">
+              <div className="space-y-5">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4">
+                    <p className="od-kpi-label">Expected cash</p>
+                    <p className="od-tabular mt-1 text-lg font-semibold text-[var(--od-ink)]">
                       {formatMoney(closing.expected_cash)}
                     </p>
                   </div>
-                  <div className="rounded-lg bg-muted/50 p-3">
-                    <p className="text-xs text-muted-foreground">Counted cash</p>
-                    <p className="mt-0.5 text-lg font-semibold tabular-nums">
+                  <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4">
+                    <p className="od-kpi-label">Counted cash</p>
+                    <p className="od-tabular mt-1 text-lg font-semibold text-[var(--od-ink)]">
                       {formatMoney(closing.counted_cash)}
                     </p>
                   </div>
-                  <div className="rounded-lg bg-muted/50 p-3">
-                    <p className="text-xs text-muted-foreground">Difference (variance)</p>
+                  <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4">
+                    <p className="od-kpi-label">Difference (variance)</p>
                     <p
-                      className={`mt-0.5 text-lg font-semibold tabular-nums ${
+                      className={`od-tabular mt-1 text-lg font-semibold ${
                         Number(closing.difference) === 0
-                          ? "text-emerald-700"
+                          ? "text-[var(--od-good)]"
                           : Number(closing.difference) < 0
-                            ? "text-rose-700"
-                            : "text-amber-700"
+                            ? "text-[var(--od-bad)]"
+                            : "text-[var(--od-warning)]"
                       }`}
                     >
                       {Number(closing.difference) > 0 ? "+" : ""}
@@ -246,12 +240,16 @@ export default function DayClosing() {
                     </p>
                   </div>
                 </div>
-                <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--od-border)] pt-4 text-sm text-[var(--od-ink-secondary)]">
                   <div>
                     Closed by{" "}
-                    <strong className="text-foreground">{closing.closed_by_name ?? "—"}</strong> on{" "}
-                    {formatDateTime(closing.closed_at)}
-                    {closing.note && <p className="mt-1 text-foreground">Note: {closing.note}</p>}
+                    <strong className="font-medium text-[var(--od-ink)]">
+                      {closing.closed_by_name ?? "—"}
+                    </strong>{" "}
+                    on {formatDateTime(closing.closed_at)}
+                    {closing.note && (
+                      <p className="mt-1 text-[var(--od-ink)]">Note: {closing.note}</p>
+                    )}
                   </div>
                   {can("finance.day.reopen") && (
                     <Button
@@ -264,11 +262,14 @@ export default function DayClosing() {
                 </div>
               </div>
             ) : (
-              <div className="space-y-4">
+              <div className="space-y-5">
                 {closing?.status === "reopened" && (
-                  <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-                    Previously reopened by <strong>{closing.reopened_by_name ?? "Admin"}</strong>:{" "}
-                    {closing.reopen_reason}
+                  <div className="flex items-start gap-2.5 rounded-xl border border-[var(--od-warning-mark)]/30 bg-[var(--od-warning-soft)] px-4 py-3 text-sm text-[var(--od-warning)]">
+                    <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                    <div>
+                      Previously reopened by <strong>{closing.reopened_by_name ?? "Admin"}</strong>:{" "}
+                      {closing.reopen_reason}
+                    </div>
                   </div>
                 )}
 
@@ -276,29 +277,38 @@ export default function DayClosing() {
                   <Field label="Counted cash in drawer">
                     <Input
                       inputMode="decimal"
+                      className="od-tabular"
                       value={countedCash}
                       onChange={(e) => setCountedCash(e.target.value)}
                       placeholder="Enter physical cash counted"
                     />
                   </Field>
-                  <div className="flex flex-col justify-center rounded-lg border bg-muted/40 px-4 py-2">
-                    <span className="text-xs text-muted-foreground">Live variance</span>
-                    <div className="mt-1 flex items-center gap-2">
+                  <div className="flex flex-col justify-center rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-4 py-2.5">
+                    <span className="od-kpi-label">Live variance</span>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
                       <span
-                        className={`text-lg font-bold tabular-nums ${
+                        className={`od-tabular text-lg font-semibold ${
                           variance === 0
-                            ? "text-emerald-700"
+                            ? "text-[var(--od-good)]"
                             : variance < 0
-                              ? "text-rose-700"
-                              : "text-amber-700"
+                              ? "text-[var(--od-bad)]"
+                              : "text-[var(--od-warning)]"
                         }`}
                       >
                         {variance > 0 ? "+" : ""}
                         {formatMoney(variance)}
                       </span>
-                      <Badge variant="outline">
+                      <span
+                        className={`od-delta ${
+                          variance === 0
+                            ? "od-delta-good"
+                            : variance < 0
+                              ? "od-delta-bad"
+                              : "od-delta-neutral"
+                        }`}
+                      >
                         {variance === 0 ? "Exact match" : variance < 0 ? "Short" : "Over"}
-                      </Badge>
+                      </span>
                     </div>
                   </div>
                   <Field
@@ -318,7 +328,7 @@ export default function DayClosing() {
                 </div>
 
                 {can("finance.day.close") ? (
-                  <div className="flex justify-end">
+                  <div className="flex justify-end border-t border-[var(--od-border)] pt-4">
                     <Button
                       disabled={variance !== 0 && !note.trim()}
                       onClick={() => setConfirmingClose(true)}
@@ -327,18 +337,19 @@ export default function DayClosing() {
                     </Button>
                   </div>
                 ) : (
-                  <p className="text-xs text-muted-foreground">
-                    You have view-only access to day closing.
-                  </p>
+                  <p className="od-caption">You have view-only access to day closing.</p>
                 )}
               </div>
             )}
-          </div>
+          </SectionCard>
         </div>
       ) : null}
 
       <div className="space-y-3">
-        <h2 className="text-lg font-semibold">Past Day Closings</h2>
+        <div>
+          <h2 className="od-section-title">Past Day Closings</h2>
+          <p className="od-caption mt-0.5">Select any past date to inspect its closing summary.</p>
+        </div>
         <DataGrid
           rows={history.data?.data}
           loading={history.isLoading}
@@ -348,33 +359,53 @@ export default function DayClosing() {
           columns={[
             {
               header: "Date",
-              cell: (r) => <span className="font-medium">{formatDate(r.date)}</span>,
+              cell: (r) => (
+                <span className="font-medium text-[var(--od-ink)]">{formatDate(r.date)}</span>
+              ),
             },
             { header: "Location", cell: (r) => r.branch_name },
             {
               header: "Payments in",
               align: "right",
-              cell: (r) => (r.payments_received != null ? formatMoney(r.payments_received) : "-"),
+              cell: (r) =>
+                r.payments_received != null ? (
+                  <span className="od-tabular">{formatMoney(r.payments_received)}</span>
+                ) : (
+                  "-"
+                ),
             },
             {
               header: "Expenses",
               align: "right",
-              cell: (r) => (r.expenses_total != null ? formatMoney(r.expenses_total) : "-"),
+              cell: (r) =>
+                r.expenses_total != null ? (
+                  <span className="od-tabular">{formatMoney(r.expenses_total)}</span>
+                ) : (
+                  "-"
+                ),
             },
-            { header: "Expected cash", align: "right", cell: (r) => formatMoney(r.expected_cash) },
-            { header: "Counted cash", align: "right", cell: (r) => formatMoney(r.counted_cash) },
+            {
+              header: "Expected cash",
+              align: "right",
+              cell: (r) => <span className="od-tabular">{formatMoney(r.expected_cash)}</span>,
+            },
+            {
+              header: "Counted cash",
+              align: "right",
+              cell: (r) => <span className="od-tabular">{formatMoney(r.counted_cash)}</span>,
+            },
             {
               header: "Variance",
               align: "right",
               cell: (r) => (
                 <span
-                  className={
+                  className={`od-tabular font-medium ${
                     Number(r.difference) === 0
-                      ? "text-emerald-700"
+                      ? "text-[var(--od-good)]"
                       : Number(r.difference) < 0
-                        ? "font-medium text-rose-700"
-                        : "font-medium text-amber-700"
-                  }
+                        ? "text-[var(--od-bad)]"
+                        : "text-[var(--od-warning)]"
+                  }`}
                 >
                   {Number(r.difference) > 0 ? "+" : ""}
                   {formatMoney(r.difference)}
@@ -420,6 +451,6 @@ export default function DayClosing() {
           />
         </Field>
       </FormDialog>
-    </>
+    </div>
   );
 }

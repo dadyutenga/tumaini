@@ -20,6 +20,7 @@ import (
 
 	"bms/internal/kernel/audit"
 	"bms/internal/kernel/notify"
+	"bms/internal/kernel/outbound"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
@@ -31,12 +32,13 @@ import (
 )
 
 type Service struct {
-	DB     *db.DB
-	Audit  *audit.Service
-	Notify *notify.Service
-	Clock  clock.Clock
-	Store  storage.Store
-	SMS    sender.Sender
+	DB       *db.DB
+	Audit    *audit.Service
+	Notify   *notify.Service
+	Outbound *outbound.Service
+	Clock    clock.Clock
+	Store    storage.Store
+	SMS      sender.Sender
 }
 
 func (s *Service) bizDate(ctx context.Context, tx pgx.Tx) (string, error) {

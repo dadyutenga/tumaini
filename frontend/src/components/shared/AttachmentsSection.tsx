@@ -78,11 +78,11 @@ export function AttachmentsSection({
   const items = list.data ?? [];
 
   return (
-    <div className="space-y-4 rounded-2xl border bg-card p-4">
+    <div className="od-card space-y-4 p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <Paperclip size={16} className="text-muted-foreground" />
-          <h3 className="font-semibold">Attachments ({items.length})</h3>
+          <Paperclip size={15} className="text-[var(--od-ink-muted)]" />
+          <h3 className="od-card-title text-[var(--od-ink)]">Attachments ({items.length})</h3>
         </div>
         {!readOnly && (
           <div className="flex flex-wrap items-center gap-2">
@@ -92,7 +92,7 @@ export function AttachmentsSection({
               value={label}
               onChange={(e) => setLabel(e.target.value)}
             />
-            <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 text-xs font-medium shadow-sm transition hover:bg-accent">
+            <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-3 text-xs font-medium text-[var(--od-ink)] transition hover:bg-[var(--od-surface-subtle)]">
               <Upload size={13} />
               <span>{uploading ? "Uploading…" : "Attach file"}</span>
               <input
@@ -110,21 +110,24 @@ export function AttachmentsSection({
       </div>
 
       {list.isLoading ? (
-        <p className="text-xs text-muted-foreground">Loading attachments…</p>
+        <p className="od-caption">Loading attachments…</p>
       ) : items.length === 0 ? (
-        <p className="text-xs text-muted-foreground">No files attached yet.</p>
+        <p className="od-caption">No files attached yet.</p>
       ) : (
-        <div className="divide-y rounded-lg border">
+        <div className="divide-y divide-[var(--od-border)] overflow-hidden rounded-xl border border-[var(--od-border)]">
           {items.map((a) => (
-            <div key={a.id} className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-sm">
+            <div
+              key={a.id}
+              className="flex flex-wrap items-center justify-between gap-2 px-3.5 py-2.5 text-sm transition hover:bg-[var(--od-surface-subtle)]/60"
+            >
               <div className="min-w-0">
-                <p className="truncate font-medium">
+                <p className="truncate font-medium text-[var(--od-ink)]">
                   {a.label ? `${a.label} — ` : ""}
                   {a.file_name}
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  {formatSize(a.size_bytes)} · {a.uploaded_by_name ?? "User"} ·{" "}
-                  {formatDateTime(a.created_at)}
+                <p className="od-caption">
+                  <span className="od-tabular">{formatSize(a.size_bytes)}</span> ·{" "}
+                  {a.uploaded_by_name ?? "User"} · {formatDateTime(a.created_at)}
                 </p>
               </div>
               <div className="flex items-center gap-1">
@@ -152,7 +155,7 @@ export function AttachmentsSection({
                   <Button
                     size="sm"
                     variant="ghost"
-                    className="h-7 px-2 text-xs text-destructive"
+                    className="h-7 px-2 text-xs text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                     disabled={remove.isPending}
                     onClick={() => remove.mutate(a.id)}
                   >

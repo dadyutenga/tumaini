@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Download } from "lucide-react";
+import { Download, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DataGrid, Field, PageHeader, Pager } from "@/components/shared/kit";
@@ -50,6 +50,7 @@ export default function Audit() {
     per_page: 25,
   });
   const rows = query.data?.data ?? [];
+  const hasFilters = Boolean(action || entityType || from || to);
 
   function exportCsv() {
     downloadCsv("audit-log.csv", [
@@ -67,7 +68,7 @@ export default function Audit() {
   }
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Audit log"
         description="Who did what, and when, with old and new values. Read only."
@@ -79,10 +80,12 @@ export default function Audit() {
           )
         }
       />
-      <div className="mb-4 flex flex-wrap items-end gap-3">
+
+      <div className="od-card flex flex-wrap items-end gap-3 p-4">
         <Field label="Action">
           <Input
             aria-label="Filter by action"
+            className="w-48"
             placeholder="e.g. sale.create"
             value={action}
             onChange={(e) => {
@@ -94,6 +97,7 @@ export default function Audit() {
         <Field label="Module / record">
           <Input
             aria-label="Filter by module"
+            className="w-52"
             placeholder="e.g. sale, svc_project, user"
             value={entityType}
             onChange={(e) => {
@@ -122,30 +126,60 @@ export default function Audit() {
             }}
           />
         </Field>
+        {hasFilters && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              setAction("");
+              setEntityType("");
+              setFrom("");
+              setTo("");
+              setPage(1);
+            }}
+          >
+            <RotateCcw size={13} /> Clear
+          </Button>
+        )}
       </div>
+
       <DataGrid
         rows={rows}
         loading={query.isLoading}
         rowKey={(e) => e.id}
         empty="No activity recorded"
         columns={[
-          { header: "Time", cell: (e) => formatDateTime(e.created_at) },
+          {
+            header: "Time",
+            cell: (e) => (
+              <span className="od-tabular text-xs text-[var(--od-ink-secondary)]">
+                {formatDateTime(e.created_at)}
+              </span>
+            ),
+          },
           {
             header: "User",
             cell: (e) => (
-              <span className="font-medium">
+              <span className="font-medium text-[var(--od-ink)]">
                 {e.user_name ?? e.user_id?.slice(0, 8) ?? "System"}
               </span>
             ),
           },
-          { header: "Action", cell: (e) => <code className="text-xs">{e.action}</code> },
+          {
+            header: "Action",
+            cell: (e) => (
+              <code className="od-mono rounded-md border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-1.5 py-0.5 text-xs text-[var(--od-ink)]">
+                {e.action}
+              </code>
+            ),
+          },
           {
             header: "Record",
             cell: (e) => (
-              <span>
+              <span className="text-[var(--od-ink)]">
                 {e.entity_type}
                 {e.entity_id && (
-                  <code className="ml-1 text-xs text-muted-foreground">
+                  <code className="od-mono ml-1.5 text-xs text-[var(--od-ink-muted)]">
                     #{e.entity_id.slice(0, 8)}
                   </code>
                 )}
@@ -155,16 +189,16 @@ export default function Audit() {
           {
             header: "Old value",
             cell: (e) => summarize(e.before),
-            className: "max-w-xs whitespace-normal text-xs text-muted-foreground",
+            className: "max-w-xs whitespace-normal text-xs text-[var(--od-ink-muted)]",
           },
           {
             header: "New value",
             cell: (e) => summarize(e.after),
-            className: "max-w-xs whitespace-normal text-xs",
+            className: "max-w-xs whitespace-normal text-xs text-[var(--od-ink-secondary)]",
           },
         ]}
       />
       <Pager meta={query.data?.meta} onPage={setPage} />
-    </>
+    </div>
   );
 }

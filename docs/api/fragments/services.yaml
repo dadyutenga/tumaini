@@ -354,6 +354,102 @@ paths:
                 error:
                   code: invalid_status
                   message: The record is not in a state that allows this
+  /clients/{id}/statement/send:
+    post:
+      summary: Queue a client statement message in the outbound outbox
+      operationId: post_clients_id_statement_send
+      tags:
+      - 'Services: Clients'
+      x-permission: finance.debt.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel:
+                  type: string
+                  enum:
+                  - sms
+                  - whatsapp
+                  - email
+                from:
+                  type: string
+                to:
+                  type: string
+      responses:
+        '200':
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: Channel not configured
+  /clients/{id}/debt-reminder:
+    post:
+      summary: Queue a debt reminder for a service client with an unpaid balance
+      operationId: post_clients_id_debt_reminder
+      tags:
+      - 'Services: Clients'
+      x-permission: finance.debt.view
+      parameters:
+      - $ref: '#/components/parameters/BranchId'
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel:
+                  type: string
+                  enum:
+                  - sms
+                  - whatsapp
+                  - email
+      responses:
+        '200':
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          description: Channel not configured
   /clients/{id}/statement:
     get:
       summary: Invoices and payments with running balance. `format=pdf`

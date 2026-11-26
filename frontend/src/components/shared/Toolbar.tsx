@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Bell, KeyRound, Plus, Search, SunMoon, UserRound } from "lucide-react";
+import { Bell, KeyRound, Plus, Search, SunMoon } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useVisibleRoutes } from "@/app/useVisibleRoutes";
 import { useDebounce } from "@/hooks/useDebounce";
@@ -85,12 +85,12 @@ export function SearchPalette() {
         <Button
           variant="outline"
           size="sm"
-          className="gap-2 text-muted-foreground"
+          className="h-8 gap-2 border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] px-2.5 text-[var(--od-ink-muted)] shadow-none hover:text-[var(--od-ink)]"
           aria-label="Global search"
         >
-          <Search size={16} />
-          <span className="hidden lg:inline">{t.actions.globalSearchPlaceholder}</span>
-          <kbd className="hidden rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium xl:inline">
+          <Search size={14} />
+          <span className="hidden text-xs lg:inline">{t.actions.globalSearchPlaceholder}</span>
+          <kbd className="od-mono hidden rounded border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--od-ink-muted)] xl:inline">
             Ctrl K
           </kbd>
         </Button>
@@ -107,30 +107,34 @@ export function SearchPalette() {
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <div className="max-h-80 space-y-3 overflow-auto">
+        <div className="scrollbar-thin max-h-80 space-y-3 overflow-auto">
           {debounced.length >= 2 && (
             <div>
-              <p className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <p className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--od-ink-muted)]">
                 Records {hits.isFetching ? "…" : `(${hits.data?.length ?? 0})`}
               </p>
               {(hits.data ?? []).length === 0 && !hits.isFetching ? (
-                <p className="px-2 py-2 text-sm text-muted-foreground">No matching records.</p>
+                <p className="px-2 py-2 text-[13px] text-[var(--od-ink-muted)]">
+                  No matching records.
+                </p>
               ) : (
-                <ul>
+                <ul className="space-y-0.5">
                   {(hits.data ?? []).map((h) => (
                     <li key={`${h.kind}-${h.id}`}>
                       <button
                         type="button"
-                        className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted focus-visible:bg-muted"
+                        className="flex w-full items-center justify-between gap-2 rounded-[var(--od-radius-sm,8px)] px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-[var(--od-surface-subtle)] focus-visible:bg-[var(--od-surface-subtle)]"
                         onClick={() => go(h.link)}
                       >
                         <span className="min-w-0 truncate">
-                          <span className="font-medium">{h.title}</span>
+                          <span className="font-medium text-[var(--od-ink)]">{h.title}</span>
                           {h.subtitle && (
-                            <span className="ml-2 text-xs text-muted-foreground">{h.subtitle}</span>
+                            <span className="ml-2 text-xs text-[var(--od-ink-muted)]">
+                              {h.subtitle}
+                            </span>
                           )}
                         </span>
-                        <span className="shrink-0 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                        <span className="shrink-0 rounded-full bg-[var(--od-neutral-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--od-ink-secondary)]">
                           {KIND_LABELS[h.kind] ?? h.kind}
                         </span>
                       </button>
@@ -142,15 +146,15 @@ export function SearchPalette() {
           )}
           {matchedRoutes.length > 0 && (
             <div>
-              <p className="mb-1 px-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              <p className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--od-ink-muted)]">
                 Pages
               </p>
-              <ul>
+              <ul className="space-y-0.5">
                 {matchedRoutes.slice(0, 8).map((route) => (
                   <li key={route.path}>
                     <button
                       type="button"
-                      className="w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-muted focus-visible:bg-muted"
+                      className="w-full rounded-[var(--od-radius-sm,8px)] px-2.5 py-2 text-left text-[13px] text-[var(--od-ink)] transition-colors hover:bg-[var(--od-surface-subtle)] focus-visible:bg-[var(--od-surface-subtle)]"
                       onClick={() => go(route.path)}
                     >
                       {route.label}
@@ -200,19 +204,21 @@ export function QuickNewMenu({ floating = false }: { floating?: boolean }) {
         {floating ? (
           <Button
             size="lg"
-            className="fixed bottom-5 right-5 z-30 h-12 rounded-full px-5 shadow-lg md:hidden"
+            className="fixed bottom-5 right-5 z-30 h-11 rounded-full px-4 shadow-[var(--od-shadow-pop)] md:hidden"
             aria-label="Quick create menu"
           >
-            <Plus size={18} /> New
+            <Plus size={16} /> New
           </Button>
         ) : (
-          <Button size="sm" className="hidden sm:inline-flex" aria-label="Quick create menu">
-            <Plus size={16} /> New
+          <Button size="sm" className="hidden h-8 sm:inline-flex" aria-label="Quick create menu">
+            <Plus size={14} /> New
           </Button>
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
-        <DropdownMenuLabel>Quick actions</DropdownMenuLabel>
+        <DropdownMenuLabel className="text-xs text-[var(--od-ink-muted)]">
+          Quick actions
+        </DropdownMenuLabel>
         <DropdownMenuSeparator />
         {actions.map((a) => (
           <DropdownMenuItem key={a.label} onSelect={() => navigate(a.to)}>
@@ -256,29 +262,29 @@ export function NotificationBell() {
           aria-label={`Notifications, ${unread} unread`}
           className="relative"
         >
-          <Bell size={19} />
+          <Bell size={17} />
           {unread > 0 && (
-            <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-destructive px-1 text-[10px] font-bold text-destructive-foreground">
+            <span className="od-tabular absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--od-bad-mark)] px-1 text-[10px] font-semibold text-white">
               {unread > 99 ? "99+" : unread}
             </span>
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-80">
+      <PopoverContent align="end" className="w-80 rounded-[var(--od-radius,16px)] p-4">
         <div className="flex items-center justify-between">
-          <h2 className="font-semibold">Notifications</h2>
+          <h2 className="od-card-title">Notifications</h2>
           <Link
             to="/notifications"
             onClick={() => setOpen(false)}
-            className="text-xs text-primary underline"
+            className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
           >
             View all
           </Link>
         </div>
         {items.length === 0 ? (
-          <p className="mt-2 text-sm text-muted-foreground">You are all caught up.</p>
+          <p className="mt-3 text-[13px] text-[var(--od-ink-muted)]">You are all caught up.</p>
         ) : (
-          <ul className="mt-2 max-h-72 space-y-2 overflow-auto text-sm">
+          <ul className="scrollbar-thin mt-3 max-h-72 space-y-1.5 overflow-auto text-[13px]">
             {items.slice(0, 15).map((n) => {
               const read = n.is_read ?? Boolean(n.read_at);
               return (
@@ -291,13 +297,24 @@ export function NotificationBell() {
                       if (n.link) navigate(n.link);
                     }}
                     className={cn(
-                      "w-full rounded-md border p-2 text-left transition hover:bg-muted/60",
-                      !read && "border-primary/40 bg-primary/5",
+                      "w-full rounded-[var(--od-radius-sm,8px)] border border-transparent p-2.5 text-left transition-colors hover:bg-[var(--od-surface-subtle)]",
+                      !read && "border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)]",
                     )}
                   >
-                    <p className={read ? "font-normal" : "font-semibold"}>{n.title ?? n.message}</p>
-                    {n.body && <p className="line-clamp-2 text-muted-foreground">{n.body}</p>}
-                    <p className="mt-1 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-2">
+                      {!read && (
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--od-info)]" />
+                      )}
+                      <p className={cn("truncate", read ? "font-normal" : "font-semibold")}>
+                        {n.title ?? n.message}
+                      </p>
+                    </div>
+                    {n.body && (
+                      <p className="mt-0.5 line-clamp-2 text-xs text-[var(--od-ink-secondary)]">
+                        {n.body}
+                      </p>
+                    )}
+                    <p className="mt-1 text-[11px] text-[var(--od-ink-muted)]">
                       {formatDateTime(n.created_at)}
                     </p>
                   </button>
@@ -339,9 +356,10 @@ export function ThemeToggle() {
       variant="ghost"
       size="icon"
       onClick={toggle}
+      title={`Theme: ${theme}`}
       aria-label={`Theme: ${theme}. Change theme`}
     >
-      <SunMoon size={19} />
+      <SunMoon size={17} />
     </Button>
   );
 }
@@ -349,23 +367,33 @@ export function ThemeToggle() {
 export function UserMenu() {
   const { user, me, logout } = useAuth();
   const { t } = useI18n();
+  const initials =
+    (user?.name ?? "U")
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((w) => w[0]?.toUpperCase() ?? "")
+      .join("") || "U";
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" aria-label="Open user menu" className="gap-2">
-          <UserRound size={19} />
+        <Button variant="ghost" aria-label="Open user menu" className="h-8 gap-2 px-1.5">
+          <span className="grid h-6 w-6 place-items-center rounded-full bg-[var(--od-neutral-soft)] text-[11px] font-semibold text-[var(--od-ink)] ring-1 ring-[var(--od-border-strong)]">
+            {initials}
+          </span>
           <span className="hidden text-left sm:inline">
-            <span className="block text-sm leading-tight">{user?.name}</span>
-            <span className="block text-[10px] leading-tight text-muted-foreground">
+            <span className="block text-[12px] font-medium leading-tight text-[var(--od-ink)]">
+              {user?.name}
+            </span>
+            <span className="block text-[10px] leading-tight text-[var(--od-ink-muted)]">
               {me?.is_owner ? "Owner" : user?.role_name}
             </span>
           </span>
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-48">
+      <DropdownMenuContent align="end" className="w-52">
         <DropdownMenuLabel>
-          <p className="truncate font-medium">{user?.name}</p>
-          <p className="text-xs font-normal text-muted-foreground">
+          <p className="truncate text-[13px] font-semibold">{user?.name}</p>
+          <p className="text-[11px] font-normal text-[var(--od-ink-muted)]">
             {me?.is_owner ? "Owner / Admin" : user?.role_name}
           </p>
         </DropdownMenuLabel>

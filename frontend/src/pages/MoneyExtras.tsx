@@ -4,9 +4,10 @@ import { Input } from "@/components/ui/input";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
-  NativeSelect,
   Pager,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
@@ -48,36 +49,55 @@ export function PaymentsTab() {
   const canVoid = canAny("finance.payment.void", "finance.payment.view_all");
   return (
     <>
-      <NativeSelect
-        aria-label="Direction"
-        className="mb-4 max-w-[12rem]"
-        value={direction}
-        onChange={(e) => {
-          setDirection(e.target.value);
-          setPage(1);
-        }}
-      >
-        <option value="">Money in and out</option>
-        <option value="in">Money in</option>
-        <option value="out">Money out</option>
-      </NativeSelect>
+      <FilterBar>
+        <SegmentedChips
+          ariaLabel="Direction"
+          value={direction}
+          onChange={(v) => {
+            setDirection(v);
+            setPage(1);
+          }}
+          options={[
+            { value: "", label: "All payments" },
+            { value: "in", label: "Money in" },
+            { value: "out", label: "Money out" },
+          ]}
+        />
+      </FilterBar>
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(p) => p.id}
         empty="No payments yet"
         columns={[
-          { header: "Number", cell: (p) => <span className="font-medium">{p.number}</span> },
-          { header: "Date", cell: (p) => formatDate(p.payment_date) },
-          { header: "Kind", cell: (p) => p.kind.replaceAll("_", " ") },
-          { header: "Party", cell: (p) => p.party_name ?? "-" },
+          {
+            header: "Number",
+            cell: (p) => <span className="od-mono font-medium">{p.number}</span>,
+          },
+          {
+            header: "Date",
+            cell: (p) => (
+              <span className="text-[var(--od-ink-secondary)]">{formatDate(p.payment_date)}</span>
+            ),
+          },
+          {
+            header: "Kind",
+            cell: (p) => <span className="capitalize">{p.kind.replaceAll("_", " ")}</span>,
+          },
+          { header: "Party", cell: (p) => p.party_name ?? "—" },
           { header: "Account", cell: (p) => p.account_name },
           {
             header: "Amount",
             align: "right",
             cell: (p) => (
-              <span className={p.direction === "out" ? "text-destructive" : ""}>
-                {p.direction === "out" ? "-" : ""}
+              <span
+                className={
+                  p.direction === "out"
+                    ? "font-semibold text-[var(--od-bad)]"
+                    : "font-semibold text-[var(--od-good)]"
+                }
+              >
+                {p.direction === "out" ? "−" : "+"}
                 {formatMoney(p.amount)}
               </span>
             ),
@@ -85,10 +105,16 @@ export function PaymentsTab() {
           { header: "Status", cell: (p) => <StatusBadge value={p.status} /> },
           {
             header: "",
+            className: "text-right",
             cell: (p) =>
               canVoid &&
               p.status !== "voided" && (
-                <Button size="sm" variant="ghost" onClick={() => setVoiding(p)}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
+                  onClick={() => setVoiding(p)}
+                >
                   {can("finance.payment.void") ? "Void" : "Request void"}
                 </Button>
               ),

@@ -65,18 +65,25 @@ export function PdfButton({
   filename,
   children = "PDF",
   query = {},
+  size = "default",
+  disabled = false,
 }: {
   path: string;
   filename: string;
   children?: ReactNode;
   query?: Record<string, string>;
+  size?: "default" | "sm" | "lg" | "icon";
+  disabled?: boolean;
 }) {
   const [busy, setBusy] = useState(false);
   return (
     <Button
+      type="button"
+      size={size}
       variant="outline"
-      disabled={busy}
-      onClick={async () => {
+      disabled={busy || disabled}
+      onClick={async (e) => {
+        e.stopPropagation();
         setBusy(true);
         try {
           await download(path, { format: "pdf", ...query }, filename);
@@ -87,7 +94,7 @@ export function PdfButton({
         }
       }}
     >
-      <FileDown size={16} /> {children}
+      <FileDown size={size === "sm" ? 14 : 16} /> {children}
     </Button>
   );
 }
@@ -253,12 +260,20 @@ export function Tile({
 }: {
   label: string;
   value: ReactNode;
-  tone?: "bad";
+  tone?: "bad" | "good";
 }) {
   return (
-    <section className="rounded-2xl border bg-card p-5">
-      <p className="text-sm text-muted-foreground">{text}</p>
-      <p className={`mt-2 text-2xl font-semibold ${tone === "bad" ? "text-destructive" : ""}`}>
+    <section className="od-card justify-between gap-2.5">
+      <p className="od-kpi-label">{text}</p>
+      <p
+        className={`od-kpi-value ${
+          tone === "bad"
+            ? "text-[var(--od-bad)]"
+            : tone === "good"
+              ? "text-[var(--od-good)]"
+              : "text-[var(--od-ink)]"
+        }`}
+      >
         {value}
       </p>
     </section>

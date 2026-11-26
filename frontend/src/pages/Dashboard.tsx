@@ -21,7 +21,15 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { IncomeExpenseChart } from "@/components/shared/Charts";
 import { ChartCard, PageLoader } from "@/components/shared/Display";
-import { Field, FormDialog, NativeSelect, PageHeader, StatusBadge } from "@/components/shared/kit";
+import {
+  Field,
+  FormDialog,
+  NativeSelect,
+  PageHeader,
+  SectionCard,
+  SegmentedChips,
+  StatusBadge,
+} from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { ClientSelect } from "@/features/services/shared";
 import { label } from "@/features/services/helpers";
@@ -114,26 +122,28 @@ function greeting() {
   return "Good evening";
 }
 
-function trendInfo(pct?: string | null) {
+function trendInfo(pct?: string | null, invertGood = false) {
   if (pct === null || pct === undefined || pct === "") return null;
   const n = toNumber(pct);
   const sign = n > 0 ? "+" : "";
+  const up = n >= 0;
   return {
     text: `${sign}${n.toFixed(1)}%`,
-    positive: n >= 0,
+    up,
+    good: invertGood ? n <= 0 : n >= 0,
   };
 }
 
 function DashboardError({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="flex flex-col items-center justify-center rounded-2xl border border-destructive/30 bg-card p-10 text-center shadow-sm">
-      <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-destructive/10 text-destructive">
-        <AlertTriangle size={22} />
+    <div className="od-card items-center py-12 text-center">
+      <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--od-bad-mark)_12%,transparent)] text-[var(--od-bad)]">
+        <AlertTriangle size={20} />
       </div>
-      <h2 className="mt-4 text-base font-semibold">Could not load dashboard data</h2>
-      <p className="mt-1 max-w-md text-sm text-muted-foreground">{message}</p>
-      <Button className="mt-4" variant="outline" onClick={onRetry}>
-        <RefreshCw size={15} /> Try again
+      <h2 className="od-section-title mt-3">Could not load dashboard data</h2>
+      <p className="od-caption mt-1 max-w-md">{message}</p>
+      <Button className="mt-4" variant="outline" size="sm" onClick={onRetry}>
+        <RefreshCw size={14} /> Try again
       </Button>
     </div>
   );
@@ -146,61 +156,49 @@ function KpiCard({
   trend,
   icon: Icon,
   to,
-  accent = "primary",
 }: {
   label: string;
   value: string;
   sub?: string;
-  trend?: { text: string; positive: boolean } | null;
+  trend?: { text: string; up: boolean; good: boolean } | null;
   icon: React.ComponentType<{ size?: number; className?: string }>;
   to?: string;
-  accent?: "primary" | "amber" | "emerald";
 }) {
-  const iconTone =
-    accent === "amber"
-      ? "bg-amber-500/12 text-amber-600 dark:text-amber-400 ring-amber-500/20"
-      : "bg-primary/12 text-primary ring-primary/20";
-
   const inner = (
-    <div className="group relative overflow-hidden rounded-2xl border bg-card p-5 shadow-xs transition duration-200 hover:-translate-y-0.5 hover:border-primary/45 hover:shadow-md">
-      <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-primary/70 via-primary/30 to-transparent opacity-75 transition group-hover:opacity-100" />
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            {title}
-          </p>
-          <p className="mt-2 truncate text-2xl font-bold tracking-tight tabular-nums">{value}</p>
-        </div>
-        <div
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ring-1 ${iconTone}`}
-        >
-          <Icon size={18} />
-        </div>
+    <article className="od-card group h-full justify-between gap-3 transition-colors hover:border-[var(--od-ink-muted)]">
+      <div className="flex items-center justify-between gap-2">
+        <p className="od-kpi-label">{title}</p>
+        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[var(--od-surface-subtle)] text-[var(--od-ink-secondary)]">
+          <Icon size={15} />
+        </span>
       </div>
-      <div className="mt-3 flex items-center justify-between gap-2">
+      <p className="od-kpi-value truncate text-[var(--od-ink)]">{value}</p>
+      <div className="flex items-center justify-between gap-2 pt-0.5">
         <div className="flex min-w-0 items-center gap-2">
           {trend && (
-            <span
-              className={`inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                trend.positive ? "bg-primary/12 text-primary" : "bg-destructive/12 text-destructive"
-              }`}
-            >
-              {trend.positive ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
+            <span className={`od-delta ${trend.good ? "od-delta-good" : "od-delta-bad"}`}>
+              {trend.up ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
               {trend.text}
             </span>
           )}
-          {sub && <p className="truncate text-xs text-muted-foreground">{sub}</p>}
+          {sub && <span className="od-caption truncate">{sub}</span>}
         </div>
         {to && (
           <ArrowUpRight
-            size={15}
-            className="shrink-0 text-muted-foreground/60 transition group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-primary"
+            size={14}
+            className="shrink-0 text-[var(--od-ink-muted)] transition-transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5 group-hover:text-[var(--od-ink)]"
           />
         )}
       </div>
-    </div>
+    </article>
   );
-  return to ? <Link to={to}>{inner}</Link> : inner;
+  return to ? (
+    <Link to={to} className="block h-full">
+      {inner}
+    </Link>
+  ) : (
+    inner
+  );
 }
 
 /** Quick Staff New Job modal (SRS Section 2A: How Staff enter jobs). */
@@ -290,9 +288,11 @@ function QuickJobDialog({
         </NativeSelect>
       </Field>
       {selected && (
-        <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+        <p className="rounded-[var(--od-radius-sm,8px)] bg-[var(--od-surface-subtle)] px-3 py-2 text-xs text-[var(--od-ink-secondary)]">
           Catalog price:{" "}
-          <strong className="text-foreground">{formatMoney(selected.standard_price)}</strong>{" "}
+          <strong className="od-tabular text-[var(--od-ink)]">
+            {formatMoney(selected.standard_price)}
+          </strong>{" "}
           (fixed; ask a Manager to change price)
         </p>
       )}
@@ -364,31 +364,35 @@ function StaffHome() {
               disabled={clockIn.isPending || clockOut.isPending}
               onClick={() => (clockedIn ? clockOut.mutate({}) : clockIn.mutate({}))}
             >
-              <Clock size={16} /> {clockedIn ? "Clock out" : "Clock in"}
+              <Clock size={15} /> {clockedIn ? "Clock out" : "Clock in"}
             </Button>
           )
         }
       />
 
-      {/* 3 Big Speed-First Action Buttons */}
+      {/* 3 Speed-First Action Buttons */}
       <div className="grid gap-3 sm:grid-cols-3">
         {can("shop.sale.create") && (
           <Button
             size="lg"
-            className="h-14 rounded-2xl text-base shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+            className="h-14 justify-start gap-3 rounded-[var(--od-radius,16px)] px-5 text-sm font-semibold"
             onClick={() => navigate("/pos")}
           >
-            <ShoppingCart size={20} /> NEW SALE
+            <ShoppingCart size={18} />
+            <span>New sale (POS)</span>
+            <ArrowUpRight size={15} className="ml-auto opacity-70" />
           </Button>
         )}
         {(can("services.project.manage") || can("services.design.manage")) && (
           <Button
             size="lg"
             variant="outline"
-            className="h-14 rounded-2xl bg-card text-base shadow-xs transition hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-sm"
+            className="h-14 justify-start gap-3 rounded-[var(--od-radius,16px)] px-5 text-sm font-semibold"
             onClick={() => setNewJobOpen(true)}
           >
-            <Briefcase size={20} className="text-primary" /> NEW JOB
+            <Briefcase size={18} />
+            <span>New job</span>
+            <ArrowUpRight size={15} className="ml-auto opacity-50" />
           </Button>
         )}
         {(can("shop.customer.view_all") ||
@@ -398,60 +402,63 @@ function StaffHome() {
           <Button
             size="lg"
             variant="outline"
-            className="h-14 rounded-2xl bg-card text-base shadow-xs transition hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-sm"
+            className="h-14 justify-start gap-3 rounded-[var(--od-radius,16px)] px-5 text-sm font-semibold"
             onClick={() =>
               navigate(can("services.invoice.manage") ? "/service-invoices" : "/customers")
             }
           >
-            <CreditCard size={20} className="text-primary" /> RECEIVE PAYMENT
+            <CreditCard size={18} />
+            <span>Receive payment</span>
+            <ArrowUpRight size={15} className="ml-auto opacity-50" />
           </Button>
         )}
       </div>
 
       {/* 4 Staff Dashboard Panels */}
-      <div className="grid gap-6 lg:grid-cols-2">
-        <section className="rounded-2xl border bg-card p-5 shadow-xs">
-          <h2 className="font-semibold">My sales today</h2>
-          <div className="mt-4 grid grid-cols-2 gap-4">
-            <div>
-              <p className="text-xs text-muted-foreground">Sales count</p>
-              <p className="text-2xl font-bold">{d?.sales_today?.count ?? 0}</p>
+      <div className="grid gap-5 lg:grid-cols-2">
+        <SectionCard title="My sales today" subtitle="Recorded under your account">
+          <div className="grid grid-cols-2 gap-4 pt-1">
+            <div className="rounded-[var(--od-radius-md,12px)] bg-[var(--od-surface-subtle)] p-4">
+              <p className="od-kpi-label">Sales count</p>
+              <p className="od-kpi-value mt-1.5">{d?.sales_today?.count ?? 0}</p>
             </div>
-            <div>
-              <p className="text-xs text-muted-foreground">Total sold</p>
-              <p className="text-2xl font-bold tabular-nums">
-                {formatMoney(d?.sales_today?.total)}
-              </p>
+            <div className="rounded-[var(--od-radius-md,12px)] bg-[var(--od-surface-subtle)] p-4">
+              <p className="od-kpi-label">Total sold</p>
+              <p className="od-kpi-value mt-1.5">{formatMoney(d?.sales_today?.total)}</p>
             </div>
-            <div className="col-span-2 border-t pt-3">
-              <p className="text-xs text-muted-foreground">My commission this month</p>
-              <p className="text-lg font-semibold tabular-nums">
+            <div className="col-span-2 flex items-center justify-between border-t border-[var(--od-border)] pt-3">
+              <span className="od-caption">My commission this month</span>
+              <span className="od-tabular text-[15px] font-semibold text-[var(--od-ink)]">
                 {formatMoney(d?.commission_month ?? "0")}
-              </p>
+              </span>
             </div>
           </div>
-        </section>
+        </SectionCard>
 
-        <section className="rounded-2xl border bg-card p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">My jobs</h2>
-            <Link to="/projects" className="text-xs text-primary underline">
+        <SectionCard
+          title="My jobs"
+          actions={
+            <Link
+              to="/projects"
+              className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
+            >
               All jobs
             </Link>
-          </div>
+          }
+        >
           {(d?.my_jobs ?? []).length === 0 ? (
-            <p className="mt-4 text-sm text-muted-foreground">No open jobs assigned to you.</p>
+            <p className="od-caption py-4">No open jobs assigned to you.</p>
           ) : (
-            <ul className="mt-3 divide-y text-sm">
+            <ul className="divide-y divide-[var(--od-border)] text-[13px]">
               {(d?.my_jobs ?? []).map((j) => (
                 <li key={`${j.kind}-${j.id}`}>
                   <Link
                     to={j.kind === "design_job" ? `/design-jobs/${j.id}` : `/projects/${j.id}`}
-                    className="flex items-center justify-between gap-2 py-2.5 hover:text-primary"
+                    className="flex items-center justify-between gap-2 py-2.5 transition-colors hover:text-[var(--od-info)]"
                   >
                     <div className="min-w-0">
                       <p className="truncate font-medium">{j.title}</p>
-                      <p className="text-xs text-muted-foreground">
+                      <p className="od-caption">
                         {j.client_name}
                         {j.due_date ? ` · Due ${formatDate(j.due_date)}` : ""}
                       </p>
@@ -462,26 +469,30 @@ function StaffHome() {
               ))}
             </ul>
           )}
-        </section>
+        </SectionCard>
 
-        <section className="rounded-2xl border bg-card p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">My tasks</h2>
-            <Link to="/service-tasks" className="text-xs text-primary underline">
+        <SectionCard
+          title="My tasks"
+          actions={
+            <Link
+              to="/service-tasks"
+              className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
+            >
               Tasks & calendar
             </Link>
-          </div>
+          }
+        >
           {(d?.my_tasks ?? []).length === 0 ? (
-            <p className="mt-4 text-sm text-muted-foreground">No pending tasks.</p>
+            <p className="od-caption py-4">No pending tasks.</p>
           ) : (
-            <ul className="mt-3 divide-y text-sm">
+            <ul className="divide-y divide-[var(--od-border)] text-[13px]">
               {(d?.my_tasks ?? []).map((t) => (
                 <li key={t.id} className="flex items-center justify-between gap-2 py-2.5">
                   <div className="min-w-0">
                     <p className="truncate font-medium">{t.title}</p>
                     <p
                       className={
-                        t.overdue ? "text-xs text-destructive" : "text-xs text-muted-foreground"
+                        t.overdue ? "text-xs font-medium text-[var(--od-bad)]" : "od-caption"
                       }
                     >
                       {t.due_date ? `Due ${formatDate(t.due_date)}` : "No deadline"}
@@ -493,36 +504,40 @@ function StaffHome() {
                     variant="outline"
                     onClick={() => completeTask.mutate({ id: t.id })}
                   >
-                    <Check size={14} /> Done
+                    <Check size={13} /> Done
                   </Button>
                 </li>
               ))}
             </ul>
           )}
-        </section>
+        </SectionCard>
 
-        <section className="rounded-2xl border bg-card p-5">
-          <div className="flex items-center justify-between">
-            <h2 className="font-semibold">Products running low</h2>
-            <Link to="/products" className="text-xs text-primary underline">
+        <SectionCard
+          title="Products running low"
+          actions={
+            <Link
+              to="/products"
+              className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
+            >
               Catalog
             </Link>
-          </div>
+          }
+        >
           {(d?.low_stock ?? []).length === 0 ? (
-            <p className="mt-4 text-sm text-muted-foreground">All stocked products look good.</p>
+            <p className="od-caption py-4">All stocked products look good.</p>
           ) : (
-            <ul className="mt-3 divide-y text-sm">
+            <ul className="divide-y divide-[var(--od-border)] text-[13px]">
               {(d?.low_stock ?? []).map((p) => (
-                <li key={p.id} className="flex items-center justify-between py-2">
+                <li key={p.id} className="flex items-center justify-between py-2.5">
                   <span className="truncate font-medium">{p.name}</span>
-                  <span className="shrink-0 font-medium text-amber-600">
+                  <span className="od-tabular shrink-0 text-xs font-semibold text-[var(--od-warning)]">
                     {toNumber(p.qty_on_hand)} left
                   </span>
                 </li>
               ))}
             </ul>
           )}
-        </section>
+        </SectionCard>
       </div>
 
       <QuickJobDialog open={newJobOpen} onOpenChange={setNewJobOpen} />
@@ -598,54 +613,59 @@ export default function Dashboard() {
     <div className="space-y-6">
       <PageHeader
         title={`${greeting()}, ${user?.name.split(" ")[0] ?? ""}`}
-        description="Business overview across Shop (Business A) and Services (Business B)."
+        description="Business performance across Shop and Services."
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <SegmentedChips
+              ariaLabel="Period"
+              value={period}
+              onChange={setPeriod}
+              options={[
+                { value: "today", label: "Today" },
+                { value: "week", label: "Week" },
+                { value: "month", label: "Month" },
+                { value: "custom", label: "Custom" },
+              ]}
+            />
+            <SegmentedChips
+              ariaLabel="Business"
+              value={business}
+              onChange={setBusiness}
+              options={[
+                { value: "all", label: "All" },
+                { value: "shop", label: "Shop" },
+                { value: "services", label: "Services" },
+              ]}
+            />
             {can("shop.sale.create") && (
               <Button size="sm" onClick={() => navigate("/pos")}>
-                <ShoppingCart size={15} /> Open POS
+                <ShoppingCart size={14} /> Open POS
               </Button>
             )}
-            <NativeSelect
-              aria-label="Period"
-              className="w-36"
-              value={period}
-              onChange={(e) => setPeriod(e.target.value as typeof period)}
-            >
-              <option value="today">Today</option>
-              <option value="week">This week</option>
-              <option value="month">This month</option>
-              <option value="custom">Custom dates</option>
-            </NativeSelect>
-            {period === "custom" && (
-              <>
-                <Input
-                  type="date"
-                  className="w-36"
-                  value={from}
-                  onChange={(e) => setFrom(e.target.value)}
-                />
-                <Input
-                  type="date"
-                  className="w-36"
-                  value={to}
-                  onChange={(e) => setTo(e.target.value)}
-                />
-              </>
-            )}
-            <NativeSelect
-              aria-label="Business"
-              className="w-44"
-              value={business}
-              onChange={(e) => setBusiness(e.target.value as typeof business)}
-            >
-              <option value="all">Both businesses</option>
-              <option value="shop">Shop (Business A)</option>
-              <option value="services">Services (Business B)</option>
-            </NativeSelect>
           </div>
         }
       />
+
+      {period === "custom" && (
+        <div className="flex flex-wrap items-center gap-2.5 rounded-[var(--od-radius-md,12px)] border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] px-4 py-2.5">
+          <span className="text-xs font-medium text-[var(--od-ink-secondary)]">Date range</span>
+          <Input
+            type="date"
+            aria-label="Start date"
+            className="h-8 w-36 text-xs"
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+          />
+          <span className="text-xs text-[var(--od-ink-muted)]">to</span>
+          <Input
+            type="date"
+            aria-label="End date"
+            className="h-8 w-36 text-xs"
+            value={to}
+            onChange={(e) => setTo(e.target.value)}
+          />
+        </div>
+      )}
 
       {/* Row 1: Four KPI Total Cards */}
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -674,9 +694,8 @@ export default function Dashboard() {
             label="Expenses"
             value={formatMoney(d?.expenses?.total ?? "0")}
             sub="Approved & paid"
-            trend={trendInfo(d?.expenses?.change_pct)}
+            trend={trendInfo(d?.expenses?.change_pct, true)}
             icon={Receipt}
-            accent="amber"
             to="/reports?path=/reports/expenses"
           />
         )}
@@ -693,86 +712,98 @@ export default function Dashboard() {
       </div>
 
       {/* Row 2: Income vs Expenses Line Chart + Cash Balances */}
-      <div className="grid gap-6 lg:grid-cols-3">
+      <div className="grid gap-5 lg:grid-cols-3">
         <div className={d?.cash ? "lg:col-span-2" : "lg:col-span-3"}>
           <ChartCard
             title="Income vs expenses by day"
-            description="Click a day to inspect transactions"
+            description="Click any day on the chart to inspect transactions"
           >
             {chartData.length > 0 ? (
               <IncomeExpenseChart data={chartData} onDayClick={() => navigate("/money")} />
             ) : (
-              <div className="flex h-56 items-center justify-center text-sm text-muted-foreground">
+              <div className="flex h-64 items-center justify-center text-[13px] text-[var(--od-ink-muted)]">
                 No income or expense transactions recorded for this period yet.
               </div>
             )}
           </ChartCard>
         </div>
         {d?.cash && (
-          <section className="rounded-2xl border bg-card p-5 shadow-xs">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/12 text-primary">
-                  <Wallet size={16} />
-                </span>
-                <h2 className="font-semibold">Cash balances</h2>
-              </div>
-              <Link to="/money" className="text-xs font-medium text-primary hover:underline">
-                Accounts
+          <SectionCard
+            title="Cash balances"
+            subtitle="Active money accounts"
+            actions={
+              <Link
+                to="/money"
+                className="inline-flex items-center gap-1 text-xs font-medium text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]"
+              >
+                <Wallet size={13} /> Accounts
               </Link>
-            </div>
-            <p className="mt-3 text-2xl font-bold tracking-tight tabular-nums">
-              {formatMoney(d.cash.total)}
-            </p>
-            <ul className="mt-4 divide-y text-sm">
+            }
+          >
+            <p className="od-kpi-value pt-1">{formatMoney(d.cash.total)}</p>
+            <ul className="divide-y divide-[var(--od-border)] text-[13px]">
               {d.cash.accounts.length === 0 ? (
-                <li className="py-3 text-xs text-muted-foreground">No money accounts yet.</li>
+                <li className="py-3 text-xs text-[var(--od-ink-muted)]">No money accounts yet.</li>
               ) : (
                 d.cash.accounts.slice(0, 6).map((a) => (
-                  <li key={a.id} className="flex items-center justify-between py-2.5">
-                    <div>
-                      <p className="font-medium">{a.name}</p>
-                      <p className="text-xs text-muted-foreground">{label(a.type)}</p>
+                  <li key={a.id} className="flex items-center justify-between gap-2 py-2.5">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-[var(--od-ink)]">{a.name}</p>
+                      <p className="od-caption">{label(a.type)}</p>
                     </div>
-                    <span className="font-semibold tabular-nums">{formatMoney(a.balance)}</span>
+                    <span className="od-tabular shrink-0 font-semibold">
+                      {formatMoney(a.balance)}
+                    </span>
                   </li>
                 ))
               )}
             </ul>
-          </section>
+          </SectionCard>
         )}
       </div>
 
       {/* Row 3: Projects by Stage + Debts */}
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-5 lg:grid-cols-2">
         {d?.projects_by_stage && (
-          <section className="rounded-2xl border bg-card p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold">Projects by stage</h2>
-              <Link to="/projects" className="text-xs text-primary underline">
+          <SectionCard
+            title="Projects by stage"
+            subtitle="Active service work distribution"
+            actions={
+              <Link
+                to="/projects"
+                className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
+              >
                 Open board
               </Link>
-            </div>
+            }
+          >
             {d.projects_by_stage.length === 0 ? (
-              <p className="mt-4 text-sm text-muted-foreground">No active projects.</p>
+              <p className="od-caption py-4">No active projects.</p>
             ) : (
-              <ul className="mt-4 space-y-3 text-sm">
+              <ul className="space-y-3.5 pt-1 text-[13px]">
                 {d.projects_by_stage.map((st) => (
                   <li key={st.stage}>
-                    <Link to="/projects" className="block group">
-                      <div className="flex justify-between text-xs">
-                        <span className="font-medium group-hover:text-primary">{st.stage}</span>
-                        <span>
-                          {st.count}
+                    <Link to="/projects" className="group block">
+                      <div className="flex items-baseline justify-between text-xs">
+                        <span className="font-medium text-[var(--od-ink)] group-hover:underline">
+                          {st.stage}
+                        </span>
+                        <span className="od-tabular text-[var(--od-ink-secondary)]">
+                          <strong className="text-[var(--od-ink)]">{st.count}</strong>
                           {st.late > 0 && (
-                            <span className="ml-1.5 text-destructive">({st.late} late/stuck)</span>
+                            <span className="ml-1.5 font-medium text-[var(--od-bad)]">
+                              ({st.late} late)
+                            </span>
                           )}
                         </span>
                       </div>
-                      <div className="mt-1 h-2 overflow-hidden rounded-full bg-muted">
+                      <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-[var(--od-neutral-soft)]">
                         <div
-                          className="h-full rounded-full bg-primary"
-                          style={{ width: `${Math.round((st.count / maxStage) * 100)}%` }}
+                          className="h-full rounded-full transition-all"
+                          style={{
+                            width: `${Math.round((st.count / maxStage) * 100)}%`,
+                            backgroundColor: "var(--od-series-1)",
+                          }}
                         />
                       </div>
                     </Link>
@@ -780,71 +811,101 @@ export default function Dashboard() {
                 ))}
               </ul>
             )}
-          </section>
+          </SectionCard>
         )}
 
         {d?.outstanding && (
-          <section className="rounded-2xl border bg-card p-5">
-            <div className="flex items-center justify-between">
-              <h2 className="font-semibold">Debts</h2>
-              <Link to="/customers" className="text-xs text-primary underline">
+          <SectionCard
+            title="Debts & payables"
+            subtitle="Receivables and outstanding obligations"
+            actions={
+              <Link
+                to="/debts"
+                className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
+              >
                 View debts
               </Link>
-            </div>
-            <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <div className="rounded-xl border p-4">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Owed to us</p>
-                <p className="mt-1 text-xl font-bold tabular-nums">{formatMoney(owedToUs)}</p>
-                <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+            }
+          >
+            <div className="grid gap-3 pt-1 sm:grid-cols-2">
+              <div className="rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4">
+                <p className="od-kpi-label">Owed to us</p>
+                <p className="od-tabular mt-1.5 text-[20px] font-semibold tracking-tight text-[var(--od-ink)]">
+                  {formatMoney(owedToUs)}
+                </p>
+                <div className="mt-3 space-y-1.5 text-xs text-[var(--od-ink-secondary)]">
                   <div className="flex justify-between">
                     <span>Shop customers</span>
-                    <span>{formatMoney(d.outstanding.customers_owe ?? "0")}</span>
+                    <span className="od-tabular font-medium text-[var(--od-ink)]">
+                      {formatMoney(d.outstanding.customers_owe ?? "0")}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span>Service clients</span>
-                    <span>{formatMoney(d.outstanding.clients_owe ?? "0")}</span>
+                    <span className="od-tabular font-medium text-[var(--od-ink)]">
+                      {formatMoney(d.outstanding.clients_owe ?? "0")}
+                    </span>
                   </div>
                 </div>
               </div>
-              <div className="rounded-xl border p-4">
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">We owe</p>
-                <p className="mt-1 text-xl font-bold tabular-nums text-destructive">
+              <div className="rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4">
+                <p className="od-kpi-label">We owe</p>
+                <p className="od-tabular mt-1.5 text-[20px] font-semibold tracking-tight text-[var(--od-bad)]">
                   {formatMoney(weOwe)}
                 </p>
-                <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                <div className="mt-3 space-y-1.5 text-xs text-[var(--od-ink-secondary)]">
                   <div className="flex justify-between">
                     <span>Suppliers</span>
-                    <span>{formatMoney(d.outstanding.we_owe_suppliers ?? "0")}</span>
+                    <span className="od-tabular font-medium text-[var(--od-ink)]">
+                      {formatMoney(d.outstanding.we_owe_suppliers ?? "0")}
+                    </span>
                   </div>
                   <div className="flex justify-between">
                     <span>Contractors</span>
-                    <span>{formatMoney(d.outstanding.we_owe_contractors ?? "0")}</span>
+                    <span className="od-tabular font-medium text-[var(--od-ink)]">
+                      {formatMoney(d.outstanding.we_owe_contractors ?? "0")}
+                    </span>
                   </div>
                 </div>
               </div>
             </div>
-          </section>
+            {d.outstanding.salaries_due !== undefined && d.outstanding.salaries_due !== null && (
+              <Link
+                to="/payroll"
+                className="flex items-center justify-between rounded-[var(--od-radius-md,12px)] border border-[var(--od-border-strong)] px-4 py-2.5 text-[13px] transition-colors hover:bg-[var(--od-surface-subtle)]"
+              >
+                <span className="font-medium text-[var(--od-ink-secondary)]">Salaries due</span>
+                <span className="od-tabular font-semibold text-[var(--od-ink)]">
+                  {formatMoney(d.outstanding.salaries_due)}
+                </span>
+              </Link>
+            )}
+          </SectionCard>
         )}
       </div>
 
       {/* Row 4: Overdue Tasks, Low Stock, Renewals Due, Approvals Waiting */}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {d?.overdue_tasks && (
-          <section className="rounded-2xl border bg-card p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Overdue tasks ({d.overdue_tasks.length})</h2>
-              <Link to="/service-tasks" className="text-xs text-primary underline">
+          <SectionCard
+            title={`Overdue tasks (${d.overdue_tasks.length})`}
+            actions={
+              <Link
+                to="/service-tasks"
+                className="text-xs font-medium text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]"
+              >
                 All
               </Link>
-            </div>
+            }
+          >
             {d.overdue_tasks.length === 0 ? (
-              <p className="mt-3 text-xs text-muted-foreground">No overdue tasks.</p>
+              <p className="od-caption py-2">No overdue tasks.</p>
             ) : (
-              <ul className="mt-3 divide-y text-xs">
+              <ul className="divide-y divide-[var(--od-border)] text-xs">
                 {d.overdue_tasks.map((t) => (
-                  <li key={t.id} className="py-2">
-                    <p className="font-medium">{t.title}</p>
-                    <p className="text-destructive">
+                  <li key={t.id} className="py-2.5">
+                    <p className="font-medium text-[var(--od-ink)]">{t.title}</p>
+                    <p className="mt-0.5 font-medium text-[var(--od-bad)]">
                       Due {formatDate(t.due_date)}
                       {t.assignee_name ? ` · ${t.assignee_name}` : ""}
                     </p>
@@ -852,52 +913,79 @@ export default function Dashboard() {
                 ))}
               </ul>
             )}
-          </section>
+          </SectionCard>
         )}
 
         {d?.stock && (
-          <section className="rounded-2xl border bg-card p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Low stock ({d.stock.low_stock_count})</h2>
-              <Link to="/products" className="text-xs text-primary underline">
+          <SectionCard
+            title={`Low stock (${d.stock.low_stock_count})`}
+            actions={
+              <Link
+                to="/products"
+                className="text-xs font-medium text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]"
+              >
                 Products
               </Link>
-            </div>
+            }
+          >
+            {d.stock.value !== undefined && d.stock.value !== null && (
+              <Link
+                to={
+                  can("reports.business.view")
+                    ? "/reports?path=/reports/inventory/valuation"
+                    : "/products"
+                }
+                className="flex items-center justify-between rounded-[var(--od-radius-sm,8px)] bg-[var(--od-surface-subtle)] px-3 py-2 text-xs transition-colors hover:bg-[var(--od-border)]"
+              >
+                <span className="font-medium text-[var(--od-ink-secondary)]">Stock value</span>
+                <span className="od-tabular font-semibold text-[var(--od-ink)]">
+                  {formatMoney(d.stock.value)}
+                </span>
+              </Link>
+            )}
             {(d.stock.items ?? []).length === 0 ? (
-              <p className="mt-3 text-xs text-muted-foreground">Stock levels are healthy.</p>
+              <p className="od-caption py-2">Stock levels are healthy.</p>
             ) : (
-              <ul className="mt-3 divide-y text-xs">
+              <ul className="divide-y divide-[var(--od-border)] text-xs">
                 {(d.stock.items ?? []).map((p) => (
-                  <li key={p.id} className="flex items-center justify-between py-2">
-                    <span className="truncate font-medium">{p.name}</span>
-                    <span className="shrink-0 font-medium text-amber-600">
+                  <li key={p.id} className="flex items-center justify-between gap-2 py-2.5">
+                    <span className="truncate font-medium text-[var(--od-ink)]">{p.name}</span>
+                    <span className="od-tabular shrink-0 font-semibold text-[var(--od-warning)]">
                       {toNumber(p.qty_on_hand)} left
                     </span>
                   </li>
                 ))}
               </ul>
             )}
-          </section>
+          </SectionCard>
         )}
 
         {d?.renewals_due && (
-          <section className="rounded-2xl border bg-card p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Renewals due ({d.renewals_due.length})</h2>
-              <Link to="/renewals" className="text-xs text-primary underline">
+          <SectionCard
+            title={`Renewals due (${d.renewals_due.length})`}
+            actions={
+              <Link
+                to="/renewals"
+                className="text-xs font-medium text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]"
+              >
                 All
               </Link>
-            </div>
+            }
+          >
             {d.renewals_due.length === 0 ? (
-              <p className="mt-3 text-xs text-muted-foreground">None due in the next 30 days.</p>
+              <p className="od-caption py-2">None due in the next 30 days.</p>
             ) : (
-              <ul className="mt-3 divide-y text-xs">
+              <ul className="divide-y divide-[var(--od-border)] text-xs">
                 {d.renewals_due.map((r) => (
-                  <li key={r.id} className="py-2">
-                    <p className="font-medium">{r.item}</p>
-                    <p className="text-muted-foreground">
+                  <li key={r.id} className="py-2.5">
+                    <p className="font-medium text-[var(--od-ink)]">{r.item}</p>
+                    <p className="mt-0.5 text-[var(--od-ink-muted)]">
                       {r.client_name} ·{" "}
-                      <span className={r.days_left <= 7 ? "font-medium text-destructive" : ""}>
+                      <span
+                        className={
+                          r.days_left <= 7 ? "font-semibold text-[var(--od-bad)]" : undefined
+                        }
+                      >
                         {r.days_left < 0 ? `${-r.days_left}d late` : `${r.days_left}d left`}
                       </span>
                     </p>
@@ -905,27 +993,35 @@ export default function Dashboard() {
                 ))}
               </ul>
             )}
-          </section>
+          </SectionCard>
         )}
 
         {d?.pending_approvals && (
-          <section className="rounded-2xl border bg-card p-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-sm font-semibold">Approvals ({d.pending_approvals.count})</h2>
-              <Link to="/approvals" className="text-xs text-primary underline">
+          <SectionCard
+            title={`Approvals (${d.pending_approvals.count})`}
+            actions={
+              <Link
+                to="/approvals"
+                className="text-xs font-medium text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]"
+              >
                 All
               </Link>
-            </div>
+            }
+          >
             {d.pending_approvals.latest.length === 0 ? (
-              <p className="mt-3 text-xs text-muted-foreground">Nothing waiting for approval.</p>
+              <p className="od-caption py-2">Nothing waiting for approval.</p>
             ) : (
-              <ul className="mt-3 divide-y text-xs">
+              <ul className="divide-y divide-[var(--od-border)] text-xs">
                 {d.pending_approvals.latest.map((a) => (
-                  <li key={a.id} className="space-y-1.5 py-2">
+                  <li key={a.id} className="space-y-2 py-2.5">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="truncate font-medium">{a.summary || label(a.kind)}</span>
+                      <span className="truncate font-medium text-[var(--od-ink)]">
+                        {a.summary || label(a.kind)}
+                      </span>
                       {a.amount && (
-                        <span className="shrink-0 tabular-nums">{formatMoney(a.amount)}</span>
+                        <span className="od-tabular shrink-0 font-semibold">
+                          {formatMoney(a.amount)}
+                        </span>
                       )}
                     </div>
                     {canDecideApprovals && (
@@ -933,7 +1029,7 @@ export default function Dashboard() {
                         <Button
                           size="sm"
                           variant="outline"
-                          className="h-6 px-2 text-xs text-emerald-700"
+                          className="h-6 px-2 text-[11px] text-[var(--od-good)]"
                           disabled={approve.isPending}
                           onClick={() => approve.mutate({ id: a.id })}
                         >
@@ -942,7 +1038,7 @@ export default function Dashboard() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="h-6 px-2 text-xs text-destructive"
+                          className="h-6 px-2 text-[11px] text-[var(--od-bad)]"
                           disabled={reject.isPending}
                           onClick={() => reject.mutate({ id: a.id })}
                         >
@@ -954,7 +1050,7 @@ export default function Dashboard() {
                 ))}
               </ul>
             )}
-          </section>
+          </SectionCard>
         )}
       </div>
     </div>

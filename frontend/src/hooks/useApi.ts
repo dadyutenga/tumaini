@@ -13,11 +13,7 @@ export function useGet<T>(path: string, query?: Query, options: { enabled?: bool
   });
 }
 
-export function useGetPage<T>(
-  path: string,
-  query?: Query,
-  options: { enabled?: boolean } = {},
-) {
+export function useGetPage<T>(path: string, query?: Query, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: [path, "page", query ?? {}],
     queryFn: ({ signal }) => getPage<T>(path, query, signal),
@@ -35,12 +31,13 @@ export function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : "Something went wrong";
 }
 
-interface MutateOptions<R> {
+interface MutateOptions<R, B = unknown> {
   /** Query keys (path prefixes) to refresh afterwards. */
   invalidate?: string[];
   success?: string;
   idempotent?: boolean;
   onSuccess?: (result: R) => void;
+  onError?: (error: unknown, variables: B) => void;
 }
 
 interface BodyOption<B> {
@@ -52,7 +49,7 @@ interface BodyOption<B> {
 export function useWrite<B = unknown, R = unknown>(
   method: "POST" | "PUT" | "DELETE",
   path: string | ((body: B) => string),
-  options: MutateOptions<R> & BodyOption<B> = {},
+  options: MutateOptions<R, B> & BodyOption<B> = {},
 ) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -77,6 +74,9 @@ export function useWrite<B = unknown, R = unknown>(
       }
       options.onSuccess?.(result);
     },
-    onError: (error) => toast.error(errorMessage(error)),
+    onError: (error, variables) => {
+      toast.error(errorMessage(error));
+      options.onError?.(error, variables);
+    },
   });
 }

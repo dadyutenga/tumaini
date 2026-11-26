@@ -1,15 +1,6 @@
 import { useState } from "react";
-import { Link, useParams } from "react-router-dom";
-import {
-  ArrowLeft,
-  Download,
-  FileText,
-  MessageCircle,
-  Pencil,
-  Plus,
-  RotateCcw,
-  Trash2,
-} from "lucide-react";
+import { useParams } from "react-router-dom";
+import { Download, FileText, MessageCircle, Pencil, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -22,7 +13,7 @@ import {
   PageHeader,
   StatusBadge,
 } from "@/components/shared/kit";
-import { PageLoader } from "@/components/shared/Display";
+import { PageLoader, StatCard } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { download } from "@/lib/api";
@@ -126,19 +117,15 @@ export default function PayrollRun() {
   const canEditLines = ["draft", "calculated"].includes(r.status) && canManage;
 
   return (
-    <>
-      <Link
-        to="/payroll"
-        className="mb-3 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft size={14} /> Payroll
-      </Link>
+    <div className="space-y-6">
       <PageHeader
+        backTo="/payroll"
+        backLabel="Payroll"
         title={r.number}
-        description={`${formatDate(r.period_start)} – ${formatDate(r.period_end)} · net ${formatMoney(r.net_total)}`}
+        description={`${formatDate(r.period_start)} – ${formatDate(r.period_end)}`}
+        badge={<StatusBadge value={r.status} />}
         actions={
           <div className="flex flex-wrap items-center gap-2">
-            <StatusBadge value={r.status} />
             {["draft", "calculated"].includes(r.status) && canManage && (
               <Button
                 variant="outline"
@@ -167,7 +154,7 @@ export default function PayrollRun() {
                     )
                   }
                 >
-                  <Download size={16} /> Payment list
+                  <Download size={15} /> Payment list
                 </Button>
                 <Button onClick={() => setPaying(true)}>Pay salaries</Button>
               </>
@@ -175,7 +162,7 @@ export default function PayrollRun() {
             {["draft", "approved"].includes(r.status) && (canApprove || canManage) && (
               <Button
                 variant="outline"
-                className="text-destructive hover:text-destructive"
+                className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                 onClick={() => setReversing(true)}
               >
                 <RotateCcw size={15} />{" "}
@@ -185,17 +172,68 @@ export default function PayrollRun() {
           </div>
         }
       />
+
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Staff on run" value={String(r.payslips?.length ?? r.payslip_count ?? 0)} />
+        <StatCard label="Gross pay" value={formatMoney(r.gross_total)} />
+        <StatCard label="Deductions" value={formatMoney(r.deduction_total)} />
+        <StatCard
+          label="Net payable"
+          value={formatMoney(r.net_total)}
+          trend={`Paid ${formatMoney(r.paid_total)}`}
+          tone={
+            Number(r.paid_total) >= Number(r.net_total) && Number(r.net_total) > 0
+              ? "good"
+              : "neutral"
+          }
+        />
+      </div>
+
       <DataGrid
         rows={r.payslips}
         rowKey={(s) => s.id}
         empty="Calculate the run to generate payslips"
         columns={[
-          { header: "Employee", cell: (s) => <span className="font-medium">{s.name}</span> },
-          { header: "Base pay", align: "right", cell: (s) => formatMoney(s.base_pay) },
-          { header: "Gross", align: "right", cell: (s) => formatMoney(s.gross) },
-          { header: "Deductions", align: "right", cell: (s) => formatMoney(s.total_deductions) },
-          { header: "Net", align: "right", cell: (s) => formatMoney(s.net) },
-          { header: "Paid", align: "right", cell: (s) => formatMoney(s.paid_total) },
+          {
+            header: "Employee",
+            cell: (s) => (
+              <div>
+                <p className="font-medium text-[var(--od-ink)]">{s.name}</p>
+                {s.employee_no && (
+                  <p className="od-mono text-xs text-[var(--od-ink-muted)]">{s.employee_no}</p>
+                )}
+              </div>
+            ),
+          },
+          {
+            header: "Base pay",
+            align: "right",
+            cell: (s) => <span className="od-tabular">{formatMoney(s.base_pay)}</span>,
+          },
+          {
+            header: "Gross",
+            align: "right",
+            cell: (s) => <span className="od-tabular">{formatMoney(s.gross)}</span>,
+          },
+          {
+            header: "Deductions",
+            align: "right",
+            cell: (s) => <span className="od-tabular">{formatMoney(s.total_deductions)}</span>,
+          },
+          {
+            header: "Net",
+            align: "right",
+            cell: (s) => (
+              <span className="od-tabular font-semibold text-[var(--od-ink)]">
+                {formatMoney(s.net)}
+              </span>
+            ),
+          },
+          {
+            header: "Paid",
+            align: "right",
+            cell: (s) => <span className="od-tabular">{formatMoney(s.paid_total)}</span>,
+          },
           {
             header: "",
             cell: (s) => (
@@ -255,6 +293,12 @@ export default function PayrollRun() {
         busy={pay.isPending}
         onSubmit={() => pay.mutate({ money_account_id: account })}
       >
+        <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3.5 py-2.5 text-sm text-[var(--od-ink-secondary)]">
+          Total net salaries to disburse:{" "}
+          <strong className="od-tabular font-semibold text-[var(--od-ink)]">
+            {formatMoney(r.net_total)}
+          </strong>
+        </div>
         <Field label="Pay from">
           <NativeSelect required value={account} onChange={(e) => setAccount(e.target.value)}>
             <option value="">Choose…</option>
@@ -282,13 +326,16 @@ export default function PayrollRun() {
           })
         }
       >
-        <p className="text-xs text-muted-foreground">
+        <p className="od-caption">
           Replaces manual earning/deduction lines on this payslip and recalculates net pay. Leave
           rows empty to remove manual lines.
         </p>
         <div className="space-y-2">
           {manualLines.map((line, idx) => (
-            <div key={idx} className="grid grid-cols-[7.5rem_1fr_6.5rem_2rem] items-center gap-2">
+            <div
+              key={idx}
+              className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[7.5rem_1fr_6.5rem_2rem]"
+            >
               <NativeSelect
                 value={line.kind}
                 onChange={(e) =>
@@ -316,6 +363,7 @@ export default function PayrollRun() {
               />
               <Input
                 inputMode="decimal"
+                className="od-tabular"
                 placeholder="Amount"
                 value={line.amount}
                 onChange={(e) =>
@@ -328,7 +376,7 @@ export default function PayrollRun() {
                 type="button"
                 size="icon"
                 variant="ghost"
-                className="h-8 w-8 text-destructive"
+                className="h-8 w-8 text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                 onClick={() => setManualLines((prev) => prev.filter((_, i) => i !== idx))}
               >
                 <Trash2 size={14} />
@@ -364,11 +412,11 @@ export default function PayrollRun() {
         busy={reverse.isPending}
         onSubmit={() => reverse.mutate({ reason: reverseReason })}
       >
-        <p className="text-sm text-muted-foreground">
+        <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3.5 py-2.5 text-sm text-[var(--od-ink-secondary)]">
           {r.status === "approved"
             ? "Reopening moves this unpaid payroll run back to draft so it can be edited and recalculated."
             : "Cancelling releases any linked pay adjustments and accrued commissions back for future runs."}
-        </p>
+        </div>
         <Field label="Reason">
           <Textarea
             rows={3}
@@ -378,6 +426,6 @@ export default function PayrollRun() {
           />
         </Field>
       </FormDialog>
-    </>
+    </div>
   );
 }

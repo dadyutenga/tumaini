@@ -18,6 +18,7 @@ import (
 	"bms/internal/kernel/audit"
 	"bms/internal/kernel/deps"
 	"bms/internal/kernel/notify"
+	"bms/internal/kernel/outbound"
 	"bms/internal/modules/attendance"
 	"bms/internal/modules/catalog"
 	"bms/internal/modules/customers"
@@ -48,8 +49,9 @@ type App struct {
 	Fiber *fiber.App
 	DB    *db.DB
 	Jobs  *jobs.Client
-	// Recovery is exposed so tests can plug in a recording sender.
+	// Recovery and Outbound are exposed so tests can plug in recording senders.
 	Recovery *identity.Recovery
+	Outbound *outbound.Service
 }
 
 func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) {
@@ -65,6 +67,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	}
 	aud := audit.New()
 	n := notify.New()
+	outb := outbound.New(database, clk, sender.OutboundFromConfig(cfg))
 	ap := approval.New(n)
 	pepper := sha256.Sum256([]byte("auth-events:" + cfg.JWTSecret))
 	ident := &identity.Service{DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads}, Clock: clk, Audit: aud, Notify: n, TTL: cfg.RefreshTokenTTL, IdleTimeout: cfg.SessionIdleTimeout, Pepper: pepper[:], DefaultTimezone: cfg.DefaultTimezone, DefaultCurrency: cfg.DefaultCurrency}
@@ -74,8 +77,9 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	}
 	worker := jobs.New(jobPool)
 	worker.SetClock(clk.Now)
+	worker.Register(jobs.DispatchOutbound, outb.Dispatch)
 	d := deps.Deps{
-		Config: cfg, DB: database, Audit: aud, Notify: n, Approval: ap,
+		Config: cfg, DB: database, Audit: aud, Notify: n, Outbound: outb, Approval: ap,
 		Clock: clk, Store: store, Jobs: worker,
 		Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads},
 	}
@@ -137,7 +141,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	}
 	svcHandler.Register(private)
 
-	return &App{Fiber: fiberApp, DB: database, Jobs: worker, Recovery: recovery}, nil
+	return &App{Fiber: fiberApp, DB: database, Jobs: worker, Recovery: recovery, Outbound: outb}, nil
 }
 
 // mountAny adapts a module Mount that returns its service.

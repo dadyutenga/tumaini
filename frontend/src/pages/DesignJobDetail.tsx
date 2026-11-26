@@ -12,6 +12,7 @@ import {
   FormDialog,
   NativeSelect,
   PageHeader,
+  SectionCard,
   StatusBadge,
 } from "@/components/shared/kit";
 import { CopyButton, PageLoader } from "@/components/shared/Display";
@@ -22,7 +23,7 @@ import { CostDialog } from "@/features/services/CostDialog";
 import { PaymentDialog, StaffSelect, Tile } from "@/features/services/shared";
 import { label, whatsappUrl } from "@/features/services/helpers";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
-import { download, uploadFile } from "@/lib/api";
+import { ApiError, download, uploadFile } from "@/lib/api";
 import { formatDate, formatDateTime, formatMoney, toNumber } from "@/lib/formatters";
 import {
   DESIGN_NEXT,
@@ -120,7 +121,7 @@ function VersionDialog({ job, onClose }: { job: Job | null; onClose: () => void 
           >
             <Upload size={14} /> {uploading ? "Uploading…" : "Choose file"}
           </Button>
-          <span className="text-sm text-muted-foreground">{fileName}</span>
+          <span className="od-caption">{fileName}</span>
         </div>
       </Field>
       <Field label="Or a link">
@@ -313,7 +314,7 @@ function EditDialog({ job, onClose }: { job: Job | null; onClose: () => void }) 
           />
         </Field>
       </div>
-      <label className="flex items-center gap-2 text-sm">
+      <label className="flex items-center gap-2 text-[13px] text-[var(--od-ink-secondary)]">
         <input
           type="checkbox"
           checked={d.printing_needed}
@@ -356,9 +357,14 @@ function Preview({
     );
   }
   return (
-    <div className="flex h-28 w-40 items-center justify-center overflow-hidden rounded-lg border bg-muted text-xs text-muted-foreground">
+    <div className="flex h-28 w-40 items-center justify-center overflow-hidden rounded-[var(--od-radius-sm,8px)] border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] text-xs text-[var(--od-ink-muted)]">
       {v.link ? (
-        <a className="p-2 text-center underline" href={v.link} target="_blank" rel="noreferrer">
+        <a
+          className="p-2 text-center font-medium text-[var(--od-ink)] underline underline-offset-4"
+          href={v.link}
+          target="_blank"
+          rel="noreferrer"
+        >
           Open link
         </a>
       ) : (
@@ -397,15 +403,26 @@ export default function DesignJobDetail() {
     invalidate: refresh,
     success: "Status updated",
   });
-  const send = useWrite<{ versionId: string }, { approval_path: string; delivered: boolean }>(
-    "POST",
-    (b) => `/design-jobs/${id}/versions/${b.versionId}/send`,
-    {
-      invalidate: refresh,
-      toBody: () => undefined,
-      onSuccess: (r) => setLink({ path: r.approval_path, delivered: r.delivered }),
+  const send = useWrite<
+    { versionId: string; channel?: string },
+    { approval_path: string; delivered?: boolean; queued?: boolean }
+  >("POST", (b) => `/design-jobs/${id}/versions/${b.versionId}/send`, {
+    invalidate: refresh,
+    toBody: (b) => ({ channel: b.channel ?? "sms" }),
+    onSuccess: (r) => {
+      const sent = Boolean(r.queued ?? r.delivered);
+      setLink({ path: r.approval_path, delivered: sent });
+      if (sent) toast.success("Approval link queued for the client");
     },
-  );
+    onError: (err) => {
+      if (err instanceof ApiError && err.status === 503) {
+        const d = err.data as { approval_path?: string } | undefined;
+        if (d?.approval_path) {
+          setLink({ path: d.approval_path, delivered: false });
+        }
+      }
+    },
+  });
   const feedback = useWrite<{ comment: string; version_id?: string }>(
     "POST",
     `/design-jobs/${id}/feedback`,
@@ -441,12 +458,12 @@ export default function DesignJobDetail() {
   const job = jobQuery.data;
   if (!job)
     return (
-      <p className="text-destructive">
-        Design job not found.{" "}
-        <Link className="underline" to="/design-jobs">
-          Back
-        </Link>
-      </p>
+      <div className="od-card items-center py-10 text-center">
+        <p className="text-[14px] font-semibold text-[var(--od-bad)]">Design job not found.</p>
+        <Button asChild variant="outline" size="sm" className="mt-3">
+          <Link to="/design-jobs">Back to design jobs</Link>
+        </Button>
+      </div>
     );
   const manage = can("services.design.manage");
   const billing = can("services.invoice.manage");
@@ -456,21 +473,27 @@ export default function DesignJobDetail() {
   const latest = job.versions.find((v) => v.kind === "design");
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
+        backTo="/design-jobs"
+        backLabel="Design jobs"
         title={job.title}
+        badge={
+          <div className="flex items-center gap-1.5">
+            <StatusBadge value={job.overdue ? "overdue" : job.status} />
+            {job.priority === "urgent" && <StatusBadge value="urgent" />}
+          </div>
+        }
         description={`${job.number} · Client: ${job.client_name}${job.designer_name ? ` · Designer: ${job.designer_name}` : ""}`}
         actions={
           <>
-            <StatusBadge value={job.overdue ? "overdue" : job.status} />
-            {job.priority === "urgent" && <StatusBadge value="urgent" />}
             {manage && (
-              <Button variant="outline" onClick={() => setEditing(true)}>
+              <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
                 Edit
               </Button>
             )}
             {manage && (
-              <Button variant="outline" onClick={() => setVersioning(true)}>
+              <Button size="sm" variant="outline" onClick={() => setVersioning(true)}>
                 Upload version
               </Button>
             )}
@@ -478,6 +501,7 @@ export default function DesignJobDetail() {
               latest &&
               ["in_design", "internal_review", "with_client"].includes(job.status) && (
                 <Button
+                  size="sm"
                   onClick={() => send.mutate({ versionId: latest.id })}
                   disabled={send.isPending}
                 >
@@ -485,34 +509,43 @@ export default function DesignJobDetail() {
                 </Button>
               )}
             {billing && (
-              <Button variant="outline" onClick={() => setPaying(true)}>
+              <Button size="sm" variant="outline" onClick={() => setPaying(true)}>
                 Add payment
               </Button>
             )}
           </>
         }
       />
-      <div className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
+
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-4 py-2.5 text-[13px] text-[var(--od-ink-secondary)]">
         {job.project_id && (
           <span>
             Project:{" "}
-            <Link className="underline" to={`/projects/${job.project_id}`}>
+            <Link
+              className="od-mono font-medium text-[var(--od-ink)] underline underline-offset-4"
+              to={`/projects/${job.project_id}`}
+            >
               {job.project_number}
             </Link>
           </span>
         )}
         <span>Type: {label(job.job_type)}</span>
         {job.deadline && (
-          <span className={job.overdue ? "font-medium text-destructive" : ""}>
+          <span className={job.overdue ? "font-semibold text-[var(--od-bad)]" : undefined}>
             Due: {formatDate(job.deadline)}
           </span>
         )}
-        <span className={job.revisions_over ? "font-medium text-destructive" : ""}>
+        <span
+          className={
+            job.revisions_over ? "od-tabular font-semibold text-[var(--od-bad)]" : "od-tabular"
+          }
+        >
           Revisions: {job.revisions_used} of {job.revisions_included}
         </span>
       </div>
+
       {job.revisions_over && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-700 dark:text-red-400">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--od-radius-md,12px)] border border-[color-mix(in_srgb,var(--od-bad-mark)_30%,transparent)] bg-[color-mix(in_srgb,var(--od-bad-mark)_10%,transparent)] px-4 py-3 text-[13px] font-medium text-[var(--od-bad)]">
           <p>
             The included revisions are used up. Add an extra charge to the price before more
             changes.
@@ -524,41 +557,49 @@ export default function DesignJobDetail() {
           )}
         </div>
       )}
+
       {link && (
-        <div className="mb-4 rounded-xl border bg-card p-4 text-sm">
-          <p className="mb-2 font-medium">
-            {link.delivered
-              ? "Link sent to the client by SMS."
-              : "Share this private link with the client (valid for 14 days)."}
-          </p>
+        <SectionCard
+          title={
+            link.delivered
+              ? "Approval link queued for the client (valid for 14 days)"
+              : "Share this private link with the client (valid for 14 days)"
+          }
+        >
           <div className="flex flex-wrap items-center gap-2">
-            <code className="flex-1 break-all rounded bg-muted px-2 py-1">{`${window.location.origin}${link.path}`}</code>
+            <code className="od-mono flex-1 break-all rounded-[var(--od-radius-sm,8px)] bg-[var(--od-surface-subtle)] px-3 py-1.5 text-xs">
+              {`${window.location.origin}${link.path}`}
+            </code>
             <CopyButton text={`${window.location.origin}${link.path}`} />
-            <Button size="sm" variant="outline" asChild>
-              <a
-                href={whatsappUrl(
-                  undefined,
-                  `Design ready for your approval (${job.title}): ${window.location.origin}${link.path}`,
-                )}
-                target="_blank"
-                rel="noreferrer"
-              >
-                <MessageCircle size={14} /> WhatsApp
-              </a>
-            </Button>
+            {!link.delivered && (
+              <Button size="sm" variant="outline" asChild>
+                <a
+                  href={whatsappUrl(
+                    undefined,
+                    `Design ready for your approval (${job.title}): ${window.location.origin}${link.path}`,
+                  )}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <MessageCircle size={13} /> Open in WhatsApp
+                </a>
+              </Button>
+            )}
           </div>
-        </div>
+        </SectionCard>
       )}
 
       {canViewDesign && (
-        <div className="mb-6 flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {manage &&
             next.map((s) => (
               <Button
                 key={s}
                 size="sm"
                 variant={s === "cancelled" ? "ghost" : "outline"}
-                className={s === "cancelled" ? "text-destructive" : undefined}
+                className={
+                  s === "cancelled" ? "text-[var(--od-bad)] hover:text-[var(--od-bad)]" : undefined
+                }
                 disabled={move.isPending}
                 onClick={() => move.mutate({ status: s })}
               >
@@ -582,17 +623,17 @@ export default function DesignJobDetail() {
           {canViewDesign &&
             (timerHere ? (
               <Button size="sm" variant="outline" onClick={() => stopTimer.mutate(undefined)}>
-                <Square size={14} /> Stop timer
+                <Square size={13} /> Stop timer
               </Button>
             ) : (
               <Button size="sm" variant="outline" onClick={() => startTimer.mutate(undefined)}>
-                <Play size={14} /> Start timer
+                <Play size={13} /> Start timer
               </Button>
             ))}
         </div>
       )}
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Tile label="Price" value={formatMoney(job.price)} />
         <Tile label="Paid" value={formatMoney(job.paid)} />
         <Tile
@@ -604,7 +645,7 @@ export default function DesignJobDetail() {
       </div>
 
       <Tabs defaultValue="files">
-        <TabsList className="mb-4 flex-wrap">
+        <TabsList>
           <TabsTrigger value="brief">Brief</TabsTrigger>
           <TabsTrigger value="files">Files</TabsTrigger>
           <TabsTrigger value="feedback">Feedback</TabsTrigger>
@@ -614,7 +655,7 @@ export default function DesignJobDetail() {
           <TabsTrigger value="history">History</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="brief" className="space-y-3">
+        <TabsContent value="brief" className="grid gap-4 sm:grid-cols-2">
           {(
             [
               ["Brief", job.brief],
@@ -624,14 +665,14 @@ export default function DesignJobDetail() {
               ["Printing", job.printing_needed ? "Needed after approval" : "Not needed"],
             ] as const
           ).map(([l, v]) => (
-            <div key={l} className="rounded-2xl border bg-card p-4">
-              <p className="text-sm text-muted-foreground">{l}</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm">{v || "-"}</p>
-            </div>
+            <SectionCard key={l} title={l} className={l === "Brief" ? "sm:col-span-2" : undefined}>
+              <p className="whitespace-pre-wrap text-[13px] text-[var(--od-ink-secondary)]">
+                {v || "—"}
+              </p>
+            </SectionCard>
           ))}
           {job.references.length > 0 && (
-            <div className="rounded-2xl border bg-card p-4">
-              <p className="mb-2 text-sm text-muted-foreground">Reference files</p>
+            <SectionCard title="Reference files" className="sm:col-span-2">
               <div className="flex flex-wrap gap-2">
                 {job.references.map((r) => (
                   <Button
@@ -644,41 +685,38 @@ export default function DesignJobDetail() {
                       )
                     }
                   >
-                    <Download size={14} /> {r.file_name ?? "File"}
+                    <Download size={13} /> {r.file_name ?? "File"}
                   </Button>
                 ))}
               </div>
-            </div>
+            </SectionCard>
           )}
         </TabsContent>
 
         <TabsContent value="files" className="space-y-3">
           {job.versions.length === 0 && (
-            <p className="rounded-2xl border bg-card p-6 text-center text-sm text-muted-foreground">
-              No versions yet. Upload the first design.
-            </p>
+            <SectionCard className="items-center py-8 text-center">
+              <p className="od-caption">No versions yet. Upload the first design.</p>
+            </SectionCard>
           )}
           {job.versions.map((v, i) => (
-            <div
-              key={v.id}
-              className="flex flex-wrap items-start gap-4 rounded-2xl border bg-card p-4"
-            >
+            <div key={v.id} className="od-card flex-row flex-wrap items-start gap-4">
               <Preview v={v} onPreview={setPreviewFile} />
-              <div className="min-w-48 flex-1 text-sm">
-                <p className="font-medium">
+              <div className="min-w-48 flex-1 text-[13px]">
+                <p className="font-semibold text-[var(--od-ink)]">
                   {v.kind === "design" ? `Version ${v.version_no}` : label(v.kind)}
                   {i === 0 && v.kind === "design" && " (current)"}
                   {v.is_final && (
-                    <span className="ml-2 rounded bg-emerald-500/15 px-1.5 py-0.5 text-xs text-emerald-700 dark:text-emerald-400">
+                    <span className="ml-2 rounded-full bg-[color-mix(in_srgb,var(--od-good-mark)_12%,transparent)] px-2 py-0.5 text-[11px] font-semibold text-[var(--od-good)]">
                       Final
                     </span>
                   )}
                 </p>
-                <p className="text-xs text-muted-foreground">
-                  Uploaded {formatDateTime(v.created_at)} by {v.uploaded_by ?? "-"}
+                <p className="od-caption mt-0.5">
+                  Uploaded {formatDateTime(v.created_at)} by {v.uploaded_by ?? "—"}
                 </p>
-                {v.notes && <p className="mt-1">{v.notes}</p>}
-                <div className="mt-2">
+                {v.notes && <p className="mt-2 text-[var(--od-ink-secondary)]">{v.notes}</p>}
+                <div className="mt-2.5">
                   <StatusBadge value={v.status === "sent" ? "with_client" : v.status} />
                 </div>
               </div>
@@ -723,7 +761,12 @@ export default function DesignJobDetail() {
             empty="No feedback yet"
             columns={[
               { header: "When", cell: (f) => formatDateTime(f.created_at) },
-              { header: "Version", cell: (f) => (f.version_no ? `v${f.version_no}` : "-") },
+              {
+                header: "Version",
+                cell: (f) => (
+                  <span className="od-mono">{f.version_no ? `v${f.version_no}` : "—"}</span>
+                ),
+              },
               {
                 header: "From",
                 cell: (f) => (f.author_type === "client" ? "Client" : (f.author_name ?? "Staff")),
@@ -733,10 +776,10 @@ export default function DesignJobDetail() {
           />
         </TabsContent>
 
-        <TabsContent value="costs">
+        <TabsContent value="costs" className="space-y-3">
           {billing && (
-            <div className="mb-3 flex justify-end">
-              <Button variant="outline" onClick={() => setCosting(true)}>
+            <div className="flex justify-end">
+              <Button size="sm" variant="outline" onClick={() => setCosting(true)}>
                 Add cost
               </Button>
             </div>
@@ -749,7 +792,7 @@ export default function DesignJobDetail() {
               { header: "Date", cell: (c) => formatDate(c.date) },
               { header: "Type", cell: (c) => label(c.kind) },
               { header: "Description", cell: (c) => c.description },
-              { header: "Contractor", cell: (c) => c.contractor_name ?? "-" },
+              { header: "Contractor", cell: (c) => c.contractor_name ?? "—" },
               { header: "Status", cell: (c) => <StatusBadge value={c.status} /> },
               { header: "Amount", align: "right", cell: (c) => formatMoney(c.amount) },
             ]}
@@ -762,7 +805,10 @@ export default function DesignJobDetail() {
             rowKey={(p) => p.id}
             empty="No payments yet"
             columns={[
-              { header: "Receipt", cell: (p) => p.number },
+              {
+                header: "Receipt",
+                cell: (p) => <span className="od-mono font-medium">{p.number}</span>,
+              },
               { header: "Date", cell: (p) => formatDate(p.date) },
               { header: "Method", cell: (p) => label(p.method) },
               { header: "Amount", align: "right", cell: (p) => formatMoney(p.amount) },
@@ -781,7 +827,7 @@ export default function DesignJobDetail() {
                       ).catch((e) => toast.error(errorMessage(e)))
                     }
                   >
-                    <Download size={14} /> Receipt PDF
+                    <Download size={13} /> Receipt PDF
                   </Button>
                 ),
               },
@@ -795,7 +841,10 @@ export default function DesignJobDetail() {
                 {
                   header: "Invoice",
                   cell: (i) => (
-                    <Link className="underline" to={`/service-invoices?open=${i.id}`}>
+                    <Link
+                      className="od-mono font-medium underline underline-offset-4"
+                      to={`/service-invoices?open=${i.id}`}
+                    >
                       {i.number}
                     </Link>
                   ),
@@ -809,16 +858,16 @@ export default function DesignJobDetail() {
         </TabsContent>
 
         <TabsContent value="work" className="space-y-6">
-          <div>
-            <h2 className="mb-2 font-semibold">Print orders</h2>
+          <div className="space-y-2.5">
+            <h2 className="od-section-title">Print orders</h2>
             <DataGrid
               rows={job.print_orders}
               rowKey={(o) => o.id}
               empty="No print orders"
               columns={[
-                { header: "Printer", cell: (o) => o.contractor_name ?? "-" },
+                { header: "Printer", cell: (o) => o.contractor_name ?? "—" },
                 { header: "Quantity", align: "right", cell: (o) => o.quantity },
-                { header: "Due", cell: (o) => (o.due_date ? formatDate(o.due_date) : "-") },
+                { header: "Due", cell: (o) => (o.due_date ? formatDate(o.due_date) : "—") },
                 { header: "Status", cell: (o) => <StatusBadge value={o.status} /> },
                 { header: "Cost", align: "right", cell: (o) => formatMoney(o.cost) },
                 {
@@ -826,7 +875,7 @@ export default function DesignJobDetail() {
                   className: "text-right",
                   cell: (o) =>
                     manage && (o.status === "sent" || o.status === "ready") ? (
-                      <div className="flex justify-end gap-2">
+                      <div className="flex justify-end gap-1.5">
                         {o.status === "sent" && (
                           <Button
                             size="sm"
@@ -848,7 +897,7 @@ export default function DesignJobDetail() {
                         <Button
                           size="sm"
                           variant="ghost"
-                          className="text-destructive"
+                          className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                           onClick={() => printStatus.mutate({ id: o.id, status: "cancelled" })}
                         >
                           Cancel
@@ -859,27 +908,29 @@ export default function DesignJobDetail() {
               ]}
             />
           </div>
-          <div>
-            <h2 className="mb-2 font-semibold">Time logged</h2>
+          <div className="space-y-2.5">
+            <h2 className="od-section-title">Time logged</h2>
             <DataGrid
               rows={job.time}
               rowKey={(t) => t.started_at}
               empty="No time logged"
               columns={[
-                { header: "Who", cell: (t) => t.user_name ?? "-" },
+                { header: "Who", cell: (t) => t.user_name ?? "—" },
                 { header: "Started", cell: (t) => formatDateTime(t.started_at) },
                 {
                   header: "Ended",
                   cell: (t) => (t.ended_at ? formatDateTime(t.ended_at) : "Running"),
                 },
-                { header: "Minutes", align: "right", cell: (t) => t.minutes ?? "-" },
+                { header: "Minutes", align: "right", cell: (t) => t.minutes ?? "—" },
               ]}
             />
           </div>
         </TabsContent>
 
         <TabsContent value="history">
-          <RecordHistoryTab entityType="design_job" entityId={job.id} />
+          <SectionCard title="Record audit log">
+            <RecordHistoryTab entityType="design_job" entityId={job.id} />
+          </SectionCard>
         </TabsContent>
       </Tabs>
 
@@ -959,6 +1010,6 @@ export default function DesignJobDetail() {
         target={{ design_job_id: id }}
         invalidate={refresh}
       />
-    </>
+    </div>
   );
 }

@@ -1,12 +1,13 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { ArrowLeft, BarChart3, Download, Printer } from "lucide-react";
+import { ArrowLeft, BarChart3, ChevronRight, Download, Printer } from "lucide-react";
 import { toast } from "sonner";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { BarChartView } from "@/components/shared/Charts";
-import { ChartCard } from "@/components/shared/Display";
-import { DataGrid, Field, NativeSelect, PageHeader } from "@/components/shared/kit";
+import { BarChartView, LineChartView } from "@/components/shared/Charts";
+import { ChartCard, StatCard } from "@/components/shared/Display";
+import { DataGrid, Field, NativeSelect, PageHeader, SegmentedChips } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { errorMessage, useGet } from "@/hooks/useApi";
 import { download } from "@/lib/api";
@@ -18,6 +19,9 @@ interface Catalogue {
   group: string;
   permission: ("reports.operations.view" | "reports.business.view")[];
   dated?: boolean;
+  amountKeys: string[];
+  labelKey?: string;
+  chartType?: "bar" | "line";
 }
 
 const OPS: Catalogue["permission"] = ["reports.operations.view", "reports.business.view"];
@@ -30,6 +34,8 @@ const catalogue: Catalogue[] = [
     path: "/reports/sales/summary",
     permission: OPS,
     dated: true,
+    amountKeys: ["net_sales", "gross_sales", "total"],
+    chartType: "line",
   },
   {
     group: "Sales",
@@ -37,6 +43,7 @@ const catalogue: Catalogue[] = [
     path: "/reports/sales/by-product",
     permission: OPS,
     dated: true,
+    amountKeys: ["net_sales", "gross_sales", "total", "qty"],
   },
   {
     group: "Sales",
@@ -44,6 +51,7 @@ const catalogue: Catalogue[] = [
     path: "/reports/sales/by-category",
     permission: OPS,
     dated: true,
+    amountKeys: ["net_sales", "gross_sales", "total"],
   },
   {
     group: "Sales",
@@ -51,6 +59,7 @@ const catalogue: Catalogue[] = [
     path: "/reports/sales/by-cashier",
     permission: OPS,
     dated: true,
+    amountKeys: ["net_sales", "gross_sales", "total"],
   },
   {
     group: "Sales",
@@ -58,6 +67,7 @@ const catalogue: Catalogue[] = [
     path: "/reports/sales/by-customer",
     permission: OPS,
     dated: true,
+    amountKeys: ["net_sales", "gross_sales", "total"],
   },
   {
     group: "Sales",
@@ -65,6 +75,7 @@ const catalogue: Catalogue[] = [
     path: "/reports/sales/by-payment-method",
     permission: OPS,
     dated: true,
+    amountKeys: ["net", "amount_in"],
   },
   {
     group: "Profit & Loss",
@@ -72,6 +83,8 @@ const catalogue: Catalogue[] = [
     path: "/reports/profit-loss",
     permission: BIZ,
     dated: true,
+    amountKeys: ["amount"],
+    labelKey: "name",
   },
   {
     group: "Cash Flow & Finance",
@@ -79,12 +92,16 @@ const catalogue: Catalogue[] = [
     path: "/reports/cash-flow",
     permission: BIZ,
     dated: true,
+    amountKeys: ["closing", "money_in", "net"],
+    chartType: "line",
   },
   {
     group: "Cash Flow & Finance",
     label: "Balance sheet",
     path: "/reports/balance-sheet",
     permission: BIZ,
+    amountKeys: ["amount"],
+    labelKey: "name",
   },
   {
     group: "Cash Flow & Finance",
@@ -92,6 +109,8 @@ const catalogue: Catalogue[] = [
     path: "/reports/tax",
     permission: BIZ,
     dated: true,
+    amountKeys: ["net_tax", "output_tax", "taxable_sales"],
+    chartType: "line",
   },
   {
     group: "Projects & Design",
@@ -99,6 +118,8 @@ const catalogue: Catalogue[] = [
     path: "/reports/projects",
     permission: OPS,
     dated: true,
+    amountKeys: ["profit", "total_price", "paid"],
+    labelKey: "client_name",
   },
   {
     group: "Projects & Design",
@@ -106,14 +127,31 @@ const catalogue: Catalogue[] = [
     path: "/reports/design-jobs",
     permission: OPS,
     dated: true,
+    amountKeys: ["profit", "income", "jobs"],
+    labelKey: "designer",
   },
-  { group: "Expenses", label: "Expenses", path: "/reports/expenses", permission: BIZ, dated: true },
-  { group: "Stock", label: "Stock on hand", path: "/reports/inventory/on-hand", permission: OPS },
+  {
+    group: "Expenses",
+    label: "Expenses",
+    path: "/reports/expenses",
+    permission: BIZ,
+    dated: true,
+    amountKeys: ["amount", "paid"],
+  },
+  {
+    group: "Stock",
+    label: "Stock on hand",
+    path: "/reports/inventory/on-hand",
+    permission: OPS,
+    amountKeys: ["value", "qty_on_hand"],
+    labelKey: "product",
+  },
   {
     group: "Stock",
     label: "Stock valuation",
     path: "/reports/inventory/valuation",
     permission: BIZ,
+    amountKeys: ["value", "qty_on_hand"],
   },
   {
     group: "Stock",
@@ -121,25 +159,66 @@ const catalogue: Catalogue[] = [
     path: "/reports/inventory/movements",
     permission: OPS,
     dated: true,
+    amountKeys: ["value", "qty"],
+    chartType: "line",
   },
-  { group: "Stock", label: "Low stock", path: "/reports/inventory/low-stock", permission: OPS },
-  { group: "Stock", label: "Dead stock", path: "/reports/inventory/dead-stock", permission: OPS },
+  {
+    group: "Stock",
+    label: "Low stock",
+    path: "/reports/inventory/low-stock",
+    permission: OPS,
+    amountKeys: ["suggested_qty", "qty_on_hand"],
+    labelKey: "product",
+  },
+  {
+    group: "Stock",
+    label: "Dead stock",
+    path: "/reports/inventory/dead-stock",
+    permission: OPS,
+    amountKeys: ["value", "qty_on_hand"],
+    labelKey: "product",
+  },
   {
     group: "Stock",
     label: "Losses and adjustments",
     path: "/reports/inventory/losses",
     permission: OPS,
     dated: true,
+    amountKeys: ["value", "qty"],
+    labelKey: "product",
   },
-  { group: "Stock", label: "Purchases", path: "/reports/purchases", permission: OPS, dated: true },
-  { group: "Debts", label: "Customer debts", path: "/reports/customer-debt", permission: OPS },
-  { group: "Debts", label: "Supplier debts", path: "/reports/supplier-debt", permission: OPS },
+  {
+    group: "Stock",
+    label: "Purchases",
+    path: "/reports/purchases",
+    permission: OPS,
+    dated: true,
+    amountKeys: ["total", "amount", "qty"],
+  },
+  {
+    group: "Debts",
+    label: "Customer debts",
+    path: "/reports/customer-debt",
+    permission: OPS,
+    amountKeys: ["balance", "overdue"],
+    labelKey: "customer",
+  },
+  {
+    group: "Debts",
+    label: "Supplier debts",
+    path: "/reports/supplier-debt",
+    permission: OPS,
+    amountKeys: ["balance", "overdue"],
+    labelKey: "supplier",
+  },
   {
     group: "Staff & Payroll",
     label: "Payroll summary",
     path: "/reports/payroll/summary",
     permission: BIZ,
     dated: true,
+    amountKeys: ["net", "gross", "paid"],
+    labelKey: "run",
   },
   {
     group: "Staff & Payroll",
@@ -147,12 +226,16 @@ const catalogue: Catalogue[] = [
     path: "/reports/payroll/deductions",
     permission: BIZ,
     dated: true,
+    amountKeys: ["amount"],
+    labelKey: "label",
   },
   {
     group: "Staff & Payroll",
     label: "Staff advances & loans",
     path: "/reports/payroll/loans",
     permission: BIZ,
+    amountKeys: ["balance", "principal"],
+    labelKey: "employee",
   },
   {
     group: "Staff & Payroll",
@@ -160,6 +243,8 @@ const catalogue: Catalogue[] = [
     path: "/reports/staff-performance",
     permission: BIZ,
     dated: true,
+    amountKeys: ["net_sales", "commission", "sales_count"],
+    labelKey: "employee",
   },
   {
     group: "Staff & Payroll",
@@ -167,6 +252,7 @@ const catalogue: Catalogue[] = [
     path: "/reports/branches",
     permission: BIZ,
     dated: true,
+    amountKeys: ["net_profit", "net_sales", "sales", "total"],
   },
 ];
 
@@ -244,22 +330,96 @@ export default function Reports() {
   const columns = useMemo(() => report.data?.columns ?? [], [report.data?.columns]);
   const rows = useMemo(() => report.data?.rows ?? [], [report.data?.rows]);
 
-  // Derive a chart automatically from the first label column + first numeric column.
-  const chartSeries = useMemo(() => {
-    if (columns.length < 2 || rows.length === 0) return [];
-    const labelCol = columns[0].key;
-    const numCol = columns.slice(1).find((c) =>
-      rows.some((r) => {
-        const v = r[c.key];
-        return typeof v === "number" || (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v));
-      }),
-    );
-    if (!numCol) return [];
-    return rows.slice(0, 10).map((r) => ({
-      name: String(r[labelCol] ?? "-").slice(0, 18),
-      value: toNumber(r[numCol.key]),
-    }));
-  }, [columns, rows]);
+  const chartConfig = useMemo(() => {
+    if (!current || !report.data) {
+      return { kind: "bar" as const, data: [] as { name: string; value: number }[], subtitle: "" };
+    }
+    // Profit & Loss: chart Business A, Business B, Operating expenses, and Net profit (plus previous when comparing).
+    if (isPL && report.data.businesses) {
+      const b = report.data.businesses;
+      const items = [
+        { name: "Shop income", value: toNumber(b.shop.income) },
+        { name: "Services income", value: toNumber(b.services.income) },
+        { name: "Operating exp.", value: toNumber(b.shared.operating_expenses) },
+        { name: "Net profit", value: toNumber(b.total.net_profit) },
+      ];
+      if (compare && report.data.previous?.net_profit !== undefined) {
+        items.push({
+          name: "Prev net profit",
+          value: toNumber(report.data.previous.net_profit),
+        });
+      }
+      const hasAny = items.some((i) => i.value !== 0);
+      return {
+        kind: "bar" as const,
+        data: hasAny ? items : [],
+        subtitle:
+          compare && report.data.previous?.net_profit !== undefined
+            ? `Previous net profit: ${formatMoney(report.data.previous.net_profit)}`
+            : "Shop, services, expenses and net profit",
+      };
+    }
+
+    if (columns.length < 2 || rows.length === 0) {
+      return { kind: "bar" as const, data: [] as { name: string; value: number }[], subtitle: "" };
+    }
+
+    const colKeys = new Set(columns.map((c) => c.key));
+    const labelCol =
+      current.labelKey && colKeys.has(current.labelKey) ? current.labelKey : columns[0].key;
+
+    // Pick the first explicit amount key still present in columns (respecting backend stripCost).
+    let amountCol = columns.find((c) => current.amountKeys.includes(c.key) && c.key !== labelCol);
+    if (!amountCol) {
+      // Fallback: prefer money-like numeric columns over id/count columns.
+      const numericCols = columns.filter(
+        (c) =>
+          c.key !== labelCol &&
+          !/(_id|^id$)/i.test(c.key) &&
+          rows.some((r) => {
+            const v = r[c.key];
+            return typeof v === "number" || (typeof v === "string" && /^-?\d+(\.\d+)?$/.test(v));
+          }),
+      );
+      amountCol =
+        numericCols.find((c) => moneyKey.test(c.key) && !countKey.test(c.key)) ?? numericCols[0];
+    }
+    if (!amountCol) {
+      return { kind: "bar" as const, data: [] as { name: string; value: number }[], subtitle: "" };
+    }
+
+    const looksLikeDates =
+      current.chartType === "line" ||
+      /^(date|day|month|period)/i.test(labelCol) ||
+      rows.every((r) => /^\d{4}-\d{2}/.test(String(r[labelCol] ?? "")));
+
+    const mapped = rows.map((r) => {
+      const rawLabel = String(r[labelCol] ?? "-");
+      return {
+        name: looksLikeDates ? rawLabel.slice(0, 10) : rawLabel.slice(0, 22),
+        value: toNumber(r[amountCol.key]),
+      };
+    });
+
+    if (mapped.every((pt) => pt.value === 0)) {
+      return { kind: "bar" as const, data: [] as { name: string; value: number }[], subtitle: "" };
+    }
+
+    if (looksLikeDates) {
+      return {
+        kind: "line" as const,
+        data: mapped,
+        subtitle: amountCol.label,
+      };
+    }
+
+    const top10 = [...mapped].sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 10);
+    return {
+      kind: "bar" as const,
+      data: top10,
+      subtitle: rows.length > 10 ? `Top 10 by ${amountCol.label}` : `By ${amountCol.label}`,
+    };
+  }, [columns, compare, current, isPL, report.data, rows]);
 
   if (available.length === 0) {
     return <PageHeader title="Reports" description="You do not have access to any reports." />;
@@ -268,54 +428,82 @@ export default function Reports() {
   // SRS Section 10: Reports Home with grouped cards.
   if (!current) {
     return (
-      <>
+      <div className="space-y-6">
         <PageHeader
           title="Reports"
           description="Choose a report category to analyze sales, profit & loss, projects, stock, debts and staff."
         />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {groups.map((g) => (
-            <section key={g} className="rounded-2xl border bg-card p-5">
-              <h2 className="mb-3 flex items-center gap-2 font-semibold">
-                <BarChart3 size={16} className="text-primary" /> {g}
-              </h2>
-              <ul className="space-y-1">
-                {available
-                  .filter((r) => r.group === g)
-                  .map((r) => (
+          {groups.map((g) => {
+            const items = available.filter((r) => r.group === g);
+            return (
+              <section key={g} className="od-card p-5">
+                <div className="mb-3 flex items-center justify-between gap-2">
+                  <h2 className="od-card-title flex items-center gap-2 text-[var(--od-ink)]">
+                    <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-[var(--od-border)] bg-[var(--od-surface-subtle)] text-[var(--od-ink-secondary)]">
+                      <BarChart3 size={14} />
+                    </span>
+                    {g}
+                  </h2>
+                  <Badge variant="secondary" className="od-tabular text-[11px]">
+                    {items.length}
+                  </Badge>
+                </div>
+                <ul className="space-y-0.5">
+                  {items.map((r) => (
                     <li key={r.path}>
                       <button
                         type="button"
                         onClick={() => openReport(r.path)}
-                        className="w-full rounded-lg px-3 py-2 text-left text-sm transition hover:bg-muted hover:text-primary"
+                        className="group flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm text-[var(--od-ink-secondary)] transition hover:bg-[var(--od-surface-subtle)] hover:text-[var(--od-ink)]"
                       >
-                        {r.label}
+                        <span>{r.label}</span>
+                        <ChevronRight
+                          size={14}
+                          className="text-[var(--od-ink-muted)] opacity-0 transition group-hover:opacity-100"
+                        />
                       </button>
                     </li>
                   ))}
-              </ul>
-            </section>
-          ))}
+                </ul>
+              </section>
+            );
+          })}
         </div>
-      </>
+      </div>
     );
   }
 
+  const netPct = report.data?.change?.net_profit_pct
+    ? toNumber(report.data.change.net_profit_pct)
+    : null;
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-6">
       <PageHeader
         title={current.label}
         description={
           report.data?.subtitle ?? "Filter, review, print or export to CSV, Excel or PDF."
         }
         actions={
-          <Button variant="outline" size="sm" onClick={closeReport}>
-            <ArrowLeft size={14} /> All reports
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={closeReport}>
+              <ArrowLeft size={14} /> All reports
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => window.print()}>
+              <Printer size={14} /> Print
+            </Button>
+            {can("reports.export") &&
+              ["csv", "xlsx", "pdf"].map((f) => (
+                <Button key={f} variant="outline" size="sm" onClick={() => save(f)}>
+                  <Download size={14} /> {f.toUpperCase()}
+                </Button>
+              ))}
+          </div>
         }
       />
 
-      <div className="flex flex-wrap items-end gap-3">
+      <div className="od-card flex flex-wrap items-end gap-3 p-4">
         <Field label="Report" className="min-w-[14rem]">
           <NativeSelect value={current.path} onChange={(e) => openReport(e.target.value)}>
             {groups.map((g) => (
@@ -343,17 +531,20 @@ export default function Reports() {
         )}
         {isPL && (
           <>
-            <Field label="Business">
-              <NativeSelect
+            <div className="flex flex-col gap-1.5">
+              <span className="text-xs font-medium text-[var(--od-ink-secondary)]">Business</span>
+              <SegmentedChips
+                ariaLabel="Filter business"
                 value={business}
-                onChange={(e) => setBusiness(e.target.value as typeof business)}
-              >
-                <option value="all">Both businesses</option>
-                <option value="shop">Shop (Business A)</option>
-                <option value="services">Services (Business B)</option>
-              </NativeSelect>
-            </Field>
-            <label className="flex h-9 items-center gap-2 text-sm">
+                onChange={(v) => setBusiness(v as typeof business)}
+                options={[
+                  { value: "all", label: "Both" },
+                  { value: "shop", label: "Shop (A)" },
+                  { value: "services", label: "Services (B)" },
+                ]}
+              />
+            </div>
+            <label className="flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3 text-sm text-[var(--od-ink)]">
               <input
                 type="checkbox"
                 checked={compare}
@@ -363,79 +554,65 @@ export default function Reports() {
             </label>
           </>
         )}
-        <div className="ml-auto flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => window.print()}>
-            <Printer size={14} /> Print
-          </Button>
-          {can("reports.export") &&
-            ["csv", "xlsx", "pdf"].map((f) => (
-              <Button key={f} variant="outline" size="sm" onClick={() => save(f)}>
-                <Download size={14} /> {f.toUpperCase()}
-              </Button>
-            ))}
-        </div>
       </div>
 
       {/* SRS Section 10: Business A vs Business B vs Total P&L summary cards */}
       {isPL && report.data?.businesses && (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Shop (Business A)
-            </p>
-            <p className="mt-1 text-xl font-bold tabular-nums">
-              {formatMoney(report.data.businesses.shop.profit)}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Sales {formatMoney(report.data.businesses.shop.income)} · COGS{" "}
-              {formatMoney(report.data.businesses.shop.cost_of_goods)}
-            </p>
-          </div>
-          <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Services (Business B)
-            </p>
-            <p className="mt-1 text-xl font-bold tabular-nums">
-              {formatMoney(report.data.businesses.services.profit)}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Income {formatMoney(report.data.businesses.services.income)} · Costs{" "}
-              {formatMoney(report.data.businesses.services.direct_costs)}
-            </p>
-          </div>
-          <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">
-              Operating expenses
-            </p>
-            <p className="mt-1 text-xl font-bold tabular-nums">
-              {formatMoney(report.data.businesses.shared.operating_expenses)}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Other income {formatMoney(report.data.businesses.shared.other_income)}
-            </p>
-          </div>
-          <div className="rounded-2xl border bg-card p-4">
-            <p className="text-xs uppercase tracking-wide text-muted-foreground">Net profit</p>
-            <p className="mt-1 text-xl font-bold tabular-nums">
-              {formatMoney(report.data.businesses.total.net_profit)}
-            </p>
-            {report.data.previous && (
-              <p className="mt-1 text-xs text-muted-foreground">
-                Previous: {formatMoney(report.data.previous.net_profit)}
-                {report.data.change?.net_profit_pct
-                  ? ` (${toNumber(report.data.change.net_profit_pct) > 0 ? "+" : ""}${toNumber(report.data.change.net_profit_pct).toFixed(1)}%)`
-                  : ""}
-              </p>
-            )}
-          </div>
+          <StatCard
+            label="Shop (Business A)"
+            value={formatMoney(report.data.businesses.shop.profit)}
+            trend={`Sales ${formatMoney(report.data.businesses.shop.income)} · COGS ${formatMoney(report.data.businesses.shop.cost_of_goods)}`}
+            tone={toNumber(report.data.businesses.shop.profit) >= 0 ? "good" : "bad"}
+          />
+          <StatCard
+            label="Services (Business B)"
+            value={formatMoney(report.data.businesses.services.profit)}
+            trend={`Income ${formatMoney(report.data.businesses.services.income)} · Costs ${formatMoney(report.data.businesses.services.direct_costs)}`}
+            tone={toNumber(report.data.businesses.services.profit) >= 0 ? "good" : "bad"}
+          />
+          <StatCard
+            label="Operating expenses"
+            value={formatMoney(report.data.businesses.shared.operating_expenses)}
+            trend={`Other income ${formatMoney(report.data.businesses.shared.other_income)}`}
+          />
+          <StatCard
+            label="Net profit"
+            value={formatMoney(report.data.businesses.total.net_profit)}
+            trend={
+              report.data.previous
+                ? `Previous: ${formatMoney(report.data.previous.net_profit)}${
+                    netPct !== null ? ` (${netPct > 0 ? "+" : ""}${netPct.toFixed(1)}%)` : ""
+                  }`
+                : undefined
+            }
+            tone={
+              netPct !== null
+                ? netPct >= 0
+                  ? "good"
+                  : "bad"
+                : toNumber(report.data.businesses.total.net_profit) >= 0
+                  ? "good"
+                  : "bad"
+            }
+          />
         </div>
       )}
 
-      {chartSeries.length > 0 && (
-        <ChartCard title={`${current.label} chart`} description="Top 10 entries">
-          <BarChartView data={chartSeries} label={current.label} />
-        </ChartCard>
-      )}
+      {!report.isLoading &&
+        (chartConfig.data.length > 0 ? (
+          <ChartCard title={`${current.label} chart`} description={chartConfig.subtitle}>
+            {chartConfig.kind === "line" ? (
+              <LineChartView data={chartConfig.data} label={current.label} />
+            ) : (
+              <BarChartView data={chartConfig.data} label={current.label} />
+            )}
+          </ChartCard>
+        ) : (
+          <div className="od-card p-4 text-sm text-[var(--od-ink-muted)]">
+            No amounts to chart for this period.
+          </div>
+        ))}
 
       <DataGrid
         rows={
@@ -458,7 +635,15 @@ export default function Reports() {
           align: i === 0 ? undefined : ("right" as const),
           cell: (r: Record<string, unknown>) => {
             const value = i === 0 && r.__total ? (r.label ?? "Total") : cell(c.key, r[c.key]);
-            return r.__total ? <strong>{value as string}</strong> : (value as string);
+            return r.__total ? (
+              <strong className="od-tabular font-semibold text-[var(--od-ink)]">
+                {value as string}
+              </strong>
+            ) : (
+              <span className={i === 0 ? "text-[var(--od-ink)]" : "od-tabular"}>
+                {value as string}
+              </span>
+            );
           },
         }))}
       />

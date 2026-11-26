@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
-import { Eye, EyeOff } from "lucide-react";
+import { AlertCircle, Eye, EyeOff } from "lucide-react";
 import { AuthLayout } from "@/components/layout/AuthLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -84,14 +84,17 @@ export default function AuthPage({ mode }: { mode: string }) {
 
   return (
     <AuthLayout>
-      <h1 className="mt-6 text-2xl font-semibold">
-        {isRegister ? "Create your business" : "Sign in"}
-      </h1>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {isRegister
-          ? "Set up the business, its main branch and the owner account."
-          : "Use your phone number or email and your password."}
-      </p>
+      <div>
+        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--od-ink)]">
+          {isRegister ? "Create your business" : "Sign in"}
+        </h1>
+        <p className="mt-1 text-sm text-[var(--od-ink-secondary)]">
+          {isRegister
+            ? "Set up the business, its main branch and the owner account."
+            : "Use your phone number or email and your password."}
+        </p>
+      </div>
+
       <form onSubmit={submit} className="mt-6 space-y-4" noValidate>
         {isRegister ? (
           <>
@@ -111,7 +114,7 @@ export default function AuthPage({ mode }: { mode: string }) {
                 autoComplete="name"
               />
             </Field>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
               <Field label="Phone" error={error?.fields.phone}>
                 <Input value={form.phone} onChange={set("phone")} autoComplete="tel" />
               </Field>
@@ -136,6 +139,7 @@ export default function AuthPage({ mode }: { mode: string }) {
             />
           </Field>
         )}
+
         <Field label="Password" error={error?.fields.password}>
           <div className="relative">
             <Input
@@ -151,15 +155,16 @@ export default function AuthPage({ mode }: { mode: string }) {
               type="button"
               aria-label={showPassword ? "Hide password" : "Show password"}
               onClick={() => setShowPassword((s) => !s)}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--od-ink-muted)] transition hover:text-[var(--od-ink)]"
             >
               {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
             </button>
           </div>
         </Field>
+
         {!isRegister && (
-          <div className="flex items-center justify-between text-sm">
-            <label className="flex items-center gap-2 text-muted-foreground">
+          <div className="flex items-center justify-between gap-2 text-sm">
+            <label className="flex cursor-pointer items-center gap-2 text-[var(--od-ink-secondary)]">
               <input
                 type="checkbox"
                 checked={remember}
@@ -167,32 +172,48 @@ export default function AuthPage({ mode }: { mode: string }) {
               />
               Remember me
             </label>
-            <Link className="text-primary underline" to="/forgot-password">
+            <Link
+              className="font-medium text-[var(--od-ink)] underline-offset-4 hover:underline"
+              to="/forgot-password"
+            >
               Forgot password?
             </Link>
           </div>
         )}
+
         {error && (
-          <p role="alert" className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-            {error.message}
-          </p>
+          <div
+            role="alert"
+            className="flex items-start gap-2 rounded-xl border border-[var(--od-bad-mark)]/30 bg-[var(--od-bad-soft,rgba(239,68,68,0.08))] p-3 text-sm text-[var(--od-bad)]"
+          >
+            <AlertCircle size={16} className="mt-0.5 shrink-0" />
+            <span>{error.message}</span>
+          </div>
         )}
+
         <Button type="submit" className="w-full" disabled={busy}>
           {busy ? "Please wait…" : isRegister ? "Create business" : "Sign in"}
         </Button>
       </form>
-      <p className="mt-6 text-center text-sm text-muted-foreground">
+
+      <p className="mt-6 border-t border-[var(--od-border)] pt-5 text-center text-sm text-[var(--od-ink-secondary)]">
         {isRegister ? (
           <>
             Already have an account?{" "}
-            <Link className="text-primary underline" to="/login">
+            <Link
+              className="font-medium text-[var(--od-ink)] underline-offset-4 hover:underline"
+              to="/login"
+            >
               Sign in
             </Link>
           </>
         ) : (
           <>
             New business?{" "}
-            <Link className="text-primary underline" to="/register">
+            <Link
+              className="font-medium text-[var(--od-ink)] underline-offset-4 hover:underline"
+              to="/register"
+            >
               Register
             </Link>
           </>

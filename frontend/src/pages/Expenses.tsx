@@ -7,10 +7,12 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
   Pager,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
 import { FilePreviewDialog } from "@/components/shared/FilePreview";
@@ -18,7 +20,7 @@ import { useAuth } from "@/features/auth/auth";
 import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { isPendingApproval, uploadFile } from "@/lib/api";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
-import type { MoneyAccount } from "@/types";
+import type { Branch, MoneyAccount } from "@/types";
 
 interface Category {
   id: string;
@@ -27,6 +29,8 @@ interface Category {
 interface Expense {
   id: string;
   number?: string;
+  branch_id?: string;
+  location_name?: string;
   status: string;
   amount?: string;
   description: string;
@@ -40,22 +44,30 @@ interface Expense {
 }
 
 const STATUS_OPTIONS = [
-  ["submitted", "Waiting approval"],
-  ["approved", "Approved"],
-  ["paid", "Paid"],
-  ["rejected", "Rejected"],
-  ["cancelled", "Cancelled"],
+  { value: "", label: "All" },
+  { value: "submitted", label: "Waiting approval" },
+  { value: "approved", label: "Approved" },
+  { value: "paid", label: "Paid" },
+  { value: "rejected", label: "Rejected" },
+  { value: "cancelled", label: "Cancelled" },
 ];
 
 export default function Expenses() {
-  const { can, canAny, user } = useAuth();
+  const { can, canAny, user, branchId } = useAuth();
+  const isAllLocations = !branchId || branchId === "all";
   const categories = useGet<Category[]>("/expense-categories");
+  const branches = useGet<Branch[]>("/branches", undefined, { enabled: isAllLocations });
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
     enabled: canAny("finance.account.view", "finance.expense.enter", "finance.expense.pay"),
   });
   const [status, setStatus] = useState("");
+  const [locationId, setLocationId] = useState("");
   const [page, setPage] = useState(1);
-  const list = useGetPage<Expense>("/expenses", { status: status || undefined, page });
+  const list = useGetPage<Expense>("/expenses", {
+    status: status || undefined,
+    location_id: isAllLocations && locationId ? locationId : undefined,
+    page,
+  });
   const [open, setOpen] = useState(false);
   const [paying, setPaying] = useState<Expense | null>(null);
   const [account, setAccount] = useState("");
@@ -156,9 +168,10 @@ export default function Expenses() {
   }
 
   const usable = (accounts.data ?? []).filter((a) => a.is_active);
+  const activeLocations = (branches.data ?? []).filter((b) => b.is_active);
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Expenses"
         description="Record spending with receipt photos. Submitted expenses are approved before payment."
@@ -170,41 +183,62 @@ export default function Expenses() {
           )
         }
       />
-      <NativeSelect
-        aria-label="Filter by status"
-        className="mb-4 max-w-[13rem]"
-        value={status}
-        onChange={(e) => {
-          setStatus(e.target.value);
-          setPage(1);
-        }}
-      >
-        <option value="">All statuses</option>
-        {STATUS_OPTIONS.map(([v, label]) => (
-          <option key={v} value={v}>
-            {label}
-          </option>
-        ))}
-      </NativeSelect>
+
+      <FilterBar>
+        <SegmentedChips
+          ariaLabel="Filter by status"
+          value={status}
+          onChange={(v) => {
+            setStatus(v);
+            setPage(1);
+          }}
+          options={STATUS_OPTIONS}
+        />
+        {isAllLocations && activeLocations.length > 1 && (
+          <NativeSelect
+            aria-label="Filter by location"
+            className="w-48"
+            value={locationId}
+            onChange={(e) => {
+              setLocationId(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">All locations</option>
+            {activeLocations.map((b) => (
+              <option key={b.id} value={b.id}>
+                {b.name}
+              </option>
+            ))}
+          </NativeSelect>
+        )}
+      </FilterBar>
+
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(e) => e.id}
         empty="No expenses found"
         columns={[
-          { header: "Number", cell: (e) => e.number ?? "-" },
+          {
+            header: "Number",
+            cell: (e) => (
+              <span className="od-mono font-medium text-[var(--od-ink)]">{e.number ?? "-"}</span>
+            ),
+          },
           { header: "Date", cell: (e) => (e.date ? formatDate(e.date) : "-") },
+          { header: "Location", cell: (e) => e.location_name ?? "-" },
           { header: "Category", cell: (e) => e.category_name ?? "-" },
           {
             header: "Description",
             cell: (e) => (
-              <div className="flex items-center gap-1.5">
-                <span>{e.description}</span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[var(--od-ink)]">{e.description}</span>
                 {e.receipt_file_id && (
                   <button
                     type="button"
                     title="Preview receipt photo"
-                    className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs text-primary hover:bg-primary/10"
+                    className="inline-flex items-center gap-1 rounded-full border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] px-2 py-0.5 text-[11px] font-medium text-[var(--od-ink-secondary)] transition hover:text-[var(--od-ink)]"
                     onClick={() =>
                       setPreview({
                         id: e.receipt_file_id!,
@@ -212,14 +246,22 @@ export default function Expenses() {
                       })
                     }
                   >
-                    <Eye size={13} /> Receipt
+                    <Eye size={12} /> Receipt
                   </button>
                 )}
               </div>
             ),
           },
           { header: "By", cell: (e) => e.submitted_by_name ?? "-" },
-          { header: "Amount", align: "right", cell: (e) => formatMoney(e.amount) },
+          {
+            header: "Amount",
+            align: "right",
+            cell: (e) => (
+              <span className="od-tabular font-medium text-[var(--od-ink)]">
+                {formatMoney(e.amount)}
+              </span>
+            ),
+          },
           { header: "Status", cell: (e) => <StatusBadge value={e.status} /> },
           {
             header: "",
@@ -241,7 +283,7 @@ export default function Expenses() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="text-emerald-700 hover:text-emerald-800"
+                        className="text-[var(--od-good)] hover:text-[var(--od-good)]"
                         disabled={approve.isPending}
                         onClick={() => approve.mutate({ id: e.id })}
                       >
@@ -250,7 +292,7 @@ export default function Expenses() {
                       <Button
                         size="sm"
                         variant="outline"
-                        className="text-rose-700 hover:text-rose-800"
+                        className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                         onClick={() => {
                           setRejecting(e);
                           setRejectNote("");
@@ -318,6 +360,7 @@ export default function Expenses() {
             <Input
               required
               inputMode="decimal"
+              className="od-tabular"
               value={draft.amount}
               onChange={(e) => setDraft((d) => ({ ...d, amount: e.target.value }))}
             />
@@ -340,9 +383,9 @@ export default function Expenses() {
         </Field>
         <Field label="Receipt photo or PDF (optional)">
           {draft.receipt_file_id ? (
-            <div className="flex items-center justify-between rounded-md border bg-muted/40 px-3 py-2 text-xs">
-              <span className="flex items-center gap-1.5 truncate">
-                <Paperclip size={13} />
+            <div className="flex items-center justify-between rounded-xl border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] px-3 py-2 text-xs">
+              <span className="flex items-center gap-1.5 truncate text-[var(--od-ink)]">
+                <Paperclip size={13} className="shrink-0 text-[var(--od-ink-muted)]" />
                 <span className="truncate">{receiptName || "Receipt attached"}</span>
               </span>
               <div className="flex items-center gap-1">
@@ -361,7 +404,7 @@ export default function Expenses() {
                   type="button"
                   size="sm"
                   variant="ghost"
-                  className="h-6 px-1.5 text-xs text-destructive"
+                  className="h-6 px-1.5 text-xs text-[var(--od-bad)]"
                   onClick={() => {
                     setDraft((d) => ({ ...d, receipt_file_id: "" }));
                     setReceiptName("");
@@ -372,7 +415,7 @@ export default function Expenses() {
               </div>
             </div>
           ) : (
-            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed px-3 py-3 text-xs text-muted-foreground transition hover:border-primary hover:text-foreground">
+            <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)]/50 px-3 py-3.5 text-xs text-[var(--od-ink-secondary)] transition hover:border-[var(--od-ink)] hover:text-[var(--od-ink)]">
               <Upload size={14} />
               <span>{uploading ? "Uploading…" : "Upload receipt photo or PDF"}</span>
               <input
@@ -395,6 +438,19 @@ export default function Expenses() {
         busy={pay.isPending}
         onSubmit={() => pay.mutate({ money_account_id: account })}
       >
+        {paying && (
+          <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3.5 py-2.5 text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <span className="font-medium text-[var(--od-ink)]">{paying.description}</span>
+              <span className="od-tabular font-semibold text-[var(--od-ink)]">
+                {formatMoney(paying.amount)}
+              </span>
+            </div>
+            {paying.number && (
+              <p className="od-mono mt-0.5 text-xs text-[var(--od-ink-muted)]">{paying.number}</p>
+            )}
+          </div>
+        )}
         <Field label="Pay from">
           <NativeSelect required value={account} onChange={(e) => setAccount(e.target.value)}>
             <option value="">Choose…</option>
@@ -431,6 +487,6 @@ export default function Expenses() {
         fileName={preview?.name}
         onClose={() => setPreview(null)}
       />
-    </>
+    </div>
   );
 }

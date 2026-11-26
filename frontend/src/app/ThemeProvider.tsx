@@ -1,9 +1,14 @@
 import { useEffect, type ReactNode } from "react";
+
 function applyTheme(theme: string) {
   const dark =
     theme === "dark" || (theme === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
-  document.documentElement.classList.toggle("dark", dark);
+  const root = document.documentElement;
+  root.classList.add("od", "od-app");
+  root.classList.toggle("dark", dark);
+  root.setAttribute("data-mode", dark ? "dark" : "light");
 }
+
 export function ThemeProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const media = matchMedia("(prefers-color-scheme: dark)");

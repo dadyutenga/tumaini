@@ -36,10 +36,14 @@ func (h *Handler) List(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
+	loc, err := httpx.QueryUUID(c, "location_id")
+	if err != nil {
+		return err
+	}
 	page := httpx.PageFrom(c)
 	sort := httpx.SortFrom(c, map[string]string{"date": "e.expense_date", "amount": "e.amount", "created_at": "e.created_at", "number": "e.expense_no"}, "")
 	rows, total, err := h.Svc.List(c.Context(), middleware.Principal(c), ListFilter{
-		Status: c.Query("status"), CategoryID: cat, SubmittedBy: by, ProjectID: proj, From: from, To: to, Q: c.Query("q"), Sort: sort,
+		Status: c.Query("status"), CategoryID: cat, SubmittedBy: by, ProjectID: proj, LocationID: loc, From: from, To: to, Q: c.Query("q"), Sort: sort,
 	}, page)
 	return httpx.Paged(c, rows, page, total, err)
 }

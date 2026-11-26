@@ -88,23 +88,23 @@ function GroupForm({
 
   return (
     <form
-      className="rounded-2xl border bg-card p-5"
+      className="od-card p-5"
       onSubmit={(e) => {
         e.preventDefault();
         save.mutate(draft);
       }}
     >
-      <h3 className="mb-3 font-semibold">{titles[name] ?? label(name)}</h3>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <h3 className="od-card-title mb-3.5 text-[var(--od-ink)]">{titles[name] ?? label(name)}</h3>
+      <div className="grid gap-3.5 sm:grid-cols-2">
         {entries.map(([key, original]) => {
           const isTemplate = key.includes("template") || key === "terms" || key === "footer";
           return (
             <label
               key={key}
-              className={`flex flex-col gap-1 text-sm ${isTemplate ? "sm:col-span-2" : ""}`}
+              className={`flex flex-col gap-1.5 text-sm ${isTemplate ? "sm:col-span-2" : ""}`}
             >
               {typeof original === "boolean" ? (
-                <span className="flex items-center gap-2 pt-1">
+                <span className="flex cursor-pointer items-center gap-2 rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3 py-2 text-[var(--od-ink)]">
                   <input
                     type="checkbox"
                     disabled={!canEdit}
@@ -115,7 +115,9 @@ function GroupForm({
                 </span>
               ) : key === "language" ? (
                 <>
-                  <span className="text-muted-foreground">{label(key)}</span>
+                  <span className="text-xs font-medium text-[var(--od-ink-secondary)]">
+                    {label(key)}
+                  </span>
                   <NativeSelect
                     disabled={!canEdit}
                     value={String(draft[key] ?? "en")}
@@ -127,7 +129,9 @@ function GroupForm({
                 </>
               ) : key === "paper_width" ? (
                 <>
-                  <span className="text-muted-foreground">Thermal paper width</span>
+                  <span className="text-xs font-medium text-[var(--od-ink-secondary)]">
+                    Thermal paper width
+                  </span>
                   <NativeSelect
                     disabled={!canEdit}
                     value={String(draft[key] ?? 80)}
@@ -139,7 +143,9 @@ function GroupForm({
                 </>
               ) : isTemplate ? (
                 <>
-                  <span className="text-muted-foreground">{label(key)}</span>
+                  <span className="text-xs font-medium text-[var(--od-ink-secondary)]">
+                    {label(key)}
+                  </span>
                   <Textarea
                     rows={2}
                     disabled={!canEdit}
@@ -149,10 +155,13 @@ function GroupForm({
                 </>
               ) : (
                 <>
-                  <span className="text-muted-foreground">{label(key)}</span>
+                  <span className="text-xs font-medium text-[var(--od-ink-secondary)]">
+                    {label(key)}
+                  </span>
                   <Input
                     disabled={!canEdit}
                     inputMode={typeof original === "number" ? "decimal" : undefined}
+                    className={typeof original === "number" ? "od-tabular" : undefined}
                     value={String(draft[key] ?? "")}
                     onChange={(e) =>
                       patch(
@@ -168,9 +177,11 @@ function GroupForm({
         })}
       </div>
       {canEdit && (
-        <Button type="submit" className="mt-4" disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save"}
-        </Button>
+        <div className="mt-4 border-t border-[var(--od-border)] pt-4">
+          <Button type="submit" disabled={save.isPending}>
+            {save.isPending ? "Saving…" : "Save"}
+          </Button>
+        </div>
       )}
     </form>
   );
@@ -249,23 +260,25 @@ export function PaymentMethodsPanel() {
   }
 
   return (
-    <div className="space-y-4 rounded-2xl border bg-card p-5">
+    <div className="od-card space-y-4 p-5">
       <div>
-        <h3 className="font-semibold">Payment Methods &amp; Default Accounts</h3>
-        <p className="text-xs text-muted-foreground">
+        <h3 className="od-card-title text-[var(--od-ink)]">
+          Payment Methods &amp; Default Accounts
+        </h3>
+        <p className="od-card-subtitle">
           Choose which payment methods cashiers can accept and which money account receives each
           one.
         </p>
       </div>
-      <div className="divide-y rounded-xl border">
+      <div className="divide-y divide-[var(--od-border)] overflow-hidden rounded-xl border border-[var(--od-border)]">
         {specs.map((sp) => {
           const cur = draft[sp.key] ?? { enabled: true, money_account_id: "" };
           const matching = sp.allowedTypes
             ? activeAccounts.filter((a) => sp.allowedTypes!.includes(a.type))
             : [];
           return (
-            <div key={sp.key} className="flex flex-wrap items-center justify-between gap-3 p-3">
-              <label className="flex items-center gap-2 text-sm font-medium">
+            <div key={sp.key} className="flex flex-wrap items-center justify-between gap-3 p-3.5">
+              <label className="flex cursor-pointer items-center gap-2.5 text-sm font-medium text-[var(--od-ink)]">
                 <input
                   type="checkbox"
                   disabled={!canEdit}
@@ -348,12 +361,12 @@ export function DocumentsSettingsPanel({ businessName }: { businessName: string 
         <GroupForm name="invoice" initial={invoiceFlat} canEdit={canEdit} />
       </div>
 
-      <div className="rounded-2xl border bg-muted/30 p-4">
-        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+      <div className="od-card h-fit bg-[var(--od-surface-subtle)] p-4">
+        <p className="od-kpi-label mb-3">
           Live Receipt Preview ({String(receiptPreview.paper_width ?? 80)}mm)
         </p>
         <div
-          className={`mx-auto rounded-lg border bg-white p-4 font-mono text-[11px] text-zinc-900 shadow-sm ${widthClass}`}
+          className={`mx-auto rounded-lg border border-[var(--od-border-strong)] bg-white p-4 font-mono text-[11px] text-zinc-900 shadow-sm ${widthClass}`}
         >
           <div className="text-center">
             {Boolean(receiptPreview.show_logo) && (
@@ -451,11 +464,13 @@ export function NotificationsSettingsPanel() {
 
   return (
     <div className="max-w-4xl space-y-6">
-      <div className="rounded-2xl border bg-card p-5">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+      <div className="od-card p-5">
+        <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h3 className="font-semibold">Alert Channels by Event ({ruleKeys.length})</h3>
-            <p className="text-xs text-muted-foreground">
+            <h3 className="od-card-title text-[var(--od-ink)]">
+              Alert Channels by Event ({ruleKeys.length})
+            </h3>
+            <p className="od-card-subtitle">
               Choose which alerts go to In-App, Email, or SMS across Shop, Finance, HR, Services and
               Design.
             </p>
@@ -470,24 +485,26 @@ export function NotificationsSettingsPanel() {
             </Button>
           )}
         </div>
-        <div className="max-h-96 overflow-auto rounded-xl border">
+        <div className="max-h-96 overflow-auto rounded-xl border border-[var(--od-border)]">
           <table className="w-full text-sm">
-            <thead className="sticky top-0 bg-muted/80 text-xs backdrop-blur">
+            <thead className="sticky top-0 bg-[var(--od-surface-subtle)] text-xs text-[var(--od-ink-secondary)] backdrop-blur">
               <tr>
-                <th className="px-3 py-2 text-left">Event</th>
-                <th className="px-3 py-2 text-center">In-App</th>
-                <th className="px-3 py-2 text-center">Email</th>
-                <th className="px-3 py-2 text-center">SMS</th>
+                <th className="px-3.5 py-2.5 text-left font-medium">Event</th>
+                <th className="px-3 py-2.5 text-center font-medium">In-App</th>
+                <th className="px-3 py-2.5 text-center font-medium">Email</th>
+                <th className="px-3 py-2.5 text-center font-medium">SMS</th>
               </tr>
             </thead>
-            <tbody className="divide-y">
+            <tbody className="divide-y divide-[var(--od-border)]">
               {ruleKeys.map((k) => {
                 const r = rules[k];
                 return (
-                  <tr key={k}>
-                    <td className="px-3 py-2 font-medium">{RULE_LABELS[k] ?? label(k)}</td>
+                  <tr key={k} className="hover:bg-[var(--od-surface-subtle)]/60">
+                    <td className="px-3.5 py-2.5 font-medium text-[var(--od-ink)]">
+                      {RULE_LABELS[k] ?? label(k)}
+                    </td>
                     {(["in_app", "email", "sms"] as const).map((col) => (
-                      <td key={col} className="px-3 py-2 text-center">
+                      <td key={col} className="px-3 py-2.5 text-center">
                         <input
                           type="checkbox"
                           disabled={!canEdit}
@@ -525,20 +542,27 @@ export function NotificationsSettingsPanel() {
       />
 
       {canEdit && (
-        <div className="space-y-3 rounded-2xl border bg-card p-5">
-          <h3 className="font-semibold">Send Test Notification</h3>
-          <p className="text-xs text-muted-foreground">
-            Verify that your notification bell and message templates work as expected.
-          </p>
+        <div className="od-card space-y-3.5 p-5">
+          <div>
+            <h3 className="od-card-title text-[var(--od-ink)]">Send Test Notification</h3>
+            <p className="od-card-subtitle">
+              Verify that your notification bell and message templates work as expected.
+            </p>
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Channel">
               <NativeSelect value={testChannel} onChange={(e) => setTestChannel(e.target.value)}>
                 <option value="in_app">In-App notification</option>
-                <option value="sms">SMS (logged in-app in dev)</option>
-                <option value="email">Email (logged in-app in dev)</option>
+                <option value="sms">SMS</option>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="email">Email</option>
               </NativeSelect>
             </Field>
-            <Field label="Recipient phone or email (optional)">
+            <Field
+              label={
+                testChannel === "in_app" ? "Recipient (optional)" : "Recipient phone or email *"
+              }
+            >
               <Input
                 value={testRecipient}
                 onChange={(e) => setTestRecipient(e.target.value)}

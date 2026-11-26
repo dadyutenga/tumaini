@@ -124,10 +124,33 @@ func TestExpensesFlow(t *testing.T) {
 	cashCats := cashier.call(t, http.MethodPost, "/api/v1/expense-categories", map[string]any{"name": "Nope"}, "")
 	require.Equal(t, 403, cashCats.code)
 
-	// Filters.
+	// Filters and location scoping.
 	filtered := e.owner.call(t, http.MethodGet, "/api/v1/expenses?status=paid&from=2026-11-01&to=2026-11-30", nil, "")
 	require.Equal(t, 200, filtered.code, filtered.raw)
-	require.Len(t, asList(filtered.body["data"]), 2)
+	paidRows := asList(filtered.body["data"])
+	require.Len(t, paidRows, 2)
+	require.NotEmpty(t, str(paidRows[0]["location_name"]))
+
+	branch2Res := e.owner.call(t, http.MethodPost, "/api/v1/branches", map[string]any{"name": "Kariakoo Shop"}, "")
+	require.Equal(t, 201, branch2Res.code, branch2Res.raw)
+	branch2 := str(branch2Res.data["id"])
+	// Asking for branch2 while header is scoped to main branch returns 400.
+	badLoc := e.owner.call(t, http.MethodGet, "/api/v1/expenses?location_id="+branch2, nil, "")
+	require.Equal(t, 400, badLoc.code, badLoc.raw)
+	// Create an expense at branch2, then filter under X-Branch-Id: all.
+	e.owner.as(t, branch2)
+	b2Exp := e.owner.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{"category_id": category, "amount": "15000", "description": "Kariakoo power"}, key())
+	require.Equal(t, 201, b2Exp.code, b2Exp.raw)
+	e.owner.as(t, "all")
+	allList := e.owner.call(t, http.MethodGet, "/api/v1/expenses", nil, "")
+	require.Equal(t, 200, allList.code, allList.raw)
+	require.GreaterOrEqual(t, len(asList(allList.body["data"])), 4)
+	onlyB2 := e.owner.call(t, http.MethodGet, "/api/v1/expenses?location_id="+branch2, nil, "")
+	require.Equal(t, 200, onlyB2.code, onlyB2.raw)
+	b2Rows := asList(onlyB2.body["data"])
+	require.Len(t, b2Rows, 1)
+	require.Equal(t, "Kariakoo Shop", str(b2Rows[0]["location_name"]))
+	e.owner.as(t, e.branch)
 
 	// Another business cannot see the expense.
 	other := newEnv(t, defaultNow)

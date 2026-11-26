@@ -4,7 +4,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CloudOff,
   Download,
-  MessageCircle,
   Minus,
   Package,
   Plus,
@@ -19,12 +18,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field, FormDialog, NativeSelect, PageHeader } from "@/components/shared/kit";
 import { ProductImage } from "@/components/shared/ProductImage";
+import { SendOutboundButton } from "@/components/shared/SendOutbound";
 import { useAuth } from "@/features/auth/auth";
-import { whatsappUrl } from "@/features/services/helpers";
 import { useDebounce } from "@/hooks/useDebounce";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { api, download, get, isPendingApproval, newIdempotencyKey } from "@/lib/api";
 import { formatMoney, toNumber } from "@/lib/formatters";
+import { cn } from "@/lib/utils";
 import type { Category, Customer, MoneyAccount, Product, Sale } from "@/types";
 
 interface CartLine {
@@ -447,8 +447,8 @@ export default function Pos() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {!online && (
-              <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/15 px-3 py-1 text-xs font-semibold text-amber-700 dark:text-amber-400">
-                <CloudOff size={14} /> Offline
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--od-warning-soft)] px-3 py-1 text-xs font-semibold text-[var(--od-warning)]">
+                <CloudOff size={13} /> Offline
               </span>
             )}
             {offlineQueue.length > 0 && (
@@ -458,7 +458,7 @@ export default function Pos() {
                 disabled={!online || syncing}
                 onClick={() => void syncOfflineSales()}
               >
-                <RefreshCw size={14} /> Sync offline ({offlineQueue.length})
+                <RefreshCw size={13} /> Sync offline ({offlineQueue.length})
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={() => setHeldOpen(true)}>
@@ -473,18 +473,18 @@ export default function Pos() {
         }
       />
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_410px]">
+      <div className="grid gap-6 lg:grid-cols-[1fr_400px]">
         <section className="space-y-4">
           {/* Search & Barcode Input */}
           <div className="relative">
             <Search
-              size={18}
-              className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-muted-foreground"
+              size={16}
+              className="pointer-events-none absolute top-1/2 left-3.5 -translate-y-1/2 text-[var(--od-ink-muted)]"
             />
             <Input
               autoFocus
               aria-label="Find a product"
-              className="h-11 rounded-xl bg-card pl-10 text-sm shadow-xs"
+              className="h-10 pl-10"
               placeholder="Scan barcode or search product name / SKU…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
@@ -505,18 +505,19 @@ export default function Pos() {
             <div
               role="tablist"
               aria-label="Product categories"
-              className="no-scrollbar flex items-center gap-2 overflow-x-auto pb-1"
+              className="no-scrollbar flex items-center gap-1.5 overflow-x-auto pb-0.5"
             >
               <button
                 type="button"
                 role="tab"
                 aria-selected={categoryId === ""}
                 onClick={() => setCategoryId("")}
-                className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                className={cn(
+                  "shrink-0 cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                   categoryId === ""
-                    ? "bg-primary text-primary-foreground shadow-xs"
-                    : "border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                }`}
+                    ? "border-transparent bg-[var(--od-app-primary)] text-[var(--od-app-primary-foreground)]"
+                    : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
+                )}
               >
                 All items
               </button>
@@ -527,11 +528,12 @@ export default function Pos() {
                   role="tab"
                   aria-selected={categoryId === c.id}
                   onClick={() => setCategoryId(c.id)}
-                  className={`shrink-0 rounded-full px-3.5 py-1.5 text-xs font-semibold transition ${
+                  className={cn(
+                    "shrink-0 cursor-pointer rounded-full border px-3 py-1 text-xs font-medium transition-colors",
                     categoryId === c.id
-                      ? "bg-primary text-primary-foreground shadow-xs"
-                      : "border bg-card text-muted-foreground hover:border-primary/40 hover:text-foreground"
-                  }`}
+                      ? "border-transparent bg-[var(--od-app-primary)] text-[var(--od-app-primary-foreground)]"
+                      : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
+                  )}
                 >
                   {c.name}
                 </button>
@@ -539,7 +541,7 @@ export default function Pos() {
             </div>
           )}
 
-          {/* E-Commerce Product Grid */}
+          {/* Product Grid */}
           <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
             {tiles.slice(0, 24).map((p) => {
               const qtyOnHand = p.qty_on_hand !== undefined ? toNumber(p.qty_on_hand) : null;
@@ -551,45 +553,46 @@ export default function Pos() {
               return (
                 <li key={p.id}>
                   <div
-                    className={`group flex h-full flex-col overflow-hidden rounded-2xl border bg-card shadow-xs transition duration-200 ${
+                    className={cn(
+                      "od-card-flush group flex h-full flex-col overflow-hidden transition-all",
                       outOfStock
                         ? "opacity-55"
                         : inCartQty > 0
-                          ? "border-primary ring-2 ring-primary/25 shadow-sm"
-                          : "hover:-translate-y-0.5 hover:border-primary/45 hover:shadow-md"
-                    }`}
+                          ? "border-[var(--od-ink)] ring-1 ring-[var(--od-ink)]"
+                          : "hover:border-[var(--od-ink-muted)]",
+                    )}
                   >
-                    {/* Clickable Product Image + Badges */}
                     <button
                       type="button"
                       disabled={outOfStock}
                       onClick={() => add(p)}
-                      className={`relative aspect-[4/3] w-full overflow-hidden bg-muted text-left focus:outline-none ${
-                        outOfStock ? "cursor-not-allowed" : "cursor-pointer"
-                      }`}
+                      className={cn(
+                        "relative aspect-[4/3] w-full overflow-hidden bg-[var(--od-surface-subtle)] text-left focus:outline-none",
+                        outOfStock ? "cursor-not-allowed" : "cursor-pointer",
+                      )}
                     >
                       <ProductImage fileId={p.photo_file} name={p.name} />
                       {inCartQty > 0 && (
-                        <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[11px] font-bold text-primary-foreground shadow-sm">
+                        <span className="od-tabular absolute top-2 left-2 inline-flex items-center rounded-full bg-[var(--od-app-primary)] px-2 py-0.5 text-[11px] font-semibold text-[var(--od-app-primary-foreground)]">
                           ×{inCartQty}
                         </span>
                       )}
                       {qtyOnHand !== null && (
                         <span
-                          className={`absolute top-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold shadow-xs backdrop-blur ${
+                          className={cn(
+                            "od-tabular absolute top-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold backdrop-blur",
                             outOfStock
-                              ? "bg-destructive text-destructive-foreground"
+                              ? "bg-[var(--od-bad-mark)] text-white"
                               : isLow
-                                ? "bg-amber-500 text-white"
-                                : "bg-background/90 text-foreground"
-                          }`}
+                                ? "bg-[var(--od-warning-mark)] text-[#0d0d0d]"
+                                : "bg-[var(--od-surface)]/90 text-[var(--od-ink)] ring-1 ring-[var(--od-border-strong)]",
+                          )}
                         >
                           {outOfStock ? "Out" : `${qtyOnHand} left`}
                         </span>
                       )}
                     </button>
 
-                    {/* Title, Price & Quick Add / Stepper */}
                     <div className="flex flex-1 flex-col justify-between p-3">
                       <button
                         type="button"
@@ -597,37 +600,39 @@ export default function Pos() {
                         onClick={() => add(p)}
                         className="text-left focus:outline-none"
                       >
-                        <p className="line-clamp-2 text-sm font-semibold leading-snug text-foreground group-hover:text-primary">
+                        <p className="line-clamp-2 text-[13px] font-semibold leading-snug text-[var(--od-ink)]">
                           {p.name}
                         </p>
-                        <p className="mt-0.5 truncate text-[11px] text-muted-foreground">{p.sku}</p>
+                        <p className="od-mono mt-0.5 truncate text-[11px] text-[var(--od-ink-muted)]">
+                          {p.sku}
+                        </p>
                       </button>
 
                       <div className="mt-2.5 space-y-2">
-                        <p className="text-sm font-bold tracking-tight text-foreground tabular-nums">
+                        <p className="od-tabular text-[14px] font-semibold tracking-tight text-[var(--od-ink)]">
                           {formatMoney(p.sell_price)}
                         </p>
 
                         {inCartQty > 0 ? (
-                          <div className="flex items-center justify-between gap-1 rounded-xl border border-primary/30 bg-primary/8 p-0.5">
+                          <div className="flex items-center justify-between gap-1 rounded-[var(--od-app-radius,10px)] border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] p-0.5">
                             <Button
                               type="button"
                               size="icon"
                               variant="ghost"
-                              className="h-7 w-7 rounded-lg text-primary hover:bg-primary/15"
+                              className="h-7 w-7"
                               aria-label={`Remove one ${p.name}`}
                               onClick={() => decrementOrRemove(p.id)}
                             >
                               <Minus size={13} />
                             </Button>
-                            <span className="text-xs font-bold tabular-nums text-primary">
+                            <span className="od-tabular text-xs font-semibold text-[var(--od-ink)]">
                               {inCartQty}
                             </span>
                             <Button
                               type="button"
                               size="icon"
                               variant="ghost"
-                              className="h-7 w-7 rounded-lg text-primary hover:bg-primary/15"
+                              className="h-7 w-7"
                               aria-label={`Add one more ${p.name}`}
                               onClick={() => add(p)}
                             >
@@ -641,7 +646,7 @@ export default function Pos() {
                             variant={outOfStock ? "outline" : "default"}
                             disabled={outOfStock}
                             onClick={() => add(p)}
-                            className="h-8 w-full rounded-xl text-xs font-semibold"
+                            className="h-8 w-full text-xs"
                           >
                             <Plus size={13} /> {outOfStock ? "Out of stock" : "Add"}
                           </Button>
@@ -653,19 +658,19 @@ export default function Pos() {
               );
             })}
             {tiles.length === 0 && (
-              <li className="col-span-full flex flex-col items-center justify-center rounded-2xl border bg-card p-10 text-center text-sm text-muted-foreground">
-                <Package size={24} className="mb-2 text-primary/60" />
-                No matching products.
+              <li className="od-card col-span-full items-center py-10 text-center">
+                <Package size={22} className="text-[var(--od-ink-muted)]" />
+                <p className="od-caption">No matching products.</p>
               </li>
             )}
           </ul>
 
           {/* Cart */}
-          <div className="overflow-hidden rounded-2xl border bg-card shadow-xs">
-            <div className="flex items-center justify-between border-b bg-muted/30 px-4 py-3">
+          <div className="od-card-flush overflow-hidden">
+            <div className="flex items-center justify-between border-b border-[var(--od-border)] bg-[var(--od-surface-subtle)]/70 px-4 py-3">
               <div className="flex items-center gap-2">
-                <ShoppingBag size={16} className="text-primary" />
-                <h2 className="text-sm font-semibold">
+                <ShoppingBag size={15} className="text-[var(--od-ink-secondary)]" />
+                <h2 className="od-card-title">
                   Selected items{totalCartItems > 0 ? ` (${totalCartItems})` : ""}
                 </h2>
               </div>
@@ -676,24 +681,24 @@ export default function Pos() {
                     setCart([]);
                     setDiscountValue("");
                   }}
-                  className="text-xs font-medium text-muted-foreground hover:text-destructive"
+                  className="cursor-pointer text-xs font-medium text-[var(--od-ink-muted)] transition-colors hover:text-[var(--od-bad)]"
                 >
                   Clear cart
                 </button>
               )}
             </div>
             {cart.length === 0 ? (
-              <p className="p-8 text-center text-sm text-muted-foreground">
+              <p className="p-8 text-center text-[13px] text-[var(--od-ink-muted)]">
                 The cart is empty. Tap any product card above or scan a barcode to start.
               </p>
             ) : (
-              <ul className="divide-y">
+              <ul className="divide-y divide-[var(--od-border)]">
                 {cart.map((l) => {
                   const line = preview.data?.items.find((i) => i.product_id === l.product.id);
                   return (
-                    <li key={l.product.id} className="space-y-2 p-3">
+                    <li key={l.product.id} className="space-y-2 p-3.5">
                       <div className="flex items-center gap-2.5">
-                        <div className="h-11 w-11 shrink-0 overflow-hidden rounded-xl border bg-muted">
+                        <div className="h-10 w-10 shrink-0 overflow-hidden rounded-[var(--od-radius-sm,8px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)]">
                           <ProductImage
                             fileId={l.product.photo_file}
                             name={l.product.name}
@@ -701,8 +706,10 @@ export default function Pos() {
                           />
                         </div>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate font-medium">{l.product.name}</p>
-                          <p className="text-xs text-muted-foreground">
+                          <p className="truncate text-[13px] font-medium text-[var(--od-ink)]">
+                            {l.product.name}
+                          </p>
+                          <p className="od-caption od-tabular">
                             {formatMoney(l.product.sell_price)} each
                             {l.product.warranty_months
                               ? ` · ${l.product.warranty_months}m warranty`
@@ -712,17 +719,17 @@ export default function Pos() {
                         <Button
                           variant="outline"
                           size="icon"
-                          className="h-8 w-8 rounded-lg"
+                          className="h-8 w-8"
                           aria-label="Decrease quantity"
                           onClick={() =>
                             setQty(l.product.id, String(Math.max(1, toNumber(l.qty) - 1)))
                           }
                         >
-                          <Minus size={14} />
+                          <Minus size={13} />
                         </Button>
                         <Input
                           aria-label={`Quantity of ${l.product.name}`}
-                          className="h-8 w-14 text-center"
+                          className="od-tabular h-8 w-14 text-center"
                           inputMode="decimal"
                           value={l.qty}
                           onChange={(e) => setQty(l.product.id, e.target.value)}
@@ -730,13 +737,13 @@ export default function Pos() {
                         <Button
                           variant="outline"
                           size="icon"
-                          className="h-8 w-8 rounded-lg"
+                          className="h-8 w-8"
                           aria-label="Increase quantity"
                           onClick={() => setQty(l.product.id, String(toNumber(l.qty) + 1))}
                         >
-                          <Plus size={14} />
+                          <Plus size={13} />
                         </Button>
-                        <span className="w-24 text-right text-sm font-semibold tabular-nums">
+                        <span className="od-tabular w-24 text-right text-[13px] font-semibold">
                           {line
                             ? formatMoney(line.line_total)
                             : formatMoney(toNumber(l.qty) * toNumber(l.product.sell_price))}
@@ -744,17 +751,17 @@ export default function Pos() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                          className="h-8 w-8 text-[var(--od-ink-muted)] hover:text-[var(--od-bad)]"
                           aria-label={`Remove ${l.product.name}`}
                           onClick={() => setCart((c) => c.filter((x) => x !== l))}
                         >
-                          <Trash2 size={15} />
+                          <Trash2 size={14} />
                         </Button>
                       </div>
                       {l.product.track_serial && (
                         <Input
                           aria-label={`Serial or IMEI for ${l.product.name}`}
-                          className="h-8 text-xs"
+                          className="od-mono h-8 text-xs"
                           placeholder="Enter or scan Serial No / IMEI…"
                           value={l.serial_number ?? ""}
                           onChange={(e) => setSerial(l.product.id, e.target.value)}
@@ -769,7 +776,7 @@ export default function Pos() {
         </section>
 
         {/* Checkout Sidebar */}
-        <aside className="h-fit space-y-4 rounded-2xl border bg-card p-5 shadow-sm lg:sticky lg:top-20">
+        <aside className="od-card h-fit gap-4 lg:sticky lg:top-20">
           {canViewCustomers && (
             <Field label="Customer">
               <div className="flex gap-2">
@@ -792,15 +799,16 @@ export default function Pos() {
                     type="button"
                     variant="outline"
                     size="icon"
+                    className="h-9 w-9 shrink-0"
                     title="Quick add customer"
                     onClick={() => setQuickCustOpen(true)}
                   >
-                    <UserPlus size={16} />
+                    <UserPlus size={15} />
                   </Button>
                 )}
               </div>
               {selectedCustomer && toNumber(selectedCustomer.balance) > 0 && (
-                <p className="mt-1 text-xs font-medium text-amber-600">
+                <p className="od-tabular mt-1 text-xs font-medium text-[var(--od-warning)]">
                   Current debt: {formatMoney(selectedCustomer.balance)}
                 </p>
               )}
@@ -836,20 +844,20 @@ export default function Pos() {
           )}
 
           {/* Totals */}
-          <dl className="space-y-1 text-sm">
+          <dl className="space-y-1.5 rounded-[var(--od-radius-md,12px)] bg-[var(--od-surface-subtle)] p-4 text-[13px]">
             <Row label="Subtotal" value={online ? preview.data?.subtotal : offlineSubtotal} />
             <Row label="Discount" value={preview.data?.discount_total ?? "0"} />
             <Row label="Tax included" value={preview.data?.tax_total ?? "0"} />
-            <div className="flex justify-between border-t pt-2 text-lg font-semibold">
-              <dt>Total</dt>
-              <dd className="tabular-nums">{formatMoney(total)}</dd>
+            <div className="flex items-baseline justify-between border-t border-[var(--od-border-strong)] pt-2.5">
+              <dt className="text-[13px] font-semibold text-[var(--od-ink)]">Total</dt>
+              <dd className="od-kpi-value text-[22px]">{formatMoney(total)}</dd>
             </div>
           </dl>
 
           {/* Split Payments */}
-          <div className="space-y-2 border-t pt-3">
+          <div className="space-y-2.5 border-t border-[var(--od-border)] pt-3">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium">Payment</span>
+              <span className="text-[13px] font-semibold text-[var(--od-ink)]">Payment</span>
               <Button
                 type="button"
                 variant="ghost"
@@ -877,7 +885,10 @@ export default function Pos() {
               );
               const showAccountPicker = p.method !== "cash" || methodAccounts.length > 1;
               return (
-                <div key={p.id} className="space-y-2 rounded-xl border bg-muted/20 p-2.5">
+                <div
+                  key={p.id}
+                  className="space-y-2 rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-2.5"
+                >
                   <div className="flex gap-2">
                     <NativeSelect
                       className="flex-1"
@@ -897,7 +908,7 @@ export default function Pos() {
                       <option value="bank">Bank</option>
                     </NativeSelect>
                     <Input
-                      className="w-32"
+                      className="od-tabular w-28"
                       inputMode="decimal"
                       placeholder={
                         payments.length === 1 && idx === 0 ? String(total || "") : "Amount"
@@ -914,6 +925,7 @@ export default function Pos() {
                         type="button"
                         variant="ghost"
                         size="icon"
+                        className="h-9 w-9 shrink-0 text-[var(--od-ink-muted)] hover:text-[var(--od-bad)]"
                         onClick={() => setPayments((ps) => ps.filter((x) => x.id !== p.id))}
                       >
                         <Trash2 size={14} />
@@ -962,7 +974,7 @@ export default function Pos() {
           </div>
 
           {paymentTotal > total && total > 0 && (
-            <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+            <p className="od-tabular rounded-[var(--od-radius-sm,8px)] bg-[color-mix(in_srgb,var(--od-good-mark)_12%,transparent)] px-3 py-2 text-[13px] font-semibold text-[var(--od-good)]">
               Change: {formatMoney(paymentTotal - total)}
             </p>
           )}
@@ -972,12 +984,12 @@ export default function Pos() {
             </Field>
           )}
           {!customerId && paymentTotal < total && (
-            <p className="text-sm text-destructive">
+            <p className="rounded-[var(--od-radius-sm,8px)] bg-[color-mix(in_srgb,var(--od-bad-mark)_10%,transparent)] px-3 py-2 text-xs font-medium text-[var(--od-bad)]">
               Walk-in sales must be paid in full. Pick a customer to sell on credit.
             </p>
           )}
 
-          <div className="flex gap-2">
+          <div className="flex gap-2 pt-1">
             <Button
               type="button"
               variant="outline"
@@ -1048,13 +1060,16 @@ export default function Pos() {
         {held.data?.length ? (
           <ul className="space-y-2">
             {held.data.map((h) => (
-              <li key={h.id} className="flex items-center gap-2 rounded-lg border p-3 text-sm">
+              <li
+                key={h.id}
+                className="flex items-center gap-2 rounded-[var(--od-radius-md,12px)] border border-[var(--od-border-strong)] p-3 text-[13px]"
+              >
                 <div className="mr-auto">
-                  <p className="font-medium">
+                  <p className="font-medium text-[var(--od-ink)]">
                     {h.item_count} item{h.item_count === 1 ? "" : "s"}
                     {h.customer_name ? ` · ${h.customer_name}` : ""}
                   </p>
-                  <p className="text-muted-foreground">
+                  <p className="od-caption">
                     {new Date(h.created_at).toLocaleTimeString()}
                     {h.note ? ` · ${h.note}` : ""}
                   </p>
@@ -1069,7 +1084,7 @@ export default function Pos() {
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-muted-foreground">No held carts.</p>
+          <p className="od-caption py-2">No held carts.</p>
         )}
       </FormDialog>
 
@@ -1081,16 +1096,40 @@ export default function Pos() {
 function Row({ label, value }: { label: string; value: unknown }) {
   return (
     <div className="flex justify-between">
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="tabular-nums">{formatMoney(value)}</dd>
+      <dt className="text-[var(--od-ink-secondary)]">{label}</dt>
+      <dd className="od-tabular font-medium text-[var(--od-ink)]">{formatMoney(value)}</dd>
     </div>
   );
 }
 
 function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
+  const [isCopy, setIsCopy] = useState(false);
+  const [printing, setPrinting] = useState(false);
   const summaryText = `Receipt ${sale.number ?? ""}\nTotal: ${formatMoney(sale.total)}\nPaid: ${formatMoney(sale.paid_total)}${
     toNumber(sale.balance) > 0 ? `\nBalance: ${formatMoney(sale.balance)}` : ""
   }\nThank you for your business!`;
+
+  async function printReceipt() {
+    if (!sale.id) {
+      window.print();
+      return;
+    }
+    setPrinting(true);
+    try {
+      const res = await api.post<{ copy: boolean; receipt_prints: number }>(
+        `/sales/${sale.id}/receipt/printed`,
+        {},
+      );
+      setIsCopy(Boolean(res?.copy));
+      await new Promise<void>((r) => requestAnimationFrame(() => requestAnimationFrame(() => r())));
+      window.print();
+    } catch (e) {
+      toast.error(errorMessage(e));
+    } finally {
+      setPrinting(false);
+    }
+  }
+
   return (
     <FormDialog
       open
@@ -1099,50 +1138,74 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
       submitLabel="New sale"
       onSubmit={onClose}
     >
-      <div id="receipt" className="space-y-2 text-sm">
-        <ul className="divide-y">
+      <div
+        id="receipt"
+        className="print-document space-y-2.5 rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4 text-[13px]"
+      >
+        {isCopy && (
+          <p className="rounded border border-dashed border-[var(--od-border-strong)] py-1 text-center text-xs font-bold tracking-widest uppercase">
+            *** COPY ***
+          </p>
+        )}
+        <div className="flex justify-between text-xs text-[var(--od-ink-muted)]">
+          <span className="od-mono font-medium">Receipt {sale.number ?? ""}</span>
+          <span>{sale.customer_name || "Walk-in"}</span>
+        </div>
+        <ul className="divide-y divide-[var(--od-border)]">
           {sale.items.map((i) => (
             <li
               key={`${i.product_id}-${i.serial_number ?? ""}`}
-              className="flex justify-between py-1"
+              className="flex justify-between py-1.5"
             >
               <span>
                 {toNumber(i.qty)} × {i.product_name}
                 {i.serial_number ? ` [SN: ${i.serial_number}]` : ""}
               </span>
-              <span className="tabular-nums">{formatMoney(i.line_total)}</span>
+              <span className="od-tabular font-medium">{formatMoney(i.line_total)}</span>
             </li>
           ))}
         </ul>
-        <div className="flex justify-between font-semibold">
-          <span>Total</span>
-          <span>{formatMoney(sale.total)}</span>
-        </div>
-        <div className="flex justify-between">
-          <span>Paid</span>
-          <span>{formatMoney(sale.paid_total)}</span>
-        </div>
-        {toNumber(sale.change_due) > 0 && (
-          <div className="flex justify-between">
-            <span>Change</span>
-            <span>{formatMoney(sale.change_due)}</span>
+        <div className="space-y-1 border-t border-[var(--od-border-strong)] pt-2">
+          <div className="flex justify-between font-semibold">
+            <span>Total</span>
+            <span className="od-tabular">{formatMoney(sale.total)}</span>
           </div>
-        )}
-        {toNumber(sale.balance) > 0 && (
-          <div className="flex justify-between text-destructive">
-            <span>On credit</span>
-            <span>{formatMoney(sale.balance)}</span>
+          <div className="flex justify-between text-[var(--od-ink-secondary)]">
+            <span>Paid</span>
+            <span className="od-tabular">{formatMoney(sale.paid_total)}</span>
           </div>
-        )}
+          {toNumber(sale.change_due) > 0 && (
+            <div className="flex justify-between text-[var(--od-good)]">
+              <span>Change</span>
+              <span className="od-tabular">{formatMoney(sale.change_due)}</span>
+            </div>
+          )}
+          {toNumber(sale.balance) > 0 && (
+            <div className="flex justify-between font-medium text-[var(--od-bad)]">
+              <span>On credit</span>
+              <span className="od-tabular">{formatMoney(sale.balance)}</span>
+            </div>
+          )}
+        </div>
         {sale.id && (
-          <Link className="text-primary underline" to={`/sales/${sale.id}`} onClick={onClose}>
+          <Link
+            className="inline-block pt-1 text-xs font-medium text-[var(--od-ink)] underline underline-offset-4 print:hidden"
+            to={`/sales/${sale.id}`}
+            onClick={onClose}
+          >
             Open sale
           </Link>
         )}
       </div>
       <div className="flex flex-wrap gap-2">
-        <Button type="button" variant="outline" size="sm" onClick={() => window.print()}>
-          Print
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={printing}
+          onClick={() => void printReceipt()}
+        >
+          {printing ? "Printing…" : "Print"}
         </Button>
         {sale.id && (
           <Button
@@ -1160,11 +1223,17 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
             <Download size={14} /> Receipt PDF
           </Button>
         )}
-        <Button type="button" variant="outline" size="sm" asChild>
-          <a href={whatsappUrl(undefined, summaryText)} target="_blank" rel="noreferrer">
-            <MessageCircle size={14} /> WhatsApp
-          </a>
-        </Button>
+        {sale.id && (
+          <SendOutboundButton
+            label="Send receipt"
+            title="Send receipt"
+            path={`/sales/${sale.id}/send-receipt`}
+            successMessage="Receipt queued"
+            phone={sale.customer_phone}
+            whatsappText={summaryText}
+            size="sm"
+          />
+        )}
       </div>
     </FormDialog>
   );

@@ -580,6 +580,76 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /sales/{id}/receipt/printed:
+    post:
+      summary: Record an on-screen receipt print and report whether it is a Copy
+      operationId: post_sales_id_receipt_printed
+      tags:
+      - Sales
+      x-permission: shop.sale.view_all
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /sales/{id}/send-receipt:
+    post:
+      summary: Queue a customer receipt message in the outbound outbox
+      operationId: post_sales_id_send_receipt
+      tags:
+      - Sales
+      x-permission: shop.sale.view_all
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel:
+                  type: string
+                  enum:
+                  - sms
+                  - whatsapp
+                  - email
+      responses:
+        '200':
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: Channel not configured
   /sales/{id}/invoice:
     get:
       summary: Invoice data, or an A4 PDF with format=pdf. The invoice number comes from the branch's invoice sequence the
@@ -1437,6 +1507,99 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+  /customers/{id}/statement/send:
+    post:
+      summary: Queue a customer statement message in the outbound outbox
+      operationId: post_customers_id_statement_send
+      tags:
+      - Customers
+      x-permission: finance.debt.view
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel:
+                  type: string
+                  enum:
+                  - sms
+                  - whatsapp
+                  - email
+                from:
+                  type: string
+                to:
+                  type: string
+      responses:
+        '200':
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          description: Channel not configured
+  /customers/{id}/debt-reminder:
+    post:
+      summary: Queue a debt reminder for a shop customer with an unpaid balance
+      operationId: post_customers_id_debt_reminder
+      tags:
+      - Customers
+      x-permission: finance.debt.view
+      parameters:
+      - $ref: '#/components/parameters/Id'
+      - $ref: '#/components/parameters/BranchId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                channel:
+                  type: string
+                  enum:
+                  - sms
+                  - whatsapp
+                  - email
+      responses:
+        '200':
+          description: Queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          description: Channel not configured
   /customers/{id}/payments:
     post:
       summary: Receive a payment. Allocated oldest first or by the given allocations; any extra becomes customer credit

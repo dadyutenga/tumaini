@@ -10,7 +10,7 @@ import (
 
 // Mount registers the system jobs and their daily schedule. It has no routes.
 func Mount(_ fiber.Router, d deps.Deps) *Service {
-	svc := &Service{DB: d.DB, Notify: d.Notify, Store: d.Store, Clock: d.Clock}
+	svc := &Service{DB: d.DB, Notify: d.Notify, Outbound: d.Outbound, Store: d.Store, Clock: d.Clock}
 	svc.Email, svc.SMS = sender.FromConfig(d.Config)
 	d.Jobs.Register(jobs.BusinessExport, svc.BusinessExport)
 	d.Jobs.Register(jobs.DebtReminders, svc.DebtReminders)

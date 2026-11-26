@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Clock, MessageSquareWarning } from "lucide-react";
+import { CheckCircle2, Clock, ExternalLink, MessageSquareWarning } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { PageLoader } from "@/components/shared/Display";
@@ -10,15 +11,26 @@ import { errorMessage } from "@/hooks/useApi";
 import { formatDate } from "@/lib/formatters";
 import type { PublicApproval } from "@/types/services";
 
-function Shell({ children, title }: { children: React.ReactNode; title?: string }) {
+function Shell({
+  children,
+  title,
+  meta,
+}: {
+  children: React.ReactNode;
+  title?: string;
+  meta?: React.ReactNode;
+}) {
   return (
-    <main className="mx-auto min-h-screen max-w-2xl p-4 sm:p-8">
-      <header className="mb-6 border-b pb-4">
-        <p className="text-sm text-muted-foreground">Design for approval</p>
-        <h1 className="text-2xl font-semibold tracking-tight">{title ?? "Your design"}</h1>
-      </header>
-      {children}
-    </main>
+    <div className="min-h-screen bg-[var(--od-app-sidebar)] px-4 py-8 sm:px-6 sm:py-12">
+      <main className="mx-auto max-w-2xl space-y-6">
+        <header className="border-b border-[var(--od-border)] pb-5">
+          <p className="od-kpi-label">Design for approval</p>
+          <h1 className="od-page-title mt-1 text-[var(--od-ink)]">{title ?? "Your design"}</h1>
+          {meta && <div className="mt-2">{meta}</div>}
+        </header>
+        {children}
+      </main>
+    </div>
   );
 }
 
@@ -50,12 +62,14 @@ export default function ClientApproval() {
     const expired = e instanceof ApiError && e.status === 410;
     return (
       <Shell>
-        <div className="rounded-2xl border bg-card p-8 text-center">
-          <Clock className="mx-auto mb-3 text-muted-foreground" />
-          <p className="font-medium">
+        <div className="od-card p-8 text-center">
+          <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full border border-[var(--od-border)] bg-[var(--od-surface-subtle)] text-[var(--od-ink-muted)]">
+            <Clock size={20} />
+          </div>
+          <p className="text-base font-semibold text-[var(--od-ink)]">
             {expired ? "This link has expired" : "This link is not valid"}
           </p>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 text-sm text-[var(--od-ink-secondary)]">
             {expired ? "Please ask us to send you a new one." : errorMessage(e)}
           </p>
         </div>
@@ -68,81 +82,110 @@ export default function ClientApproval() {
   const mime = a.mime_type ?? "";
 
   return (
-    <Shell title={a.title}>
-      <p className="mb-4 text-sm text-muted-foreground">
-        {a.business_name} · for {a.client_name} · Version {a.version_no}
-      </p>
-      <section className="mb-6 overflow-hidden rounded-2xl border bg-card">
+    <Shell
+      title={a.title}
+      meta={
+        <div className="flex flex-wrap items-center gap-2 text-sm text-[var(--od-ink-secondary)]">
+          <span>
+            {a.business_name} · for {a.client_name}
+          </span>
+          <Badge variant="secondary" className="od-tabular">
+            Version {a.version_no}
+          </Badge>
+        </div>
+      }
+    >
+      <section className="od-card-flush overflow-hidden">
         {a.has_file && mime.startsWith("image/") ? (
-          <img
-            src={fileUrl}
-            alt={`${a.title}, version ${a.version_no}`}
-            className="mx-auto max-h-[70vh] w-full object-contain"
-          />
+          <div className="bg-[var(--od-surface-subtle)] p-2">
+            <img
+              src={fileUrl}
+              alt={`${a.title}, version ${a.version_no}`}
+              className="mx-auto max-h-[70vh] w-full rounded-lg object-contain"
+            />
+          </div>
         ) : a.has_file && mime === "application/pdf" ? (
           <iframe title={a.title} src={fileUrl} className="h-[70vh] w-full" />
         ) : a.has_file ? (
-          <p className="p-8 text-center">
-            <a className="underline" href={fileUrl} target="_blank" rel="noreferrer">
-              Open the file{a.file_name ? ` (${a.file_name})` : ""}
-            </a>
-          </p>
+          <div className="p-8 text-center">
+            <Button variant="outline" asChild>
+              <a href={fileUrl} target="_blank" rel="noreferrer">
+                <ExternalLink size={14} /> Open the file{a.file_name ? ` (${a.file_name})` : ""}
+              </a>
+            </Button>
+          </div>
         ) : a.link ? (
-          <p className="p-8 text-center">
-            <a className="underline" href={a.link} target="_blank" rel="noreferrer">
-              Open the design
-            </a>
-          </p>
+          <div className="p-8 text-center">
+            <Button variant="outline" asChild>
+              <a href={a.link} target="_blank" rel="noreferrer">
+                <ExternalLink size={14} /> Open the design
+              </a>
+            </Button>
+          </div>
         ) : (
-          <p className="p-8 text-center text-muted-foreground">No preview is available.</p>
+          <p className="p-8 text-center text-sm text-[var(--od-ink-muted)]">
+            No preview is available.
+          </p>
         )}
       </section>
 
       {a.comments.length > 0 && (
-        <section className="mb-6 space-y-2">
-          <h2 className="text-sm font-semibold">Comments</h2>
-          {a.comments.map((c) => (
-            <p key={c.created_at + c.comment} className="rounded-xl bg-muted/50 p-3 text-sm">
-              <span className="font-medium">
-                {c.author_type === "client" ? "You" : "Designer"}:{" "}
-              </span>
-              {c.comment}
-            </p>
-          ))}
+        <section className="od-card space-y-3 p-5">
+          <h2 className="od-card-title text-[var(--od-ink)]">Comments</h2>
+          <div className="space-y-2">
+            {a.comments.map((c) => (
+              <div
+                key={c.created_at + c.comment}
+                className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3.5 py-2.5 text-sm text-[var(--od-ink)]"
+              >
+                <span className="font-semibold">
+                  {c.author_type === "client" ? "You" : "Designer"}:{" "}
+                </span>
+                <span className="text-[var(--od-ink-secondary)]">{c.comment}</span>
+              </div>
+            ))}
+          </div>
         </section>
       )}
 
       {decided || decide.isSuccess ? (
-        <div className="rounded-2xl border bg-card p-6 text-center">
+        <div className="od-card p-6 text-center">
           {a.status === "changes_requested" || (decide.isSuccess && choice === "changes") ? (
             <>
-              <MessageSquareWarning className="mx-auto mb-2 text-amber-600" />
-              <p className="font-medium">Thank you. We will send you a new version.</p>
+              <MessageSquareWarning className="mx-auto mb-2.5 text-[var(--od-warning)]" size={28} />
+              <p className="text-base font-semibold text-[var(--od-ink)]">
+                Thank you. We will send you a new version.
+              </p>
             </>
           ) : (
             <>
-              <CheckCircle2 className="mx-auto mb-2 text-emerald-600" />
-              <p className="font-medium">Approved. Thank you!</p>
-              <p className="mt-1 text-sm text-muted-foreground">We will prepare the final files.</p>
+              <CheckCircle2 className="mx-auto mb-2.5 text-[var(--od-good)]" size={28} />
+              <p className="text-base font-semibold text-[var(--od-ink)]">Approved. Thank you!</p>
+              <p className="mt-1 text-sm text-[var(--od-ink-secondary)]">
+                We will prepare the final files.
+              </p>
             </>
           )}
-          {a.decided_at && (
-            <p className="mt-2 text-xs text-muted-foreground">Decided {formatDate(a.decided_at)}</p>
-          )}
+          {a.decided_at && <p className="od-caption mt-2.5">Decided {formatDate(a.decided_at)}</p>}
         </div>
       ) : (
-        <section className="space-y-3">
-          <label className="block text-sm font-medium" htmlFor="comment">
-            Comments (required if you want changes)
-          </label>
-          <Textarea
-            id="comment"
-            rows={3}
-            placeholder="For example: make the text bigger"
-            value={comment}
-            onChange={(e) => setComment(e.target.value)}
-          />
-          {decide.error && <p className="text-sm text-destructive">{errorMessage(decide.error)}</p>}
+        <section className="od-card space-y-4 p-6">
+          <div>
+            <label className="block text-sm font-medium text-[var(--od-ink)]" htmlFor="comment">
+              Comments (required if you want changes)
+            </label>
+            <Textarea
+              id="comment"
+              rows={3}
+              className="mt-2"
+              placeholder="For example: make the text bigger"
+              value={comment}
+              onChange={(e) => setComment(e.target.value)}
+            />
+          </div>
+          {decide.error && (
+            <p className="text-sm text-[var(--od-bad)]">{errorMessage(decide.error)}</p>
+          )}
           <div className="flex flex-wrap gap-3">
             <Button
               size="lg"
@@ -166,7 +209,7 @@ export default function ClientApproval() {
               Request changes
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground">
+          <p className="od-caption border-t border-[var(--od-border)] pt-3">
             This link works until {formatDate(a.expires_at)}. You can decide once.
           </p>
         </section>

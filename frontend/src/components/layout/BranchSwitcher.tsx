@@ -12,7 +12,7 @@ export function BranchSwitcher() {
   return (
     <NativeSelect
       aria-label="Active location"
-      className="h-9 w-40"
+      className="h-8 w-36 text-xs sm:w-40"
       value={branchId ?? "all"}
       onChange={(e) => setBranchId(e.target.value)}
     >

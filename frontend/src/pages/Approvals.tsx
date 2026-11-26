@@ -1,12 +1,14 @@
 import { useState } from "react";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   DataGrid,
-  FormDialog,
   Field,
-  NativeSelect,
+  FilterBar,
+  FormDialog,
   PageHeader,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
@@ -31,6 +33,13 @@ const APPROVAL_PERMISSION: Record<string, string> = {
 };
 
 const ANY_APPROVAL_PERMS = Object.values(APPROVAL_PERMISSION);
+
+const STATUS_OPTIONS = [
+  { value: "pending", label: "Pending" },
+  { value: "approved", label: "Approved" },
+  { value: "rejected", label: "Rejected" },
+  { value: "", label: "All" },
+];
 
 export default function Approvals() {
   const { can, canAny, user } = useAuth();
@@ -60,40 +69,58 @@ export default function Approvals() {
     },
   );
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Approvals"
-        description="Requests that went over someone's limit."
-        actions={
-          <NativeSelect
-            aria-label="Filter by status"
-            className="w-40"
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-          >
-            <option value="pending">Pending</option>
-            <option value="approved">Approved</option>
-            <option value="rejected">Rejected</option>
-            <option value="">All</option>
-          </NativeSelect>
-        }
+        description="Requests that went over someone's authority limit."
       />
+
+      <FilterBar>
+        <SegmentedChips
+          ariaLabel="Filter by status"
+          value={status}
+          onChange={setStatus}
+          options={STATUS_OPTIONS}
+        />
+      </FilterBar>
+
       <DataGrid
         rows={data}
         loading={isLoading}
         rowKey={(a) => a.id}
         empty="Nothing waiting for approval"
         columns={[
-          { header: "Requested", cell: (a) => formatDateTime(a.created_at) },
+          {
+            header: "Requested",
+            cell: (a) => (
+              <span className="od-tabular text-xs text-[var(--od-ink-secondary)]">
+                {formatDateTime(a.created_at)}
+              </span>
+            ),
+          },
           {
             header: "Kind",
-            cell: (a) => <span className="capitalize">{a.kind.replaceAll("_", " ")}</span>,
+            cell: (a) => (
+              <Badge variant="secondary" className="capitalize">
+                {a.kind.replaceAll("_", " ")}
+              </Badge>
+            ),
           },
-          { header: "Summary", cell: (a) => a.summary },
+          {
+            header: "Summary",
+            cell: (a) => <span className="font-medium text-[var(--od-ink)]">{a.summary}</span>,
+          },
           {
             header: "Amount",
             align: "right",
-            cell: (a) => (toNumber(a.amount) ? formatMoney(a.amount) : "-"),
+            cell: (a) =>
+              toNumber(a.amount) ? (
+                <span className="od-tabular font-semibold text-[var(--od-ink)]">
+                  {formatMoney(a.amount)}
+                </span>
+              ) : (
+                <span className="text-[var(--od-ink-muted)]">-</span>
+              ),
           },
           { header: "Status", cell: (a) => <StatusBadge value={a.status} /> },
           {
@@ -103,20 +130,23 @@ export default function Approvals() {
                 a.requested_by === user?.id ||
                 (Boolean(user?.membership_id) && a.requested_by === user?.membership_id);
               return a.status === "pending" && canDecideKind(a.kind) && !isOwn ? (
-                <div className="flex gap-2">
+                <div className="flex justify-end gap-1.5">
                   <Button size="sm" onClick={() => setDeciding({ approval: a, action: "approve" })}>
                     Approve
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
+                    className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                     onClick={() => setDeciding({ approval: a, action: "reject" })}
                   >
                     Reject
                   </Button>
                 </div>
               ) : a.status === "pending" && isOwn ? (
-                <span className="text-xs text-muted-foreground">Your request</span>
+                <div className="flex justify-end">
+                  <span className="text-xs text-[var(--od-ink-muted)]">Your request</span>
+                </div>
               ) : null;
             },
           },
@@ -137,6 +167,6 @@ export default function Approvals() {
           <Input value={note} onChange={(e) => setNote(e.target.value)} />
         </Field>
       </FormDialog>
-    </>
+    </div>
   );
 }

@@ -1131,8 +1131,10 @@ func (s *Service) ListPayments(ctx context.Context, p *auth.Principal, clientID,
 	return out, total, err
 }
 
-// PaymentReceipt returns a service payment receipt with business details, client, project/design job, purpose, and balance remaining.
-func (s *Service) PaymentReceipt(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
+// PaymentReceipt returns a service payment receipt with business details, client, project/design job,
+// purpose, and balance remaining. When recordPrint is true (PDF download), it records a
+// service_receipt.printed audit row: the first PDF is original (copy=false) and later PDFs are copy=true.
+func (s *Service) PaymentReceipt(ctx context.Context, p *auth.Principal, id uuid.UUID, recordPrint bool) (map[string]any, error) {
 	var out map[string]any
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		row, err := one(ctx, tx, "Payment", `
@@ -1230,6 +1232,26 @@ func (s *Service) PaymentReceipt(ctx context.Context, p *auth.Principal, id uuid
 		} else if balance.IsZero() && totalPrice.IsPositive() {
 			purpose = "Final payment"
 		}
+		if recordPrint {
+			if err := s.Audit.Record(ctx, tx, p, "service_receipt.printed", "payment_received", id, nil, nil); err != nil {
+				return err
+			}
+		}
+		var prints int
+		_ = tx.QueryRow(ctx, `
+			SELECT count(*) FROM audit.audit_log
+			WHERE tenant_id = $1 AND entity_table = 'payment_received' AND entity_id = $2 AND action = 'service_receipt.printed'`,
+			p.TenantID, id).Scan(&prints)
+		if recordPrint {
+			if prints < 1 {
+				prints = 1
+			}
+			row["receipt_prints"] = prints
+			row["copy"] = prints > 1
+		} else {
+			row["receipt_prints"] = prints
+			row["copy"] = prints >= 1
+		}
 		row["business"] = map[string]any{"name": bName, "phone": bPhone, "address": bAddr, "tax_number": bTin}
 		row["purpose"] = purpose
 		row["total_paid_so_far"] = totalPaid
@@ -1270,6 +1292,9 @@ func serviceReceiptPDF(m map[string]any) []byte {
 	}
 	if len(sub) > 0 {
 		d.Text(strings.Join(sub, " | "))
+	}
+	if copyFlag, _ := m["copy"].(bool); copyFlag {
+		d.Heading("*** COPY ***", 11)
 	}
 	d.Rule()
 	d.Heading("Service Payment Receipt "+export.Cell(m["number"]), 12)

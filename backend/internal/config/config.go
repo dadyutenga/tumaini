@@ -35,15 +35,19 @@ type Config struct {
 	ArgonThreads       uint8
 	// TrustedProxies are the reverse proxies (IPs or CIDRs) whose X-Forwarded-For is believed.
 	// Empty means the socket address is used, so rate limits and audit IPs cannot be spoofed.
-	TrustedProxies []string
-	SMTPHost       string
-	SMTPPort       int
-	SMTPUser       string
-	SMTPPassword   string
-	SMTPFrom       string
-	SMSWebhookURL  string
-	SMSAPIKey      string
-	SMSSender      string
+	TrustedProxies     []string
+	SMTPHost           string
+	SMTPPort           int
+	SMTPUser           string
+	SMTPPassword       string
+	SMTPFrom           string
+	SMSWebhookURL      string
+	SMSAPIKey          string
+	SMSSender          string
+	WhatsAppWebhookURL string
+	WhatsAppAPIKey     string
+	WhatsAppSender     string
+	OutboundLog        bool
 }
 
 func Load() (Config, error) {
@@ -78,6 +82,10 @@ func Load() (Config, error) {
 		SMSWebhookURL:      os.Getenv("SMS_WEBHOOK_URL"),
 		SMSAPIKey:          os.Getenv("SMS_API_KEY"),
 		SMSSender:          os.Getenv("SMS_SENDER_ID"),
+		WhatsAppWebhookURL: os.Getenv("WHATSAPP_WEBHOOK_URL"),
+		WhatsAppAPIKey:     os.Getenv("WHATSAPP_API_KEY"),
+		WhatsAppSender:     os.Getenv("WHATSAPP_SENDER"),
+		OutboundLog:        boolenv("OUTBOUND_LOG", false),
 	}
 	if len(bad) > 0 {
 		return c, fmt.Errorf("invalid configuration: %s", strings.Join(bad, "; "))

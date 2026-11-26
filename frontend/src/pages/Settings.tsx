@@ -2,12 +2,14 @@ import { useEffect, useState } from "react";
 import { Plus, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
@@ -142,7 +144,7 @@ export default function Settings() {
   });
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader title={t.settings.title} description={t.settings.subtitle} />
       <Tabs defaultValue="business">
         <TabsList className="mb-4 flex flex-wrap">
@@ -157,14 +159,14 @@ export default function Settings() {
         <TabsContent value="business">
           {form && (
             <form
-              className="max-w-2xl space-y-5 rounded-2xl border bg-card p-6"
+              className="od-card max-w-2xl space-y-5 p-6"
               onSubmit={(e) => {
                 e.preventDefault();
                 save.mutate(form);
               }}
             >
-              <div className="flex flex-wrap items-center gap-4 border-b pb-4">
-                <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-xl border bg-muted">
+              <div className="flex flex-wrap items-center gap-4 border-b border-[var(--od-border)] pb-5">
+                <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-xl border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)]">
                   {logoUrl ? (
                     <img
                       src={logoUrl}
@@ -172,17 +174,19 @@ export default function Settings() {
                       className="h-full w-full object-contain"
                     />
                   ) : (
-                    <span className="text-xs font-bold text-muted-foreground">LOGO</span>
+                    <span className="od-mono text-xs font-bold text-[var(--od-ink-muted)]">
+                      LOGO
+                    </span>
                   )}
                 </div>
                 <div className="space-y-1">
-                  <p className="text-sm font-medium">Business Logo</p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="od-card-title text-[var(--od-ink)]">Business Logo</p>
+                  <p className="od-caption">
                     Appears on printed invoices, quotations and thermal receipts (PNG or JPEG, max 2
                     MB).
                   </p>
                   {manage && (
-                    <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border bg-background px-3 py-1.5 text-xs font-medium shadow-sm hover:bg-accent">
+                    <label className="mt-1 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-3 py-1.5 text-xs font-medium text-[var(--od-ink)] transition hover:bg-[var(--od-surface-subtle)]">
                       <Upload size={13} />
                       <span>{uploadingLogo ? "Uploading…" : "Upload logo"}</span>
                       <input
@@ -200,7 +204,7 @@ export default function Settings() {
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3.5 sm:grid-cols-2">
                 <Field label="Business name" className="sm:col-span-2">
                   <Input required {...field("name")} />
                 </Field>
@@ -208,10 +212,10 @@ export default function Settings() {
                   <Input {...field("legal_name")} />
                 </Field>
                 <Field label="Registration number (BRELA)">
-                  <Input {...field("reg_number")} />
+                  <Input className="od-mono" {...field("reg_number")} />
                 </Field>
                 <Field label="Tax number (TIN / VRN)">
-                  <Input {...field("tax_number")} />
+                  <Input className="od-mono" {...field("tax_number")} />
                 </Field>
                 <Field label="Phone">
                   <Input {...field("phone")} />
@@ -223,28 +227,30 @@ export default function Settings() {
                   <Input {...field("address")} />
                 </Field>
                 <Field label="Currency">
-                  <Input {...field("currency")} disabled />
+                  <Input className="od-mono" {...field("currency")} disabled />
                 </Field>
                 <Field label="Time zone">
-                  <Input {...field("timezone")} disabled />
+                  <Input className="od-mono" {...field("timezone")} disabled />
                 </Field>
               </div>
               {manage && (
-                <Button type="submit" disabled={save.isPending}>
-                  {save.isPending ? "Saving…" : "Save changes"}
-                </Button>
+                <div className="border-t border-[var(--od-border)] pt-4">
+                  <Button type="submit" disabled={save.isPending}>
+                    {save.isPending ? "Saving…" : "Save changes"}
+                  </Button>
+                </div>
               )}
             </form>
           )}
         </TabsContent>
 
-        <TabsContent value="branches">
+        <TabsContent value="branches" className="space-y-4">
           {manage && (
-            <div className="mb-3 flex justify-end">
+            <FilterBar className="justify-end">
               <Button onClick={() => setBranch({ name: "", kind: "shop", address: "", phone: "" })}>
                 <Plus size={16} /> New location
               </Button>
-            </div>
+            </FilterBar>
           )}
           <DataGrid
             rows={branches.data}
@@ -254,18 +260,25 @@ export default function Settings() {
               {
                 header: "Location",
                 cell: (b) => (
-                  <span className="font-medium">
-                    {b.name}
-                    {b.is_main && " (main)"}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-[var(--od-ink)]">{b.name}</span>
+                    {b.is_main && <Badge variant="secondary">Main</Badge>}
+                  </div>
                 ),
               },
               {
                 header: "Type",
-                cell: (b) => <span className="capitalize">{b.kind ?? "shop"}</span>,
+                cell: (b) => (
+                  <Badge variant="outline" className="capitalize">
+                    {b.kind ?? "shop"}
+                  </Badge>
+                ),
               },
               { header: "Address", cell: (b) => b.address ?? "-" },
-              { header: "Phone", cell: (b) => b.phone ?? "-" },
+              {
+                header: "Phone",
+                cell: (b) => <span className="od-mono text-xs">{b.phone ?? "-"}</span>,
+              },
               {
                 header: "Status",
                 cell: (b) => <StatusBadge value={b.is_active ? "active" : "inactive"} />,
@@ -276,8 +289,8 @@ export default function Settings() {
 
         <TabsContent value="finance" className="max-w-4xl space-y-6">
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <h3 className="font-semibold">Tax Rates</h3>
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="od-section-title">Tax Rates</h3>
               {can("settings.manage") && (
                 <Button size="sm" onClick={() => setTax({ name: "", rate: "" })}>
                   <Plus size={15} /> New tax rate
@@ -289,9 +302,19 @@ export default function Settings() {
               loading={taxes.isLoading}
               rowKey={(tx) => tx.id}
               columns={[
-                { header: "Name", cell: (tx) => tx.name },
-                { header: "Rate", align: "right", cell: (tx) => `${tx.rate}%` },
-                { header: "Default", cell: (tx) => (tx.is_default ? "Yes" : "") },
+                {
+                  header: "Name",
+                  cell: (tx) => <span className="font-medium text-[var(--od-ink)]">{tx.name}</span>,
+                },
+                {
+                  header: "Rate",
+                  align: "right",
+                  cell: (tx) => <span className="od-tabular font-medium">{tx.rate}%</span>,
+                },
+                {
+                  header: "Default",
+                  cell: (tx) => (tx.is_default ? <Badge variant="secondary">Default</Badge> : ""),
+                },
                 {
                   header: "Status",
                   cell: (tx) => <StatusBadge value={tx.is_active ? "active" : "inactive"} />,
@@ -383,6 +406,7 @@ export default function Settings() {
               <Input
                 required
                 inputMode="decimal"
+                className="od-tabular"
                 value={tax.rate}
                 onChange={(e) => setTax({ ...tax, rate: e.target.value })}
               />
@@ -390,6 +414,6 @@ export default function Settings() {
           </>
         )}
       </FormDialog>
-    </>
+    </div>
   );
 }

@@ -3,6 +3,7 @@ package customers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -11,12 +12,14 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/kernel/audit"
+	"bms/internal/kernel/outbound"
 	"bms/internal/kernel/payments"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/idem"
+	"bms/internal/platform/ids"
 	"bms/internal/platform/money"
 	"bms/internal/platform/phone"
 	"bms/internal/platform/setting"
@@ -24,9 +27,10 @@ import (
 )
 
 type Service struct {
-	DB    *db.DB
-	Audit *audit.Service
-	Clock clock.Clock
+	DB       *db.DB
+	Audit    *audit.Service
+	Outbound *outbound.Service
+	Clock    clock.Clock
 }
 
 func New(database *db.DB, aud *audit.Service, clk clock.Clock) *Service {
@@ -536,6 +540,136 @@ func (s *Service) Debts(ctx context.Context, p *auth.Principal, key string) ([]m
 type WriteOffIn struct {
 	Amount decimal.Decimal `json:"amount" validate:"dgte0"`
 	Reason string          `json:"reason" validate:"required,max=500"`
+}
+
+// SendStatement queues the customer's statement summary into app.outbound_messages.
+func (s *Service) SendStatement(ctx context.Context, p *auth.Principal, id uuid.UUID, channel, from, to, idemKey string) (map[string]any, error) {
+	if strings.TrimSpace(channel) == "" {
+		channel = "sms"
+	}
+	ch, err := s.Outbound.CheckAvailable(channel)
+	if err != nil {
+		return nil, err
+	}
+	if from != "" {
+		if _, err := time.Parse("2006-01-02", from); err != nil {
+			return nil, httpx.BadRequest("invalid_query", "from must be YYYY-MM-DD")
+		}
+	}
+	if to != "" {
+		if _, err := time.Parse("2006-01-02", to); err != nil {
+			return nil, httpx.BadRequest("invalid_query", "to must be YYYY-MM-DD")
+		}
+	}
+	if from != "" && to != "" && to < from {
+		return nil, httpx.BadRequest("invalid_query", "to must not be before from")
+	}
+	stmt, err := s.Statement(ctx, p, id, from, to)
+	if err != nil {
+		return nil, err
+	}
+	c := stmt["customer"].(Customer)
+	recipient := ""
+	if ch == "email" {
+		if c.Email != nil {
+			recipient = *c.Email
+		}
+	} else if c.Phone != nil {
+		recipient = *c.Phone
+	}
+	if len(strings.TrimSpace(recipient)) < 5 {
+		return nil, httpx.BadRequest("no_recipient", "Customer has no phone number or email for this channel")
+	}
+	closing := stmt["closing_balance"].(decimal.Decimal)
+	period := "all dates"
+	if from != "" && to != "" {
+		period = from + " to " + to
+	} else if from != "" {
+		period = "from " + from
+	} else if to != "" {
+		period = "up to " + to
+	}
+	body := fmt.Sprintf("Statement for %s (%s): closing balance %s.", c.Name, period, closing.StringFixed(2))
+	suffix := strings.TrimSpace(idemKey)
+	if suffix == "" {
+		suffix = ids.New().String()
+	}
+	key := fmt.Sprintf("cust-stmt:%s:%s:%s:%s:%s", id.String(), ch, from, to, suffix)
+	var out map[string]any
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+			Channel:        ch,
+			Recipient:      recipient,
+			Subject:        "Account statement",
+			Body:           body,
+			IdempotencyKey: key,
+			CustomerID:     &id,
+		})
+		if err != nil {
+			return err
+		}
+		out = map[string]any{"id": row.ID, "status": row.Status}
+		return nil
+	})
+	return out, err
+}
+
+// SendDebtReminder queues a debt reminder for a shop customer with an unpaid balance.
+func (s *Service) SendDebtReminder(ctx context.Context, p *auth.Principal, id uuid.UUID, channel string) (map[string]any, error) {
+	if strings.TrimSpace(channel) == "" {
+		channel = "sms"
+	}
+	ch, err := s.Outbound.CheckAvailable(channel)
+	if err != nil {
+		return nil, err
+	}
+	var out map[string]any
+	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+		c, err := s.load(ctx, tx, p.TenantID, id)
+		if err != nil {
+			return err
+		}
+		if !c.Balance.IsPositive() {
+			return httpx.Conflict("nothing_due", "This customer has no outstanding balance")
+		}
+		recipient := ""
+		if ch == "email" {
+			if c.Email != nil {
+				recipient = *c.Email
+			}
+		} else if c.Phone != nil {
+			recipient = *c.Phone
+		}
+		if len(strings.TrimSpace(recipient)) < 5 {
+			return httpx.BadRequest("no_recipient", "Customer has no phone number or email for this channel")
+		}
+		today, err := s.bizDate(ctx, tx)
+		if err != nil {
+			return err
+		}
+		body := outbound.RenderTemplate(ctx, tx, "notifications.sms_template_debt",
+			"Reminder: {{name}}, your outstanding balance is {{balance}}.",
+			map[string]string{
+				"name":    c.Name,
+				"balance": c.Balance.StringFixed(2),
+			},
+		)
+		key := fmt.Sprintf("debt-reminder:shop:%s:%s:%s", id.String(), ch, today)
+		row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+			Channel:        ch,
+			Recipient:      recipient,
+			Subject:        "Payment reminder",
+			Body:           body,
+			IdempotencyKey: key,
+			CustomerID:     &id,
+		})
+		if err != nil {
+			return err
+		}
+		out = map[string]any{"id": row.ID, "status": row.Status}
+		return nil
+	})
+	return out, err
 }
 
 // WriteOff is not part of the approved model: a debt is settled by payment, or corrected by an

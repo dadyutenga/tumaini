@@ -45,12 +45,31 @@ func TestSalesVoidReceiptAndPayments(t *testing.T) {
 	require.Len(t, asList(detail.data["payments"]), 1)
 	require.NotEmpty(t, asList(detail.data["audit"]))
 
-	// First print is the original, the second is a copy.
-	r1 := o.call(t, http.MethodGet, "/api/v1/sales/"+saleID+"/receipt", nil, "")
-	require.Equal(t, 200, r1.code, r1.raw)
-	require.Equal(t, false, r1.data["copy"])
-	r2 := o.call(t, http.MethodGet, "/api/v1/sales/"+saleID+"/receipt", nil, "")
-	require.Equal(t, true, r2.data["copy"])
+	// JSON preview does not consume the original; first PDF is original, subsequent prints are marked Copy.
+	preview1 := o.call(t, http.MethodGet, "/api/v1/sales/"+saleID+"/receipt", nil, "")
+	require.Equal(t, 200, preview1.code, preview1.raw)
+	require.Equal(t, false, preview1.data["copy"])
+	require.EqualValues(t, 0, preview1.data["receipt_prints"])
+
+	pdf1 := o.call(t, http.MethodGet, "/api/v1/sales/"+saleID+"/receipt?format=pdf", nil, "")
+	require.Equal(t, 200, pdf1.code)
+	require.True(t, strings.HasPrefix(pdf1.raw, "%PDF"))
+	require.NotContains(t, pdf1.raw, "*** COPY ***")
+
+	preview2 := o.call(t, http.MethodGet, "/api/v1/sales/"+saleID+"/receipt", nil, "")
+	require.Equal(t, 200, preview2.code, preview2.raw)
+	require.Equal(t, true, preview2.data["copy"])
+	require.EqualValues(t, 1, preview2.data["receipt_prints"])
+
+	pdf2 := o.call(t, http.MethodGet, "/api/v1/sales/"+saleID+"/receipt?format=pdf", nil, "")
+	require.Equal(t, 200, pdf2.code)
+	require.True(t, strings.HasPrefix(pdf2.raw, "%PDF"))
+	require.Contains(t, pdf2.raw, "COPY")
+
+	printed := o.call(t, http.MethodPost, "/api/v1/sales/"+saleID+"/receipt/printed", nil, "")
+	require.Equal(t, 200, printed.code, printed.raw)
+	require.Equal(t, true, printed.data["copy"])
+	require.EqualValues(t, 3, printed.data["receipt_prints"])
 
 	inv := o.call(t, http.MethodGet, "/api/v1/sales/"+saleID+"/invoice?format=pdf", nil, "")
 	require.Equal(t, 200, inv.code)

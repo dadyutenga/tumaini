@@ -8,6 +8,7 @@ import (
 	"bms/internal/kernel/approval"
 	"bms/internal/kernel/audit"
 	"bms/internal/kernel/notify"
+	"bms/internal/kernel/outbound"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/clock"
 	"bms/internal/platform/db"
@@ -20,6 +21,7 @@ type Deps struct {
 	DB       *db.DB
 	Audit    *audit.Service
 	Notify   *notify.Service
+	Outbound *outbound.Service
 	Approval *approval.Service
 	Clock    clock.Clock
 	Store    storage.Store

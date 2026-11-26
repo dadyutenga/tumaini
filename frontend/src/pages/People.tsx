@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { Clock, KeyRound, LogIn, LogOut, Plus, ShieldCheck } from "lucide-react";
+import { Clock, KeyRound, LogIn, LogOut, Plus, Search, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,10 +9,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DataGrid,
   Field,
+  FilterBar,
   FormDialog,
   NativeSelect,
   PageHeader,
   Pager,
+  SegmentedChips,
   StatusBadge,
 } from "@/components/shared/kit";
 import { CopyButton } from "@/components/shared/Display";
@@ -90,18 +92,22 @@ function ClockCard() {
   });
   if (!me.data) return null;
   return (
-    <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl border bg-card p-4">
-      <Clock size={18} className="text-muted-foreground" />
-      <div className="mr-auto">
-        <p className="font-medium">{me.data.name}</p>
-        <p className="text-sm text-muted-foreground">Record your own attendance for today.</p>
+    <div className="od-card flex flex-wrap items-center gap-3.5 p-4">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] text-[var(--od-ink-secondary)]">
+        <Clock size={18} />
       </div>
-      <Button onClick={() => clockIn.mutate({})} disabled={clockIn.isPending}>
-        <LogIn size={16} /> Clock in
-      </Button>
-      <Button variant="outline" onClick={() => clockOut.mutate({})} disabled={clockOut.isPending}>
-        <LogOut size={16} /> Clock out
-      </Button>
+      <div className="mr-auto min-w-0">
+        <p className="font-semibold text-[var(--od-ink)]">{me.data.name}</p>
+        <p className="od-caption">Record your own attendance for today.</p>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button onClick={() => clockIn.mutate({})} disabled={clockIn.isPending}>
+          <LogIn size={15} /> Clock in
+        </Button>
+        <Button variant="outline" onClick={() => clockOut.mutate({})} disabled={clockOut.isPending}>
+          <LogOut size={15} /> Clock out
+        </Button>
+      </div>
     </div>
   );
 }
@@ -227,19 +233,21 @@ function EmployeesTab() {
   const canSetSalary = can("hr.compensation.manage");
   const activeBranches = (branches.data ?? []).filter((b) => b.is_active);
   return (
-    <>
+    <div className="space-y-4">
       {grantedBanner && (
-        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-primary/30 bg-primary/5 p-4 text-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--od-info-mark)]/30 bg-[var(--od-surface-subtle)] p-4 text-sm">
           <div>
-            <p className="font-medium">
+            <p className="font-semibold text-[var(--od-ink)]">
               System access granted for {grantedBanner.name} ({grantedBanner.role})
             </p>
-            <p className="text-xs text-muted-foreground">
+            <p className="od-caption mt-0.5">
               Share this temporary password securely. They will change it on their first sign-in.
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <code className="rounded bg-muted px-2 py-1 font-mono">{grantedBanner.password}</code>
+            <code className="od-mono rounded-lg border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-2.5 py-1 text-xs font-medium text-[var(--od-ink)]">
+              {grantedBanner.password}
+            </code>
             <CopyButton text={grantedBanner.password} />
             <Button size="sm" variant="ghost" onClick={() => setGrantedBanner(null)}>
               Dismiss
@@ -247,23 +255,31 @@ function EmployeesTab() {
           </div>
         </div>
       )}
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <Input
-          aria-label="Search employees"
-          className="max-w-xs"
-          placeholder="Search name, number or phone…"
-          value={q}
-          onChange={(e) => {
-            setQ(e.target.value);
-            setPage(1);
-          }}
-        />
+
+      <FilterBar className="justify-between">
+        <div className="relative">
+          <Search
+            size={14}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--od-ink-muted)]"
+          />
+          <Input
+            aria-label="Search employees"
+            className="w-64 pl-8"
+            placeholder="Search name, number or phone…"
+            value={q}
+            onChange={(e) => {
+              setQ(e.target.value);
+              setPage(1);
+            }}
+          />
+        </div>
         {can("hr.employee.manage") && (
           <Button onClick={() => setOpen(true)}>
             <Plus size={16} /> New employee
           </Button>
         )}
-      </div>
+      </FilterBar>
+
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
@@ -271,8 +287,18 @@ function EmployeesTab() {
         empty="No employees yet. Create an employee first, then grant them Manager or Staff access."
         onRowClick={(e) => navigate(`/employees/${e.id}`)}
         columns={[
-          { header: "No.", cell: (e) => e.employee_no },
-          { header: "Name", cell: (e) => <span className="font-medium">{e.name}</span> },
+          {
+            header: "No.",
+            cell: (e) => (
+              <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
+                {e.employee_no}
+              </span>
+            ),
+          },
+          {
+            header: "Name",
+            cell: (e) => <span className="font-medium text-[var(--od-ink)]">{e.name}</span>,
+          },
           {
             header: "Position",
             cell: (e) => e.position || e.position_name || e.department_name || "-",
@@ -284,7 +310,11 @@ function EmployeesTab() {
                 {
                   header: "Base pay",
                   align: "right" as const,
-                  cell: (e: Employee) => formatMoney(e.base_pay),
+                  cell: (e: Employee) => (
+                    <span className="od-tabular font-medium text-[var(--od-ink)]">
+                      {formatMoney(e.base_pay)}
+                    </span>
+                  ),
                 },
               ]
             : []),
@@ -293,7 +323,7 @@ function EmployeesTab() {
             cell: (e) =>
               e.user_id ? (
                 <Badge variant="secondary" className="gap-1">
-                  <ShieldCheck size={12} className="text-primary" />
+                  <ShieldCheck size={12} className="text-[var(--od-good)]" />
                   {e.role_name || "Active login"}
                 </Badge>
               ) : canGrantAccess && e.status !== "terminated" ? (
@@ -316,13 +346,14 @@ function EmployeesTab() {
                   <KeyRound size={12} /> Grant access
                 </Button>
               ) : (
-                <span className="text-xs text-muted-foreground">No login</span>
+                <span className="text-xs text-[var(--od-ink-muted)]">No login</span>
               ),
           },
           { header: "Status", cell: (e) => <StatusBadge value={e.status} /> },
         ]}
       />
       <Pager meta={list.data?.meta} onPage={setPage} />
+
       <FormDialog
         open={open}
         onOpenChange={setOpen}
@@ -371,6 +402,7 @@ function EmployeesTab() {
             <Field label="Monthly basic salary" className="col-span-2">
               <Input
                 inputMode="decimal"
+                className="od-tabular"
                 placeholder="Optional"
                 value={draft.base_pay}
                 onChange={(e) => setDraft((d) => ({ ...d, base_pay: e.target.value }))}
@@ -379,8 +411,8 @@ function EmployeesTab() {
           )}
         </div>
         {canGrantAccess && (
-          <div className="space-y-3 rounded-xl border bg-muted/30 p-3">
-            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+          <div className="space-y-3 rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-3.5">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium text-[var(--od-ink)]">
               <input
                 type="checkbox"
                 checked={draft.grant_access}
@@ -507,13 +539,21 @@ function EmployeesTab() {
           />
         </Field>
       </FormDialog>
-    </>
+    </div>
   );
 }
 
 interface MeLeaveRes {
   requests?: LeaveRequest[];
 }
+
+const LEAVE_STATUS_OPTIONS = [
+  { value: "", label: "All" },
+  { value: "requested", label: "Requested" },
+  { value: "approved", label: "Approved" },
+  { value: "rejected", label: "Rejected" },
+  { value: "cancelled", label: "Cancelled" },
+];
 
 function LeaveTab() {
   const { can, canAny, user } = useAuth();
@@ -564,41 +604,43 @@ function LeaveTab() {
     { invalidate: refresh, success: "Leave updated", toBody: () => ({}) },
   );
   return (
-    <>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
-        <NativeSelect
-          aria-label="Filter by status"
-          className="max-w-[12rem]"
+    <div className="space-y-4">
+      <FilterBar className="justify-between">
+        <SegmentedChips
+          ariaLabel="Filter by status"
           value={status}
-          onChange={(e) => {
-            setStatus(e.target.value);
+          onChange={(v) => {
+            setStatus(v);
             setPage(1);
           }}
-        >
-          <option value="">All</option>
-          {["requested", "approved", "rejected", "cancelled"].map((v) => (
-            <option key={v} value={v}>
-              {v}
-            </option>
-          ))}
-        </NativeSelect>
+          options={LEAVE_STATUS_OPTIONS}
+        />
         <Button onClick={() => setOpen(true)}>
           <Plus size={16} /> Request leave
         </Button>
-      </div>
+      </FilterBar>
       <DataGrid
         rows={rows}
         loading={loading}
         rowKey={(l) => l.id}
         empty="No leave requests"
         columns={[
-          { header: "Employee", cell: (l) => l.employee_name ?? "Me" },
+          {
+            header: "Employee",
+            cell: (l) => (
+              <span className="font-medium text-[var(--od-ink)]">{l.employee_name ?? "Me"}</span>
+            ),
+          },
           { header: "Type", cell: (l) => l.leave_type },
           {
             header: "Dates",
             cell: (l) => `${formatDate(l.start_date)} – ${formatDate(l.end_date)}`,
           },
-          { header: "Days", align: "right", cell: (l) => l.days },
+          {
+            header: "Days",
+            align: "right",
+            cell: (l) => <span className="od-tabular">{l.days}</span>,
+          },
           { header: "Status", cell: (l) => <StatusBadge value={l.status} /> },
           {
             header: "",
@@ -606,7 +648,7 @@ function LeaveTab() {
               const isOwn = Boolean(user?.employee_id) && l.employee_id === user?.employee_id;
               return (
                 (l.status === "requested" || l.status === "pending") && (
-                  <div className="flex gap-2">
+                  <div className="flex justify-end gap-1.5">
                     {approver && !isOwn && (
                       <>
                         <Button
@@ -618,6 +660,7 @@ function LeaveTab() {
                         <Button
                           size="sm"
                           variant="outline"
+                          className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                           onClick={() => decide.mutate({ id: l.id, action: "reject" })}
                         >
                           Reject
@@ -713,7 +756,7 @@ function LeaveTab() {
           />
         </Field>
       </FormDialog>
-    </>
+    </div>
   );
 }
 
@@ -721,14 +764,22 @@ function AttendanceTab() {
   const board = useGet<Today>("/attendance/today");
   const counts = board.data?.counts ?? {};
   return (
-    <>
-      <div className="mb-4 flex flex-wrap gap-2 text-sm">
-        {Object.entries(counts).map(([k, v]) => (
-          <span key={k} className="rounded-full border bg-card px-3 py-1">
-            {k.replace("_", " ")}: <strong>{v}</strong>
-          </span>
-        ))}
-      </div>
+    <div className="space-y-4">
+      {Object.keys(counts).length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(counts).map(([k, v]) => (
+            <div
+              key={k}
+              className="inline-flex items-center gap-2 rounded-full border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-3.5 py-1.5 text-xs"
+            >
+              <span className="capitalize text-[var(--od-ink-secondary)]">
+                {k.replace("_", " ")}
+              </span>
+              <span className="od-tabular font-semibold text-[var(--od-ink)]">{v}</span>
+            </div>
+          ))}
+        </div>
+      )}
       <DataGrid
         rows={board.data?.employees}
         loading={board.isLoading}
@@ -737,14 +788,22 @@ function AttendanceTab() {
         columns={[
           {
             header: "Employee",
-            cell: (r) => <span className="font-medium">{r.employee_name}</span>,
+            cell: (r) => (
+              <span className="font-medium text-[var(--od-ink)]">{r.employee_name}</span>
+            ),
           },
-          { header: "In", cell: (r) => time(r.first_in) },
-          { header: "Out", cell: (r) => time(r.last_out) },
+          {
+            header: "In",
+            cell: (r) => <span className="od-mono text-xs">{time(r.first_in)}</span>,
+          },
+          {
+            header: "Out",
+            cell: (r) => <span className="od-mono text-xs">{time(r.last_out)}</span>,
+          },
           { header: "State", cell: (r) => <StatusBadge value={r.state} /> },
         ]}
       />
-    </>
+    </div>
   );
 }
 
@@ -753,7 +812,7 @@ export default function People() {
   const canEmployees = canAny("hr.employee.view", "hr.employee.manage");
   const canAttendance = canAny("hr.attendance.manage", "hr.employee.view");
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader title="People" description="Employees, leave and daily attendance." />
       <ClockCard />
       <Tabs defaultValue={canEmployees ? "employees" : "leave"}>
@@ -776,6 +835,6 @@ export default function People() {
           </TabsContent>
         )}
       </Tabs>
-    </>
+    </div>
   );
 }

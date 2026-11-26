@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Download, Plus } from "lucide-react";
+import { Download, Plus, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,8 +10,15 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { DataGrid, Field, FormDialog, PageHeader, StatusBadge } from "@/components/shared/kit";
-import { PageLoader } from "@/components/shared/Display";
+import {
+  DataGrid,
+  Field,
+  FilterBar,
+  FormDialog,
+  PageHeader,
+  StatusBadge,
+} from "@/components/shared/kit";
+import { PageLoader, StatCard } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
 import { PaymentDialog } from "@/features/services/shared";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
@@ -47,27 +54,41 @@ function Statement({ id, onClose }: { id: string; onClose: () => void }) {
               empty="No work or payments yet"
               columns={[
                 { header: "Date", cell: (l) => formatDate(l.date) },
-                { header: "Reference", cell: (l) => l.number },
+                {
+                  header: "Reference",
+                  cell: (l) => <span className="od-mono font-medium">{l.number}</span>,
+                },
                 { header: "Description", cell: (l) => l.description },
                 {
                   header: "Work",
                   align: "right",
-                  cell: (l) => (toNumber(l.owed_amount) ? formatMoney(l.owed_amount) : "-"),
+                  cell: (l) => (toNumber(l.owed_amount) ? formatMoney(l.owed_amount) : "—"),
                 },
                 {
                   header: "Paid",
                   align: "right",
-                  cell: (l) => (toNumber(l.paid_amount) ? formatMoney(l.paid_amount) : "-"),
+                  cell: (l) =>
+                    toNumber(l.paid_amount) ? (
+                      <span className="text-[var(--od-good)]">{formatMoney(l.paid_amount)}</span>
+                    ) : (
+                      "—"
+                    ),
                 },
-                { header: "Balance", align: "right", cell: (l) => formatMoney(l.balance) },
+                {
+                  header: "Balance",
+                  align: "right",
+                  cell: (l) => <span className="font-medium">{formatMoney(l.balance)}</span>,
+                },
               ]}
             />
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm">
-                We owe <strong>{formatMoney(s.owed)}</strong>
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--od-radius-md,12px)] bg-[var(--od-surface-subtle)] px-4 py-3">
+              <p className="text-[13px] text-[var(--od-ink-secondary)]">
+                We owe{" "}
+                <strong className="od-tabular text-[var(--od-ink)]">{formatMoney(s.owed)}</strong>
               </p>
               <div className="flex gap-2">
                 <Button
+                  size="sm"
                   variant="outline"
                   onClick={() =>
                     download(
@@ -77,10 +98,12 @@ function Statement({ id, onClose }: { id: string; onClose: () => void }) {
                     ).catch((e) => toast.error(errorMessage(e)))
                   }
                 >
-                  <Download size={14} /> Statement PDF
+                  <Download size={13} /> Statement PDF
                 </Button>
                 {can("services.contractor.manage") && toNumber(s.owed) > 0 && (
-                  <Button onClick={() => setPaying(true)}>Pay contractor</Button>
+                  <Button size="sm" onClick={() => setPaying(true)}>
+                    Pay contractor
+                  </Button>
                 )}
               </div>
             </div>
@@ -131,40 +154,72 @@ export default function Contractors() {
     (b) => `/contractors/${b.id}/${b.active ? "activate" : "deactivate"}`,
     { invalidate: ["/contractors"], success: "Contractor updated", toBody: () => undefined },
   );
-  const owed = (list.data ?? []).reduce((s, c) => s + toNumber(c.owed), 0);
+  const rows = list.data ?? [];
+  const owed = rows.reduce((s, c) => s + toNumber(c.owed), 0);
+  const activeCount = rows.filter((c) => c.is_active).length;
   const set = (k: keyof typeof blank) => (e: { target: { value: string } }) =>
     setDraft({ ...draft, [k]: e.target.value });
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
         title="Contractors"
-        description={list.data ? `You owe contractors ${formatMoney(owed)} in total.` : undefined}
+        description="External printers, tradespeople and contractor payables."
         actions={
           manage && (
-            <Button onClick={() => setOpen(true)}>
-              <Plus size={16} /> New contractor
+            <Button size="sm" onClick={() => setOpen(true)}>
+              <Plus size={14} /> New contractor
             </Button>
           )
         }
       />
-      <Input
-        aria-label="Search contractors"
-        className="mb-4 max-w-xs"
-        placeholder="Search name or trade…"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-      />
+
+      <div className="grid gap-4 sm:grid-cols-3">
+        <StatCard label="Total contractors" value={rows.length} />
+        <StatCard label="Active" value={activeCount} />
+        <StatCard label="Total we owe" value={formatMoney(owed)} tone={owed > 0 ? "bad" : "good"} />
+      </div>
+
+      <FilterBar>
+        <div className="relative min-w-60 flex-1 sm:max-w-xs">
+          <Search
+            size={15}
+            className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
+          />
+          <Input
+            aria-label="Search contractors"
+            className="pl-9"
+            placeholder="Search name or trade…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+          />
+        </div>
+      </FilterBar>
+
       <DataGrid
-        rows={list.data}
+        rows={rows}
         loading={list.isLoading}
         rowKey={(c) => c.id}
         empty="No contractors yet. Add the printers and tradespeople you use."
         onRowClick={(c) => setViewing(c.id)}
         columns={[
-          { header: "Name", cell: (c) => <span className="font-medium">{c.name}</span> },
-          { header: "Trade", cell: (c) => c.trade ?? "-" },
-          { header: "Phone", cell: (c) => c.phone ?? "-" },
+          {
+            header: "Name",
+            sortValue: (c) => c.name,
+            cell: (c) => <span className="font-medium">{c.name}</span>,
+          },
+          {
+            header: "Trade",
+            cell: (c) => <span className="text-[var(--od-ink-secondary)]">{c.trade ?? "—"}</span>,
+          },
+          {
+            header: "Phone",
+            cell: (c) => (
+              <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
+                {c.phone ?? "—"}
+              </span>
+            ),
+          },
           {
             header: "Status",
             cell: (c) => <StatusBadge value={c.is_active ? "active" : "inactive"} />,
@@ -172,8 +227,9 @@ export default function Contractors() {
           {
             header: "We owe",
             align: "right",
+            sortValue: (c) => toNumber(c.owed),
             cell: (c) => (
-              <span className={toNumber(c.owed) > 0 ? "font-medium text-destructive" : ""}>
+              <span className={toNumber(c.owed) > 0 ? "font-semibold text-[var(--od-bad)]" : ""}>
                 {formatMoney(c.owed)}
               </span>
             ),
@@ -213,6 +269,7 @@ export default function Contractors() {
           },
         ]}
       />
+
       <FormDialog
         open={open || editing !== null}
         onOpenChange={(o) => {
@@ -249,6 +306,6 @@ export default function Contractors() {
         </div>
       </FormDialog>
       {viewing && <Statement id={viewing} onClose={() => setViewing(null)} />}
-    </>
+    </div>
   );
 }

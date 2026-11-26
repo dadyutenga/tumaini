@@ -29,6 +29,7 @@ const (
 	BusinessExport     = "business_export"
 	PayrollCalculate   = "payroll_calculate"
 	ServiceReminders   = "service_reminders"
+	DispatchOutbound   = "dispatch_outbound"
 )
 
 type Handler func(ctx context.Context, businessID uuid.UUID, payload json.RawMessage) error

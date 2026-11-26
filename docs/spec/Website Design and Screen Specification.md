@@ -558,7 +558,7 @@ Only the Owner sees salaries and payroll. A staff member sees only their own att
 |Screen|What it shows|Main actions and fields|
 |---|---|---|
 |Login History|Table: user, time, device, location, success<br>or failure|Filter; Export|
-|Backup|List of automatic daily backups with date<br>and size|Download a backup;<br>Restore (Owner only,<br>asks for password);<br>Run Backup Now|
+|Backup|List of automatic daily backups with date<br>and size|Download a backup;<br>Run Backup Now;<br>Full restore is done offline<br>by the Owner with `pg_restore`|
 |Settings: Business Profile|Business name, logo, address, phone,<br>email, TIN, registration details|Edit and save; these<br>appear on receipts and<br>invoices|
 |Settings: Finance and Tax|Currency (TZS), tax rates, payment<br>methods, bank and mobile money<br>accounts, discount limits|Edit and save|
 |Settings: Documents|Layout and footer text for receipts,<br>invoices, quotations and payslips;<br>numbering formats|Edit, preview, save|
