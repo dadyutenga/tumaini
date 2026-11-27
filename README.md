@@ -24,7 +24,7 @@ docs/       spec/ (SRS, designs, schema, API reference), api/ (OpenAPI) and impl
 
 ## Prerequisites
 
-- Go 1.27 or newer (the module requires 1.27.3; the toolchain downloads itself when needed)
+- Go 1.27 or newer (the module requires 1.27.4; the toolchain downloads itself when needed)
 - PostgreSQL 16 or newer, or Podman/Docker
 
 ## Local database
