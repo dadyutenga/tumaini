@@ -592,3 +592,86 @@ func TestInventoryIntegrity_AdjustmentsTransfersPOReconciliationValuationAndImmu
 	require.Equal(t, 200, stockCard.code, stockCard.raw)
 	require.NotEmpty(t, asList(stockCard.body["data"]), "deactivated product must preserve full stock movement history")
 }
+
+// TestInventoryIntegrity_DirectStockIncreaseBlocked directly tests the challenge:
+// "Can someone increase stock directly through an API request without creating an authorized stock adjustment?"
+// Verifies mass-assignment on product endpoints, negative-quantity sign-flip attacks,
+// unauthorized stock-in/receipt/transfer calls, and direct SQL writes to stock tables are all blocked.
+func TestInventoryIntegrity_DirectStockIncreaseBlocked(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	till := e.cashAccount(t)
+	staff, _ := e.user(t, "staff")
+
+	// 1. Mass-assignment on product creation & update (qty_on_hand / quantity_on_hand / stock) must never create stock.
+	created := e.owner.call(t, http.MethodPost, "/api/v1/products", map[string]any{
+		"name":             "Watch",
+		"sell_price":       "25000",
+		"qty_on_hand":      "500",
+		"quantity_on_hand": "500",
+		"stock":            "500",
+	}, "")
+	require.Equal(t, 201, created.code, created.raw)
+	prodID := str(created.data["id"])
+	require.True(t, stockQty(t, e.owner, prodID).Equal(rd("0")), "POST /products must never accept direct stock quantities")
+
+	updated := e.owner.call(t, http.MethodPut, "/api/v1/products/"+prodID, map[string]any{
+		"name":             "Watch",
+		"sell_price":       "25000",
+		"qty_on_hand":      "500",
+		"quantity_on_hand": "500",
+		"stock":            "500",
+	}, "")
+	require.Equal(t, 200, updated.code, updated.raw)
+	require.True(t, stockQty(t, e.owner, prodID).Equal(rd("0")), "PUT /products/:id must never allow direct stock edits")
+
+	// 2. Negative-quantity sign-flip attacks on sales and stock-out entries must be rejected.
+	negSale := e.owner.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+		"items":    []map[string]any{{"product_id": prodID, "qty": "-5"}},
+		"payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "1"}},
+	}, key())
+	require.Equal(t, 400, negSale.code, negSale.raw)
+
+	negOut := e.owner.call(t, http.MethodPost, "/api/v1/stock-entries", map[string]any{
+		"direction": "out", "reason": "damaged",
+		"items": []map[string]any{{"product_id": prodID, "qty": "-5"}},
+	}, key())
+	require.Equal(t, 422, negOut.code, negOut.raw)
+	require.True(t, stockQty(t, e.owner, prodID).Equal(rd("0")))
+
+	// 3. Unauthorized staff cannot increase stock via stock-entries, stock-adjustments, or goods-receipts.
+	sup := e.owner.call(t, http.MethodPost, "/api/v1/suppliers", map[string]any{"name": "Timepiece Ltd"}, "")
+	require.Equal(t, 201, sup.code, sup.raw)
+	supID := str(sup.data["id"])
+
+	require.Equal(t, 403, staff.call(t, http.MethodPost, "/api/v1/stock-entries", map[string]any{
+		"direction": "in", "reason": "found",
+		"items": []map[string]any{{"product_id": prodID, "qty": "50", "unit_cost": "10000"}},
+	}, key()).code)
+	require.Equal(t, 403, staff.call(t, http.MethodPost, "/api/v1/stock-adjustments", map[string]any{
+		"reason": "Ghost stock",
+		"items":  []map[string]any{{"product_id": prodID, "qty_counted": "50"}},
+	}, "").code)
+	require.Equal(t, 403, staff.call(t, http.MethodPost, "/api/v1/goods-receipts", map[string]any{
+		"supplier_id": supID,
+		"items":       []map[string]any{{"product_id": prodID, "qty": "50", "unit_cost": "10000"}},
+	}, key()).code)
+	require.True(t, stockQty(t, e.owner, prodID).Equal(rd("0")))
+
+	// 4. Direct SQL INSERT into app.stock_movements or UPDATE/INSERT on app.stock_balances is forbidden for bms_app.
+	pUUID := uuid.MustParse(prodID)
+	bUUID := uuid.MustParse(e.branch)
+	for name, sqlStmt := range map[string]string{
+		"direct insert stock_balances": `INSERT INTO app.stock_balances (tenant_id, location_id, product_id, quantity_on_hand) VALUES ($1,$2,$3,500)`,
+		"direct update stock_balances": `UPDATE app.stock_balances SET quantity_on_hand = 500 WHERE tenant_id = $1 AND location_id = $2 AND product_id = $3`,
+		"direct insert stock_movements": `INSERT INTO app.stock_movements (tenant_id, location_id, product_id, movement_type, quantity_delta, unit_cost, business_date)
+		                                  VALUES ($1,$2,$3,'adjustment',500,10000,'2026-11-27')`,
+	} {
+		err := e.app.DB.InActorTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+			_, qErr := tx.Exec(ctx, sqlStmt, e.tenantID, bUUID, pUUID)
+			return qErr
+		})
+		require.Error(t, err, "bms_app must be denied %s", name)
+		require.Contains(t, err.Error(), "42501", "expected PostgreSQL privilege denial (42501) for %s, got: %v", name, err)
+	}
+	require.True(t, stockQty(t, e.owner, prodID).Equal(rd("0")))
+}
