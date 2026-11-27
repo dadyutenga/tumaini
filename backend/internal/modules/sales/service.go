@@ -611,6 +611,9 @@ func (s *Service) checkPayments(ctx context.Context, tx pgx.Tx, pays []PayIn) er
 		}
 	}
 	for _, pay := range pays {
+		if pay.Amount.IsNegative() {
+			return httpx.BadRequest("invalid_body", "Payment amount cannot be negative")
+		}
 		if !pay.Amount.IsPositive() {
 			continue
 		}
@@ -660,7 +663,10 @@ func splitPayments(pays []PayIn, total decimal.Decimal) ([]PayIn, decimal.Decima
 	var applied []PayIn
 	for _, pay := range pays {
 		amt := money.Money(pay.Amount)
-		if amt.LessThanOrEqual(money.Zero) {
+		if amt.IsNegative() {
+			return nil, money.Zero, money.Zero, httpx.BadRequest("invalid_body", "Payment amount cannot be negative")
+		}
+		if amt.IsZero() {
 			continue
 		}
 		if amt.GreaterThan(remaining) {
@@ -699,15 +705,24 @@ func (s *Service) resolveCustomer(ctx context.Context, tx pgx.Tx, tenantID uuid.
 }
 
 func checkCreditLimit(ctx context.Context, tx pgx.Tx, tenantID, customerID uuid.UUID, added decimal.Decimal) error {
-	var owed decimal.Decimal
+	// Lock the customer row first so concurrent credit sales serialize against the same credit limit.
 	var limit *decimal.Decimal
 	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE((SELECT SUM(s.balance_due) FROM app.sales s WHERE s.tenant_id = c.tenant_id AND s.customer_id = c.id AND s.status = 'completed'), 0),
-		       c.credit_limit
-		FROM app.customers c WHERE c.tenant_id = $1 AND c.id = $2`, tenantID, customerID).Scan(&owed, &limit); err != nil {
+		SELECT credit_limit FROM app.customers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
+		tenantID, customerID).Scan(&limit); err != nil {
 		return err
 	}
-	if limit != nil && owed.Add(added).GreaterThan(*limit) {
+	if limit == nil {
+		return nil
+	}
+	var owed decimal.Decimal
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(balance_due), 0) FROM app.sales
+		WHERE tenant_id = $1 AND customer_id = $2 AND status = 'completed'`,
+		tenantID, customerID).Scan(&owed); err != nil {
+		return err
+	}
+	if owed.Add(added).GreaterThan(*limit) {
 		return httpx.Conflict("credit_limit_exceeded", "This sale goes over the customer's credit limit")
 	}
 	return nil

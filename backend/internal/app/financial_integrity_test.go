@@ -643,3 +643,85 @@ func TestFinancialIntegrity_ReportReconciliationAndDayClosing(t *testing.T) {
 	}, key())
 	require.Equal(t, 201, afterReopen.code, afterReopen.raw)
 }
+
+// TestFinancialIntegrity_NegativePaymentsAndConcurrentCreditLimit verifies that:
+// 1. Negative payment amounts are explicitly rejected instead of silently ignored.
+// 2. Non-cash overpayments are rejected while cash overpayments record exact change_due
+//    and only post the net sale total into the ledger.
+// 3. Concurrent credit sales for the same customer serialize on the customer row lock and
+//    cannot breach the customer's credit_limit.
+func TestFinancialIntegrity_NegativePaymentsAndConcurrentCreditLimit(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	till := e.cashAccount(t)
+	prod := e.product(t, "Flour 5kg", "10000", "50", "6000")
+
+	// 1. Negative payment must be rejected with 400.
+	neg := e.owner.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+		"items":    []map[string]any{{"product_id": prod, "qty": "1"}},
+		"payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "-1000"}},
+	}, key())
+	require.Equal(t, 400, neg.code, neg.raw)
+
+	// 2. Non-cash overpayment must be rejected; cash overpayment returns exact change_due
+	//    while ledger receives only the sale total (10000).
+	bank := e.owner.call(t, http.MethodPost, "/api/v1/money-accounts", map[string]any{
+		"name": "Bank Overpay Check", "type": "bank",
+	}, "")
+	require.Equal(t, 201, bank.code, bank.raw)
+	bankID := str(bank.data["id"])
+	nonCashOver := e.owner.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+		"items": []map[string]any{{"product_id": prod, "qty": "1"}},
+		"payments": []map[string]any{
+			{"method": "bank", "money_account_id": bankID, "amount": "15000", "reference": "REF-OVER"},
+		},
+	}, key())
+	require.Equal(t, 400, nonCashOver.code, nonCashOver.raw)
+
+	cashOver := e.owner.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+		"items": []map[string]any{{"product_id": prod, "qty": "1"}},
+		"payments": []map[string]any{
+			{"method": "cash", "money_account_id": till, "amount": "15000"},
+		},
+	}, key())
+	require.Equal(t, 201, cashOver.code, cashOver.raw)
+	require.True(t, dec(cashOver.data["total"]).Equal(rd("10000")), cashOver.raw)
+	require.True(t, dec(cashOver.data["paid_total"]).Equal(rd("10000")), cashOver.raw)
+	require.True(t, dec(cashOver.data["change_due"]).Equal(rd("5000")), cashOver.raw)
+
+	// 3. Concurrent credit sales cannot breach a customer's credit_limit.
+	cust := e.owner.call(t, http.MethodPost, "/api/v1/customers", map[string]any{
+		"name": "Capped Credit Customer", "credit_limit": "10000",
+	}, "")
+	require.Equal(t, 201, cust.code, cust.raw)
+	custID := str(cust.data["id"])
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	codes := make([]int, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			r := e.owner.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+				"customer_id": custID,
+				"items":       []map[string]any{{"product_id": prod, "qty": "1"}},
+				"payments":    []map[string]any{},
+			}, key())
+			codes[idx] = r.code
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	created, conflicted := 0, 0
+	for _, code := range codes {
+		if code == 201 {
+			created++
+		} else if code == 409 {
+			conflicted++
+		}
+	}
+	require.Equal(t, 1, created, "exactly one concurrent credit sale should succeed: %v", codes)
+	require.Equal(t, 1, conflicted, "second concurrent credit sale must hit 409 credit_limit_exceeded: %v", codes)
+}
