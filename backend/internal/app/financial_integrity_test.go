@@ -1012,3 +1012,65 @@ func TestFinancialIntegrity_SnapshotIsolationNoTornReads(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, afterCommit.Equal(rd("400000")), "fresh read after commit must be 400000, got %s", afterCommit)
 }
+
+// TestFinancialIntegrity_ConcurrentAccountOutflowsSerialized verifies that two concurrent
+// withdrawals (TZS 300,000 each) from a TZS 500,000 non-overdraft account serialize cleanly
+// via SELECT ... FOR UPDATE on app.financial_accounts: exactly one succeeds (200), one returns
+// a clean 409 insufficient_funds, and the ending balance is exactly TZS 200,000.
+func TestFinancialIntegrity_ConcurrentAccountOutflowsSerialized(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	accRes := e.owner.call(t, http.MethodPost, "/api/v1/money-accounts", map[string]any{
+		"name": "Ops Account 500k", "type": "bank", "opening_balance": "500000", "allow_overdraft": false,
+	}, "")
+	require.Equal(t, 201, accRes.code, accRes.raw)
+	accID := str(accRes.data["id"])
+
+	cats := e.owner.call(t, http.MethodGet, "/api/v1/expense-categories", nil, "")
+	require.Equal(t, 200, cats.code, cats.raw)
+	catID := str(asList(cats.body["data"])[0]["id"])
+	staff, _ := e.user(t, "staff")
+
+	expIDs := make([]string, 2)
+	for i := 0; i < 2; i++ {
+		ex := staff.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{
+			"category_id": catID, "amount": "300000", "description": "Concurrent payout test",
+		}, key())
+		require.Equal(t, 201, ex.code, ex.raw)
+		expIDs[i] = str(ex.data["id"])
+		ap := e.owner.call(t, http.MethodPost, "/api/v1/expenses/"+expIDs[i]+"/approve", nil, "")
+		require.Equal(t, 200, ap.code, ap.raw)
+	}
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	codes := make([]int, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			r := e.owner.call(t, http.MethodPost, "/api/v1/expenses/"+expIDs[idx]+"/pay", map[string]any{
+				"money_account_id": accID,
+			}, key())
+			codes[idx] = r.code
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+
+	paid, rejected := 0, 0
+	for _, code := range codes {
+		if code == 200 {
+			paid++
+		} else if code == 409 {
+			rejected++
+		}
+	}
+	require.Equal(t, 1, paid, "exactly one concurrent 300k payout should succeed: %v", codes)
+	require.Equal(t, 1, rejected, "second concurrent 300k payout must cleanly return 409 insufficient_funds: %v", codes)
+
+	accts := e.owner.call(t, http.MethodGet, "/api/v1/money-accounts", nil, "")
+	require.Equal(t, 200, accts.code, accts.raw)
+	acct := find(asList(accts.body["data"]), "id", accID)
+	require.True(t, dec(acct["balance"]).Equal(rd("200000")), "ending balance must be exactly 200000, got %v", acct["balance"])
+}

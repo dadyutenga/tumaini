@@ -54,6 +54,26 @@ func ActiveFin(ctx context.Context, tx pgx.Tx, id uuid.UUID) (FinAccount, error)
 	return a, nil
 }
 
+// ActiveFinForUpdate locks the financial account row FOR UPDATE and rejects inactive accounts.
+// Use on money outflows so concurrent withdrawals serialize cleanly against current_balance.
+func ActiveFinForUpdate(ctx context.Context, tx pgx.Tx, id uuid.UUID) (FinAccount, error) {
+	var a FinAccount
+	err := tx.QueryRow(ctx, `
+		SELECT id, location_id, business_unit_id, kind::text, name::text, allow_negative, status = 'active', current_balance
+		FROM app.financial_accounts WHERE id = $1 FOR UPDATE`, id).
+		Scan(&a.ID, &a.LocationID, &a.BusinessUnit, &a.Kind, &a.Name, &a.AllowNegative, &a.Active, &a.Balance)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return a, httpx.NotFound("not_found", "Money account not found")
+	}
+	if err != nil {
+		return a, err
+	}
+	if !a.Active {
+		return a, httpx.Conflict("account_inactive", "That money account is not active")
+	}
+	return a, nil
+}
+
 // MethodForKind is the payment method an account of this kind records by default.
 func MethodForKind(kind string) string {
 	switch kind {
@@ -167,9 +187,12 @@ type PayInput struct {
 
 // Pay records money paid out and the documents it settles. Exactly one payee must be named.
 func Pay(ctx context.Context, tx pgx.Tx, in PayInput) (Receipt, error) {
-	acc, err := ActiveFin(ctx, tx, in.AccountID)
+	acc, err := ActiveFinForUpdate(ctx, tx, in.AccountID)
 	if err != nil {
 		return Receipt{}, err
+	}
+	if !acc.AllowNegative && acc.Balance.LessThan(in.Amount) {
+		return Receipt{}, httpx.Conflict("insufficient_funds", "That money account does not have enough funds")
 	}
 	method := in.Method
 	if method == "" {

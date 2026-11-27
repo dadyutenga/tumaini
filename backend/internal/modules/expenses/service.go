@@ -263,7 +263,7 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, id, accountID uuid
 		if st != "approved" {
 			return httpx.Conflict("invalid_status", "Only an approved expense can be paid")
 		}
-		acc, err := payments.ActiveFin(ctx, tx, accountID)
+		acc, err := payments.ActiveFinForUpdate(ctx, tx, accountID)
 		if err != nil {
 			return err
 		}
