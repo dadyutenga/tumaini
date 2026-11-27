@@ -1,3 +1,82 @@
 import type { Translations } from "../en";
 
-export default {} satisfies Translations["errors"];
+export default {
+  stockShort: "Stoo haitoshi: {product} kwenye {location} (imepungua {quantity})",
+  codes: {
+    already_clocked_in: "Tayari umeingia kazini. Toka kwanza",
+    already_clocked_out:
+      "Siku hii tayari ina muda wa kutoka. Rekodi moja tu ya mahudhurio inahifadhiwa kwa siku",
+    already_closed: "Siku hii tayari imefungwa",
+    already_decided: "Uamuzi tayari umerekodiwa kwa ubunifu huu",
+    approval_pending: "Ombi la kufuta malipo haya tayari linasubiri idhini",
+    balance_not_zero: "Hamisha salio lote kwenye akaunti hii kabla ya kuizima",
+    client_inactive: "Mteja huyo hatumiki",
+    credit_limit_exceeded: "Mauzo haya yanazidi kikomo cha mkopo cha mteja",
+    customer_required: "Mauzo ya mkopo yanahitaji mteja aliyetajwa",
+    day_closed: "Siku ya biashara imefungwa kwa eneo hili",
+    employee_required:
+      "Akaunti yako haijaunganishwa na rekodi ya mfanyakazi. Mwombe Msimamizi aiunganishe.",
+    fee_not_supported: "Uhamisho hauna ada. Rekodi ada kama matumizi",
+    file_too_large: "Faili hilo ni kubwa mno",
+    idempotency_mismatch: "Ombi hili tayari lilitumika kwa kitu tofauti. Jaribu tena",
+    internal_error: "Kuna hitilafu imetokea. Ukiwasiliana na msaada, taja namba ya ombi.",
+    invalid_amount: "Marejesho yanazidi salio lililobaki",
+    invalid_code: "Msimbo si sahihi au umeisha muda. Omba mpya.",
+    invalid_rank: "Daraja lazima liwe kati ya 1 na daraja lako",
+    invalid_token: "Ingia tena",
+    invalid_value: "Kuna taarifa inayokosekana au isiyoruhusiwa",
+    last_owner: "Biashara lazima ibaki na angalau Msimamizi mmoja anayetumika",
+    leave_balance_exceeded: "Ombi hili linazidi siku za likizo zilizobaki",
+    mfa_already_enabled: "Uthibitishaji wa hatua mbili tayari umewashwa",
+    mfa_not_pending: "Anza kwanza kuweka uthibitishaji wa hatua mbili",
+    multi_tenant_user:
+      "Mtumiaji huyu yuko kwenye biashara zaidi ya moja, lazima aweke nenosiri upya mwenyewe",
+    negative_net: "Mshahara halisi hauwezi kuwa chini ya sifuri",
+    network_not_allowed:
+      "Ingia kazini ukiwa kwenye mtandao wa tawi. Kama uko kwingine, muombe meneja akuingize.",
+    no_timer: "Huna saa inayohesabu kwenye kazi hii",
+    nothing_to_adjust: "Idadi zote zilizohesabiwa zinalingana na mfumo, hakuna cha kuingiza",
+    nothing_to_invoice: "Kazi hii tayari imetozwa yote kwenye ankara",
+    owner_immutable: "Ruhusa za Msimamizi haziwezi kubadilishwa",
+    partial_receipt_not_supported:
+      "Uhamisho unapokelewa wote. Upokee, kisha rekebisha tofauti kwa marekebisho ya stoo",
+    password_reused: "Chagua nenosiri ambalo hujalitumia karibuni",
+    pin_not_supported:
+      "PIN ya idhini haitumiki; idhinisha ukiwa umeingia kwa akaunti ya anayeidhinisha",
+    reason_required: "Toa sababu ya kufuta malipo",
+    reauth_required: "Tafadhali thibitisha nenosiri lako ili kuendelea",
+    recovery_unavailable:
+      "Kurejesha nenosiri kwa njia hii hakujawekwa. Muombe msimamizi aweke nenosiri lako upya.",
+    reference_conflict: "Rekodi hii imeunganishwa na nyingine au inaelekeza kwenye isiyopo",
+    reference_required: "Weka namba ya kumbukumbu ya muamala wa benki au pesa kwa simu",
+    refund_exceeds_paid: "Kiasi cha kurejesha hakiwezi kuzidi kilicholipwa kwenye mauzo haya",
+    return_exceeds_sold: "Idadi inayorudishwa haiwezi kuzidi iliyouzwa ukitoa marejesho ya awali",
+    scan_unavailable: "Mafaili hayawezi kukaguliwa kwa sasa. Jaribu tena baada ya dakika chache.",
+    serial_required: "Weka namba ya serial au IMEI iliyoko stoo kwa kila bidhaa",
+    timer_running: "Tayari una saa inayohesabu. Isimamishe kwanza",
+    too_many_rows: "Ingiza bidhaa zisizozidi 5,000 kwa mara moja",
+    unsupported_file:
+      "Aina hiyo ya faili hairuhusiwi. Tumia picha, PDF, maandishi, CSV, au faili la Excel/Word.",
+  },
+  messages: {
+    wrongSignIn: "Simu, barua pepe au nenosiri si sahihi",
+    wrongPassword: "Nenosiri la sasa si sahihi",
+    idleSignOut: "Umetolewa kwa kutotumia mfumo kwa muda. Ingia tena.",
+    tooManyAttempts: "Majaribio mengi mno. Subiri dakika moja kisha ujaribu tena.",
+    tooManyAnswers: "Majibu mengi yasiyo sahihi. Subiri dakika 15.",
+    badAuthCode: "Msimbo wa uthibitishaji si sahihi",
+    badVerificationCode: "Msimbo wa uthibitisho si sahihi au umeisha muda",
+    noPermission: "Huna ruhusa ya kufanya hivyo",
+    duplicateRecord: "Rekodi hiyo tayari ipo",
+    phoneOrEmailUsed: "Simu au barua pepe hiyo tayari inatumika",
+    chooseBranch: "Chagua tawi kwanza",
+    checkFields: "Kagua sehemu zilizowekewa alama",
+    notClockedIn: "Hujaingia kazini",
+    ownRequest: "Huwezi kuidhinisha ombi lako mwenyewe",
+    accountFunds: "Akaunti hiyo ya fedha haina salio la kutosha",
+    creditOff: "Mauzo ya mkopo yamezimwa kwenye mipangilio",
+    methodOff: "Njia hii ya malipo imezimwa kwenye mipangilio",
+    channelOff: "Njia hii haijawekwa. Muombe msimamizi aiweke.",
+    branchForbidden: "Huna ruhusa ya tawi hili",
+  },
+} satisfies Translations["errors"];

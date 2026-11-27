@@ -1,3 +1,5 @@
+import { translateError } from "@/features/i18n/errors";
+import { activeLocale, activeT } from "@/features/i18n/active";
 /**
  * HTTP client for the Go API. JSON in and out, access token in memory, rotating
  * refresh cookie, branch header, and the `{ data, meta }` / `{ error }` envelopes.
@@ -120,7 +122,7 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
     });
   } catch {
-    throw new ApiError("Cannot reach the server. Check your connection.", 0, "network");
+    throw new ApiError(activeT().common.cannotReachTheServerCheck, 0, "network");
   }
 }
 
@@ -137,7 +139,8 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   try {
     json = await response.json();
   } catch {
-    if (response.ok) throw new ApiError("The server returned invalid JSON", response.status);
+    if (response.ok)
+      throw new ApiError(activeT().common.theServerReturnedInvalidJson, response.status);
   }
   if (!response.ok) {
     const body = json as {
@@ -156,7 +159,9 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
       }
     }
     throw new ApiError(
-      err?.message ?? response.statusText ?? "Request failed",
+      err?.message
+        ? translateError(activeLocale(), err.code, err.message)
+        : (response.statusText ?? activeT().common.requestFailed),
       response.status,
       err?.code,
       err?.fields,
@@ -220,10 +225,11 @@ export async function download(path: string, query: Query, filename: string) {
   let response = await send(path, { query });
   if (response.status === 401 && (await refreshSession())) response = await send(path, { query });
   if (!response.ok) {
-    let message = "Could not download the file";
+    let message = activeT().common.couldNotDownloadTheFile;
     try {
-      const json = (await response.json()) as { error?: { message?: string } };
-      message = json.error?.message ?? message;
+      const json = (await response.json()) as { error?: { code?: string; message?: string } };
+      if (json.error?.message)
+        message = translateError(activeLocale(), json.error.code, json.error.message);
     } catch {
       // keep the default message
     }
@@ -257,7 +263,7 @@ export async function uploadFile(file: File): Promise<string> {
     response = await send();
     if (response.status === 401 && (await refreshSession())) response = await send();
   } catch {
-    throw new ApiError("Cannot reach the server. Check your connection.", 0, "network");
+    throw new ApiError(activeT().common.cannotReachTheServerCheck, 0, "network");
   }
   const json = (await response.json().catch(() => null)) as {
     data?: { id: string };
@@ -265,7 +271,9 @@ export async function uploadFile(file: File): Promise<string> {
   } | null;
   if (!response.ok || !json?.data) {
     throw new ApiError(
-      json?.error?.message ?? "Could not upload the file",
+      json?.error?.message
+        ? translateError(activeLocale(), json.error.code, json.error.message)
+        : activeT().common.couldNotUploadTheFile,
       response.status,
       json?.error?.code,
     );
@@ -281,7 +289,7 @@ export async function fetchFileBlob(
   let response = await send(path, { signal });
   if (response.status === 401 && (await refreshSession())) response = await send(path, { signal });
   if (!response.ok) {
-    throw new ApiError("Could not load the file preview", response.status);
+    throw new ApiError(activeT().common.couldNotLoadTheFile, response.status);
   }
   const blob = await response.blob();
   return {

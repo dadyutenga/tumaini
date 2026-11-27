@@ -15,6 +15,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { useI18n } from "@/features/i18n/i18n";
 
 export type ChartDatum = { name: string; value: number };
 type Props = { data: ChartDatum[]; label?: string };
@@ -56,9 +57,10 @@ function Frame({ children, label }: { children: React.ReactElement; label: strin
   );
 }
 
-export function LineChartView({ data, label = "Line chart" }: Props) {
+export function LineChartView({ data, label }: Props) {
+  const { t } = useI18n();
   return (
-    <Frame label={label}>
+    <Frame label={label ?? t.common.lineChart}>
       <LineChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
         <CartesianGrid vertical={false} stroke="var(--od-grid, #dedad0)" />
         <XAxis dataKey="name" tick={axisTickProps} axisLine={false} tickLine={false} />
@@ -79,15 +81,16 @@ export function LineChartView({ data, label = "Line chart" }: Props) {
 
 export function IncomeExpenseChart({
   data,
-  label = "Income versus expenses by day",
+  label,
   onDayClick,
 }: {
   data: { name: string; date?: string; income: number; expenses: number }[];
   label?: string;
   onDayClick?: (date: string) => void;
 }) {
+  const { t } = useI18n();
   return (
-    <Frame label={label}>
+    <Frame label={label ?? t.common.incomeVersusExpensesByDay}>
       <LineChart
         data={data}
         margin={{ top: 8, right: 12, left: 0, bottom: 0 }}
@@ -112,7 +115,7 @@ export function IncomeExpenseChart({
         <Line
           type="monotone"
           dataKey="income"
-          name="Income"
+          name={t.common.income}
           stroke="var(--od-good-mark, #16b76f)"
           strokeWidth={2}
           dot={false}
@@ -121,7 +124,7 @@ export function IncomeExpenseChart({
         <Line
           type="monotone"
           dataKey="expenses"
-          name="Expenses"
+          name={t.common.expenses}
           stroke="var(--od-bad-mark, #d03348)"
           strokeWidth={2}
           dot={false}
@@ -132,9 +135,10 @@ export function IncomeExpenseChart({
   );
 }
 
-export function BarChartView({ data, label = "Bar chart" }: Props) {
+export function BarChartView({ data, label }: Props) {
+  const { t } = useI18n();
   return (
-    <Frame label={label}>
+    <Frame label={label ?? t.common.barChart}>
       <BarChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
         <CartesianGrid vertical={false} stroke="var(--od-grid, #dedad0)" />
         <XAxis dataKey="name" tick={axisTickProps} axisLine={false} tickLine={false} />
@@ -146,9 +150,10 @@ export function BarChartView({ data, label = "Bar chart" }: Props) {
   );
 }
 
-export function AreaChartView({ data, label = "Area chart" }: Props) {
+export function AreaChartView({ data, label }: Props) {
+  const { t } = useI18n();
   return (
-    <Frame label={label}>
+    <Frame label={label ?? t.common.areaChart}>
       <AreaChart data={data} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
         <CartesianGrid vertical={false} stroke="var(--od-grid, #dedad0)" />
         <XAxis dataKey="name" tick={axisTickProps} axisLine={false} tickLine={false} />
@@ -167,9 +172,10 @@ export function AreaChartView({ data, label = "Area chart" }: Props) {
   );
 }
 
-export function PieChartView({ data, label = "Pie chart" }: Props) {
+export function PieChartView({ data, label }: Props) {
+  const { t } = useI18n();
   return (
-    <Frame label={label}>
+    <Frame label={label ?? t.common.pieChart}>
       <PieChart>
         <Pie
           data={data}

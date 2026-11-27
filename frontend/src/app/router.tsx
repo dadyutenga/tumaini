@@ -38,17 +38,7 @@ export const router = createBrowserRouter([
   { path: "forgot-password", element: <ForgotPassword /> },
   // Private link the client opens from an SMS to approve a design. No sign-in.
   { path: "approve/:token", element: <ClientApproval /> },
-  {
-    path: "403",
-    element: (
-      <Status
-        code="403"
-        title="Access denied"
-        description="Your role does not include this page."
-      />
-    ),
-  },
-  { path: "404", element: <Status code="404" title="Page not found" /> },
-  { path: "500", element: <Status code="500" title="Server error" /> },
+  // Titles and explanations come from the status code, in the user's language.
+  ...["403", "404", "500"].map((code) => ({ path: code, element: <Status code={code} /> })),
   { path: "*", element: <NotFound /> },
 ]);

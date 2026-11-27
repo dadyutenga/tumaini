@@ -37,6 +37,9 @@ import {
 import { EmptyState, PageLoader } from "@/components/shared/Display";
 import { cn } from "@/lib/utils";
 import type { Meta } from "@/lib/api";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 export function PageHeader({
   title,
@@ -53,6 +56,7 @@ export function PageHeader({
   backLabel?: string;
   badge?: ReactNode;
 }) {
+  const { t } = useI18n();
   return (
     <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
@@ -62,7 +66,7 @@ export function PageHeader({
             className="mb-2 inline-flex items-center gap-1.5 text-[12px] font-medium text-[var(--od-ink-muted)] transition-colors hover:text-[var(--od-ink)]"
           >
             <ArrowLeft size={13} />
-            <span>{backLabel ?? "Back"}</span>
+            <span>{backLabel ?? t.common.back}</span>
           </Link>
         )}
         <div className="flex flex-wrap items-center gap-2.5">
@@ -122,7 +126,7 @@ export function SegmentedChips<T extends string>({
   options,
   value,
   onChange,
-  ariaLabel = "Filter",
+  ariaLabel,
   className,
 }: {
   options: { value: T; label: string; count?: number }[];
@@ -131,8 +135,13 @@ export function SegmentedChips<T extends string>({
   ariaLabel?: string;
   className?: string;
 }) {
+  const { t } = useI18n();
   return (
-    <div role="radiogroup" aria-label={ariaLabel} className={cn("od-chips flex-wrap", className)}>
+    <div
+      role="radiogroup"
+      aria-label={ariaLabel ?? t.common.filter}
+      className={cn("od-chips flex-wrap", className)}
+    >
       {options.map((opt) => {
         const selected = opt.value === value;
         return (
@@ -307,6 +316,7 @@ const DOT_CLASS: Record<Tone, string> = {
 };
 
 export function StatusBadge({ value }: { value: string }) {
+  const { t } = useI18n();
   const tone: Tone = STATUS_TONE_KEY[value.toLowerCase()] ?? "neutral";
   return (
     <Badge
@@ -314,7 +324,7 @@ export function StatusBadge({ value }: { value: string }) {
       className={cn("border-transparent font-medium capitalize", TONE_CLASS[tone])}
     >
       <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", DOT_CLASS[tone])} aria-hidden />
-      <span>{value.replaceAll("_", " ")}</span>
+      <span>{statusLabel(t, value)}</span>
     </Badge>
   );
 }
@@ -332,7 +342,7 @@ export function DataGrid<T>({
   rows,
   columns,
   loading,
-  empty = "Nothing here yet",
+  empty,
   emptyDescription,
   onRowClick,
   rowKey,
@@ -348,6 +358,7 @@ export function DataGrid<T>({
   /** Optional footer cells aligned 1:1 with columns to show a bold totals row. */
   totals?: ReactNode[];
 }) {
+  const { t } = useI18n();
   const [sort, setSort] = useState<{ header: string; dir: "asc" | "desc" } | null>(null);
 
   const sortedRows = useMemo(() => {
@@ -447,7 +458,9 @@ export function DataGrid<T>({
           </tfoot>
         )}
       </Table>
-      {rows?.length === 0 && <EmptyState title={empty} description={emptyDescription} />}
+      {rows?.length === 0 && (
+        <EmptyState title={empty ?? t.common.nothingHereYet} description={emptyDescription} />
+      )}
     </div>
   );
 }
@@ -466,18 +479,19 @@ export function useUnsavedChanges(dirty: boolean) {
 }
 
 export function Pager({ meta, onPage }: { meta?: Meta; onPage: (page: number) => void }) {
+  const { t } = useI18n();
   if (!meta || meta.total <= meta.per_page) return null;
   const last = Math.ceil(meta.total / meta.per_page);
   return (
     <div className="mt-4 flex items-center justify-between gap-2 text-[12px] text-[var(--od-ink-muted)]">
       <span className="od-tabular">
-        Page {meta.page} of {last} · {meta.total} total
+        {fmt(t.common.pageOfTotal, { page: meta.page, last, total: meta.total })}
       </span>
       <div className="flex items-center gap-1.5">
         <Button
           variant="outline"
           size="icon"
-          aria-label="Previous page"
+          aria-label={t.common.previousPage}
           disabled={meta.page <= 1}
           onClick={() => onPage(meta.page - 1)}
         >
@@ -486,7 +500,7 @@ export function Pager({ meta, onPage }: { meta?: Meta; onPage: (page: number) =>
         <Button
           variant="outline"
           size="icon"
-          aria-label="Next page"
+          aria-label={t.common.nextPage}
           disabled={meta.page >= last}
           onClick={() => onPage(meta.page + 1)}
         >
@@ -503,7 +517,7 @@ export function FormDialog({
   onOpenChange,
   title,
   description,
-  submitLabel = "Save",
+  submitLabel,
   busy,
   onSubmit,
   children,
@@ -519,6 +533,7 @@ export function FormDialog({
   children: ReactNode;
   wide?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className={cn("max-h-[90vh] overflow-y-auto", wide && "sm:max-w-2xl")}>
@@ -538,10 +553,10 @@ export function FormDialog({
           {children}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button type="submit" disabled={busy}>
-              {busy ? "Saving…" : submitLabel}
+              {busy ? t.common.saving : (submitLabel ?? t.common.save)}
             </Button>
           </DialogFooter>
         </form>

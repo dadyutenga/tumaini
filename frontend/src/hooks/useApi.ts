@@ -2,6 +2,8 @@ import { useRef } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { ApiError, api, get, getPage, isPendingApproval, newIdempotencyKey } from "@/lib/api";
+import { useI18n } from "@/features/i18n/i18n";
+import { activeT } from "@/features/i18n/active";
 
 type Query = Record<string, string | number | boolean | undefined | null>;
 
@@ -29,7 +31,7 @@ export function errorMessage(error: unknown) {
     const fields = Object.values(error.fields);
     return fields.length ? `${error.message}: ${fields.join(", ")}` : error.message;
   }
-  return error instanceof Error ? error.message : "Something went wrong";
+  return error instanceof Error ? error.message : activeT().common.somethingWentWrong;
 }
 
 interface MutateOptions<R, B = unknown> {
@@ -52,6 +54,7 @@ export function useWrite<B = unknown, R = unknown>(
   path: string | ((body: B) => string),
   options: MutateOptions<R, B> & BodyOption<B> = {},
 ) {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   // Keep the same Idempotency-Key across network/5xx retries of the exact same request so a
   // dropped response never results in duplicate financial postings when the user retries.
@@ -77,7 +80,7 @@ export function useWrite<B = unknown, R = unknown>(
     onSuccess: (result) => {
       pendingKey.current = null;
       if (isPendingApproval(result)) {
-        toast.info("Sent for approval. A manager must approve it before it completes.");
+        toast.info(t.common.sentForApprovalAManager);
       } else if (options.success) {
         toast.success(options.success);
       }

@@ -1,11 +1,9 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import type { Locale } from "@/types";
-import en, { type Translations } from "./locales/en";
-import sw from "./locales/sw";
+import { dictionaries, setActiveLocale } from "./active";
+import type { Translations } from "./locales/en";
 
 export type { Translations };
-
-const dictionaries: Record<Locale, Translations> = { en, sw };
 
 const STORAGE_KEY = "bms-locale";
 /** The key used before the rename. Its value is moved across once, then removed. */
@@ -48,8 +46,18 @@ const defaultI18nValue: I18nContextType = {
 
 const I18nContext = createContext<I18nContextType | null>(null);
 
-export function I18nProvider({ children }: { children: ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(readStoredLocale);
+export function I18nProvider({
+  children,
+  fixedLocale,
+}: {
+  children: ReactNode;
+  /** For pages without a signed-in user: use this language and leave the saved choice alone. */
+  fixedLocale?: Locale;
+}) {
+  const [saved, setLocaleState] = useState<Locale>(readStoredLocale);
+  const locale = fixedLocale ?? saved;
+  // Set before the children render, so formatting and API errors use the same language.
+  setActiveLocale(locale);
 
   const setLocale = (next: Locale) => {
     setLocaleState(next);

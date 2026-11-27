@@ -2,6 +2,7 @@ import { DataGrid } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { useGet } from "@/hooks/useApi";
 import { formatDateTime } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
 
 interface AuditEntry {
   id: string;
@@ -34,6 +35,7 @@ export function RecordHistoryTab({
   entityType: string;
   entityId: string;
 }) {
+  const { t } = useI18n();
   const { can } = useAuth();
   const audit = useGet<AuditEntry[]>(
     `/audit-logs/entity/${entityType}/${entityId}`,
@@ -44,7 +46,7 @@ export function RecordHistoryTab({
   if (!can("security.audit.view")) {
     return (
       <div className="od-card p-6 text-sm text-[var(--od-ink-secondary)]">
-        Detailed change history is available to administrators.
+        {t.common.detailedChangeHistoryIsAvailable}
       </div>
     );
   }
@@ -54,10 +56,10 @@ export function RecordHistoryTab({
       rows={audit.data}
       loading={audit.isLoading}
       rowKey={(a) => a.id}
-      empty="No history entries recorded yet"
+      empty={t.common.noHistoryEntriesRecordedYet}
       columns={[
         {
-          header: "When",
+          header: t.common.when,
           cell: (a) => (
             <span className="od-tabular text-xs text-[var(--od-ink-secondary)]">
               {formatDateTime(a.created_at)}
@@ -65,15 +67,15 @@ export function RecordHistoryTab({
           ),
         },
         {
-          header: "Who",
+          header: t.common.who,
           cell: (a) => (
             <span className="font-medium text-[var(--od-ink)]">
-              {a.user_name ?? a.user_id?.slice(0, 8) ?? "System"}
+              {a.user_name ?? a.user_id?.slice(0, 8) ?? t.common.system}
             </span>
           ),
         },
         {
-          header: "Action",
+          header: t.common.action,
           cell: (a) => (
             <code className="od-mono rounded-md border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-1.5 py-0.5 text-xs text-[var(--od-ink)]">
               {a.action}
@@ -81,12 +83,12 @@ export function RecordHistoryTab({
           ),
         },
         {
-          header: "Old value",
+          header: t.common.oldValue,
           cell: (a) => summarize(a.before),
           className: "max-w-xs whitespace-normal text-xs text-[var(--od-ink-muted)]",
         },
         {
-          header: "New value",
+          header: t.common.newValue,
           cell: (a) => summarize(a.after),
           className: "max-w-xs whitespace-normal text-xs text-[var(--od-ink-secondary)]",
         },

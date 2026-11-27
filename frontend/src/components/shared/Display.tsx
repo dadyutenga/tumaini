@@ -14,6 +14,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/features/i18n/i18n";
 
 export function StatCard({
   label,
@@ -100,20 +101,26 @@ export function ActivityFeed({ items }: { items: Activity[] }) {
   );
 }
 
-export function Spinner({ label = "Loading" }: { label?: string }) {
+export function Spinner({ label }: { label?: string }) {
+  const { t } = useI18n();
   return (
-    <span role="status" aria-label={label} className="inline-flex text-[var(--od-ink-muted)]">
+    <span
+      role="status"
+      aria-label={label ?? t.common.loading}
+      className="inline-flex text-[var(--od-ink-muted)]"
+    >
       <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden="true" />
     </span>
   );
 }
 
 export function PageLoader() {
+  const { t } = useI18n();
   return (
     <div className="grid min-h-48 place-items-center py-12">
       <div className="flex flex-col items-center gap-2.5">
         <Spinner />
-        <p className="od-caption">Loading…</p>
+        <p className="od-caption">{t.common.loading2}</p>
       </div>
     </div>
   );
@@ -150,7 +157,7 @@ export function ConfirmDialog({
   onConfirm,
   title,
   description,
-  confirmLabel = "Confirm",
+  confirmLabel,
   destructive,
 }: {
   open: boolean;
@@ -161,6 +168,7 @@ export function ConfirmDialog({
   confirmLabel?: string;
   destructive?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
       <AlertDialogContent className="rounded-[var(--od-radius,16px)] border-[var(--od-border-strong)] bg-[var(--od-surface)] shadow-[var(--od-shadow-pop)]">
@@ -171,7 +179,7 @@ export function ConfirmDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogCancel>{t.common.cancel}</AlertDialogCancel>
           <AlertDialogAction
             onClick={onConfirm}
             className={
@@ -180,7 +188,7 @@ export function ConfirmDialog({
                 : undefined
             }
           >
-            {confirmLabel}
+            {confirmLabel ?? t.common.confirm}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -188,7 +196,9 @@ export function ConfirmDialog({
   );
 }
 
-export function CopyButton({ text, label = "Copy" }: { text: string; label?: string }) {
+export function CopyButton({ text, label: given }: { text: string; label?: string }) {
+  const { t } = useI18n();
+  const label = given ?? t.common.copy;
   const [copied, setCopied] = useState(false);
   return (
     <Button
@@ -198,22 +208,23 @@ export function CopyButton({ text, label = "Copy" }: { text: string; label?: str
         void navigator.clipboard.writeText(text).then(
           () => {
             setCopied(true);
-            toast.success("Copied");
+            toast.success(t.common.copied);
             setTimeout(() => setCopied(false), 1800);
           },
-          () => toast.error("Could not copy"),
+          () => toast.error(t.common.couldNotCopy),
         );
       }}
     >
       {copied ? <Check size={14} /> : <Copy size={14} />}
-      <span>{copied ? "Copied" : label}</span>
+      <span>{copied ? t.common.copied : label}</span>
     </Button>
   );
 }
 
 export function Stepper({ steps, current }: { steps: string[]; current: number }) {
+  const { t } = useI18n();
   return (
-    <ol className="flex flex-wrap items-center gap-2" aria-label="Progress">
+    <ol className="flex flex-wrap items-center gap-2" aria-label={t.common.progress}>
       {steps.map((step, index) => {
         const done = index < current;
         const active = index === current;
@@ -242,6 +253,7 @@ export function Stepper({ steps, current }: { steps: string[]; current: number }
 }
 
 export function PrintableDocument({ title, children }: { title: string; children: ReactNode }) {
+  const { t } = useI18n();
   return (
     <article className="print-document od-card p-6 sm:p-8">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--od-border)] pb-4">
@@ -249,7 +261,7 @@ export function PrintableDocument({ title, children }: { title: string; children
           {title}
         </h1>
         <Button className="print:hidden" variant="outline" size="sm" onClick={() => window.print()}>
-          <Printer size={14} /> Print
+          <Printer size={14} /> {t.common.print}
         </Button>
       </div>
       <div className="mt-5">{children}</div>

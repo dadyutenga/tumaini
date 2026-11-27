@@ -26,6 +26,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { fmt } from "@/features/i18n/format";
+import type { Translations } from "@/features/i18n/i18n";
 
 interface SearchHit {
   kind: string;
@@ -35,18 +37,18 @@ interface SearchHit {
   link: string;
 }
 
-const KIND_LABELS: Record<string, string> = {
-  product: "Product",
-  customer: "Shop customer",
-  client: "Service client",
-  project: "Project",
-  design_job: "Design job",
-  sale: "Sale / receipt",
-  service_invoice: "Service invoice",
-};
+const kindLabels = (t: Translations): Record<string, string> => ({
+  product: t.common.product,
+  customer: t.common.shopCustomer,
+  client: t.common.serviceClient,
+  project: t.common.project,
+  design_job: t.common.designJob,
+  sale: t.common.saleReceipt,
+  service_invoice: t.common.serviceInvoice,
+});
 
 export function SearchPalette() {
-  const { t } = useI18n();
+  const { t, routeLabel } = useI18n();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const debounced = useDebounce(query.trim(), 220);
@@ -71,7 +73,11 @@ export function SearchPalette() {
 
   const matchedRoutes = routes
     .filter((route) => route.navigation)
-    .filter((route) => !query.trim() || route.label.toLowerCase().includes(query.toLowerCase()));
+    .filter(
+      (route) =>
+        !query.trim() ||
+        routeLabel(route.path, route.label).toLowerCase().includes(query.toLowerCase()),
+    );
 
   const go = (to: string) => {
     setOpen(false);
@@ -86,7 +92,7 @@ export function SearchPalette() {
           variant="outline"
           size="sm"
           className="h-8 gap-2 border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] px-2.5 text-[var(--od-ink-muted)] shadow-none hover:text-[var(--od-ink)]"
-          aria-label="Global search"
+          aria-label={t.common.globalSearch}
         >
           <Search size={14} />
           <span className="hidden text-xs lg:inline">{t.common.globalSearchPlaceholder}</span>
@@ -96,14 +102,12 @@ export function SearchPalette() {
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-xl">
-        <DialogTitle>Global search</DialogTitle>
-        <DialogDescription>
-          Find clients, customers, products, invoices, projects, receipts or pages.
-        </DialogDescription>
+        <DialogTitle>{t.common.globalSearch}</DialogTitle>
+        <DialogDescription>{t.common.findClientsCustomersProductsInvoices}</DialogDescription>
         <Input
           autoFocus
-          aria-label="Global search input"
-          placeholder="Type a name, phone, number, SKU or barcode…"
+          aria-label={t.common.globalSearchInput}
+          placeholder={t.common.typeANamePhoneNumber}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
@@ -111,11 +115,13 @@ export function SearchPalette() {
           {debounced.length >= 2 && (
             <div>
               <p className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--od-ink-muted)]">
-                Records {hits.isFetching ? "…" : `(${hits.data?.length ?? 0})`}
+                {fmt(t.common.records, {
+                  value: hits.isFetching ? "…" : `(${hits.data?.length ?? 0})`,
+                })}
               </p>
               {(hits.data ?? []).length === 0 && !hits.isFetching ? (
                 <p className="px-2 py-2 text-[13px] text-[var(--od-ink-muted)]">
-                  No matching records.
+                  {t.common.noMatchingRecords}
                 </p>
               ) : (
                 <ul className="space-y-0.5">
@@ -135,7 +141,7 @@ export function SearchPalette() {
                           )}
                         </span>
                         <span className="shrink-0 rounded-full bg-[var(--od-neutral-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--od-ink-secondary)]">
-                          {KIND_LABELS[h.kind] ?? h.kind}
+                          {kindLabels(t)[h.kind] ?? h.kind}
                         </span>
                       </button>
                     </li>
@@ -147,7 +153,7 @@ export function SearchPalette() {
           {matchedRoutes.length > 0 && (
             <div>
               <p className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--od-ink-muted)]">
-                Pages
+                {t.common.pages}
               </p>
               <ul className="space-y-0.5">
                 {matchedRoutes.slice(0, 8).map((route) => (
@@ -157,7 +163,7 @@ export function SearchPalette() {
                       className="w-full rounded-[var(--od-radius-sm,8px)] px-2.5 py-2 text-left text-[13px] text-[var(--od-ink)] transition-colors hover:bg-[var(--od-surface-subtle)] focus-visible:bg-[var(--od-surface-subtle)]"
                       onClick={() => go(route.path)}
                     >
-                      {route.label}
+                      {routeLabel(route.path, route.label)}
                     </button>
                   </li>
                 ))}
@@ -171,29 +177,30 @@ export function SearchPalette() {
 }
 
 export function QuickNewMenu({ floating = false }: { floating?: boolean }) {
+  const { t } = useI18n();
   const { can, canAny } = useAuth();
   const navigate = useNavigate();
   const actions = [
-    { label: "New sale (POS)", to: "/pos", show: can("shop.sale.create") },
-    { label: "New client", to: "/clients", show: can("services.client.manage") },
-    { label: "New project", to: "/projects", show: can("services.project.manage") },
-    { label: "New design job", to: "/design-jobs", show: can("services.design.manage") },
+    { label: t.common.newSalePos, to: "/pos", show: can("shop.sale.create") },
+    { label: t.common.newClient, to: "/clients", show: can("services.client.manage") },
+    { label: t.common.newProject, to: "/projects", show: can("services.project.manage") },
+    { label: t.common.newDesignJob, to: "/design-jobs", show: can("services.design.manage") },
     {
-      label: "Receive payment",
+      label: t.common.receivePayment,
       to: "/service-invoices",
       show: canAny("services.invoice.manage", "finance.payment.receive"),
     },
     {
-      label: "Customer payment",
+      label: t.common.customerPayment,
       to: "/customers",
       show: canAny("shop.customer.view_all", "shop.customer.manage", "finance.payment.receive"),
     },
     {
-      label: "New expense",
+      label: t.common.newExpense,
       to: "/expenses",
       show: canAny("finance.expense.submit", "finance.expense.enter"),
     },
-    { label: "New task", to: "/service-tasks", show: can("services.task.manage") },
+    { label: t.common.newTask, to: "/service-tasks", show: can("services.task.manage") },
   ].filter((a) => a.show);
 
   if (actions.length === 0) return null;
@@ -205,19 +212,23 @@ export function QuickNewMenu({ floating = false }: { floating?: boolean }) {
           <Button
             size="lg"
             className="fixed bottom-5 right-5 z-30 h-11 rounded-full px-4 shadow-[var(--od-shadow-pop)] md:hidden"
-            aria-label="Quick create menu"
+            aria-label={t.common.quickCreateMenu}
           >
-            <Plus size={16} /> New
+            <Plus size={16} /> {t.common.newQuick}
           </Button>
         ) : (
-          <Button size="sm" className="hidden h-8 sm:inline-flex" aria-label="Quick create menu">
-            <Plus size={14} /> New
+          <Button
+            size="sm"
+            className="hidden h-8 sm:inline-flex"
+            aria-label={t.common.quickCreateMenu}
+          >
+            <Plus size={14} /> {t.common.newQuick}
           </Button>
         )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-48">
         <DropdownMenuLabel className="text-xs text-[var(--od-ink-muted)]">
-          Quick actions
+          {t.common.quickActions}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         {actions.map((a) => (
@@ -242,6 +253,7 @@ interface Notice {
 }
 
 export function NotificationBell() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const { data } = useGet<Notice[]>("/notifications");
@@ -259,7 +271,7 @@ export function NotificationBell() {
         <Button
           variant="ghost"
           size="icon"
-          aria-label={`Notifications, ${unread} unread`}
+          aria-label={fmt(t.common.notificationsUnread, { unread })}
           className="relative"
         >
           <Bell size={17} />
@@ -272,17 +284,19 @@ export function NotificationBell() {
       </PopoverTrigger>
       <PopoverContent align="end" className="w-80 rounded-[var(--od-radius,16px)] p-4">
         <div className="flex items-center justify-between">
-          <h2 className="od-card-title">Notifications</h2>
+          <h2 className="od-card-title">{t.common.notifications}</h2>
           <Link
             to="/notifications"
             onClick={() => setOpen(false)}
             className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
           >
-            View all
+            {t.common.viewAll}
           </Link>
         </div>
         {items.length === 0 ? (
-          <p className="mt-3 text-[13px] text-[var(--od-ink-muted)]">You are all caught up.</p>
+          <p className="mt-3 text-[13px] text-[var(--od-ink-muted)]">
+            {t.common.youAreAllCaughtUp}
+          </p>
         ) : (
           <ul className="scrollbar-thin mt-3 max-h-72 space-y-1.5 overflow-auto text-[13px]">
             {items.slice(0, 15).map((n) => {
@@ -330,7 +344,7 @@ export function NotificationBell() {
             className="mt-3 w-full"
             onClick={() => readAll.mutate(undefined)}
           >
-            Mark all read
+            {t.common.markAllRead}
           </Button>
         )}
       </PopoverContent>
@@ -339,14 +353,8 @@ export function NotificationBell() {
 }
 
 const THEME_ORDER = ["system", "light", "high-contrast", "dark"] as const;
-const THEME_LABELS: Record<string, string> = {
-  system: "System",
-  light: "Soft light",
-  "high-contrast": "High contrast light",
-  dark: "Dark",
-};
-
 export function ThemeToggle() {
+  const { t } = useI18n();
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") ?? "system");
   useEffect(() => {
     const update = () => setTheme(localStorage.getItem("theme") ?? "system");
@@ -360,14 +368,20 @@ export function ThemeToggle() {
     setTheme(next);
     window.dispatchEvent(new Event("themechange"));
   };
-  const label = THEME_LABELS[theme] ?? theme;
+  const themeLabels: Record<string, string> = {
+    system: t.common.system,
+    light: t.common.softLight,
+    "high-contrast": t.common.highContrastLight,
+    dark: t.common.dark,
+  };
+  const label = themeLabels[theme] ?? theme;
   return (
     <Button
       variant="ghost"
       size="icon"
       onClick={toggle}
-      title={`Theme: ${label}`}
-      aria-label={`Theme: ${label}. Change theme`}
+      title={fmt(t.common.theme, { label })}
+      aria-label={fmt(t.common.themeChangeTheme, { label })}
     >
       <SunMoon size={17} />
     </Button>
@@ -386,7 +400,7 @@ export function UserMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" aria-label="Open user menu" className="h-8 gap-2 px-1.5">
+        <Button variant="ghost" aria-label={t.common.openUserMenu} className="h-8 gap-2 px-1.5">
           <span className="grid h-6 w-6 place-items-center rounded-full bg-[var(--od-neutral-soft)] text-[11px] font-semibold text-[var(--od-ink)] ring-1 ring-[var(--od-border-strong)]">
             {initials}
           </span>
@@ -395,7 +409,7 @@ export function UserMenu() {
               {user?.name}
             </span>
             <span className="block text-[10px] leading-tight text-[var(--od-ink-muted)]">
-              {me?.is_owner ? "Owner" : user?.role_name}
+              {me?.is_owner ? t.common.owner : user?.role_name}
             </span>
           </span>
         </Button>
@@ -404,7 +418,7 @@ export function UserMenu() {
         <DropdownMenuLabel>
           <p className="truncate text-[13px] font-semibold">{user?.name}</p>
           <p className="text-[11px] font-normal text-[var(--od-ink-muted)]">
-            {me?.is_owner ? "Owner / Admin" : user?.role_name}
+            {me?.is_owner ? t.common.ownerAdmin : user?.role_name}
           </p>
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
@@ -413,7 +427,7 @@ export function UserMenu() {
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <Link to="/profile#password">
-            <KeyRound size={14} className="mr-1.5" /> Change password
+            <KeyRound size={14} className="mr-1.5" /> {t.common.changePassword}
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
