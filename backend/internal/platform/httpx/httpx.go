@@ -60,6 +60,10 @@ func ErrorHandler(c fiber.Ctx, err error) error {
 	}
 	var fe *fiber.Error
 	if errors.As(err, &fe) {
+		if fe.Code >= fiber.StatusInternalServerError {
+			slog.Error("fiber_internal", "err", err, "status", fe.Code, "path", c.Path(), "request_id", c.GetRespHeader("X-Request-Id"))
+			return c.Status(fe.Code).JSON(fiber.Map{"error": Error{Code: "internal_error", Message: "Something went wrong. Quote the request id if you contact support."}})
+		}
 		return c.Status(fe.Code).JSON(fiber.Map{"error": Error{Code: "http_error", Message: fe.Message}})
 	}
 	slog.Error("unhandled", "err", err, "path", c.Path(), "request_id", c.GetRespHeader("X-Request-Id"))

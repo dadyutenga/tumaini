@@ -140,6 +140,9 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("SMTP_FROM is required when SMTP_HOST is set")
 	}
 	if c.AppEnv == "production" {
+		if strings.EqualFold(c.LogLevel, "debug") {
+			return c, fmt.Errorf("LOG_LEVEL=debug is not allowed in production")
+		}
 		if !c.CookieSecure {
 			return c, fmt.Errorf("COOKIE_SECURE must be true in production")
 		}
@@ -147,6 +150,9 @@ func Load() (Config, error) {
 		for _, badSecret := range []string{"replace-with", "dev-only", "changeme"} {
 			if strings.Contains(lowerSecret, badSecret) {
 				return c, fmt.Errorf("JWT_SECRET still has an example or development value")
+			}
+			if c.MFAEncryptionKey != "" && strings.Contains(strings.ToLower(c.MFAEncryptionKey), badSecret) {
+				return c, fmt.Errorf("MFA_ENCRYPTION_KEY still has an example or development value")
 			}
 		}
 		for _, url := range []string{c.DatabaseURL, c.JobsDatabaseURL, c.MigrateDatabaseURL} {

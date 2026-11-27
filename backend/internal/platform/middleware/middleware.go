@@ -55,7 +55,15 @@ func SecurityHeaders() fiber.Handler {
 		c.Set("X-Content-Type-Options", "nosniff")
 		c.Set("X-Frame-Options", "DENY")
 		c.Set("Referrer-Policy", "no-referrer")
+		c.Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		c.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		c.Set("X-Request-Id", requestid.FromContext(c))
+		if strings.HasPrefix(c.Path(), "/api/") {
+			c.Set("Cache-Control", "no-store")
+		}
+		if c.Protocol() == "https" || strings.EqualFold(c.Get("X-Forwarded-Proto"), "https") {
+			c.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
 		return c.Next()
 	}
 }
