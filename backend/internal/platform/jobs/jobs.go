@@ -30,6 +30,7 @@ const (
 	PayrollCalculate   = "payroll_calculate"
 	ServiceReminders   = "service_reminders"
 	DispatchOutbound   = "dispatch_outbound"
+	AuditSeal          = "audit_seal"
 )
 
 type Handler func(ctx context.Context, businessID uuid.UUID, payload json.RawMessage) error

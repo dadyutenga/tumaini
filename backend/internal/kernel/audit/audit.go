@@ -63,13 +63,31 @@ func redact(v any) any {
 	return walk(m)
 }
 
+var sensitiveKeyFragments = []string{
+	"password", "passphrase", "pin", "token", "secret",
+	"api_key", "apikey", "authorization", "cookie", "credential", "bearer",
+	"private_key", "otp", "totp", "recovery_code",
+	"cvv", "cvc", "card_number", "iban",
+}
+
+func isSensitiveKey(lk string) bool {
+	if lk == "pan" || strings.HasSuffix(lk, "_pan") || strings.HasSuffix(lk, "hash") {
+		return true
+	}
+	for _, frag := range sensitiveKeyFragments {
+		if strings.Contains(lk, frag) {
+			return true
+		}
+	}
+	return false
+}
+
 func walk(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
 		out := map[string]any{}
 		for k, val := range t {
-			lk := strings.ToLower(k)
-			if strings.Contains(lk, "password") || strings.Contains(lk, "pin") || strings.Contains(lk, "token") || strings.Contains(lk, "secret") || strings.HasSuffix(lk, "hash") {
+			if isSensitiveKey(strings.ToLower(k)) {
 				continue
 			}
 			out[k] = walk(val)

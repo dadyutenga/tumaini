@@ -501,6 +501,39 @@ func (s *Service) SessionCleanup(ctx context.Context, tenantID uuid.UUID, _ json
 	})
 }
 
+// AuditSeal ensures future monthly audit partitions exist, appends a cryptographic hash-chain seal
+// for the tenant's audit log, and verifies the full seal chain — alerting owners if tampering is found.
+func (s *Service) AuditSeal(ctx context.Context, tenantID uuid.UUID, _ json.RawMessage) error {
+	var brokenSeal int64
+	var problem string
+	err := s.DB.InJobsTx(ctx, db.Actor{TenantID: tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT audit.ensure_partitions(3)`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `SELECT audit.seal_tenant($1, interval '5 minutes')`, tenantID); err != nil {
+			return err
+		}
+		row := tx.QueryRow(ctx, `SELECT seal_no, problem FROM audit.verify_tenant($1) LIMIT 1`, tenantID)
+		if scanErr := row.Scan(&brokenSeal, &problem); scanErr != nil && !errors.Is(scanErr, pgx.ErrNoRows) {
+			return scanErr
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if problem == "" {
+		return nil
+	}
+	slog.Error("audit seal verification failed", "tenant_id", tenantID, "seal_no", brokenSeal, "problem", problem)
+	return s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		return s.toOwners(ctx, tx, tenantID, notify.Message{
+			Type: "account_locked", Title: "Audit trail integrity alert",
+			Body: fmt.Sprintf("Audit seal #%d failed integrity verification (%s). Contact security/support immediately.", brokenSeal, problem),
+		})
+	})
+}
+
 // SendNotification delivers one notification by email/SMS if the tenant rule enables it
 // and a sender is configured.
 func (s *Service) SendNotification(ctx context.Context, tenantID uuid.UUID, raw json.RawMessage) error {

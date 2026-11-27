@@ -18,11 +18,13 @@ func Mount(_ fiber.Router, d deps.Deps) *Service {
 	d.Jobs.Register(jobs.LedgerBalanceCheck, svc.LedgerBalanceCheck)
 	d.Jobs.Register(jobs.StockRebuildCheck, svc.StockRebuildCheck)
 	d.Jobs.Register(jobs.SessionCleanup, svc.SessionCleanup)
+	d.Jobs.Register(jobs.AuditSeal, svc.AuditSeal)
 	d.Jobs.Register(jobs.SendNotification, svc.SendNotification)
 	d.Jobs.Daily(jobs.DebtReminders, "08:00")
 	d.Jobs.Daily(jobs.OwnerDailySummary, "end")
 	d.Jobs.Daily(jobs.LedgerBalanceCheck, "02:00")
 	d.Jobs.Daily(jobs.StockRebuildCheck, "02:30")
 	d.Jobs.Daily(jobs.SessionCleanup, "03:00")
+	d.Jobs.Daily(jobs.AuditSeal, "03:15")
 	return svc
 }
