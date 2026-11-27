@@ -58,3 +58,62 @@ func TestSalesIntegrity_ReceiptsBlockedOnUncompletedAndVoidedSales(t *testing.T)
 	require.Equal(t, 409, e.owner.call(t, http.MethodGet, "/api/v1/sales/"+saleID+"/receipt", nil, "").code)
 	require.Equal(t, 409, e.owner.call(t, http.MethodGet, "/api/v1/sales/"+saleID+"/invoice", nil, "").code)
 }
+
+// TestSalesIntegrity_InvoiceAndQuotationIsolation verifies that draft-only staff cannot
+// view, download PDFs for, or edit invoices or quotations created by other users/clients,
+// and another tenant cannot access them either.
+func TestSalesIntegrity_InvoiceAndQuotationIsolation(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	clientA := e.owner.call(t, http.MethodPost, "/api/v1/clients", map[string]any{"name": "Client Alpha"}, "")
+	require.Equal(t, 201, clientA.code, clientA.raw)
+	clientAID := str(clientA.data["id"])
+
+	staffA, _ := e.user(t, "staff")
+	staffB, _ := e.user(t, "staff")
+
+	// Staff A creates a draft quotation and a draft invoice.
+	qA := staffA.call(t, http.MethodPost, "/api/v1/service-quotations", map[string]any{
+		"client_id": clientAID,
+		"lines":     []map[string]any{{"description": "Brand Audit", "quantity": "1", "unit_price": "80000"}},
+	}, "")
+	require.Equal(t, 201, qA.code, qA.raw)
+	qAID := str(qA.data["id"])
+
+	invA := staffA.call(t, http.MethodPost, "/api/v1/service-invoices", map[string]any{
+		"client_id": clientAID,
+		"lines":     []map[string]any{{"description": "Brand Audit", "quantity": "1", "unit_price": "80000"}},
+	}, "")
+	require.Equal(t, 201, invA.code, invA.raw)
+	invAID := str(invA.data["id"])
+
+	// Staff A can view own records.
+	require.Equal(t, 200, staffA.call(t, http.MethodGet, "/api/v1/service-quotations/"+qAID, nil, "").code)
+	require.Equal(t, 200, staffA.call(t, http.MethodGet, "/api/v1/service-invoices/"+invAID, nil, "").code)
+
+	// Staff B (draft-only) cannot view, list, download PDF, or edit Staff A's quotation or invoice.
+	require.Equal(t, 404, staffB.call(t, http.MethodGet, "/api/v1/service-quotations/"+qAID, nil, "").code)
+	require.Equal(t, 404, staffB.call(t, http.MethodGet, "/api/v1/service-quotations/"+qAID+"/pdf", nil, "").code)
+	require.Equal(t, 404, staffB.call(t, http.MethodPut, "/api/v1/service-quotations/"+qAID, map[string]any{
+		"client_id": clientAID,
+		"lines":     []map[string]any{{"description": "Tampered", "quantity": "1", "unit_price": "1"}},
+	}, "").code)
+
+	require.Equal(t, 404, staffB.call(t, http.MethodGet, "/api/v1/service-invoices/"+invAID, nil, "").code)
+	require.Equal(t, 404, staffB.call(t, http.MethodGet, "/api/v1/service-invoices/"+invAID+"/pdf", nil, "").code)
+	require.Equal(t, 404, staffB.call(t, http.MethodPut, "/api/v1/service-invoices/"+invAID, map[string]any{
+		"client_id": clientAID,
+		"lines":     []map[string]any{{"description": "Tampered", "quantity": "1", "unit_price": "1"}},
+	}, "").code)
+
+	listB := staffB.call(t, http.MethodGet, "/api/v1/service-invoices", nil, "")
+	require.Equal(t, 200, listB.code, listB.raw)
+	require.Empty(t, asList(listB.body["data"]))
+
+	// Owner (holds services.invoice.manage) CAN view, issue, and manage all invoices.
+	require.Equal(t, 200, e.owner.call(t, http.MethodGet, "/api/v1/service-invoices/"+invAID, nil, "").code)
+
+	// Cross-tenant isolation.
+	other := newEnv(t, defaultNow)
+	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/service-invoices/"+invAID, nil, "").code)
+	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/service-quotations/"+qAID, nil, "").code)
+}

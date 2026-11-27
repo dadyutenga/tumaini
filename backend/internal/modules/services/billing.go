@@ -177,6 +177,12 @@ const quotationCols = `q.id, q.quotation_no AS number, q.status::text AS status,
 
 const quotationFrom = ` FROM app.quotations q JOIN app.customers c ON c.tenant_id = q.tenant_id AND c.id = q.customer_id`
 
+func ownQuotation(q *sqlq.Q, p *auth.Principal) {
+	if !p.Has("services.quotation.manage") {
+		q.Add("q.created_by = ?", p.MembershipID)
+	}
+}
+
 func (s *Service) ListQuotations(ctx context.Context, p *auth.Principal, status string, clientID *uuid.UUID, q0 string, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	total := 0
@@ -188,6 +194,7 @@ func (s *Service) ListQuotations(ctx context.Context, p *auth.Principal, status 
 		if t := clean(q0); t != "" {
 			q.Add("(q.quotation_no ILIKE '%' || ? || '%' OR c.full_name ILIKE '%' || ? || '%')", t, t)
 		}
+		ownQuotation(q, p)
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+quotationFrom+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
@@ -202,20 +209,23 @@ func (s *Service) GetQuotation(ctx context.Context, p *auth.Principal, id uuid.U
 	var out map[string]any
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		out, err = s.loadQuotation(ctx, tx, p.TenantID, id)
+		out, err = s.loadQuotation(ctx, tx, p, id)
 		return err
 	})
 	return out, err
 }
 
-func (s *Service) loadQuotation(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (map[string]any, error) {
-	q, err := one(ctx, tx, "Quotation", `SELECT `+quotationCols+quotationFrom+` WHERE q.tenant_id = $1 AND q.id = $2`, tenantID, id)
+func (s *Service) loadQuotation(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
+	qb := sqlq.New(p.TenantID, id)
+	qb.Add("q.tenant_id = $1 AND q.id = $2")
+	ownQuotation(qb, p)
+	q, err := one(ctx, tx, "Quotation", `SELECT `+quotationCols+quotationFrom+qb.Where(), qb.Args...)
 	if err != nil {
 		return nil, err
 	}
 	q["lines"], err = rows(ctx, tx, `
 		SELECT line_no AS position, service_id, description::text AS description, quantity, unit_price, line_total AS total
-		FROM app.quotation_lines WHERE tenant_id = $1 AND quotation_id = $2 ORDER BY line_no`, tenantID, id)
+		FROM app.quotation_lines WHERE tenant_id = $1 AND quotation_id = $2 ORDER BY line_no`, p.TenantID, id)
 	return q, err
 }
 
@@ -288,8 +298,11 @@ func (s *Service) CreateQuotation(ctx context.Context, p *auth.Principal, in Quo
 
 func (s *Service) UpdateQuotation(ctx context.Context, p *auth.Principal, id uuid.UUID, in QuotationIn) (map[string]any, error) {
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		qb := sqlq.New(p.TenantID, id)
+		qb.Add("q.tenant_id = $1 AND q.id = $2")
+		ownQuotation(qb, p)
 		var status, issueDate string
-		if err := tx.QueryRow(ctx, `SELECT status::text, issue_date::text FROM app.quotations WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&status, &issueDate); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT q.status::text, q.issue_date::text FROM app.quotations q`+qb.Where()+` FOR UPDATE`, qb.Args...).Scan(&status, &issueDate); err != nil {
 			return httpx.NotFound("not_found", "Quotation not found")
 		}
 		if status != "draft" {
@@ -487,7 +500,7 @@ func docPDF(biz, title string, m map[string]any, withPaid bool) []byte {
 func (s *Service) QuotationPDF(ctx context.Context, p *auth.Principal, id uuid.UUID) ([]byte, error) {
 	var out []byte
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		q, err := s.loadQuotation(ctx, tx, p.TenantID, id)
+		q, err := s.loadQuotation(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
@@ -532,6 +545,12 @@ func mapInvoiceStatusFilter(st string) string {
 	return st
 }
 
+func ownInvoice(q *sqlq.Q, p *auth.Principal) {
+	if !p.Has("services.invoice.manage") {
+		q.Add("i.created_by = ?", p.MembershipID)
+	}
+}
+
 func (s *Service) ListInvoices(ctx context.Context, p *auth.Principal, status string, clientID, projectID *uuid.UUID, overdue bool, q0 string, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	total := 0
@@ -549,6 +568,7 @@ func (s *Service) ListInvoices(ctx context.Context, p *auth.Principal, status st
 		if t := clean(q0); t != "" {
 			q.Add("(i.invoice_no ILIKE '%' || ? || '%' OR c.full_name ILIKE '%' || ? || '%')", t, t)
 		}
+		ownInvoice(q, p)
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+invoiceFrom+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
@@ -562,25 +582,28 @@ func (s *Service) GetInvoice(ctx context.Context, p *auth.Principal, id uuid.UUI
 	var out map[string]any
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		out, err = s.loadInvoice(ctx, tx, p.TenantID, id)
+		out, err = s.loadInvoice(ctx, tx, p, id)
 		return err
 	})
 	return out, err
 }
 
-func (s *Service) loadInvoice(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (map[string]any, error) {
-	inv, err := one(ctx, tx, "Invoice", `SELECT `+invoiceCols+invoiceFrom+` WHERE i.tenant_id = $1 AND i.id = $2`, tenantID, id)
+func (s *Service) loadInvoice(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
+	qb := sqlq.New(p.TenantID, id)
+	qb.Add("i.tenant_id = $1 AND i.id = $2")
+	ownInvoice(qb, p)
+	inv, err := one(ctx, tx, "Invoice", `SELECT `+invoiceCols+invoiceFrom+qb.Where(), qb.Args...)
 	if err != nil {
 		return nil, err
 	}
 	if inv["lines"], err = rows(ctx, tx, `
 		SELECT line_no AS position, service_id, description::text AS description, quantity, unit_price, line_total AS total
-		FROM app.invoice_lines WHERE tenant_id = $1 AND invoice_id = $2 ORDER BY line_no`, tenantID, id); err != nil {
+		FROM app.invoice_lines WHERE tenant_id = $1 AND invoice_id = $2 ORDER BY line_no`, p.TenantID, id); err != nil {
 		return nil, err
 	}
 	inst, err := rows(ctx, tx, `
 		SELECT seq AS position, label, due_date, amount
-		FROM app.invoice_installments WHERE tenant_id = $1 AND invoice_id = $2 ORDER BY seq`, tenantID, id)
+		FROM app.invoice_installments WHERE tenant_id = $1 AND invoice_id = $2 ORDER BY seq`, p.TenantID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -599,7 +622,7 @@ func (s *Service) loadInvoice(ctx context.Context, tx pgx.Tx, tenantID, id uuid.
 		FROM app.payment_allocations a
 		JOIN app.payments_received pr ON pr.tenant_id = a.tenant_id AND pr.id = a.payment_received_id
 		WHERE a.tenant_id = $1 AND a.invoice_id = $2
-		ORDER BY pr.business_date, pr.created_at`, tenantID, id)
+		ORDER BY pr.business_date, pr.created_at`, p.TenantID, id)
 	return inv, err
 }
 
@@ -758,9 +781,12 @@ func (s *Service) CreateInvoice(ctx context.Context, p *auth.Principal, in Invoi
 
 func (s *Service) UpdateInvoice(ctx context.Context, p *auth.Principal, id uuid.UUID, in InvoiceIn) (map[string]any, error) {
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		qb := sqlq.New(p.TenantID, id)
+		qb.Add("i.tenant_id = $1 AND i.id = $2")
+		ownInvoice(qb, p)
 		var status, issueDate string
 		var client uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT status::text, customer_id, issue_date::text FROM app.invoices WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&status, &client, &issueDate); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT i.status::text, i.customer_id, i.issue_date::text FROM app.invoices i`+qb.Where()+` FOR UPDATE`, qb.Args...).Scan(&status, &client, &issueDate); err != nil {
 			return httpx.NotFound("not_found", "Invoice not found")
 		}
 		if status != "draft" {
@@ -952,11 +978,15 @@ func (s *Service) VoidInvoice(ctx context.Context, p *auth.Principal, id uuid.UU
 func (s *Service) InvoicePDF(ctx context.Context, p *auth.Principal, id uuid.UUID) ([]byte, error) {
 	var out []byte
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		inv, err := s.loadInvoice(ctx, tx, p.TenantID, id)
+		inv, err := s.loadInvoice(ctx, tx, p, id)
 		if err != nil {
 			return err
 		}
-		out = docPDF(s.businessName(ctx, tx, p.TenantID), "Invoice", inv, true)
+		title := "Invoice"
+		if st, _ := inv["status"].(string); st == "void" {
+			title = "Invoice (VOID)"
+		}
+		out = docPDF(s.businessName(ctx, tx, p.TenantID), title, inv, true)
 		return nil
 	})
 	return out, err
