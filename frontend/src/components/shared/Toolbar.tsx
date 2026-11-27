@@ -89,7 +89,7 @@ export function SearchPalette() {
           aria-label="Global search"
         >
           <Search size={14} />
-          <span className="hidden text-xs lg:inline">{t.actions.globalSearchPlaceholder}</span>
+          <span className="hidden text-xs lg:inline">{t.common.globalSearchPlaceholder}</span>
           <kbd className="od-mono hidden rounded border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--od-ink-muted)] xl:inline">
             Ctrl K
           </kbd>
@@ -417,7 +417,7 @@ export function UserMenu() {
           </Link>
         </DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem onSelect={() => void logout()}>{t.actions.signOut}</DropdownMenuItem>
+        <DropdownMenuItem onSelect={() => void logout()}>{t.common.signOut}</DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );

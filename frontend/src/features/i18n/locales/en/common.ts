@@ -1,0 +1,18 @@
+export default {
+  signIn: "Sign in",
+  signOut: "Sign out",
+  register: "Register",
+  save: "Save",
+  cancel: "Cancel",
+  edit: "Edit",
+  delete: "Delete",
+  create: "Create",
+  exportCsv: "Export CSV",
+  search: "Search",
+  copy: "Copy",
+  print: "Print",
+  previous: "Previous",
+  next: "Next",
+  newQuick: "New",
+  globalSearchPlaceholder: "Search clients, products, invoices…",
+};
