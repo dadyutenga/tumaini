@@ -582,9 +582,9 @@ export default function Pos() {
                           className={cn(
                             "od-tabular absolute top-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold backdrop-blur",
                             outOfStock
-                              ? "bg-[var(--od-bad-mark)] text-white"
+                              ? "bg-[var(--od-bad-pill)] text-[var(--od-badge-on-solid)]"
                               : isLow
-                                ? "bg-[var(--od-warning-mark)] text-[#0d0d0d]"
+                                ? "bg-[var(--od-warning-mark)] text-[var(--od-badge-on-warning)]"
                                 : "bg-[var(--od-surface)]/90 text-[var(--od-ink)] ring-1 ring-[var(--od-border-strong)]",
                           )}
                         >

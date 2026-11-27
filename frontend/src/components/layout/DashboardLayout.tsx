@@ -95,7 +95,7 @@ function Navigation({
                           "group flex items-center gap-2.5 rounded-[var(--od-app-radius,10px)] px-2.5 py-1.5 text-[13px] transition-colors",
                           compact && "justify-center px-0",
                           isActive
-                            ? "bg-[var(--od-surface)] font-semibold text-[var(--od-ink)] shadow-[0_0_0_1px_var(--od-border-strong),0_1px_2px_rgba(0,0,0,0.03)]"
+                            ? "bg-[var(--od-surface)] font-semibold text-[var(--od-ink)] shadow-[0_0_0_1px_var(--od-border-strong),var(--od-shadow)]"
                             : "font-medium text-[var(--od-ink-secondary)] hover:bg-[var(--od-surface-subtle)] hover:text-[var(--od-ink)]",
                         )
                       }

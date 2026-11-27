@@ -4,7 +4,7 @@ import { Link } from "react-router-dom";
 
 export function AuthLayout({ children }: { children: ReactNode }) {
   return (
-    <main className="grid min-h-screen place-items-center bg-[var(--od-app-sidebar)] px-4 py-10">
+    <main className="grid min-h-screen place-items-center bg-[var(--od-page)] px-4 py-10">
       <div className="w-full max-w-[420px]">
         <div className="mb-6 flex items-center justify-center">
           <Link

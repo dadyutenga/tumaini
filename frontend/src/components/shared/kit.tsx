@@ -197,7 +197,7 @@ export const NativeSelect = forwardRef<HTMLSelectElement, ComponentProps<"select
     <select
       ref={ref}
       className={cn(
-        "flex h-9 w-full rounded-[var(--od-app-radius,10px)] border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-3 py-1 text-sm text-[var(--od-ink)] shadow-[0_1px_2px_rgba(0,0,0,0.02)] transition-colors focus-visible:border-[var(--od-ink-secondary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 disabled:opacity-50",
+        "flex h-9 w-full rounded-[var(--od-app-radius,10px)] border border-input bg-[var(--od-surface)] px-3 py-1 text-sm text-[var(--od-ink)] shadow-[var(--od-shadow)] transition-colors focus-visible:border-ring focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/35 disabled:opacity-50",
         className,
       )}
       {...props}

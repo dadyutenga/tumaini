@@ -246,7 +246,7 @@ export default function AuthPage({ mode }: { mode: string }) {
               Remember me
             </label>
             <Link
-              className="font-medium text-[var(--od-ink)] underline-offset-4 hover:underline"
+              className="font-medium text-[var(--od-link)] underline-offset-4 hover:underline"
               to="/forgot-password"
             >
               Forgot password?
@@ -274,7 +274,7 @@ export default function AuthPage({ mode }: { mode: string }) {
           <>
             Already have an account?{" "}
             <Link
-              className="font-medium text-[var(--od-ink)] underline-offset-4 hover:underline"
+              className="font-medium text-[var(--od-link)] underline-offset-4 hover:underline"
               to="/login"
             >
               Sign in
@@ -284,7 +284,7 @@ export default function AuthPage({ mode }: { mode: string }) {
           <>
             New business?{" "}
             <Link
-              className="font-medium text-[var(--od-ink)] underline-offset-4 hover:underline"
+              className="font-medium text-[var(--od-link)] underline-offset-4 hover:underline"
               to="/register"
             >
               Register

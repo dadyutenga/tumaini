@@ -427,7 +427,7 @@ function FirstLoginPasswordScreen() {
     <div className="grid min-h-screen place-items-center bg-background p-4">
       <form
         onSubmit={submit}
-        className="w-full max-w-md space-y-4 rounded-2xl border bg-card p-6 shadow-sm"
+        className="w-full max-w-md space-y-4 rounded-2xl border bg-card p-6 shadow-[var(--od-shadow)]"
       >
         <div>
           <h1 className="text-xl font-semibold">Change your temporary password</h1>

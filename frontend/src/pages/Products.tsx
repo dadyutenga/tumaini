@@ -397,10 +397,10 @@ export default function Products() {
                             !p.is_active
                               ? "bg-[var(--od-surface)]/90 text-[var(--od-ink-muted)]"
                               : outOfStock
-                                ? "bg-[var(--od-bad-mark)] text-white"
+                                ? "bg-[var(--od-bad-pill)] text-[var(--od-badge-on-solid)]"
                                 : isLow
-                                  ? "bg-[var(--od-warning-mark)] text-[#0d0d0d]"
-                                  : "bg-[var(--od-good-mark)] text-white",
+                                  ? "bg-[var(--od-warning-mark)] text-[var(--od-badge-on-warning)]"
+                                  : "bg-[var(--od-good-pill)] text-[var(--od-badge-on-solid)]",
                           )}
                         >
                           {!p.is_active

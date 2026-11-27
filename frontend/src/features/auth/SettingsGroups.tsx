@@ -366,7 +366,7 @@ export function DocumentsSettingsPanel({ businessName }: { businessName: string 
           Live Receipt Preview ({String(receiptPreview.paper_width ?? 80)}mm)
         </p>
         <div
-          className={`mx-auto rounded-lg border border-[var(--od-border-strong)] bg-white p-4 font-mono text-[11px] text-zinc-900 shadow-sm ${widthClass}`}
+          className={`mx-auto rounded-lg border border-[var(--od-border-strong)] bg-[var(--od-surface)] p-4 font-mono text-[11px] text-[var(--od-ink)] shadow-[var(--od-shadow)] ${widthClass}`}
         >
           <div className="text-center">
             {Boolean(receiptPreview.show_logo) && (

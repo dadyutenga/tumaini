@@ -10,16 +10,16 @@ const buttonVariants = cva(
     variants: {
       variant: {
         default:
-          "bg-[var(--od-app-primary)] text-[var(--od-app-primary-foreground)] shadow-[0_1px_2px_rgba(0,0,0,0.06)] hover:opacity-90",
+          "bg-[var(--od-app-primary)] text-[var(--od-app-primary-foreground)] shadow-[var(--od-shadow)] hover:opacity-90",
         destructive:
-          "bg-destructive text-destructive-foreground shadow-[0_1px_2px_rgba(0,0,0,0.06)] hover:opacity-90",
+          "bg-destructive text-destructive-foreground shadow-[var(--od-shadow)] hover:opacity-90",
         outline:
-          "border border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink)] shadow-[0_1px_2px_rgba(0,0,0,0.03)] hover:bg-[var(--od-surface-subtle)]",
+          "border border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink)] shadow-[var(--od-shadow)] hover:bg-[var(--od-surface-subtle)]",
         secondary:
           "bg-[var(--od-neutral-soft)] text-[var(--od-ink)] hover:bg-[var(--od-border-strong)]",
         ghost:
           "text-[var(--od-ink-secondary)] hover:bg-[var(--od-surface-subtle)] hover:text-[var(--od-ink)]",
-        link: "text-[var(--od-ink)] underline-offset-4 hover:underline",
+        link: "text-[var(--od-link)] underline-offset-4 hover:underline",
       },
       size: {
         default: "h-9 px-3.5 py-2",
