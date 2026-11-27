@@ -41,6 +41,9 @@ func (s *Service) Receipt(ctx context.Context, p *auth.Principal, id uuid.UUID, 
 		if err != nil {
 			return err
 		}
+		if str(m["status"]) != "completed" {
+			return httpx.Conflict("invalid_status", "A receipt is only available for a completed sale")
+		}
 		if recordPrint {
 			if err := s.Audit.Record(ctx, tx, p, "sale.receipt_printed", "sale", id, nil, nil); err != nil {
 				return err
@@ -84,8 +87,12 @@ func (s *Service) Receipt(ctx context.Context, p *auth.Principal, id uuid.UUID, 
 func (s *Service) RecordReceiptPrint(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := s.loadSale(ctx, tx, p, id); err != nil {
+		m, err := s.loadSale(ctx, tx, p, id)
+		if err != nil {
 			return err
+		}
+		if str(m["status"]) != "completed" {
+			return httpx.Conflict("invalid_status", "A receipt can only be printed for a completed sale")
 		}
 		if err := s.Audit.Record(ctx, tx, p, "sale.receipt_printed", "sale", id, nil, nil); err != nil {
 			return err
@@ -111,6 +118,9 @@ func (s *Service) Invoice(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 		m, err := s.loadSale(ctx, tx, p, id)
 		if err != nil {
 			return err
+		}
+		if str(m["status"]) != "completed" {
+			return httpx.Conflict("invalid_status", "An invoice is only available for a completed sale")
 		}
 		// Shop sales carry a single immutable receipt_no; services invoices live in app.invoices.
 		m["invoice_number"] = m["number"]
@@ -336,6 +346,9 @@ func (s *Service) SendReceipt(ctx context.Context, p *auth.Principal, id uuid.UU
 		m, err := s.loadSale(ctx, tx, p, id)
 		if err != nil {
 			return err
+		}
+		if str(m["status"]) != "completed" {
+			return httpx.Conflict("invalid_status", "A receipt can only be sent for a completed sale")
 		}
 		cid, _ := m["customer_id"].(*uuid.UUID)
 		if cid == nil {
