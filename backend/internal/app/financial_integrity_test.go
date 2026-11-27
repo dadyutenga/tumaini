@@ -786,3 +786,101 @@ func TestFinancialIntegrity_ServiceDiscountAuthorityControls(t *testing.T) {
 	require.Equal(t, 201, ownerInv.code, ownerInv.raw)
 	require.True(t, dec(ownerInv.data["total"]).Equal(rd("45000")), ownerInv.raw)
 }
+
+// TestFinancialIntegrity_ConcurrentContractorAndSupplierPayments verifies that concurrent
+// payouts against the same contractor bill or supplier purchase serialize cleanly via row locks
+// so balances can never be corrupted or double-paid.
+func TestFinancialIntegrity_ConcurrentContractorAndSupplierPayments(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	// Seed a funded bank account for payouts.
+	bankRes := e.owner.call(t, http.MethodPost, "/api/v1/money-accounts", map[string]any{
+		"name": "Payout Bank", "type": "bank", "opening_balance": "500000",
+	}, "")
+	require.Equal(t, 201, bankRes.code, bankRes.raw)
+	bankID := str(bankRes.data["id"])
+
+	// 1. Concurrent contractor payouts against a single 40,000 bill.
+	clientRes := e.owner.call(t, http.MethodPost, "/api/v1/clients", map[string]any{"name": "Bill Client"}, "")
+	require.Equal(t, 201, clientRes.code, clientRes.raw)
+	projRes := e.owner.call(t, http.MethodPost, "/api/v1/projects", map[string]any{
+		"client_id": str(clientRes.data["id"]), "name": "Print Project", "total_price": "100000",
+	}, "")
+	require.Equal(t, 201, projRes.code, projRes.raw)
+	ctRes := e.owner.call(t, http.MethodPost, "/api/v1/contractors", map[string]any{"name": "Print House"}, "")
+	require.Equal(t, 201, ctRes.code, ctRes.raw)
+	ctID := str(ctRes.data["id"])
+	costRes := e.owner.call(t, http.MethodPost, "/api/v1/service-costs", map[string]any{
+		"kind": "contractor", "project_id": str(projRes.data["id"]), "contractor_id": ctID,
+		"description": "Offset printing", "amount": "40000", "paid_now": false,
+	}, key())
+	require.Equal(t, 201, costRes.code, costRes.raw)
+
+	start1 := make(chan struct{})
+	var wg1 sync.WaitGroup
+	ctCodes := make([]int, 2)
+	for i := 0; i < 2; i++ {
+		wg1.Add(1)
+		go func(idx int) {
+			defer wg1.Done()
+			<-start1
+			r := e.owner.call(t, http.MethodPost, "/api/v1/contractors/"+ctID+"/payments", map[string]any{
+				"amount": "40000", "method": "bank", "money_account_id": bankID, "reference": "CT-PAY",
+			}, key())
+			ctCodes[idx] = r.code
+		}(i)
+	}
+	close(start1)
+	wg1.Wait()
+
+	ctOK, ctConflict := 0, 0
+	for _, code := range ctCodes {
+		if code == 201 {
+			ctOK++
+		} else if code == 409 {
+			ctConflict++
+		}
+	}
+	require.Equal(t, 1, ctOK, "exactly one concurrent contractor payout must succeed: %v", ctCodes)
+	require.Equal(t, 1, ctConflict, "second concurrent contractor payout must be rejected as 409 overpayment: %v", ctCodes)
+
+	// 2. Concurrent supplier payouts explicitly allocated to the same 60,000 purchase order.
+	supRes := e.owner.call(t, http.MethodPost, "/api/v1/suppliers", map[string]any{"name": "Bulk Supplier"}, "")
+	require.Equal(t, 201, supRes.code, supRes.raw)
+	supID := str(supRes.data["id"])
+	prodID := e.product(t, "Cooking Oil", "8000", "", "6000")
+	poRes := e.owner.call(t, http.MethodPost, "/api/v1/purchase-orders", map[string]any{
+		"supplier_id": supID,
+		"items":       []map[string]any{{"product_id": prodID, "qty": "10", "unit_cost": "6000"}},
+	}, "")
+	require.Equal(t, 201, poRes.code, poRes.raw)
+	poID := str(poRes.data["id"])
+
+	start2 := make(chan struct{})
+	var wg2 sync.WaitGroup
+	supCodes := make([]int, 2)
+	for i := 0; i < 2; i++ {
+		wg2.Add(1)
+		go func(idx int) {
+			defer wg2.Done()
+			<-start2
+			r := e.owner.call(t, http.MethodPost, "/api/v1/suppliers/"+supID+"/payments", map[string]any{
+				"amount": "60000", "method": "bank", "money_account_id": bankID, "reference": "SUP-PAY",
+				"allocations": []map[string]any{{"purchase_id": poID, "amount": "60000"}},
+			}, key())
+			supCodes[idx] = r.code
+		}(i)
+	}
+	close(start2)
+	wg2.Wait()
+
+	supOK, supConflict := 0, 0
+	for _, code := range supCodes {
+		if code == 201 {
+			supOK++
+		} else if code == 409 {
+			supConflict++
+		}
+	}
+	require.Equal(t, 1, supOK, "exactly one concurrent supplier allocation must succeed: %v", supCodes)
+	require.Equal(t, 1, supConflict, "second concurrent supplier allocation must be rejected with 409: %v", supCodes)
+}

@@ -1835,8 +1835,9 @@ func (s *Service) PayContractor(ctx context.Context, p *auth.Principal, id uuid.
 		return 0, nil, err
 	}
 	return s.idemTx(ctx, p, func(ctx context.Context, tx pgx.Tx) (int, any, error) {
-		if err := require404(ctx, tx, "app.contractors", "Contractor", p.TenantID, id); err != nil {
-			return 0, nil, err
+		var contractorID uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT id FROM app.contractors WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&contractorID); err != nil {
+			return 0, nil, httpx.NotFound("not_found", "Contractor not found")
 		}
 		amount := money.Money(in.Amount)
 		r, err := tx.Query(ctx, `

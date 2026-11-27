@@ -586,8 +586,9 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, supplierID uuid.UU
 		return 0, nil, err
 	}
 	return s.idemRun(ctx, p, func(ctx context.Context, tx pgx.Tx) (int, any, error) {
-		if _, err := supplierRow(ctx, tx, p.TenantID, supplierID); err != nil {
-			return 0, nil, err
+		var lockedSup uuid.UUID
+		if err := tx.QueryRow(ctx, `SELECT id FROM app.suppliers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, supplierID).Scan(&lockedSup); err != nil {
+			return 0, nil, httpx.NotFound("not_found", "Supplier not found")
 		}
 		amt := money.Money(in.Amount)
 		method := ""
