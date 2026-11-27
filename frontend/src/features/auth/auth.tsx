@@ -99,12 +99,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const profile = await get<Me>("/me");
       const allowed = profile.branches ?? [];
       let next = branchId || defaultBranch || allowed[0] || null;
-      if (
-        !profile.is_owner &&
-        allowed.length === 1 &&
-        next &&
-        next !== allowed[0]
-      ) {
+      if (!profile.is_owner && allowed.length === 1 && next && next !== allowed[0]) {
         next = allowed[0];
       }
       session.setBranch(next);
