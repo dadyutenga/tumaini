@@ -51,40 +51,45 @@
   --font-mono: var(--od-font-mono, "Geist Mono", ui-monospace, monospace);
 }
 
-/* OpenDashboards Light tokens mapped onto Tailwind / shadcn variables */
+/* OpenDashboards Soft Light tokens mapped onto Tailwind / shadcn variables */
 :root {
+  color-scheme: light;
   --radius: 0.625rem;
-  --background: var(--od-page, #ffffff);
-  --foreground: var(--od-ink, #0d0d0d);
-  --surface: var(--od-surface, #ffffff);
-  --surface-elevated: var(--od-surface, #ffffff);
-  --sidebar: var(--od-app-sidebar, oklch(0.985 0 0));
-  --card: var(--od-surface, #ffffff);
-  --card-foreground: var(--od-ink, #0d0d0d);
-  --popover: var(--od-surface, #ffffff);
-  --popover-foreground: var(--od-ink, #0d0d0d);
-  --primary: var(--od-app-primary, oklch(0.205 0 0));
-  --primary-foreground: var(--od-app-primary-foreground, oklch(0.985 0 0));
-  --secondary: var(--od-app-secondary, oklch(0.97 0 0));
-  --secondary-foreground: var(--od-app-secondary-foreground, oklch(0.205 0 0));
-  --muted: var(--od-app-muted, oklch(0.97 0 0));
-  --muted-foreground: var(--od-ink-muted, rgba(13, 13, 13, 0.52));
-  --accent: var(--od-surface-subtle, rgba(0, 0, 0, 0.04));
-  --accent-foreground: var(--od-ink, #0d0d0d);
-  --success: var(--od-good, #079455);
-  --warning: var(--od-warning, #cd8200);
-  --info: var(--od-info, #317ce6);
-  --destructive: var(--od-app-destructive, oklch(0.577 0.245 27.325));
-  --destructive-foreground: #ffffff;
-  --border: var(--od-app-border, oklch(0.922 0 0));
-  --input: var(--od-border-strong, rgba(0, 0, 0, 0.1));
-  --ring: var(--od-app-ring, oklch(0.708 0 0));
+  --shadow-card: 0 1px 2px rgb(40 35 25 / 0.06);
+  --background: var(--od-page, #eeece6);
+  --foreground: var(--od-ink, #2a2d33);
+  --surface: var(--od-surface, #f7f5f0);
+  --surface-elevated: var(--od-surface, #f7f5f0);
+  --sidebar: var(--od-app-sidebar, #e6e3db);
+  --card: var(--od-surface, #f7f5f0);
+  --card-foreground: var(--od-ink, #2a2d33);
+  --popover: var(--od-surface, #f7f5f0);
+  --popover-foreground: var(--od-ink, #2a2d33);
+  --primary: var(--od-app-primary, #343c4a);
+  --primary-foreground: var(--od-app-primary-foreground, #f7f5f0);
+  --secondary: var(--od-app-secondary, #e6e3db);
+  --secondary-foreground: var(--od-app-secondary-foreground, #2a2d33);
+  --muted: var(--od-app-muted, #e6e3db);
+  --muted-foreground: var(--od-ink-muted, #585d66);
+  --accent: var(--od-surface-subtle, #e6e3db);
+  --accent-foreground: var(--od-ink, #2a2d33);
+  --link: var(--od-link, #2f5f9e);
+  --success: var(--od-good, #236b48);
+  --warning: var(--od-warning, #85570d);
+  --info: var(--od-info, #2f5f9e);
+  --destructive: var(--od-app-destructive, #a4353c);
+  --destructive-foreground: var(--od-app-primary-foreground, #f7f5f0);
+  --border: var(--od-app-border, #cfcbc0);
+  --input: var(--od-input-border, #c5c1b5);
+  --ring: var(--od-app-ring, #2f5f9e);
 }
 
 /* OpenDashboards Dark tokens mapped onto Tailwind / shadcn variables */
 :root.dark,
 :root[data-mode="dark"] {
+  color-scheme: dark;
   --radius: 0.625rem;
+  --shadow-card: 0 2px 6px -2px rgba(0, 0, 0, 0.22), 0 3px 10px -3px rgba(0, 0, 0, 0.16);
   --background: var(--od-page, #141414);
   --foreground: var(--od-ink, #fafafa);
   --surface: var(--od-surface, #151515);

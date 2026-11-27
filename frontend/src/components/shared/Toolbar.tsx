@@ -264,7 +264,7 @@ export function NotificationBell() {
         >
           <Bell size={17} />
           {unread > 0 && (
-            <span className="od-tabular absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--od-bad-mark)] px-1 text-[10px] font-semibold text-white">
+            <span className="od-tabular absolute right-0.5 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--od-bad-pill)] px-1 text-[10px] font-semibold text-[var(--od-badge-on-solid)]">
               {unread > 99 ? "99+" : unread}
             </span>
           )}
@@ -338,6 +338,14 @@ export function NotificationBell() {
   );
 }
 
+const THEME_ORDER = ["system", "light", "high-contrast", "dark"] as const;
+const THEME_LABELS: Record<string, string> = {
+  system: "System",
+  light: "Soft light",
+  "high-contrast": "High contrast light",
+  dark: "Dark",
+};
+
 export function ThemeToggle() {
   const [theme, setTheme] = useState(() => localStorage.getItem("theme") ?? "system");
   useEffect(() => {
@@ -346,18 +354,20 @@ export function ThemeToggle() {
     return () => window.removeEventListener("themechange", update);
   }, []);
   const toggle = () => {
-    const next = theme === "system" ? "light" : theme === "light" ? "dark" : "system";
+    const idx = THEME_ORDER.indexOf(theme as (typeof THEME_ORDER)[number]);
+    const next = THEME_ORDER[(idx + 1) % THEME_ORDER.length];
     localStorage.setItem("theme", next);
     setTheme(next);
     window.dispatchEvent(new Event("themechange"));
   };
+  const label = THEME_LABELS[theme] ?? theme;
   return (
     <Button
       variant="ghost"
       size="icon"
       onClick={toggle}
-      title={`Theme: ${theme}`}
-      aria-label={`Theme: ${theme}. Change theme`}
+      title={`Theme: ${label}`}
+      aria-label={`Theme: ${label}. Change theme`}
     >
       <SunMoon size={17} />
     </Button>

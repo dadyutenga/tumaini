@@ -118,8 +118,8 @@
   padding: 0 10px;
   border: 1px solid transparent;
   border-radius: var(--od-app-radius, 10px);
-  background: var(--od-app-primary, #1c1c1c);
-  color: var(--od-app-primary-foreground, #fafafa);
+  background: var(--od-app-primary, #343c4a);
+  color: var(--od-app-primary-foreground, #f7f5f0);
   font-family: var(--od-font-sans);
   font-size: 14px;
   font-weight: 500;
@@ -128,14 +128,14 @@
 }
 
 .od-btn-outline {
-  border-color: var(--od-app-border, #e5e5e5);
-  background: var(--od-app-background, #fff);
-  color: var(--od-app-foreground, #171717);
+  border-color: var(--od-app-border, #cfcbc0);
+  background: var(--od-surface, #f7f5f0);
+  color: var(--od-app-foreground, #2a2d33);
 }
 
 .od-btn-ghost {
   background: transparent;
-  color: var(--od-app-foreground, #171717);
+  color: var(--od-app-foreground, #2a2d33);
 }
 
 .od-bevel {
@@ -144,11 +144,11 @@
   gap: 10px;
   height: 48px;
   padding: 0 8px 0 20px;
-  border: 1px solid rgb(255 255 255 / 0.12);
+  border: 1px solid rgb(247 245 240 / 0.14);
   border-radius: 999px;
-  background: var(--od-mkt-bevel-primary, #0a0a0a);
-  color: var(--od-mkt-bevel-primary-ink, #fff);
-  box-shadow: inset 0 7px 12px -6px rgb(255 255 255 / 0.1), inset 0 -5px 8px -2px rgb(0 0 0 / 0.6);
+  background: var(--od-mkt-bevel-primary, #343c4a);
+  color: var(--od-mkt-bevel-primary-ink, #f7f5f0);
+  box-shadow: inset 0 7px 12px -6px rgb(247 245 240 / 0.12), inset 0 -5px 8px -2px rgb(40 35 25 / 0.35);
   font-family: var(--od-font-display);
   font-size: 16px;
   font-weight: 500;
@@ -161,19 +161,19 @@
   width: 32px;
   height: 32px;
   border-radius: 999px;
-  background: #fff;
-  color: #0a0a0a;
+  background: var(--od-surface, #f7f5f0);
+  color: var(--od-ink, #2a2d33);
   font-size: 16px;
 }
 
 .od-bevel-secondary {
-  border-color: rgb(0 0 0 / 0.08);
-  background: var(--od-mkt-secondary, #f7f7f8);
-  color: var(--od-mkt-ink, #0a0a0a);
-  box-shadow: inset 0 2px 1px -0.5px #fff, inset 0 -3px 6px -1px rgb(0 0 0 / 0.04);
+  border-color: var(--od-border-strong, #cfcbc0);
+  background: var(--od-mkt-secondary, #e6e3db);
+  color: var(--od-mkt-ink, #2a2d33);
+  box-shadow: inset 0 2px 1px -0.5px var(--od-surface, #f7f5f0), inset 0 -3px 6px -1px rgb(40 35 25 / 0.05);
 }
 
 .od-bevel-secondary .od-bevel-badge {
-  background: #0a0a0a;
-  color: #fff;
+  background: var(--od-app-primary, #343c4a);
+  color: var(--od-app-primary-foreground, #f7f5f0);
 }
