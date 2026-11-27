@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { FileText } from "lucide-react";
+import { Link } from "react-router-dom";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -7,7 +8,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { DataGrid, PageHeader, Pager, StatusBadge } from "@/components/shared/kit";
 import { EmptyState } from "@/components/shared/Display";
 import { errorMessage, useGet, useGetPage } from "@/hooks/useApi";
-import { download } from "@/lib/api";
+import { useAuth } from "@/features/auth/auth";
+import { ApiError, download } from "@/lib/api";
 import { formatDate, formatMoney } from "@/lib/formatters";
 
 const time = (v: string | null) =>
@@ -269,6 +271,49 @@ function Payments() {
   );
 }
 
+/** Shown when the signed-in account has no employee record: what that blocks and who can fix it. */
+function NotLinked() {
+  const { can, user } = useAuth();
+  const canLink = can("security.user.manage");
+  const signIn = [user?.name, user?.phone ?? user?.email].filter(Boolean).join(", ");
+  return (
+    <EmptyState
+      title="No employee profile linked"
+      description="You can sign in, but this account is not connected to an employee record. Payslips, attendance, loans, leave requests and clock-in need that connection."
+      action={
+        canLink ? (
+          <div className="max-w-md space-y-3 text-left text-[12px] leading-[1.5] text-[var(--od-ink-secondary)]">
+            <p className="font-semibold text-[var(--od-ink)]">How to link it</p>
+            <ol className="list-decimal space-y-1 pl-4">
+              <li>If this person has no employee record yet, add one under People.</li>
+              <li>
+                In Team and roles, choose Edit next to the account, pick the record under “Link to
+                employee profile” and save.
+              </li>
+            </ol>
+            <p>An owner who does not need payslips or attendance can leave it unlinked.</p>
+            <div className="flex flex-wrap justify-center gap-2">
+              {can("hr.employee.manage") && (
+                <Button asChild size="sm" variant="outline">
+                  <Link to="/people?new=1">Add employee</Link>
+                </Button>
+              )}
+              <Button asChild size="sm">
+                <Link to="/team">Open Team and roles</Link>
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <p className="max-w-sm text-[12px] leading-[1.5] text-[var(--od-ink-secondary)]">
+            Ask an Admin to link it. Tell them which account is yours:{" "}
+            <span className="font-semibold text-[var(--od-ink)]">{signIn}</span>
+          </p>
+        )
+      }
+    />
+  );
+}
+
 export default function MyWork() {
   const me = useGet<{ name: string; employee_no?: string }>("/me/employee");
   return (
@@ -281,11 +326,10 @@ export default function MyWork() {
             : "Your attendance, payslips and loans."
         }
       />
-      {me.isError ? (
-        <EmptyState
-          title="No employee profile linked"
-          description="Your login is not linked to an employee record yet. Ask a manager to link it."
-        />
+      {me.error instanceof ApiError && me.error.code === "employee_required" ? (
+        <NotLinked />
+      ) : me.isError ? (
+        <EmptyState title="Could not load your work" description={errorMessage(me.error)} />
       ) : (
         <Tabs defaultValue="payslips">
           <TabsList className="mb-4">

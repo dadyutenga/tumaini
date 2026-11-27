@@ -60,7 +60,7 @@ func (s *Service) employeeFor(ctx context.Context, tx pgx.Tx, p *auth.Principal,
 		target, source = id, "manager"
 	}
 	if target == nil {
-		return emp{}, "", httpx.Conflict("employee_required", "Link this login to an employee before clocking in")
+		return emp{}, "", httpx.Conflict("employee_required", "To clock in or out, your account must be linked to an employee record. Ask an Admin to link it.")
 	}
 	e, err := s.loadEmp(ctx, tx, p.TenantID, *target)
 	if err != nil {

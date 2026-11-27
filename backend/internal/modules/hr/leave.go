@@ -82,7 +82,7 @@ func (s *Service) RequestLeave(ctx context.Context, p *auth.Principal, in LeaveI
 		emp = in.EmployeeID
 	}
 	if emp == nil {
-		return nil, httpx.Conflict("employee_required", "Link this login to an employee before requesting leave")
+		return nil, httpx.Conflict("employee_required", "To request leave, your account must be linked to an employee record. Ask an Admin to link it.")
 	}
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {

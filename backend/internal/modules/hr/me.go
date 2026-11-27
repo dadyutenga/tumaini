@@ -14,7 +14,7 @@ import (
 
 func (s *Service) self(p *auth.Principal) error {
 	if p.EmployeeID == nil {
-		return httpx.NotFound("employee_required", "This login is not linked to an employee")
+		return httpx.NotFound("employee_required", "Your account is not linked to an employee record. An Admin can link it in Team and roles.")
 	}
 	return nil
 }

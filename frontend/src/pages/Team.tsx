@@ -585,6 +585,16 @@ export default function Team() {
             </NativeSelect>
           </Field>
         )}
+        {!editingUser?.employee_id && employees.isSuccess && unlinkedEmployees.length === 0 && (
+          <p className="od-caption">
+            This account has no employee profile, and no unlinked profile is available. To link it,
+            first add the person under{" "}
+            <Link to="/people?new=1" className="font-medium text-[var(--od-info)] hover:underline">
+              People
+            </Link>
+            , then edit this account again.
+          </p>
+        )}
       </FormDialog>
 
       <FormDialog
