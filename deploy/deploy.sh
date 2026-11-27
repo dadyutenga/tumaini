@@ -47,6 +47,11 @@ ALTER ROLE bms_api LOGIN PASSWORD :'api_pw';
 ALTER ROLE bms_jobs LOGIN PASSWORD :'jobs_pw';
 SQL
 
+if [ -n "${CLAMD_ADDR:-}" ]; then
+  log "start virus scanner"
+  "${DC[@]}" --profile scan up -d clamav
+fi
+
 log "start api and web"
 "${DC[@]}" up -d --remove-orphans api web
 

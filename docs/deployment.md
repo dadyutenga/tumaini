@@ -1,6 +1,7 @@
 # Deployment
 
-Production runs at **https://bms.qarmalab.dev** on `rida-server` (Ubuntu 24.04, shared with other apps).
+Production runs on a shared Ubuntu 24.04 server. Its name and address are deliberately not recorded here; keep
+them with the server credentials.
 
 ```
 Cloudflare (proxied) -> host nginx :443 -> 127.0.0.1:18501  web  (static frontend, nginx)
@@ -8,8 +9,9 @@ Cloudflare (proxied) -> host nginx :443 -> 127.0.0.1:18501  web  (static fronten
                                            postgres (internal network only, never published)
 ```
 
-Everything lives in `/opt/tumaini` (compose file, `.env`, `deploy.sh`, `backup-prod.sh`). The host's nginx and
-certbot (webroot, auto-renewing) terminate TLS; the vhost is `deploy/nginx/bms.conf`.
+Everything lives in `/opt/tumaini` (compose file, `.env`, `deploy.sh`, `backup-prod.sh`, `restore.sh`). The host's nginx and
+certbot (webroot, auto-renewing) terminate TLS; the vhost is `deploy/nginx/bms.conf`. The deploy workflow does not
+install it: after changing that file, re-run `scripts/provision-server.sh`.
 
 ## Branches and releases
 
@@ -26,10 +28,14 @@ That push runs the Deploy workflow. Pushes to `main` only run the CI workflows.
 | Workflow | When | What |
 | --- | --- | --- |
 | `backend-ci.yml`, `frontend-ci.yml` | pull requests and pushes touching those paths | full checks (lint, `go test -race`, ...) |
-| `deploy.yml` | push to the `deploy` branch, or run it by hand | verify (gofmt, vet, build, migrations on an empty DB, OpenAPI, frontend build and tests) -> build and push `ghcr.io/<repo>/{api,web}:sha-<12>` -> SSH deploy |
+| `deploy.yml` | push to the `deploy` branch, or run it by hand | both CI workflows (tests, vulnerability scans, lint, builds) -> build images -> scan them -> push `ghcr.io/<repo>/{api,web}:sha-<12>` -> SSH deploy |
 
-The deploy gate is deliberately the fast checks that pass today. The full Go integration suite and frontend lint
-are in the PR workflows; make them green and add them to the `verify-*` jobs to gate deploys on them.
+A failing test, a known vulnerability or a high-severity image finding stops the release. Third-party actions are
+pinned to commit hashes; update the hash and its version comment together.
+
+The `deploy` user is in the `docker` group, which is equivalent to root, so whoever holds the CI key controls the
+server. Add required reviewers to the `production` environment (repository Settings > Environments) so a push alone
+cannot release.
 
 `deploy.sh <tag>` on the server: pull images, start Postgres, take a pre-deploy backup, run migrations (as the
 Postgres superuser, inside the private network), set the `bms_api` / `bms_jobs` passwords, start api and web, wait
@@ -40,11 +46,11 @@ forward-only, so a rollback restores the previous images, not the schema; restor
 
 | Secret | Value |
 | --- | --- |
-| `SSH_HOST` | `37.60.238.125` |
-| `SSH_PORT` | `6969` |
+| `SSH_HOST` | the server address |
+| `SSH_PORT` | the SSH port |
 | `SSH_USER` | `deploy` |
 | `SSH_PRIVATE_KEY` | private half of the CI key authorised for `deploy` in `/home/deploy/.ssh/authorized_keys` |
-| `SSH_KNOWN_HOSTS` | `ssh-keyscan -p 6969 -t ed25519 37.60.238.125` (output is `[host]:port` form) |
+| `SSH_KNOWN_HOSTS` | `ssh-keyscan -p <port> -t ed25519 <address>` (output is `[host]:port` form) |
 
 The workflow logs in to GHCR on the server with the job's `GITHUB_TOKEN` for the pull and logs out afterwards.
 The workflow's `production` environment can hold required reviewers if deploys should need approval.
@@ -52,19 +58,19 @@ The workflow's `production` environment can hold required reviewers if deploys s
 ## First-time server setup
 
 ```bash
-scripts/provision-server.sh rida-server bms.qarmalab.dev path/to/ci-key.pub admin@example.com
+scripts/provision-server.sh <ssh-host> <domain> path/to/ci-key.pub admin@example.com
 ```
 
 Idempotent. It installs Docker only if missing, creates the `deploy` user, writes `/opt/tumaini/.env` with generated
-secrets (never overwritten), installs the nightly backup cron (`/etc/cron.d/tumaini-backup`, 01:15, 30 days kept in
-`/var/backups/tumaini`) and the nginx vhost plus certificate. It does not touch the firewall or other sites.
+secrets (never overwritten), installs the backup cron (`/etc/cron.d/tumaini-backup`: nightly at 01:15 with 30 days kept in
+`/var/backups/tumaini`, hourly database dumps, a monthly restore drill) and the nginx vhost plus certificate. It does not touch the firewall or other sites.
 
 Bootstrap deploy without GHCR (build on the server, then `PULL=0 /opt/tumaini/deploy.sh <tag>` as `deploy`).
 
 ## Operations
 
 ```bash
-ssh rida-server
+ssh <ssh-host>
 su - deploy -c 'cd /opt/tumaini && docker compose -f docker-compose.prod.yml ps'
 su - deploy -c 'cd /opt/tumaini && docker compose -f docker-compose.prod.yml logs -f api'
 su - deploy -c 'cd /opt/tumaini && ./backup-prod.sh manual'
@@ -73,10 +79,19 @@ su - deploy -c 'cd /opt/tumaini && ./backup-prod.sh manual'
 Restore & DR runbook: see [backup-and-dr.md](./backup-and-dr.md) (encrypted backups, `restore-verify.sh`, RPO/RTO, rollback, and migration recovery).
 Set SMTP and SMS values in `/opt/tumaini/.env` and redeploy to switch on email and SMS.
 
-## Known issues found while deploying
+## Server checks
 
-- The backend image had no `tzdata`, so the API refused to start (`DEFAULT_TIMEZONE`). Fixed in `backend/Dockerfile`.
-- The identity module still checks legacy permission keys (`users.manage`, `roles.view`) that the new schema does not
-  define, so no role can list roles or create users through the API yet. Demo users were inserted directly.
-- Many `internal/app` integration tests fail (for example `invalid_phone` in the registration helper) and the frontend
-  has 13 prettier errors; both predate this pipeline.
+| Command (in `/opt/tumaini`) | What it does |
+| --- | --- |
+| `sudo ./host-check.sh` | Reports SSH, firewall, open ports, updates, file permissions and certificates. `--apply-updates` and `--apply-ssh` change those two things only when asked |
+| `./data-check.sh` | Read-only: missing or altered uploads, debts hidden by archiving, clear-text national IDs, ledger, stock and audit integrity, backup settings |
+| `./restore-drill.sh` | Restores the newest nightly backup into a temporary database (also monthly by cron) |
+| `./verify-anchors.sh <file>` | Compares the audit trail with seal hashes saved in an earlier backup |
+
+After a change to `deploy/server-setup.sh` or the nginx vhost (new cron jobs, the restricted CI key), re-run
+`scripts/provision-server.sh`.
+
+## Virus scanning (optional)
+
+Set `CLAMD_ADDR=clamav:3310` in `.env` and deploy. ClamAV needs about 3 GB of free memory. While it starts, or if it
+stops, uploads are refused rather than stored unchecked.

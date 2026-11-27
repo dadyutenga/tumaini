@@ -77,6 +77,8 @@ services:
       SMS_WEBHOOK_URL: ${SMS_WEBHOOK_URL:-}
       SMS_API_KEY: ${SMS_API_KEY:-}
       SMS_SENDER_ID: ${SMS_SENDER_ID:-}
+      # Set to clamav:3310 to scan every upload; deploy.sh then starts the clamav service.
+      CLAMD_ADDR: ${CLAMD_ADDR:-}
     ports:
       - "127.0.0.1:${API_PORT:-18500}:8080"
     volumes:
@@ -90,6 +92,17 @@ services:
       timeout: 3s
       retries: 6
       start_period: 10s
+
+  # Optional virus scanner, started only when CLAMD_ADDR is set. It needs about 3 GB of memory and
+  # a few minutes after first start to download signatures; uploads are refused until it answers.
+  clamav:
+    image: clamav/clamav:1.4
+    profiles: ["scan"]
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    volumes:
+      - clamdb:/var/lib/clamav
 
   web:
     image: ${IMAGE_PREFIX}/web:${TAG}
@@ -108,3 +121,4 @@ services:
 volumes:
   pgdata:
   files:
+  clamdb:

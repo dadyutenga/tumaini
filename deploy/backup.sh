@@ -3,6 +3,7 @@
 # Must connect with a BYPASSRLS / superuser role (e.g. postgres) because FORCE ROW LEVEL SECURITY
 # is enabled on tenant tables.
 #   BACKUP_DATABASE_URL=postgres://postgres:...@127.0.0.1:5433/bms BACKUP_ENCRYPTION_KEY=... ./backup.sh
+# Database only; production uses backup-prod.sh, which also saves uploaded files.
 # Keeps BACKUP_KEEP_DAYS (default 30) days locally. Set BACKUP_UPLOAD_CMD to copy each
 # dump off the server; it receives the file path as $1.
 set -euo pipefail
@@ -13,18 +14,21 @@ REQUIRE_ENC="${BACKUP_REQUIRE_ENCRYPTION:-0}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 BASE="$DIR/bms-$STAMP"
 
-notify_failure() {
+umask 077
+
+# Runs on every exit, so refusals and signals alert as well as failed commands.
+on_exit() {
   local rc=$?
-  rm -f "$BASE.dump.partial" "$BASE.dump.enc.partial"
+  rm -f "$BASE".dump*.partial
+  [ "$rc" = 0 ] && return
   echo "ERROR: backup failed with exit code $rc at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
   if [ -n "${BACKUP_ALERT_WEBHOOK_URL:-}" ]; then
     curl -fsS -m 10 -X POST -H "Content-Type: application/json" \
       -d "{\"event\":\"backup_failed\",\"host\":\"$(hostname -f 2>/dev/null || hostname)\",\"exit_code\":$rc,\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
       "$BACKUP_ALERT_WEBHOOK_URL" >/dev/null || true
   fi
-  exit "$rc"
 }
-trap notify_failure ERR
+trap on_exit EXIT
 
 mkdir -p "$DIR"
 chmod 700 "$DIR"
@@ -34,30 +38,34 @@ if [ "$REQUIRE_ENC" = "1" ] && [ -z "${BACKUP_ENCRYPTION_KEY:-}" ]; then
   exit 2
 fi
 
-raw_file="$BASE.dump"
-pg_dump --format=custom --no-owner --file="$raw_file.partial" "$BACKUP_DATABASE_URL"
-mv "$raw_file.partial" "$raw_file"
-chmod 600 "$raw_file"
-pg_restore --list "$raw_file" >/dev/null
-
-final_file="$raw_file"
+# Encrypt while streaming, so no plaintext copy touches the disk.
 if [ -n "${BACKUP_ENCRYPTION_KEY:-}" ]; then
-  enc_file="$raw_file.enc"
-  openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt \
-    -in "$raw_file" -out "$enc_file.partial" -pass env:BACKUP_ENCRYPTION_KEY
-  mv "$enc_file.partial" "$enc_file"
-  chmod 600 "$enc_file"
-  rm -f "$raw_file"
-  final_file="$enc_file"
+  final_file="$BASE.dump.enc"
+  pg_dump --format=custom "$BACKUP_DATABASE_URL" \
+    | openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt -out "$final_file.partial" -pass env:BACKUP_ENCRYPTION_KEY
+  openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 -in "$final_file.partial" -pass env:BACKUP_ENCRYPTION_KEY \
+    | { pg_restore --list >/dev/null && cat >/dev/null; }
+else
+  echo "WARNING: BACKUP_ENCRYPTION_KEY is not set; this backup is NOT encrypted" >&2
+  final_file="$BASE.dump"
+  pg_dump --format=custom --file="$final_file.partial" "$BACKUP_DATABASE_URL"
+  pg_restore --list "$final_file.partial" >/dev/null
 fi
+mv "$final_file.partial" "$final_file"
 
-sha256sum "$final_file" > "$final_file.sha256"
-chmod 600 "$final_file.sha256"
+(cd "$DIR" && sha256sum "$(basename "$final_file")" > "$(basename "$final_file").sha256")
 
 if [ -n "${BACKUP_UPLOAD_CMD:-}" ]; then
   bash -c "$BACKUP_UPLOAD_CMD" upload "$final_file"
   bash -c "$BACKUP_UPLOAD_CMD" upload "$final_file.sha256"
 fi
 
-find "$DIR" \( -name 'bms-*.dump' -o -name 'bms-*.dump.enc' -o -name 'bms-*.sha256' \) -mtime +"$KEEP" -delete
+# restore-verify.sh requires this for encrypted backups.
+if [ -n "${BACKUP_ENCRYPTION_KEY:-}" ]; then
+  . "$(dirname "$(readlink -f "$0")")/backup-lib.sh"
+  bk_mac "$final_file" > "$final_file.mac"
+  if [ -n "${BACKUP_UPLOAD_CMD:-}" ]; then bash -c "$BACKUP_UPLOAD_CMD" upload "$final_file.mac"; fi
+fi
+
+find "$DIR" \( -name 'bms-*.mac' -o -name 'bms-*.dump' -o -name 'bms-*.dump.enc' -o -name 'bms-*.sha256' \) -mtime +"$KEEP" -delete
 echo "backup written: $final_file"

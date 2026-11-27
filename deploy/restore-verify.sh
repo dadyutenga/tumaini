@@ -16,6 +16,8 @@ BACKUP_FILE="${1:?usage: restore-verify.sh <backup.dump|backup.dump.enc>}"
 [ -f "$BACKUP_FILE" ] || { echo "backup file not found: $BACKUP_FILE" >&2; exit 1; }
 
 SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+. "$SCRIPT_DIR/backup-lib.sh"
+STARTED=$SECONDS
 if [ -z "${ADMIN_DATABASE_URL:-}" ] && [ -f "$SCRIPT_DIR/.env" ]; then
   set -a; . "$SCRIPT_DIR/.env"; set +a
 fi
@@ -53,32 +55,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ -f "$BACKUP_FILE.sha256" ]; then
-  echo "==> verifying sha256 checksum"
-  sha256sum -c "$BACKUP_FILE.sha256"
-fi
+echo "==> verifying checksum and authentication"
+bk_check "$BACKUP_FILE"
 
 DUMP_SRC="$BACKUP_FILE"
 if [[ "$BACKUP_FILE" == *.enc ]]; then
-  : "${BACKUP_ENCRYPTION_KEY:?set BACKUP_ENCRYPTION_KEY to decrypt $BACKUP_FILE}"
   TMP_DUMP="$(mktemp /tmp/bms-restore-verify-XXXXXX.dump)"
   chmod 600 "$TMP_DUMP"
   echo "==> decrypting AES-256 backup"
-  openssl enc -d -aes-256-cbc -pbkdf2 -iter 600000 \
-    -in "$BACKUP_FILE" -out "$TMP_DUMP" -pass env:BACKUP_ENCRYPTION_KEY
+  bk_decrypt "$BACKUP_FILE" > "$TMP_DUMP"
   DUMP_SRC="$TMP_DUMP"
 fi
 
 echo "==> creating ephemeral verification database $VERIFY_DB"
+run_psql_admin -q < "$SCRIPT_DIR/roles.sql"
 run_psql_admin -q -c "CREATE DATABASE $VERIFY_DB;"
 
 echo "==> restoring dump into $VERIFY_DB"
 if [ "$USE_DOCKER" = 1 ]; then
   docker compose -f "$COMPOSE_FILE" exec -T postgres \
-    pg_restore -U postgres -d "$VERIFY_DB" --no-owner --exit-on-error < "$DUMP_SRC"
+    pg_restore -U postgres -d "$VERIFY_DB" --exit-on-error < "$DUMP_SRC"
 else
   verify_url="${ADMIN_DATABASE_URL%/*}/$VERIFY_DB"
-  pg_restore --dbname="$verify_url" --no-owner --exit-on-error "$DUMP_SRC"
+  pg_restore --dbname="$verify_url" --exit-on-error "$DUMP_SRC"
 fi
 
 echo "==> running post-recovery financial, inventory, and audit reconciliation"
@@ -88,9 +87,23 @@ DECLARE
   fin_mismatch bigint;
   stk_mismatch bigint;
   bad_seals    bigint;
+  bad_owners   bigint;
   sales_cnt    bigint;
   pay_cnt      bigint;
 BEGIN
+  -- Row-level security and the SECURITY DEFINER functions are only safe when bms_owner owns them.
+  SELECT count(*) INTO bad_owners FROM (
+    SELECT c.relowner AS owner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname IN ('app', 'iam', 'audit')
+    UNION ALL
+    SELECT p.proowner FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+     WHERE n.nspname IN ('app', 'iam', 'audit')
+  ) o WHERE pg_get_userbyid(o.owner) <> 'bms_owner';
+
+  IF bad_owners <> 0 THEN
+    RAISE EXCEPTION 'post-recovery ownership check failed: % objects not owned by bms_owner', bad_owners;
+  END IF;
+
   SELECT count(*) INTO fin_mismatch
     FROM app.financial_accounts a
     LEFT JOIN (
@@ -118,8 +131,9 @@ BEGIN
     RAISE EXCEPTION 'post-recovery stock reconciliation failed: % mismatched stock balances', stk_mismatch;
   END IF;
 
+  -- Every business, and the chain of events that belong to none.
   SELECT count(*) INTO bad_seals
-    FROM app.tenants t, LATERAL audit.verify_tenant(t.id) v;
+    FROM (SELECT id FROM app.tenants UNION ALL SELECT NULL) t, LATERAL audit.verify_tenant(t.id) v;
 
   IF bad_seals <> 0 THEN
     RAISE EXCEPTION 'post-recovery audit seal verification failed: % broken seals', bad_seals;
@@ -130,4 +144,4 @@ BEGIN
   RAISE NOTICE 'RESTORE VERIFIED OK: financial_mismatches=0 stock_mismatches=0 broken_audit_seals=0 sales=% payments_received=%', sales_cnt, pay_cnt;
 END $$;
 SQL
-echo "==> restore verification PASSED"
+echo "==> restore verification PASSED in $((SECONDS - STARTED))s"

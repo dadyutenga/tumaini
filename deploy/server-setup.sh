@@ -38,7 +38,11 @@ usermod -aG docker deploy
 if [ -n "${DEPLOY_PUBKEY:-}" ]; then
   install -d -m 700 -o deploy -g deploy /home/deploy/.ssh
   touch /home/deploy/.ssh/authorized_keys
-  grep -qxF "$DEPLOY_PUBKEY" /home/deploy/.ssh/authorized_keys || echo "$DEPLOY_PUBKEY" >> /home/deploy/.ssh/authorized_keys
+  # "restrict": the CI key runs commands only, with no terminal or port, agent or X11 forwarding.
+  # An earlier unrestricted copy of the same key is replaced.
+  keys=/home/deploy/.ssh/authorized_keys
+  { grep -vxF -e "$DEPLOY_PUBKEY" -e "restrict $DEPLOY_PUBKEY" "$keys" || true; echo "restrict $DEPLOY_PUBKEY"; } > "$keys.new"
+  mv "$keys.new" "$keys"
   chown deploy:deploy /home/deploy/.ssh/authorized_keys; chmod 600 /home/deploy/.ssh/authorized_keys
 fi
 
@@ -57,11 +61,14 @@ if [ ! -f "$APP_DIR/.env" ]; then
   echo "created $APP_DIR/.env with generated secrets"
 fi
 chown deploy:deploy "$APP_DIR/.env"; chmod 600 "$APP_DIR/.env"
-chmod +x "$APP_DIR"/deploy.sh "$APP_DIR"/backup-prod.sh "$APP_DIR"/restore-verify.sh
+chmod +x "$APP_DIR"/deploy.sh "$APP_DIR"/backup-prod.sh "$APP_DIR"/restore-verify.sh "$APP_DIR"/restore.sh \
+  "$APP_DIR"/restore-drill.sh "$APP_DIR"/verify-anchors.sh "$APP_DIR"/data-check.sh "$APP_DIR"/host-check.sh
 chown -R deploy:deploy "$APP_DIR"
 
 cat > /etc/cron.d/tumaini-backup <<CRON
 15 1 * * * deploy cd $APP_DIR && ./backup-prod.sh >> /var/log/tumaini-backup.log 2>&1
+45 * * * * deploy cd $APP_DIR && ./backup-prod.sh hourly >> /var/log/tumaini-backup.log 2>&1
+30 2 1 * * deploy cd $APP_DIR && ./restore-drill.sh >> /var/log/tumaini-backup.log 2>&1
 CRON
 touch /var/log/tumaini-backup.log; chown deploy:deploy /var/log/tumaini-backup.log
 
@@ -89,4 +96,5 @@ ln -sf "$SITE" "/etc/nginx/sites-enabled/$DOMAIN"
 if ! nginx -t; then rm -f "/etc/nginx/sites-enabled/$DOMAIN"; echo "nginx config invalid; vhost removed" >&2; exit 1; fi
 systemctl reload nginx
 
+log "check the host settings with: sudo $APP_DIR/host-check.sh"
 log "done. Next: deploy an image tag with $APP_DIR/deploy.sh <tag> (as the deploy user)"
