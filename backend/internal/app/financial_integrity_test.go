@@ -654,11 +654,11 @@ func TestFinancialIntegrity_ReportReconciliationAndDayClosing(t *testing.T) {
 }
 
 // TestFinancialIntegrity_NegativePaymentsAndConcurrentCreditLimit verifies that:
-// 1. Negative payment amounts are explicitly rejected instead of silently ignored.
-// 2. Non-cash overpayments are rejected while cash overpayments record exact change_due
-//    and only post the net sale total into the ledger.
-// 3. Concurrent credit sales for the same customer serialize on the customer row lock and
-//    cannot breach the customer's credit_limit.
+//  1. Negative payment amounts are explicitly rejected instead of silently ignored.
+//  2. Non-cash overpayments are rejected while cash overpayments record exact change_due
+//     and only post the net sale total into the ledger.
+//  3. Concurrent credit sales for the same customer serialize on the customer row lock and
+//     cannot breach the customer's credit_limit.
 func TestFinancialIntegrity_NegativePaymentsAndConcurrentCreditLimit(t *testing.T) {
 	e := newEnv(t, defaultNow)
 	till := e.cashAccount(t)
@@ -892,4 +892,60 @@ func TestFinancialIntegrity_ConcurrentContractorAndSupplierPayments(t *testing.T
 	}
 	require.Equal(t, 1, supOK, "exactly one concurrent supplier allocation must succeed: %v", supCodes)
 	require.Equal(t, 1, supConflict, "second concurrent supplier allocation must be rejected with 409: %v", supCodes)
+}
+
+// TestFinancialIntegrity_ServerComputedTotalsTaxAndCashOverage verifies:
+// 1. Frontend-submitted totals/unit prices are never trusted; totals & tax are computed on the backend.
+// 2. Tax totals reconcile cleanly with GET /api/v1/reports/tax.
+// 3. Cash drawer overages (counted > expected) require an explicit explanation note and record the exact positive variance.
+func TestFinancialIntegrity_ServerComputedTotalsTaxAndCashOverage(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	till := e.cashAccount(t)
+
+	// Configure a default 18% VAT rate and create a product priced at 11,800 (10,000 net + 1,800 VAT).
+	rates := e.owner.call(t, http.MethodGet, "/api/v1/tax-rates", nil, "")
+	require.Equal(t, 200, rates.code, rates.raw)
+	exempt := find(asList(rates.body["data"]), "name", "Exempt")
+	updTax := e.owner.call(t, http.MethodPut, "/api/v1/tax-rates/"+str(exempt["id"]), map[string]any{
+		"name": "VAT 18%", "rate": "18", "is_default": true, "is_active": true,
+	}, "")
+	require.Equal(t, 200, updTax.code, updTax.raw)
+
+	prod := e.product(t, "Taxed Appliance", "11800", "10", "7000")
+
+	// Client attempts to spoof unit_price=1, subtotal=1, tax_total=0, total=1 while paying 11800.
+	sale := e.owner.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+		"subtotal":  "1",
+		"tax_total": "0",
+		"total":     "1",
+		"items": []map[string]any{
+			{"product_id": prod, "qty": "1", "unit_price": "1", "line_total": "1"},
+		},
+		"payments": []map[string]any{
+			{"method": "cash", "money_account_id": till, "amount": "11800"},
+		},
+	}, key())
+	require.Equal(t, 201, sale.code, sale.raw)
+	require.True(t, dec(sale.data["subtotal"]).Equal(rd("11800")), "backend must ignore spoofed subtotal: %s", sale.raw)
+	require.True(t, dec(sale.data["total"]).Equal(rd("11800")), "backend must ignore spoofed total: %s", sale.raw)
+	require.True(t, dec(sale.data["tax_total"]).Equal(rd("1800")), "backend must compute 18% inclusive VAT: %s", sale.raw)
+
+	// Tax report must reconcile exactly to the 1,800 output VAT recorded on the sale.
+	taxRep := e.owner.call(t, http.MethodGet, "/api/v1/reports/tax?from=2026-11-01&to=2026-11-30", nil, "")
+	require.Equal(t, 200, taxRep.code, taxRep.raw)
+	require.Contains(t, taxRep.raw, "1800", "tax report should reconcile output VAT: %s", taxRep.raw)
+
+	// Day closing overage (+750 above expected 11,800) must require a reason and record positive difference.
+	noNote := e.owner.call(t, http.MethodPost, "/api/v1/day-closings", map[string]any{
+		"date": "2026-11-16", "counted_cash": "12550",
+	}, "")
+	require.Equal(t, 400, noNote.code, noNote.raw)
+
+	overage := e.owner.call(t, http.MethodPost, "/api/v1/day-closings", map[string]any{
+		"date": "2026-11-16", "counted_cash": "12550", "note": "Unclaimed customer change left in drawer",
+	}, "")
+	require.Equal(t, 201, overage.code, overage.raw)
+	require.True(t, dec(overage.data["expected_cash"]).Equal(rd("11800")), overage.raw)
+	require.True(t, dec(overage.data["counted_cash"]).Equal(rd("12550")), overage.raw)
+	require.True(t, dec(overage.data["difference"]).Equal(rd("750")), overage.raw)
 }
