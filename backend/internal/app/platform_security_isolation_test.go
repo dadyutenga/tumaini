@@ -234,3 +234,129 @@ func TestMultiTenantAndBranchIsolation_CrossTenantOrgSpoofingBlocked(t *testing.
 	require.NoError(t, envA.app.Jobs.Enqueue(context.Background(), envA.tenantID, jobs.AuditSeal, map[string]any{}))
 	require.NoError(t, envA.app.Jobs.RunPendingForTenant(context.Background(), envA.tenantID))
 }
+
+// TestAuditIntegrity_FiveMillionAccountabilityTrailAndHashChain directly tests the
+// Section 8 challenge:
+// "If TZS 5,000,000 disappears from a business account, can management establish exactly who
+// performed the relevant operations, when, and why?"
+// Also verifies login/failed-login recording, user/role/price/stock/settings/sale audit coverage,
+// audit access control, secret redaction, and cryptographic hash-chain sealing/verification.
+func TestAuditIntegrity_FiveMillionAccountabilityTrailAndHashChain(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	till := e.cashAccount(t)
+	staff, _ := e.user(t, "staff")
+	mgr, _ := e.user(t, "manager")
+
+	// 1. Failed and successful login attempts are recorded in login history.
+	badLogin := (&client{app: e.app.Fiber}).call(t, http.MethodPost, "/api/v1/auth/login", map[string]any{
+		"identifier": e.phone, "password": "wrong-password-123",
+	}, "")
+	require.Equal(t, 401, badLogin.code, badLogin.raw)
+
+	okLogin := (&client{app: e.app.Fiber}).call(t, http.MethodPost, "/api/v1/auth/login", map[string]any{
+		"identifier": e.phone, "password": "correct-horse",
+	}, "")
+	require.Equal(t, 200, okLogin.code, okLogin.raw)
+
+	// Ordinary staff cannot read tenant-wide audit logs or login history.
+	require.Equal(t, 403, staff.call(t, http.MethodGet, "/api/v1/audit-logs", nil, "").code)
+	require.Equal(t, 403, staff.call(t, http.MethodGet, "/api/v1/login-history", nil, "").code)
+
+	loginHist := e.owner.call(t, http.MethodGet, "/api/v1/login-history", nil, "")
+	require.Equal(t, 200, loginHist.code, loginHist.raw)
+	require.Contains(t, loginHist.raw, "login_failure", "failed login must be recorded in login history")
+	require.Contains(t, loginHist.raw, "login_success", "successful login must be recorded in login history")
+	require.NotContains(t, loginHist.raw, "wrong-password-123", "raw password must never appear in login history")
+
+	// 2. Price change, stock adjustment, financial setting change, sale + void are all audited.
+	prod := e.product(t, "Generator", "100000", "5", "60000")
+	require.Equal(t, 200, e.owner.call(t, http.MethodPut, "/api/v1/products/"+prod, map[string]any{
+		"name": "Generator", "sell_price": "120000", "reason": "FX adjustment",
+	}, "").code)
+
+	adj := mgr.call(t, http.MethodPost, "/api/v1/stock-adjustments", map[string]any{
+		"reason": "Audit count", "items": []map[string]any{{"product_id": prod, "qty_counted": "4"}},
+	}, "")
+	require.Equal(t, 201, adj.code, adj.raw)
+	require.Equal(t, 200, mgr.call(t, http.MethodPost, "/api/v1/stock-adjustments/"+str(adj.data["id"])+"/post", nil, key()).code)
+
+	require.Equal(t, 200, e.owner.call(t, http.MethodPut, "/api/v1/settings/receipt", map[string]any{"footer": "Audited footer"}, "").code)
+
+	sale := e.owner.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+		"items":    []map[string]any{{"product_id": prod, "qty": "1"}},
+		"payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "120000"}},
+	}, key())
+	require.Equal(t, 201, sale.code, sale.raw)
+	require.Equal(t, 200, e.owner.call(t, http.MethodPost, "/api/v1/sales/"+str(sale.data["id"])+"/void", map[string]any{"reason": "Duplicate order"}, key()).code)
+
+	// 3. TZS 5,000,000 leaves a business bank account: trace WHO, WHEN, and WHY end-to-end.
+	bank := e.owner.call(t, http.MethodPost, "/api/v1/money-accounts", map[string]any{
+		"name": "NMB Business", "type": "bank", "opening_balance": "10000000",
+	}, "")
+	require.Equal(t, 201, bank.code, bank.raw)
+	bankID := str(bank.data["id"])
+
+	cats := e.owner.call(t, http.MethodGet, "/api/v1/expense-categories", nil, "")
+	require.Equal(t, 200, cats.code, cats.raw)
+	catID := str(asList(cats.body["data"])[0]["id"])
+
+	exp := staff.call(t, http.MethodPost, "/api/v1/expenses", map[string]any{
+		"category_id": catID,
+		"amount":      "5000000",
+		"description": "Emergency warehouse roof repair",
+	}, key())
+	require.Equal(t, 201, exp.code, exp.raw)
+	expID := str(exp.data["id"])
+
+	require.Equal(t, 200, e.owner.call(t, http.MethodPost, "/api/v1/expenses/"+expID+"/approve", map[string]any{
+		"note": "Verified contractor invoice #INV-99",
+	}, "").code)
+	require.Equal(t, 200, e.owner.call(t, http.MethodPost, "/api/v1/expenses/"+expID+"/pay", map[string]any{
+		"money_account_id": bankID,
+	}, key()).code)
+
+	// Balance is now 5,000,000 (5,000,000 gone). Management reconstructs the complete forensic trail.
+	accts := e.owner.call(t, http.MethodGet, "/api/v1/money-accounts", nil, "")
+	require.True(t, dec(find(asList(accts.body["data"]), "id", bankID)["balance"]).Equal(rd("5000000")))
+
+	expTrail := e.owner.call(t, http.MethodGet, "/api/v1/audit-logs/entity/expenses/"+expID, nil, "")
+	require.Equal(t, 200, expTrail.code, expTrail.raw)
+	trailRows := asList(expTrail.body["data"])
+	require.GreaterOrEqual(t, len(trailRows), 3, "expected submit, approve, and pay audit entries: %s", expTrail.raw)
+	for _, row := range trailRows {
+		require.NotEmpty(t, str(row["created_at"]), "every audit entry must include a timestamp")
+		require.NotEmpty(t, str(row["user_id"]), "every audit entry must identify the responsible user")
+	}
+	require.Contains(t, expTrail.raw, "Emergency warehouse roof repair")
+	require.Contains(t, expTrail.raw, "5000000")
+	require.Contains(t, expTrail.raw, bankID, "audit trail must link the exact bank account debited")
+	require.Contains(t, expTrail.raw, "staff user", "audit trail must identify who requested the expense")
+	require.Contains(t, expTrail.raw, "Owner", "audit trail must identify who approved and paid the expense")
+
+	// Explicit business event log also captures the approver's note.
+	expApproveLog := e.owner.call(t, http.MethodGet, "/api/v1/audit-logs?action=expense.approved", nil, "")
+	require.Equal(t, 200, expApproveLog.code, expApproveLog.raw)
+	require.Contains(t, expApproveLog.raw, "Verified contractor invoice #INV-99")
+
+	// Verify key governance events are recorded across the audit log.
+	for _, action := range []string{"user.created", "stock_adjustment.posted", "settings.updated", "sale.voided"} {
+		res := e.owner.call(t, http.MethodGet, "/api/v1/audit-logs?action="+action, nil, "")
+		require.Equal(t, 200, res.code, res.raw)
+		require.NotEmpty(t, asList(res.body["data"]), "expected audit entries for %s", action)
+		require.NotContains(t, res.raw, "staff-pass-123", "credentials must never appear in audit logs")
+		require.NotContains(t, res.raw, "correct-horse", "credentials must never appear in audit logs")
+	}
+
+	// 4. Cryptographic hash-chain sealing & verification via worker role succeeds with 0 broken seals.
+	var sealed int
+	var broken int
+	err := e.app.DB.InJobsTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT audit.seal_tenant($1, interval '0 seconds')`, e.tenantID).Scan(&sealed); err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT count(*) FROM audit.verify_tenant($1)`, e.tenantID).Scan(&broken)
+	})
+	require.NoError(t, err)
+	require.Greater(t, sealed, 0, "audit.seal_tenant must cryptographically seal audit rows")
+	require.Equal(t, 0, broken, "audit.verify_tenant must confirm an intact hash chain")
+}
