@@ -2,7 +2,7 @@ import { DEFAULT_CURRENCY } from "@/lib/constants";
 
 export const formatNumber = (value: number, locale = "en-US") =>
   new Intl.NumberFormat(locale).format(value);
-export const formatCurrency = (value: number, currency = "USD", locale = "en-US") =>
+export const formatCurrency = (value: number, currency = activeCurrency, locale = "en-US") =>
   new Intl.NumberFormat(locale, { style: "currency", currency }).format(value);
 export const formatDate = (value: Date | string, locale = "en-US") =>
   new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(value));

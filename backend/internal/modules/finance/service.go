@@ -361,7 +361,8 @@ func (s *Service) Statement(ctx context.Context, p *auth.Principal, id uuid.UUID
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		out = map[string]any{"account": a, "from": from, "to": to, "opening_balance": opening, "total_in": in, "total_out": outSum, "closing_balance": run, "lines": lines}
+		cur := setting.String(ctx, tx, "currency.code", "TZS")
+		out = map[string]any{"account": a, "currency": cur, "from": from, "to": to, "opening_balance": opening, "total_in": in, "total_out": outSum, "closing_balance": run, "lines": lines}
 		return nil
 	})
 	return out, err

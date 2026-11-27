@@ -13,6 +13,7 @@ import (
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/money"
+	"bms/internal/platform/setting"
 )
 
 type CloseDayIn struct {
@@ -105,8 +106,9 @@ func (s *Service) DaySummary(ctx context.Context, p *auth.Principal, date string
 		} else if err != pgx.ErrNoRows {
 			return err
 		}
+		cur := setting.String(ctx, tx, "currency.code", "TZS")
 		out = map[string]any{
-			"date": d, "sales_by_method": byMethod, "payments_received": paysIn, "expenses_total": expTotal,
+			"date": d, "currency": cur, "sales_by_method": byMethod, "payments_received": paysIn, "expenses_total": expTotal,
 			"expected_cash": expectedCash, "closing": closing,
 		}
 		return nil
@@ -256,8 +258,9 @@ func (s *Service) CloseDay(ctx context.Context, p *auth.Principal, in CloseDayIn
 		if err := s.Audit.Record(ctx, tx, p, "day_closing.closed", "day_closings", id, nil, map[string]any{"date": d, "expected_cash": expectedCash, "counted_cash": counted, "difference": diff}); err != nil {
 			return err
 		}
+		cur := setting.String(ctx, tx, "currency.code", "TZS")
 		out = map[string]any{
-			"id": id, "date": d, "expected_cash": expectedCash, "counted_cash": counted, "difference": diff,
+			"id": id, "date": d, "currency": cur, "expected_cash": expectedCash, "counted_cash": counted, "difference": diff,
 			"status": "closed", "payments_received": paysIn, "expenses_total": expTotal,
 		}
 		return nil

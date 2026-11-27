@@ -6,8 +6,15 @@ describe("formatters", () => {
     expect(formatNumber(1250000, "en-US")).toBe("1,250,000");
   });
 
-  it("formats currency accurately", () => {
+  it("formats currency accurately and defaults to active tenant currency", async () => {
+    const { formatMoney, setActiveCurrency, getActiveCurrency } = await import("./formatters");
     expect(formatCurrency(49.99, "USD", "en-US")).toBe("$49.99");
+    expect(getActiveCurrency()).toBe("TZS");
+    expect(formatMoney("2500.5")).toBe("TZS 2,500.50");
+    setActiveCurrency("KES");
+    expect(formatMoney("1000")).toBe("KES 1,000.00");
+    expect(formatCurrency(1000)).toContain("1,000");
+    setActiveCurrency("TZS");
   });
 
   it("formats date in medium dateStyle", () => {

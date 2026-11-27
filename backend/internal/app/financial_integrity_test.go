@@ -621,10 +621,19 @@ func TestFinancialIntegrity_ReportReconciliationAndDayClosing(t *testing.T) {
 		"date": "2026-11-16", "counted_cash": "22500", "note": "500 TZS torn note shortage",
 	}, "")
 	require.Equal(t, 201, closed.code, closed.raw)
+	require.Equal(t, "TZS", str(closed.data["currency"]), closed.raw)
 	require.True(t, dec(closed.data["expected_cash"]).Equal(rd("23000")), closed.raw)
 	require.True(t, dec(closed.data["counted_cash"]).Equal(rd("22500")), closed.raw)
 	require.True(t, dec(closed.data["difference"]).Equal(rd("-500")), closed.raw)
 	closeID := str(closed.data["id"])
+
+	summary := e.owner.call(t, http.MethodGet, "/api/v1/day-closings/summary?date=2026-11-16", nil, "")
+	require.Equal(t, 200, summary.code, summary.raw)
+	require.Equal(t, "TZS", str(summary.data["currency"]), summary.raw)
+
+	stmt := e.owner.call(t, http.MethodGet, "/api/v1/money-accounts/"+till+"/statement?from=2026-11-01&to=2026-11-30", nil, "")
+	require.Equal(t, 200, stmt.code, stmt.raw)
+	require.Equal(t, "TZS", str(stmt.data["currency"]), stmt.raw)
 
 	// Posting a payment on the closed business date MUST fail (day locked).
 	blocked := e.owner.call(t, http.MethodPost, "/api/v1/service-invoices/"+invID+"/payments", map[string]any{
