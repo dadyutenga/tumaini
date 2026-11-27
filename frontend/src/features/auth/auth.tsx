@@ -23,6 +23,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import type { Me } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 type Status = "loading" | "authed" | "anon";
 
@@ -81,6 +83,7 @@ function storedBranch() {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<Status>("loading");
   const [me, setMe] = useState<Me | null>(null);
@@ -160,12 +163,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         );
         closeReauth(true);
       } catch (err) {
-        setReauthError(err instanceof ApiError ? err.message : "Could not verify your identity.");
+        setReauthError(err instanceof ApiError ? err.message : t.auth.couldNotVerifyYourIdentity);
       } finally {
         setReauthBusy(false);
       }
     },
-    [reauthPassword, reauthCode, closeReauth],
+    [reauthPassword, reauthCode, closeReauth, t],
   );
 
   useEffect(() => {
@@ -314,14 +317,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         <DialogContent>
           <form onSubmit={submitReauth} className="space-y-4">
             <DialogHeader>
-              <DialogTitle>Confirm your identity</DialogTitle>
+              <DialogTitle>{t.auth.confirmYourIdentity}</DialogTitle>
               <DialogDescription>
-                This sensitive account change requires confirming your password
-                {me?.mfa_enabled ? " and authenticator code" : ""}.
+                {fmt(t.auth.thisSensitiveAccountChangeRequires, {
+                  value: me?.mfa_enabled ? ` ${t.auth.andAuthenticatorCode}` : "",
+                })}
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-1">
-              <label className="text-sm font-medium">Current password *</label>
+              <label className="text-sm font-medium">{t.common.currentPassword}</label>
               <Input
                 required
                 autoFocus
@@ -333,12 +337,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             </div>
             {me?.mfa_enabled && (
               <div className="space-y-1">
-                <label className="text-sm font-medium">Authenticator or recovery code *</label>
+                <label className="text-sm font-medium">
+                  {t.common.authenticatorOrRecoveryCode}
+                </label>
                 <Input
                   required
                   inputMode="numeric"
                   autoComplete="one-time-code"
-                  placeholder="6-digit code or XXXX-XXXX"
+                  placeholder={t.auth.n6DigitCodeOrXxxx}
                   value={reauthCode}
                   onChange={(e) => setReauthCode(e.target.value)}
                 />
@@ -351,10 +357,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             )}
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => closeReauth(false)}>
-                Cancel
+                {t.common.cancel}
               </Button>
               <Button type="submit" disabled={reauthBusy}>
-                {reauthBusy ? "Verifying…" : "Confirm"}
+                {reauthBusy ? t.auth.verifying : t.common.confirm}
               </Button>
             </DialogFooter>
           </form>
@@ -363,15 +369,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       <Dialog open={warnSeconds !== null} onOpenChange={() => {}}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Session expiring soon</DialogTitle>
+            <DialogTitle>{t.auth.sessionExpiringSoon}</DialogTitle>
             <DialogDescription>
-              You have been inactive for 29 minutes. You will be signed out in {warnSeconds ?? 60}{" "}
-              seconds. Any POS sale in progress is saved as a draft.
+              {fmt(t.auth.youHaveBeenInactiveFor, { warnSeconds: warnSeconds ?? 60 })}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => void logout()}>
-              Sign out now
+              {t.auth.signOutNow}
             </Button>
             <Button
               onClick={() => {
@@ -379,7 +384,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                 setWarnSeconds(null);
               }}
             >
-              Stay signed in
+              {t.auth.staySignedIn}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -395,6 +400,7 @@ export function useAuth() {
 }
 
 function FirstLoginPasswordScreen() {
+  const { t } = useI18n();
   const { user, reloadMe, logout } = useAuth();
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -405,7 +411,7 @@ function FirstLoginPasswordScreen() {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (newPassword !== confirm) {
-      setError("New passwords do not match.");
+      setError(t.auth.newPasswordsDoNotMatch);
       return;
     }
     setBusy(true);
@@ -417,7 +423,7 @@ function FirstLoginPasswordScreen() {
       });
       await reloadMe();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not update password.");
+      setError(err instanceof ApiError ? err.message : t.auth.couldNotUpdatePassword);
     } finally {
       setBusy(false);
     }
@@ -430,14 +436,13 @@ function FirstLoginPasswordScreen() {
         className="w-full max-w-md space-y-4 rounded-2xl border bg-card p-6 shadow-[var(--od-shadow)]"
       >
         <div>
-          <h1 className="text-xl font-semibold">Change your temporary password</h1>
+          <h1 className="text-xl font-semibold">{t.auth.changeYourTemporaryPassword}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Welcome, {user?.name}. Before continuing, choose a personal password of at least 8
-            characters.
+            {fmt(t.auth.welcomeBeforeContinuingChooseA, { name: user?.name ?? "" })}
           </p>
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium">Temporary password *</label>
+          <label className="text-sm font-medium">{t.common.temporaryPassword}</label>
           <Input
             required
             type="password"
@@ -447,7 +452,7 @@ function FirstLoginPasswordScreen() {
           />
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium">New password *</label>
+          <label className="text-sm font-medium">{t.common.newPassword}</label>
           <Input
             required
             minLength={8}
@@ -458,7 +463,7 @@ function FirstLoginPasswordScreen() {
           />
         </div>
         <div className="space-y-1">
-          <label className="text-sm font-medium">Confirm new password *</label>
+          <label className="text-sm font-medium">{t.auth.confirmNewPassword}</label>
           <Input
             required
             minLength={8}
@@ -475,10 +480,10 @@ function FirstLoginPasswordScreen() {
         )}
         <div className="flex items-center justify-between gap-2 pt-2">
           <Button type="button" variant="ghost" onClick={() => void logout()}>
-            Sign out
+            {t.common.signOut}
           </Button>
           <Button type="submit" disabled={busy}>
-            {busy ? "Saving…" : "Update password"}
+            {busy ? t.common.saving : t.auth.updatePassword}
           </Button>
         </div>
       </form>
@@ -493,12 +498,13 @@ export function ProtectedRoute({
   children: ReactNode;
   permission?: string | string[];
 }) {
+  const { t } = useI18n();
   const { status, user, can } = useAuth();
   const location = useLocation();
   if (status === "loading")
     return (
       <div className="grid min-h-screen place-items-center text-sm text-muted-foreground">
-        Loading…
+        {t.common.loading2}
       </div>
     );
   if (status === "anon")

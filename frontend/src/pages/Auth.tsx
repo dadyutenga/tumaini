@@ -7,8 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Field } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { ApiError } from "@/lib/api";
+import { useI18n } from "@/features/i18n/i18n";
 
 export default function AuthPage({ mode }: { mode: string }) {
+  const { t } = useI18n();
   const isRegister = mode === "register";
   const { status, login, verifyMfa, register } = useAuth();
   const navigate = useNavigate();
@@ -88,7 +90,7 @@ export default function AuthPage({ mode }: { mode: string }) {
       }
       navigate(from, { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err : new ApiError("Something went wrong", 0));
+      setError(err instanceof ApiError ? err : new ApiError(t.common.somethingWentWrong, 0));
     } finally {
       setBusy(false);
     }
@@ -103,22 +105,22 @@ export default function AuthPage({ mode }: { mode: string }) {
           </div>
           <div>
             <h1 className="text-[22px] font-semibold tracking-tight text-[var(--od-ink)]">
-              Two-factor verification
+              {t.auth.twoFactorVerification}
             </h1>
             <p className="mt-1 text-sm text-[var(--od-ink-secondary)]">
-              Enter the 6-digit code from your authenticator app or a single-use recovery code.
+              {t.auth.enterThe6DigitCode}
             </p>
           </div>
         </div>
 
         <form onSubmit={submit} className="mt-6 space-y-4" noValidate>
-          <Field label="Verification code">
+          <Field label={t.auth.verificationCode}>
             <Input
               required
               autoFocus
               autoComplete="one-time-code"
               className="od-mono tracking-widest"
-              placeholder="123456 or XXXX-XXXX"
+              placeholder={t.common.n123456OrXxxxXxxx}
               value={mfaCode}
               onChange={(e) => setMfaCode(e.target.value)}
             />
@@ -144,10 +146,10 @@ export default function AuthPage({ mode }: { mode: string }) {
                 setError(null);
               }}
             >
-              Back
+              {t.common.back}
             </Button>
             <Button type="submit" className="flex-1" disabled={busy}>
-              {busy ? "Verifying…" : "Verify and sign in"}
+              {busy ? t.auth.verifying : t.auth.verifyAndSignIn}
             </Button>
           </div>
         </form>
@@ -159,19 +161,17 @@ export default function AuthPage({ mode }: { mode: string }) {
     <AuthLayout>
       <div>
         <h1 className="text-[22px] font-semibold tracking-tight text-[var(--od-ink)]">
-          {isRegister ? "Create your business" : "Sign in"}
+          {isRegister ? t.auth.createYourBusiness : t.common.signIn}
         </h1>
         <p className="mt-1 text-sm text-[var(--od-ink-secondary)]">
-          {isRegister
-            ? "Set up the business, its main branch and the owner account."
-            : "Use your phone number or email and your password."}
+          {isRegister ? t.auth.setUpTheBusinessIts : t.auth.useYourPhoneNumberOr}
         </p>
       </div>
 
       <form onSubmit={submit} className="mt-6 space-y-4" noValidate>
         {isRegister ? (
           <>
-            <Field label="Business name" error={error?.fields.business_name}>
+            <Field label={t.common.businessName} error={error?.fields.business_name}>
               <Input
                 required
                 value={form.business_name}
@@ -179,7 +179,7 @@ export default function AuthPage({ mode }: { mode: string }) {
                 autoComplete="organization"
               />
             </Field>
-            <Field label="Your name" error={error?.fields.owner_name}>
+            <Field label={t.auth.yourName} error={error?.fields.owner_name}>
               <Input
                 required
                 value={form.owner_name}
@@ -188,10 +188,10 @@ export default function AuthPage({ mode }: { mode: string }) {
               />
             </Field>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label="Phone" error={error?.fields.phone}>
+              <Field label={t.common.phone} error={error?.fields.phone}>
                 <Input value={form.phone} onChange={set("phone")} autoComplete="tel" />
               </Field>
-              <Field label="Email" error={error?.fields.email}>
+              <Field label={t.common.email} error={error?.fields.email}>
                 <Input
                   type="email"
                   value={form.email}
@@ -202,7 +202,7 @@ export default function AuthPage({ mode }: { mode: string }) {
             </div>
           </>
         ) : (
-          <Field label="Phone or email" error={error?.fields.identifier}>
+          <Field label={t.auth.phoneOrEmail} error={error?.fields.identifier}>
             <Input
               required
               autoFocus
@@ -213,7 +213,7 @@ export default function AuthPage({ mode }: { mode: string }) {
           </Field>
         )}
 
-        <Field label="Password" error={error?.fields.password}>
+        <Field label={t.auth.password} error={error?.fields.password}>
           <div className="relative">
             <Input
               required
@@ -226,7 +226,7 @@ export default function AuthPage({ mode }: { mode: string }) {
             />
             <button
               type="button"
-              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-label={showPassword ? t.common.hidePassword : t.common.showPassword}
               onClick={() => setShowPassword((s) => !s)}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--od-ink-muted)] transition hover:text-[var(--od-ink)]"
             >
@@ -243,13 +243,13 @@ export default function AuthPage({ mode }: { mode: string }) {
                 checked={remember}
                 onChange={(e) => setRemember(e.target.checked)}
               />
-              Remember me
+              {t.auth.rememberMe}
             </label>
             <Link
               className="font-medium text-[var(--od-link)] underline-offset-4 hover:underline"
               to="/forgot-password"
             >
-              Forgot password?
+              {t.auth.forgotPassword2}
             </Link>
           </div>
         )}
@@ -265,29 +265,29 @@ export default function AuthPage({ mode }: { mode: string }) {
         )}
 
         <Button type="submit" className="w-full" disabled={busy}>
-          {busy ? "Please wait…" : isRegister ? "Create business" : "Sign in"}
+          {busy ? t.auth.pleaseWait : isRegister ? t.auth.createBusiness : t.common.signIn}
         </Button>
       </form>
 
       <p className="mt-6 border-t border-[var(--od-border)] pt-5 text-center text-sm text-[var(--od-ink-secondary)]">
         {isRegister ? (
           <>
-            Already have an account?{" "}
+            {t.auth.alreadyHaveAnAccount}{" "}
             <Link
               className="font-medium text-[var(--od-link)] underline-offset-4 hover:underline"
               to="/login"
             >
-              Sign in
+              {t.common.signIn}
             </Link>
           </>
         ) : (
           <>
-            New business?{" "}
+            {t.auth.newBusiness}{" "}
             <Link
               className="font-medium text-[var(--od-link)] underline-offset-4 hover:underline"
               to="/register"
             >
-              Register
+              {t.common.register}
             </Link>
           </>
         )}

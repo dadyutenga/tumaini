@@ -53,7 +53,7 @@ interface LoginEvent {
 
 export default function Profile() {
   const { user, me, reloadMe } = useAuth();
-  const { locale, setLocale } = useI18n();
+  const { t, locale, setLocale } = useI18n();
   const [name, setName] = useState(user?.name ?? "");
   const [lang, setLang] = useState<Locale>((user?.language as Locale) || locale);
   const [pw, setPw] = useState({ current_password: "", new_password: "" });
@@ -85,7 +85,7 @@ export default function Profile() {
     "/me/mfa/confirm",
     {
       invalidate: ["/me/mfa"],
-      success: "Two-factor authentication enabled",
+      success: t.settings.twoFactorAuthenticationEnabled,
       onSuccess: (res) => {
         setRecoveryCodes(res.recovery_codes);
         setMfaSetupOpen(false);
@@ -100,7 +100,7 @@ export default function Profile() {
     "/me/mfa/disable",
     {
       invalidate: ["/me/mfa"],
-      success: "Two-factor authentication disabled",
+      success: t.settings.twoFactorAuthenticationDisabled,
       onSuccess: () => {
         setMfaAction(null);
         setMfaPassword("");
@@ -114,7 +114,7 @@ export default function Profile() {
     { recovery_codes: string[] }
   >("POST", "/me/mfa/recovery-codes", {
     invalidate: ["/me/mfa"],
-    success: "New recovery codes generated",
+    success: t.settings.newRecoveryCodesGenerated,
     onSuccess: (res) => {
       setRecoveryCodes(res.recovery_codes);
       setMfaAction(null);
@@ -124,14 +124,14 @@ export default function Profile() {
   });
 
   const update = useWrite<{ name: string; language: Locale }, unknown>("PUT", "/me", {
-    success: "Profile updated",
+    success: t.settings.profileUpdated,
     onSuccess: () => {
       setLocale(lang);
       void reloadMe();
     },
   });
   const change = useWrite<typeof pw, unknown>("PUT", "/auth/password", {
-    success: "Password changed",
+    success: t.settings.passwordChanged,
     onSuccess: () => {
       setPw({ current_password: "", new_password: "" });
       void reloadMe();
@@ -139,15 +139,15 @@ export default function Profile() {
   });
   const endSession = useWrite<{ id: string }>("DELETE", (b) => `/me/sessions/${b.id}`, {
     invalidate: ["/me/sessions"],
-    success: "Session signed out",
+    success: t.settings.sessionSignedOut,
   });
 
   return (
     <div className="space-y-8">
       <PageHeader
-        title="My profile"
-        description={`${user?.role_name ?? ""}${me?.is_owner ? " · Owner" : ""}`}
-        badge={me?.is_owner ? <Badge variant="secondary">Owner</Badge> : undefined}
+        title={t.settings.myProfile}
+        description={`${user?.role_name ?? ""}${me?.is_owner ? ` ${t.settings.owner}` : ""}`}
+        badge={me?.is_owner ? <Badge variant="secondary">{t.common.owner}</Badge> : undefined}
       />
 
       <div className="grid max-w-4xl gap-5 md:grid-cols-2">
@@ -159,32 +159,32 @@ export default function Profile() {
           }}
         >
           <div>
-            <h2 className="od-card-title text-[var(--od-ink)]">Profile details</h2>
-            <p className="od-card-subtitle">Update your display name and interface language.</p>
+            <h2 className="od-card-title text-[var(--od-ink)]">{t.settings.profileDetails}</h2>
+            <p className="od-card-subtitle">{t.settings.updateYourDisplayNameAnd}</p>
           </div>
-          <Field label="Name *">
+          <Field label={t.common.name}>
             <Input required value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
-          <Field label="Role">
+          <Field label={t.common.role}>
             <Input disabled value={`${user?.role_name ?? ""}${me?.is_owner ? " (Owner)" : ""}`} />
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Phone">
+            <Field label={t.common.phone}>
               <Input disabled className="od-mono" value={user?.phone ?? "-"} />
             </Field>
-            <Field label="Email">
+            <Field label={t.common.email}>
               <Input disabled value={user?.email ?? "-"} />
             </Field>
           </div>
-          <Field label="Language">
+          <Field label={t.settings.language2}>
             <NativeSelect value={lang} onChange={(e) => setLang(e.target.value as Locale)}>
-              <option value="en">English</option>
-              <option value="sw">Kiswahili (Swahili)</option>
+              <option value="en">{t.settings.english}</option>
+              <option value="sw">{t.settings.kiswahiliSwahili}</option>
             </NativeSelect>
           </Field>
           <div className="border-t border-[var(--od-border)] pt-3">
             <Button type="submit" disabled={update.isPending}>
-              Save changes
+              {t.settings.saveChanges}
             </Button>
           </div>
         </form>
@@ -198,10 +198,10 @@ export default function Profile() {
           }}
         >
           <div>
-            <h2 className="od-card-title text-[var(--od-ink)]">Change password</h2>
-            <p className="od-card-subtitle">Use at least 8 characters for a strong password.</p>
+            <h2 className="od-card-title text-[var(--od-ink)]">{t.common.changePassword}</h2>
+            <p className="od-card-subtitle">{t.settings.useAtLeast8Characters}</p>
           </div>
-          <Field label="Current password *">
+          <Field label={t.common.currentPassword}>
             <Input
               required
               type="password"
@@ -210,7 +210,7 @@ export default function Profile() {
               onChange={(e) => setPw({ ...pw, current_password: e.target.value })}
             />
           </Field>
-          <Field label="New password *">
+          <Field label={t.common.newPassword}>
             <Input
               required
               minLength={8}
@@ -222,7 +222,7 @@ export default function Profile() {
           </Field>
           <div className="border-t border-[var(--od-border)] pt-3">
             <Button type="submit" disabled={change.isPending}>
-              Change password
+              {t.common.changePassword}
             </Button>
           </div>
         </form>
@@ -232,20 +232,19 @@ export default function Profile() {
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
-              <h2 className="od-card-title text-[var(--od-ink)]">Two-factor authentication</h2>
+              <h2 className="od-card-title text-[var(--od-ink)]">
+                {t.settings.twoFactorAuthentication}
+              </h2>
               {mfa.data?.enabled ? (
                 <StatusBadge value="active" />
               ) : (
-                <Badge variant="outline">Not enabled</Badge>
+                <Badge variant="outline">{t.settings.notEnabled}</Badge>
               )}
               {mfa.data?.recommended && !mfa.data?.enabled && (
-                <Badge variant="secondary">Recommended for your role</Badge>
+                <Badge variant="secondary">{t.settings.recommendedForYourRole}</Badge>
               )}
             </div>
-            <p className="od-card-subtitle">
-              Protect your account with a 6-digit authenticator app code (TOTP) and single-use
-              recovery codes.
-            </p>
+            <p className="od-card-subtitle">{t.settings.protectYourAccountWithA}</p>
           </div>
           <div className="flex flex-wrap gap-2">
             {mfa.data?.enabled ? (
@@ -259,7 +258,7 @@ export default function Profile() {
                     setMfaAction("regen");
                   }}
                 >
-                  <KeyRound size={14} /> Regenerate codes
+                  <KeyRound size={14} /> {t.settings.regenerateCodes}
                 </Button>
                 <Button
                   size="sm"
@@ -271,7 +270,7 @@ export default function Profile() {
                     setMfaAction("disable");
                   }}
                 >
-                  <ShieldOff size={14} /> Disable MFA
+                  <ShieldOff size={14} /> {t.settings.disableMfa}
                 </Button>
               </>
             ) : (
@@ -284,7 +283,7 @@ export default function Profile() {
                   setMfaSetupOpen(true);
                 }}
               >
-                <ShieldCheck size={14} /> Enable two-factor
+                <ShieldCheck size={14} /> {t.settings.enableTwoFactor}
               </Button>
             )}
           </div>
@@ -293,17 +292,19 @@ export default function Profile() {
         {mfa.data?.enabled && (
           <div className="flex flex-wrap items-center gap-6 border-t border-[var(--od-border)] pt-3 text-xs text-[var(--od-ink-secondary)]">
             <span>
-              Method: <strong className="text-[var(--od-ink)]">Authenticator app (TOTP)</strong>
+              {t.settings.method}{" "}
+              <strong className="text-[var(--od-ink)]">{t.settings.authenticatorAppTotp}</strong>
             </span>
             <span>
-              Recovery codes remaining:{" "}
+              {t.settings.recoveryCodesRemaining}{" "}
               <strong className="od-tabular text-[var(--od-ink)]">
                 {mfa.data.recovery_codes_remaining}
               </strong>
             </span>
             {mfa.data.confirmed_at && (
               <span>
-                Enabled: <span className="od-tabular">{formatDateTime(mfa.data.confirmed_at)}</span>
+                {t.settings.enabled}{" "}
+                <span className="od-tabular">{formatDateTime(mfa.data.confirmed_at)}</span>
               </span>
             )}
           </div>
@@ -314,16 +315,14 @@ export default function Profile() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <p className="text-sm font-semibold text-[var(--od-ink)]">
-                  Save your single-use recovery codes
+                  {t.settings.saveYourSingleUseRecovery}
                 </p>
-                <p className="od-caption">
-                  Store these safely. Each code works once if you lose access to your authenticator.
-                </p>
+                <p className="od-caption">{t.settings.storeTheseSafelyEachCode}</p>
               </div>
               <div className="flex items-center gap-2">
                 <CopyButton text={recoveryCodes.join("\n")} />
                 <Button size="sm" variant="ghost" onClick={() => setRecoveryCodes(null)}>
-                  Done
+                  {t.common.done}
                 </Button>
               </div>
             </div>
@@ -351,13 +350,15 @@ export default function Profile() {
             setMfaCode("");
           }
         }}
-        title={mfaSetupData ? "Verify your authenticator app" : "Enable two-factor authentication"}
-        description={
+        title={
           mfaSetupData
-            ? "Add this secret key in Google Authenticator, Authy, or 1Password, then enter the 6-digit code."
-            : "Confirm your current password to generate a new authenticator secret."
+            ? t.settings.verifyYourAuthenticatorApp
+            : t.settings.enableTwoFactorAuthentication
         }
-        submitLabel={mfaSetupData ? "Verify and enable" : "Continue"}
+        description={
+          mfaSetupData ? t.settings.addThisSecretKeyIn : t.settings.confirmYourCurrentPasswordTo
+        }
+        submitLabel={mfaSetupData ? t.settings.verifyAndEnable : t.settings.continue}
         busy={startMfa.isPending || confirmMfa.isPending}
         onSubmit={() => {
           if (!mfaSetupData) {
@@ -368,7 +369,7 @@ export default function Profile() {
         }}
       >
         {!mfaSetupData ? (
-          <Field label="Current password *">
+          <Field label={t.common.currentPassword}>
             <Input
               required
               type="password"
@@ -382,7 +383,7 @@ export default function Profile() {
             <div className="space-y-2 rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-3">
               <div className="flex items-center justify-between gap-2">
                 <span className="text-xs font-medium text-[var(--od-ink-secondary)]">
-                  Setup secret key
+                  {t.settings.setupSecretKey}
                 </span>
                 <CopyButton text={mfaSetupData.secret} />
               </div>
@@ -390,7 +391,9 @@ export default function Profile() {
                 {mfaSetupData.secret}
               </code>
               <div className="flex items-center justify-between gap-2 border-t border-[var(--od-border)] pt-2">
-                <span className="text-xs text-[var(--od-ink-muted)]">Authenticator URI</span>
+                <span className="text-xs text-[var(--od-ink-muted)]">
+                  {t.settings.authenticatorUri}
+                </span>
                 <CopyButton text={mfaSetupData.otpauth_url} />
               </div>
             </div>
@@ -420,15 +423,15 @@ export default function Profile() {
         }}
         title={
           mfaAction === "disable"
-            ? "Disable two-factor authentication"
-            : "Regenerate recovery codes"
+            ? t.settings.disableTwoFactorAuthentication
+            : t.settings.regenerateRecoveryCodes
         }
         description={
           mfaAction === "disable"
-            ? "Confirm your password and enter a live authenticator code or recovery code."
-            : "This replaces all unused recovery codes. Enter your password and a live 6-digit authenticator code."
+            ? t.settings.confirmYourPasswordAndEnter
+            : t.settings.thisReplacesAllUnusedRecovery
         }
-        submitLabel={mfaAction === "disable" ? "Disable MFA" : "Generate new codes"}
+        submitLabel={mfaAction === "disable" ? t.settings.disableMfa : t.settings.generateNewCodes}
         busy={disableMfa.isPending || regenCodes.isPending}
         onSubmit={() => {
           if (mfaAction === "disable") {
@@ -438,7 +441,7 @@ export default function Profile() {
           }
         }}
       >
-        <Field label="Current password *">
+        <Field label={t.common.currentPassword}>
           <Input
             required
             type="password"
@@ -449,14 +452,16 @@ export default function Profile() {
         </Field>
         <Field
           label={
-            mfaAction === "disable" ? "Authenticator or recovery code *" : "6-digit TOTP code *"
+            mfaAction === "disable"
+              ? t.common.authenticatorOrRecoveryCode
+              : t.settings.n6DigitTotpCode
           }
         >
           <Input
             required
             autoComplete="one-time-code"
             className="od-mono tracking-widest"
-            placeholder={mfaAction === "disable" ? "123456 or XXXX-XXXX" : "123456"}
+            placeholder={mfaAction === "disable" ? t.common.n123456OrXxxxXxxx : "123456"}
             value={mfaCode}
             onChange={(e) => setMfaCode(e.target.value)}
           />
@@ -465,23 +470,23 @@ export default function Profile() {
 
       <section className="max-w-4xl space-y-3">
         <div>
-          <h2 className="od-section-title">Active sessions</h2>
-          <p className="od-caption mt-0.5">Devices currently signed into your account.</p>
+          <h2 className="od-section-title">{t.settings.activeSessions}</h2>
+          <p className="od-caption mt-0.5">{t.settings.devicesCurrentlySignedIntoYour}</p>
         </div>
         <DataGrid
           rows={sessions.data}
           loading={sessions.isLoading}
           rowKey={(s) => s.id}
-          empty="No active sessions"
+          empty={t.settings.noActiveSessions}
           columns={[
             {
-              header: "Device",
+              header: t.common.device,
               cell: (s) => (
                 <span
                   className="line-clamp-1 max-w-xs text-xs text-[var(--od-ink)]"
                   title={s.user_agent ?? ""}
                 >
-                  {s.user_agent || "Browser session"}
+                  {s.user_agent || t.settings.browserSession}
                 </span>
               ),
             },
@@ -494,7 +499,7 @@ export default function Profile() {
               ),
             },
             {
-              header: "Last active",
+              header: t.settings.lastActive,
               cell: (s) => <span className="od-tabular">{formatDateTime(s.last_used_at)}</span>,
             },
             {
@@ -503,7 +508,7 @@ export default function Profile() {
               cell: (s) => (
                 <div className="flex justify-end">
                   {s.current ? (
-                    <Badge variant="secondary">Current</Badge>
+                    <Badge variant="secondary">{t.settings.current}</Badge>
                   ) : (
                     <Button
                       size="sm"
@@ -511,7 +516,7 @@ export default function Profile() {
                       className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                       onClick={() => endSession.mutate({ id: s.id })}
                     >
-                      Sign out
+                      {t.common.signOut}
                     </Button>
                   )}
                 </div>
@@ -523,21 +528,21 @@ export default function Profile() {
 
       <section className="max-w-4xl space-y-3">
         <div>
-          <h2 className="od-section-title">Recent logins</h2>
-          <p className="od-caption mt-0.5">Latest 10 sign-in attempts on your account.</p>
+          <h2 className="od-section-title">{t.settings.recentLogins}</h2>
+          <p className="od-caption mt-0.5">{t.settings.latest10SignInAttempts}</p>
         </div>
         <DataGrid
           rows={logins.data}
           loading={logins.isLoading}
           rowKey={(l) => l.id}
-          empty="No recent logins recorded"
+          empty={t.settings.noRecentLoginsRecorded}
           columns={[
             {
-              header: "Time",
+              header: t.common.time,
               cell: (l) => <span className="od-tabular">{formatDateTime(l.created_at)}</span>,
             },
             {
-              header: "Result",
+              header: t.common.result,
               cell: (l) => <StatusBadge value={l.success ? "active" : "rejected"} />,
             },
             {
@@ -549,7 +554,7 @@ export default function Profile() {
               ),
             },
             {
-              header: "Device",
+              header: t.common.device,
               cell: (l) => (
                 <span className="line-clamp-1 max-w-xs text-xs text-[var(--od-ink-muted)]">
                   {l.user_agent || "-"}
