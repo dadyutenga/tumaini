@@ -8,6 +8,9 @@ import (
 
 func base(t *testing.T) {
 	t.Setenv("DATABASE_URL", "postgres://x")
+	// CI exports these; the tests decide for themselves what they contain.
+	t.Setenv("JOBS_DATABASE_URL", "")
+	t.Setenv("MIGRATE_DATABASE_URL", "")
 	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
 }
 

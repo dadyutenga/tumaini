@@ -31,6 +31,7 @@ func TestAcceptance(t *testing.T) {
 		t.Setenv("JOBS_DATABASE_URL", "postgres://bms_jobs:bms_jobs_dev@127.0.0.1:5433/bms?sslmode=disable")
 	}
 	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
+	t.Setenv("RATE_LIMIT_SCOPE", uuid.NewString())
 	t.Setenv("ARGON_MEMORY", "8192")
 	t.Setenv("ARGON_TIME", "1")
 	t.Setenv("ARGON_THREADS", "1")

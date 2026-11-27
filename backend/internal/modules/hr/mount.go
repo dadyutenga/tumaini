@@ -9,7 +9,7 @@ import (
 // Mount builds the module from the shared services and registers its routes.
 // Leave requests and advances live on their own tables and do not use app.approval_requests.
 func Mount(r fiber.Router, d deps.Deps) *Service {
-	svc := New(d.DB, d.Audit, d.Approval, d.Notify, d.Clock, d.Hash, d.Store)
+	svc := New(d.DB, d.Audit, d.Approval, d.Notify, d.Clock, d.Hash, d.Uploads)
 	Register(r, &Handler{Svc: svc})
 	return svc
 }

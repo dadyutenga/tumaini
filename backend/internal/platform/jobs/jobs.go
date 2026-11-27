@@ -31,6 +31,7 @@ const (
 	ServiceReminders   = "service_reminders"
 	DispatchOutbound   = "dispatch_outbound"
 	AuditSeal          = "audit_seal"
+	ProtectNationalIDs = "protect_national_ids"
 )
 
 type Handler func(ctx context.Context, businessID uuid.UUID, payload json.RawMessage) error

@@ -496,7 +496,11 @@ func (s *Service) SessionCleanup(ctx context.Context, tenantID uuid.UUID, _ json
 		if _, err := tx.Exec(ctx, `DELETE FROM app.idempotency_keys WHERE expires_at < $1`, now); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM iam.password_reset_requests WHERE expires_at < $1`, now.Add(-24*time.Hour))
+		if _, err := tx.Exec(ctx, `DELETE FROM iam.password_reset_requests WHERE expires_at < $1`, now.Add(-24*time.Hour)); err != nil {
+			return err
+		}
+		// Rate-limit windows are timed by the database clock and last minutes.
+		_, err := tx.Exec(ctx, `DELETE FROM iam.rate_limits WHERE window_start < now() - interval '1 day'`)
 		return err
 	})
 }
@@ -511,6 +515,10 @@ func (s *Service) AuditSeal(ctx context.Context, tenantID uuid.UUID, _ json.RawM
 			return err
 		}
 		if _, err := tx.Exec(ctx, `SELECT audit.seal_tenant($1, interval '5 minutes')`, tenantID); err != nil {
+			return err
+		}
+		// Events outside any business (sign-in identity changes) form their own chain.
+		if _, err := tx.Exec(ctx, `SELECT audit.seal_tenant(NULL, interval '5 minutes')`); err != nil {
 			return err
 		}
 		row := tx.QueryRow(ctx, `SELECT seal_no, problem FROM audit.verify_tenant($1) LIMIT 1`, tenantID)

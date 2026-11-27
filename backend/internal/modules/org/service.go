@@ -449,7 +449,7 @@ func (s *Service) store(ctx context.Context, p *auth.Principal, name string, r i
 	}
 	file, err := s.Store.Save(ctx, p.TenantID.String(), safe, upload.Reader(buf), max)
 	if err != nil {
-		return uuid.Nil, httpx.BadRequest("invalid_body", err.Error())
+		return uuid.Nil, err // an API error from the scanner, or logged and reported as a server error
 	}
 	sum := sha256.Sum256(buf)
 	var id uuid.UUID

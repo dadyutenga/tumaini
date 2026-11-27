@@ -50,6 +50,24 @@ func Validation(err error) *Error {
 	return &Error{Status: fiber.StatusUnprocessableEntity, Code: "validation_failed", Message: "Check the highlighted fields", Fields: fields}
 }
 
+// publicPrefix starts the unauthenticated link routes, /api/v1/public/<resource>/<token>[/...].
+const publicPrefix = "/api/v1/public/"
+
+// LogPath is the request path as it may be written to logs: the token of a public link is the
+// credential for that link, so it is replaced.
+func LogPath(c fiber.Ctx) string { return redactPath(c.Path()) }
+
+func redactPath(path string) string {
+	if len(path) <= len(publicPrefix) || !strings.EqualFold(path[:len(publicPrefix)], publicPrefix) {
+		return path
+	}
+	parts := strings.Split(path[len(publicPrefix):], "/")
+	if len(parts) > 1 && parts[1] != "" {
+		parts[1] = ":token"
+	}
+	return path[:len(publicPrefix)] + strings.Join(parts, "/")
+}
+
 func ErrorHandler(c fiber.Ctx, err error) error {
 	var e *Error
 	if errors.As(err, &e) {
@@ -61,12 +79,12 @@ func ErrorHandler(c fiber.Ctx, err error) error {
 	var fe *fiber.Error
 	if errors.As(err, &fe) {
 		if fe.Code >= fiber.StatusInternalServerError {
-			slog.Error("fiber_internal", "err", err, "status", fe.Code, "path", c.Path(), "request_id", c.GetRespHeader("X-Request-Id"))
+			slog.Error("fiber_internal", "err", err, "status", fe.Code, "path", LogPath(c), "request_id", c.GetRespHeader("X-Request-Id"))
 			return c.Status(fe.Code).JSON(fiber.Map{"error": Error{Code: "internal_error", Message: "Something went wrong. Quote the request id if you contact support."}})
 		}
 		return c.Status(fe.Code).JSON(fiber.Map{"error": Error{Code: "http_error", Message: fe.Message}})
 	}
-	slog.Error("unhandled", "err", err, "path", c.Path(), "request_id", c.GetRespHeader("X-Request-Id"))
+	slog.Error("unhandled", "err", err, "path", LogPath(c), "request_id", c.GetRespHeader("X-Request-Id"))
 	return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": Error{Code: "internal_error", Message: "Something went wrong. Quote the request id if you contact support."}})
 }
 

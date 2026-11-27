@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -51,6 +52,10 @@ type Config struct {
 	WhatsAppAPIKey     string
 	WhatsAppSender     string
 	OutboundLog        bool
+	// RateLimitScope separates the shared rate-limit budgets of deployments using one database.
+	RateLimitScope string
+	// ClamdAddr is the host:port of a ClamAV daemon. When set, every upload must pass it.
+	ClamdAddr string
 }
 
 func Load() (Config, error) {
@@ -91,6 +96,8 @@ func Load() (Config, error) {
 		WhatsAppAPIKey:     os.Getenv("WHATSAPP_API_KEY"),
 		WhatsAppSender:     os.Getenv("WHATSAPP_SENDER"),
 		OutboundLog:        boolenv("OUTBOUND_LOG", false),
+		RateLimitScope:     os.Getenv("RATE_LIMIT_SCOPE"),
+		ClamdAddr:          os.Getenv("CLAMD_ADDR"),
 	}
 	if len(bad) > 0 {
 		return c, fmt.Errorf("invalid configuration: %s", strings.Join(bad, "; "))
@@ -136,6 +143,11 @@ func Load() (Config, error) {
 	if c.StorageDriver != "local" {
 		return c, fmt.Errorf("STORAGE_DRIVER %q is not supported; use local", c.StorageDriver)
 	}
+	if c.ClamdAddr != "" {
+		if host, port, err := net.SplitHostPort(c.ClamdAddr); err != nil || host == "" || port == "" {
+			return c, fmt.Errorf("CLAMD_ADDR must be host:port")
+		}
+	}
 	if c.SMTPHost != "" && c.SMTPFrom == "" {
 		return c, fmt.Errorf("SMTP_FROM is required when SMTP_HOST is set")
 	}
@@ -173,6 +185,16 @@ func Load() (Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// DataKey is the secret that data encrypted at rest (TOTP secrets, national ID numbers) is derived
+// from, and the key id recorded beside it. Without MFA_ENCRYPTION_KEY it falls back to JWT_SECRET,
+// in which case rotating JWT_SECRET makes that data unreadable.
+func (c Config) DataKey() (secret, keyID string) {
+	if c.MFAEncryptionKey != "" {
+		return c.MFAEncryptionKey, "env-v1"
+	}
+	return c.JWTSecret, "derived-v1"
 }
 
 // bad collects malformed variables during Load so they fail start-up instead

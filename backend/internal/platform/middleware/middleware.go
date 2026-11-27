@@ -30,7 +30,12 @@ type Scope struct {
 func RequestLogger() fiber.Handler {
 	return func(c fiber.Ctx) error {
 		start := time.Now()
-		err := c.Next()
+		// Write the error response here so the status logged is the one the client receives.
+		if err := c.Next(); err != nil {
+			if herr := c.App().ErrorHandler(c, err); herr != nil {
+				_ = c.SendStatus(fiber.StatusInternalServerError)
+			}
+		}
 		p, _ := c.Locals(principalKey).(*auth.Principal)
 		uid, tid := "", ""
 		if p != nil {
@@ -40,13 +45,13 @@ func RequestLogger() fiber.Handler {
 		slog.Info("request",
 			"request_id", requestid.FromContext(c),
 			"method", c.Method(),
-			"path", c.Path(),
+			"path", httpx.LogPath(c),
 			"status", c.Response().StatusCode(),
 			"duration_ms", time.Since(start).Milliseconds(),
 			"user_id", uid,
 			"tenant_id", tid,
 		)
-		return err
+		return nil
 	}
 }
 
@@ -82,6 +87,34 @@ type Limiter struct {
 	max   int
 	win   time.Duration
 	swept time.Time
+	// shared, when set, counts across processes and restarts; name keeps limiters apart there.
+	shared Counter
+	name   string
+}
+
+// Counter counts hits somewhere every API process can see.
+type Counter interface {
+	Hit(ctx context.Context, key string, window time.Duration) (hits, retryAfter int, err error)
+}
+
+// Share adds a shared counter behind the in-process one. name must be unique per limiter.
+func (l *Limiter) Share(c Counter, name string) *Limiter {
+	l.shared, l.name = c, name
+	return l
+}
+
+// check applies the in-process budget and then the shared one. If the shared counter fails the
+// in-process budget still holds, so a database hiccup does not lock everyone out of signing in.
+func (l *Limiter) check(c fiber.Ctx, key string) (bool, int) {
+	if ok, retryAfter := l.allow(key); !ok || l.shared == nil {
+		return ok, retryAfter
+	}
+	hits, retryAfter, err := l.shared.Hit(c.Context(), l.name+"|"+key, l.win)
+	if err != nil {
+		slog.Warn("shared rate limit unavailable", "err", err)
+		return true, 0
+	}
+	return hits <= l.max, retryAfter
 }
 
 func NewLimiter(max int, win time.Duration) *Limiter {
@@ -123,8 +156,7 @@ func (l *Limiter) allow(key string) (bool, int) {
 
 func (l *Limiter) Handler() fiber.Handler {
 	return func(c fiber.Ctx) error {
-		key := c.IP() + "|" + c.Path()
-		ok, retryAfter := l.allow(key)
+		ok, retryAfter := l.check(c, c.IP()+"|"+routeKey(c))
 		if !ok {
 			c.Set("Retry-After", strconv.Itoa(retryAfter))
 			return httpx.TooMany("too_many_requests", "Too many attempts. Wait a minute and try again.")
@@ -133,6 +165,11 @@ func (l *Limiter) Handler() fiber.Handler {
 	}
 }
 
+// routeKey names the matched route, not the requested path. Routing ignores case and a trailing
+// slash, and public routes carry a token in the path; keying on the raw path would give every
+// spelling and every guessed token its own budget.
+func routeKey(c fiber.Ctx) string { return c.Route().Method + " " + c.Route().Path }
+
 // HandlerByUser rate limits authenticated requests by user id (falling back to IP) and route path.
 func (l *Limiter) HandlerByUser() fiber.Handler {
 	return func(c fiber.Ctx) error {
@@ -140,7 +177,7 @@ func (l *Limiter) HandlerByUser() fiber.Handler {
 		if p := Principal(c); p != nil {
 			subject = p.UserID.String()
 		}
-		ok, retryAfter := l.allow(subject + "|" + c.Path())
+		ok, retryAfter := l.check(c, subject+"|"+routeKey(c))
 		if !ok {
 			c.Set("Retry-After", strconv.Itoa(retryAfter))
 			return httpx.TooMany("too_many_requests", "Too many attempts. Wait a minute and try again.")

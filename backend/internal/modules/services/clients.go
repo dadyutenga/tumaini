@@ -104,12 +104,15 @@ func (s *Service) CreateClient(ctx context.Context, p *auth.Principal, in Client
 		if err != nil {
 			return err
 		}
-		cipher, keyID, hmacBytes, last4 := encodeNationalID(in.IDNumber)
+		natID, err := s.IDs.protect(in.IDNumber)
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO app.customers (id, tenant_id, full_name, phone, email, address, national_id_ciphertext, national_id_key_id, national_id_hmac, national_id_last4,
 			                           client_status, lead_source_id, needs_summary, notes, registered_by, assigned_to)
 			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::app.client_status,$12,$13,$14,$15,$15)
-		`, id, p.TenantID, clean(in.Name), nz(ph), nz(in.Email), nz(in.Address), cipher, keyID, hmacBytes, last4, status, srcID, nz(in.Needs), nz(in.Notes), p.MembershipID); err != nil {
+		`, id, p.TenantID, clean(in.Name), nz(ph), nz(in.Email), nz(in.Address), natID.cipher, natID.keyID, natID.hmac, natID.last4, status, srcID, nz(in.Needs), nz(in.Notes), p.MembershipID); err != nil {
 			if isDup(err) {
 				return httpx.Conflict("duplicate", "A client with that phone or ID number already exists")
 			}
@@ -214,10 +217,13 @@ func (s *Service) UpdateClient(ctx context.Context, p *auth.Principal, id uuid.U
 			return err
 		}
 		if clean(in.IDNumber) != "" {
-			cipher, keyID, hmacBytes, last4 := encodeNationalID(in.IDNumber)
+			natID, err := s.IDs.protect(in.IDNumber)
+			if err != nil {
+				return err
+			}
 			if _, err := tx.Exec(ctx, `
 				UPDATE app.customers SET national_id_ciphertext=$3, national_id_key_id=$4, national_id_hmac=$5, national_id_last4=$6
-				WHERE tenant_id=$1 AND id=$2`, p.TenantID, id, cipher, keyID, hmacBytes, last4); err != nil {
+				WHERE tenant_id=$1 AND id=$2`, p.TenantID, id, natID.cipher, natID.keyID, natID.hmac, natID.last4); err != nil {
 				if isDup(err) {
 					return httpx.Conflict("duplicate", "A client with that ID number already exists")
 				}

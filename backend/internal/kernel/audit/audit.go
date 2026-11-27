@@ -68,6 +68,7 @@ var sensitiveKeyFragments = []string{
 	"api_key", "apikey", "authorization", "cookie", "credential", "bearer",
 	"private_key", "otp", "totp", "recovery_code",
 	"cvv", "cvc", "card_number", "iban",
+	"id_number", "national_id",
 }
 
 func isSensitiveKey(lk string) bool {

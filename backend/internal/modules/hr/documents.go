@@ -61,7 +61,7 @@ func (s *Service) AddDocument(ctx context.Context, p *auth.Principal, employeeID
 		}
 		file, err := s.Store.Save(ctx, p.TenantID.String(), filename, upload.Reader(content), documentMax)
 		if err != nil {
-			return httpx.BadRequest("invalid_body", err.Error())
+			return err
 		}
 		var fileID, docID uuid.UUID
 		if err := tx.QueryRow(ctx, `

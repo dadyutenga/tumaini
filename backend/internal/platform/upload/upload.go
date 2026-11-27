@@ -2,6 +2,7 @@
 package upload
 
 import (
+	"archive/zip"
 	"bytes"
 	"io"
 	"net/http"
@@ -33,7 +34,7 @@ func Read(r io.Reader, max int64, imagesOnly bool) ([]byte, string, error) {
 		return nil, "", httpx.BadRequest("invalid_body", "The file is empty")
 	}
 	mime := detect(buf)
-	if !allowedTypes[mime] || (imagesOnly && !imageTypes[mime]) {
+	if !allowedTypes[mime] || (imagesOnly && !imageTypes[mime]) || (mime == "application/zip" && !officeDocument(buf)) {
 		return nil, "", httpx.New(http.StatusUnsupportedMediaType, "unsupported_file", "That file type is not allowed. Use an image, PDF, text, CSV, or Excel/Word file.")
 	}
 	return buf, mime, nil
@@ -51,6 +52,28 @@ func detect(buf []byte) string {
 		return "text/markup"
 	}
 	return mime
+}
+
+// officeDocument reports whether a zip archive is a Word or Excel document without macros. Other
+// archives are refused: they could carry anything.
+func officeDocument(buf []byte) bool {
+	zr, err := zip.NewReader(bytes.NewReader(buf), int64(len(buf)))
+	if err != nil {
+		return false
+	}
+	var manifest, body bool
+	for _, f := range zr.File {
+		name := strings.ToLower(f.Name)
+		switch {
+		case strings.HasSuffix(name, "vbaproject.bin"):
+			return false
+		case name == "[content_types].xml":
+			manifest = true
+		case strings.HasPrefix(name, "word/"), strings.HasPrefix(name, "xl/"):
+			body = true
+		}
+	}
+	return manifest && body
 }
 
 // Reader returns the bytes as a reader again, for the storage layer.

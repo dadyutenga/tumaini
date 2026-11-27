@@ -41,6 +41,8 @@ import (
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/jobs"
 	"bms/internal/platform/middleware"
+	"bms/internal/platform/ratelimit"
+	"bms/internal/platform/scan"
 	"bms/internal/platform/sender"
 	"bms/internal/platform/storage"
 )
@@ -70,12 +72,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	outb := outbound.New(database, clk, sender.OutboundFromConfig(cfg))
 	ap := approval.New(n)
 	pepper := sha256.Sum256([]byte("auth-events:" + cfg.JWTSecret))
-	mfaKeySecret := cfg.MFAEncryptionKey
-	mfaKeyID := "env-v1"
-	if mfaKeySecret == "" {
-		mfaKeySecret = cfg.JWTSecret
-		mfaKeyID = "derived-v1"
-	}
+	mfaKeySecret, mfaKeyID := cfg.DataKey()
 	mfaKey := auth.DeriveKey(mfaKeySecret, "mfa-totp-key:v1")
 	ident := &identity.Service{
 		DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now},
@@ -91,9 +88,14 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	worker := jobs.New(jobPool)
 	worker.SetClock(clk.Now)
 	worker.Register(jobs.DispatchOutbound, outb.Dispatch)
+	var uploads storage.Store = store
+	if cfg.ClamdAddr != "" {
+		uploads = scan.Store{Store: store, Scanner: scan.Clamd{Addr: cfg.ClamdAddr}}
+	}
+	shared := ratelimit.DB{DB: database, Scope: cfg.RateLimitScope}
 	d := deps.Deps{
 		Config: cfg, DB: database, Audit: aud, Notify: n, Outbound: outb, Approval: ap,
-		Clock: clk, Store: store, Jobs: worker,
+		Clock: clk, Store: store, Uploads: uploads, Jobs: worker,
 		Hash: auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads},
 	}
 
@@ -131,7 +133,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	})
 
 	api := fiberApp.Group("/api/v1")
-	limit := middleware.NewLimiter(30, time.Minute).Handler()
+	limit := middleware.NewLimiter(30, time.Minute).Share(shared, "public").Handler()
 	authGroup := api.Group("/auth")
 	identity.RegisterPublic(authGroup, &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL}, limit)
 	recovery := &identity.Recovery{Svc: ident}
@@ -143,7 +145,8 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	svcHandler.RegisterPublic(api.Group("/public"), limit)
 
 	private := api.Group("", middleware.Auth(auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, ident.Load), middleware.Branch(database))
-	identity.Register(private, &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL})
+	identity.Register(private, &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL, Shared: shared})
+	limitCostly(private, shared)
 	for _, mount := range []func(fiber.Router, deps.Deps){
 		mountAny(org.Mount), mountAny(catalog.Mount), mountAny(inventory.Mount), mountAny(sales.Mount),
 		mountAny(customers.Mount), mountAny(expenses.Mount), mountAny(finance.Mount), mountAny(purchasing.Mount),
@@ -155,6 +158,21 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	svcHandler.Register(private)
 
 	return &App{Fiber: fiberApp, DB: database, Jobs: worker, Recovery: recovery, Outbound: outb}, nil
+}
+
+// limitCostly gives each member a per-minute budget on the routes that spend money (messages to
+// customers) or capacity (a full export). It must be registered before the modules' own handlers.
+func limitCostly(r fiber.Router, shared middleware.Counter) {
+	export := middleware.NewLimiter(5, time.Minute).Share(shared, "export").HandlerByUser()
+	send := middleware.NewLimiter(60, time.Minute).Share(shared, "send").HandlerByUser()
+	r.Post("/backups/export", export)
+	for _, path := range []string{
+		"/sales/:id/send-receipt", "/customers/:id/statement/send", "/customers/:id/debt-reminder",
+		"/clients/:id/statement/send", "/clients/:id/debt-reminder", "/service-quotations/:id/send",
+		"/design-jobs/:id/versions/:version_id/send",
+	} {
+		r.Post(path, send)
+	}
 }
 
 // mountAny adapts a module Mount that returns its service.

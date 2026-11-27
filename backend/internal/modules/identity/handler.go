@@ -15,6 +15,8 @@ type Handler struct {
 	CookieSecure bool
 	CookieDomain string
 	RefreshTTL   time.Duration
+	// Shared, when set, makes the account rate limits count across API processes and restarts.
+	Shared middleware.Counter
 }
 
 func (h *Handler) cookie(c fiber.Ctx, value string, maxAge int) {
@@ -488,7 +490,11 @@ func RegisterPublic(r fiber.Router, h *Handler, limit fiber.Handler) {
 
 func Register(r fiber.Router, h *Handler) {
 	reauth := middleware.RequireRecentAuth(h.Svc.reauthWindow(), h.Svc.Clock.Now)
-	userLimit := middleware.NewLimiter(20, time.Minute).HandlerByUser()
+	userLimiter := middleware.NewLimiter(20, time.Minute)
+	if h.Shared != nil {
+		userLimiter.Share(h.Shared, "account")
+	}
+	userLimit := userLimiter.HandlerByUser()
 
 	r.Post("/auth/logout", h.Logout)
 	r.Post("/auth/reauthenticate", userLimit, h.Reauthenticate)

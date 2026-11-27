@@ -25,6 +25,9 @@ type Deps struct {
 	Approval *approval.Service
 	Clock    clock.Clock
 	Store    storage.Store
-	Jobs     *jobs.Client
-	Hash     auth.Params
+	// Uploads is where files supplied by people are saved. It is Store, behind the virus scanner when
+	// one is configured; files the system writes itself go to Store.
+	Uploads storage.Store
+	Jobs    *jobs.Client
+	Hash    auth.Params
 }

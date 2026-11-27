@@ -5,7 +5,7 @@
 //	migrate verify   exit non-zero unless everything is applied and unchanged
 //
 // There is no "down": the approved schema is forward-only. Recovery is a restore from backup or a new
-// forward migration (see docs/deployment/rollback-plan.md).
+// forward migration (see docs/backup-and-dr.md).
 package main
 
 import (

@@ -5,7 +5,6 @@ package services
 
 import (
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math/big"
@@ -39,6 +38,8 @@ type Service struct {
 	Clock    clock.Clock
 	Store    storage.Store
 	SMS      sender.Sender
+	// IDs encrypts national ID numbers before they are stored.
+	IDs IDProtector
 }
 
 func (s *Service) bizDate(ctx context.Context, tx pgx.Tx) (string, error) {
@@ -241,22 +242,6 @@ func uuidOrNil(id *uuid.UUID) any {
 }
 
 var alnumOnly = regexp.MustCompile(`[^A-Z0-9]+`)
-
-func encodeNationalID(raw string) (cipher []byte, keyID any, hmacBytes []byte, last4 any) {
-	s := strings.TrimSpace(raw)
-	if s == "" {
-		return nil, nil, nil, nil
-	}
-	cipher = []byte(s)
-	keyID = "local-v1"
-	h := sha256.Sum256([]byte(strings.ToUpper(s)))
-	hmacBytes = h[:]
-	alnum := alnumOnly.ReplaceAllString(strings.ToUpper(s), "")
-	if len(alnum) >= 4 {
-		last4 = alnum[len(alnum)-4:]
-	}
-	return cipher, keyID, hmacBytes, last4
-}
 
 func serviceCodeFromName(name string) string {
 	s := alnumOnly.ReplaceAllString(strings.ToUpper(strings.TrimSpace(name)), "_")

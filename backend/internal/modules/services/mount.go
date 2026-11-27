@@ -11,7 +11,9 @@ import (
 // group and the private routes after it.
 func Build(d deps.Deps) *Handler {
 	_, sms := sender.FromConfig(d.Config)
-	svc := &Service{DB: d.DB, Audit: d.Audit, Notify: d.Notify, Outbound: d.Outbound, Clock: d.Clock, Store: d.Store, SMS: sms}
+	idSecret, idKeyID := d.Config.DataKey()
+	svc := &Service{DB: d.DB, Audit: d.Audit, Notify: d.Notify, Outbound: d.Outbound, Clock: d.Clock, Store: d.Store, SMS: sms,
+		IDs: NewIDProtector(idSecret, idKeyID)}
 	base := ""
 	if len(d.Config.CORSOrigins) > 0 {
 		base = d.Config.CORSOrigins[0]
@@ -19,5 +21,7 @@ func Build(d deps.Deps) *Handler {
 	h := &Handler{Svc: svc, BaseURL: base}
 	d.Jobs.Register(jobs.ServiceReminders, svc.RunReminders)
 	d.Jobs.Daily(jobs.ServiceReminders, "08:15")
+	d.Jobs.Register(jobs.ProtectNationalIDs, svc.ProtectNationalIDs)
+	d.Jobs.Daily(jobs.ProtectNationalIDs, "00:00") // due as soon as a new release starts
 	return h
 }

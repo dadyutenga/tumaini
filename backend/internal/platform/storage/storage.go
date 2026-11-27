@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
@@ -49,7 +50,13 @@ func (l *Local) Save(_ context.Context, businessID, name string, r io.Reader, ma
 		}
 		return r
 	}, filepath.Base(name))
-	rel := filepath.Join(businessID, hex.EncodeToString(sum[:8])+"_"+safe)
+	// Every save gets its own path. A path derived only from content and name would be shared by
+	// repeat uploads, so removing one record's file would destroy another's.
+	unique := make([]byte, 8)
+	if _, err := rand.Read(unique); err != nil {
+		return File{}, err
+	}
+	rel := filepath.Join(businessID, hex.EncodeToString(sum[:8])+hex.EncodeToString(unique)+"_"+safe)
 	full := filepath.Join(l.Root, rel)
 	if err := os.MkdirAll(filepath.Dir(full), 0o750); err != nil {
 		return File{}, err
