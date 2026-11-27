@@ -295,6 +295,10 @@ func TestInventoryIntegrity_ConcurrentOversellNegativeStockAndReturns(t *testing
 		"payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "100000"}},
 	}, key())
 	require.Equal(t, 409, oversell.code, oversell.raw)
+	// The cashier reads this message: it names the product and shop, never their ids.
+	require.Contains(t, oversell.raw, "Not enough stock: Limited Edition Headphones at ")
+	require.Contains(t, oversell.raw, "(short by 1)")
+	require.NotContains(t, oversell.raw, limited)
 	require.True(t, stockQty(t, e.owner, limited).Equal(rd("1")))
 
 	// Underpaid walk-in sale fails atomically (409 customer_required) without deducting stock.
