@@ -57,7 +57,7 @@ if [ ! -f "$APP_DIR/.env" ]; then
   echo "created $APP_DIR/.env with generated secrets"
 fi
 chown deploy:deploy "$APP_DIR/.env"; chmod 600 "$APP_DIR/.env"
-chmod +x "$APP_DIR"/deploy.sh "$APP_DIR"/backup-prod.sh
+chmod +x "$APP_DIR"/deploy.sh "$APP_DIR"/backup-prod.sh "$APP_DIR"/restore-verify.sh
 chown -R deploy:deploy "$APP_DIR"
 
 cat > /etc/cron.d/tumaini-backup <<CRON

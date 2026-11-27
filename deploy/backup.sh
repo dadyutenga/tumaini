@@ -1,29 +1,63 @@
 #!/usr/bin/env bash
-# Nightly full database backup (FR-SEC-07). Run from the host's cron, for example:
-#   15 1 * * * BACKUP_DATABASE_URL=postgres://bms_owner:...@127.0.0.1:5433/bms /opt/tumaini/deploy/backup.sh
+# Nightly full database backup via direct PostgreSQL connection (FR-SEC-07).
+# Must connect with a BYPASSRLS / superuser role (e.g. postgres) because FORCE ROW LEVEL SECURITY
+# is enabled on tenant tables.
+#   BACKUP_DATABASE_URL=postgres://postgres:...@127.0.0.1:5433/bms BACKUP_ENCRYPTION_KEY=... ./backup.sh
 # Keeps BACKUP_KEEP_DAYS (default 30) days locally. Set BACKUP_UPLOAD_CMD to copy each
-# dump off the server; it receives the file path as $1, for example:
-#   BACKUP_UPLOAD_CMD='rclone copy "$1" offsite:tumaini-backups/'
-# After a successful dump it records the time in every business's settings, which
-# GET /api/v1/backups shows as last_automatic_backup_at.
+# dump off the server; it receives the file path as $1.
 set -euo pipefail
-: "${BACKUP_DATABASE_URL:?set BACKUP_DATABASE_URL to the bms_owner connection string}"
+: "${BACKUP_DATABASE_URL:?set BACKUP_DATABASE_URL to a postgres/BYPASSRLS connection string}"
 DIR="${BACKUP_DIR:-/var/backups/tumaini}"
 KEEP="${BACKUP_KEEP_DAYS:-30}"
+REQUIRE_ENC="${BACKUP_REQUIRE_ENCRYPTION:-0}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+BASE="$DIR/bms-$STAMP"
+
+notify_failure() {
+  local rc=$?
+  rm -f "$BASE.dump.partial" "$BASE.dump.enc.partial"
+  echo "ERROR: backup failed with exit code $rc at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >&2
+  if [ -n "${BACKUP_ALERT_WEBHOOK_URL:-}" ]; then
+    curl -fsS -m 10 -X POST -H "Content-Type: application/json" \
+      -d "{\"event\":\"backup_failed\",\"host\":\"$(hostname -f 2>/dev/null || hostname)\",\"exit_code\":$rc,\"timestamp\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" \
+      "$BACKUP_ALERT_WEBHOOK_URL" >/dev/null || true
+  fi
+  exit "$rc"
+}
+trap notify_failure ERR
+
 mkdir -p "$DIR"
 chmod 700 "$DIR"
-stamp=$(date -u +%Y%m%dT%H%M%SZ)
-file="$DIR/bms-$stamp.dump"
-pg_dump --format=custom --no-owner --file="$file.partial" "$BACKUP_DATABASE_URL"
-mv "$file.partial" "$file"
-chmod 600 "$file"
-pg_restore --list "$file" >/dev/null
-if [ -n "${BACKUP_UPLOAD_CMD:-}" ]; then
-  bash -c "$BACKUP_UPLOAD_CMD" upload "$file"
+
+if [ "$REQUIRE_ENC" = "1" ] && [ -z "${BACKUP_ENCRYPTION_KEY:-}" ]; then
+  echo "BACKUP_ENCRYPTION_KEY is required when BACKUP_REQUIRE_ENCRYPTION=1" >&2
+  exit 2
 fi
-find "$DIR" -name 'bms-*.dump' -mtime +"$KEEP" -delete
-psql "$BACKUP_DATABASE_URL" -v ON_ERROR_STOP=1 -q -c "
-  INSERT INTO settings (business_id, key, value)
-  SELECT id, 'backup.last_automatic', to_jsonb(now()) FROM businesses
-  ON CONFLICT (business_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now();"
-echo "backup written: $file"
+
+raw_file="$BASE.dump"
+pg_dump --format=custom --no-owner --file="$raw_file.partial" "$BACKUP_DATABASE_URL"
+mv "$raw_file.partial" "$raw_file"
+chmod 600 "$raw_file"
+pg_restore --list "$raw_file" >/dev/null
+
+final_file="$raw_file"
+if [ -n "${BACKUP_ENCRYPTION_KEY:-}" ]; then
+  enc_file="$raw_file.enc"
+  openssl enc -aes-256-cbc -pbkdf2 -iter 600000 -salt \
+    -in "$raw_file" -out "$enc_file.partial" -pass env:BACKUP_ENCRYPTION_KEY
+  mv "$enc_file.partial" "$enc_file"
+  chmod 600 "$enc_file"
+  rm -f "$raw_file"
+  final_file="$enc_file"
+fi
+
+sha256sum "$final_file" > "$final_file.sha256"
+chmod 600 "$final_file.sha256"
+
+if [ -n "${BACKUP_UPLOAD_CMD:-}" ]; then
+  bash -c "$BACKUP_UPLOAD_CMD" upload "$final_file"
+  bash -c "$BACKUP_UPLOAD_CMD" upload "$final_file.sha256"
+fi
+
+find "$DIR" \( -name 'bms-*.dump' -o -name 'bms-*.dump.enc' -o -name 'bms-*.sha256' \) -mtime +"$KEEP" -delete
+echo "backup written: $final_file"

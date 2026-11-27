@@ -134,8 +134,8 @@ jobs:
           CFG
       - name: Copy deploy files
         run: |
-          tar -C deploy -cf - docker-compose.prod.yml deploy.sh backup-prod.sh .env.production.example \
-            | ssh target 'tar -C /opt/tumaini -xf - && chmod +x /opt/tumaini/deploy.sh /opt/tumaini/backup-prod.sh'
+          tar -C deploy -cf - docker-compose.prod.yml deploy.sh backup-prod.sh restore-verify.sh .env.production.example \
+            | ssh target 'tar -C /opt/tumaini -xf - && chmod +x /opt/tumaini/deploy.sh /opt/tumaini/backup-prod.sh /opt/tumaini/restore-verify.sh'
       - name: Deploy
         env:
           TAG: ${{ needs.images.outputs.tag }}

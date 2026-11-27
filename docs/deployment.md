@@ -70,7 +70,7 @@ su - deploy -c 'cd /opt/tumaini && docker compose -f docker-compose.prod.yml log
 su - deploy -c 'cd /opt/tumaini && ./backup-prod.sh manual'
 ```
 
-Restore: `docker compose -f docker-compose.prod.yml exec -T postgres pg_restore -U postgres -d bms --clean --if-exists < dump`.
+Restore & DR runbook: see [backup-and-dr.md](./backup-and-dr.md) (encrypted backups, `restore-verify.sh`, RPO/RTO, rollback, and migration recovery).
 Set SMTP and SMS values in `/opt/tumaini/.env` and redeploy to switch on email and SMS.
 
 ## Known issues found while deploying
