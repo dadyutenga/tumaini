@@ -103,7 +103,11 @@ func setContext(ctx context.Context, tx pgx.Tx, a Actor) error {
 }
 
 func inTx(ctx context.Context, pool *pgxpool.Pool, a Actor, fn func(ctx context.Context, tx pgx.Tx) error) error {
-	tx, err := pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	return inTxOpts(ctx, pool, pgx.TxOptions{IsoLevel: pgx.ReadCommitted}, a, fn)
+}
+
+func inTxOpts(ctx context.Context, pool *pgxpool.Pool, opts pgx.TxOptions, a Actor, fn func(ctx context.Context, tx pgx.Tx) error) error {
+	tx, err := pool.BeginTx(ctx, opts)
 	if err != nil {
 		return err
 	}
@@ -121,6 +125,16 @@ func inTx(ctx context.Context, pool *pgxpool.Pool, a Actor, fn func(ctx context.
 // behalf of a signed-in member so created_by, updated_by and the audit trail are attributed.
 func (d *DB) InActorTx(ctx context.Context, a Actor, fn func(ctx context.Context, tx pgx.Tx) error) error {
 	return inTx(ctx, d.Pool, a, fn)
+}
+
+// InActorReadTx runs fn in a REPEATABLE READ, READ ONLY transaction so multi-query financial
+// reports, statements, and summaries observe a single consistent MVCC snapshot without blocking
+// concurrent writers or suffering torn / non-repeatable reads.
+func (d *DB) InActorReadTx(ctx context.Context, a Actor, fn func(ctx context.Context, tx pgx.Tx) error) error {
+	return inTxOpts(ctx, d.Pool, pgx.TxOptions{
+		IsoLevel:   pgx.RepeatableRead,
+		AccessMode: pgx.ReadOnly,
+	}, a, fn)
 }
 
 // InTx runs fn in a transaction limited to one tenant. Prefer InActorTx where an actor is known.

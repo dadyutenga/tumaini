@@ -949,3 +949,66 @@ func TestFinancialIntegrity_ServerComputedTotalsTaxAndCashOverage(t *testing.T) 
 	require.True(t, dec(overage.data["counted_cash"]).Equal(rd("12550")), overage.raw)
 	require.True(t, dec(overage.data["difference"]).Equal(rd("750")), overage.raw)
 }
+
+// TestFinancialIntegrity_SnapshotIsolationNoTornReads reproduces the classic banking concurrency scenario:
+// Account starts at TZS 500,000. Transaction B opens a REPEATABLE READ READ ONLY snapshot (InActorReadTx)
+// and reads the balance; concurrently Transaction A withdraws TZS 100,000 and commits.
+// Verifies:
+// 1. Transaction B does not block Transaction A (MVCC).
+// 2. Transaction B observes a consistent TZS 500,000 across repeated queries (no dirty or torn read).
+// 3. A new transaction after A commits immediately observes TZS 400,000.
+func TestFinancialIntegrity_SnapshotIsolationNoTornReads(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	srcRes := e.owner.call(t, http.MethodPost, "/api/v1/money-accounts", map[string]any{
+		"name": "Checking 500k", "type": "bank", "opening_balance": "500000",
+	}, "")
+	require.Equal(t, 201, srcRes.code, srcRes.raw)
+	srcID := uuid.MustParse(str(srcRes.data["id"]))
+
+	dstRes := e.owner.call(t, http.MethodPost, "/api/v1/money-accounts", map[string]any{
+		"name": "Reserve Bank", "type": "bank",
+	}, "")
+	require.Equal(t, 201, dstRes.code, dstRes.raw)
+	dstID := str(dstRes.data["id"])
+
+	read1Done := make(chan struct{})
+	writeDone := make(chan struct{})
+	var firstRead, secondRead decimal.Decimal
+	var readErr error
+
+	// Transaction B: multi-query REPEATABLE READ READ ONLY snapshot.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		readErr = e.app.DB.InActorReadTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+			if err := tx.QueryRow(ctx, `SELECT current_balance FROM app.financial_accounts WHERE id = $1`, srcID).Scan(&firstRead); err != nil {
+				return err
+			}
+			close(read1Done)
+			<-writeDone // wait until Transaction A has committed its 100,000 withdrawal
+			return tx.QueryRow(ctx, `SELECT current_balance FROM app.financial_accounts WHERE id = $1`, srcID).Scan(&secondRead)
+		})
+	}()
+
+	<-read1Done
+	// Transaction A: withdraw 100,000 while Transaction B's read snapshot is still open.
+	txA := e.owner.call(t, http.MethodPost, "/api/v1/money-transfers", map[string]any{
+		"from_account_id": srcID.String(), "to_account_id": dstID, "amount": "100000", "note": "Concurrent withdrawal",
+	}, key())
+	require.Equal(t, 201, txA.code, txA.raw)
+	close(writeDone)
+	wg.Wait()
+
+	require.NoError(t, readErr)
+	require.True(t, firstRead.Equal(rd("500000")), "first read in snapshot should be 500000, got %s", firstRead)
+	require.True(t, secondRead.Equal(rd("500000")), "second read in same REPEATABLE READ snapshot must still be 500000 (no torn read), got %s", secondRead)
+
+	// Fresh read after Transaction A committed must see 400,000.
+	var afterCommit decimal.Decimal
+	err := e.app.DB.InActorReadTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT current_balance FROM app.financial_accounts WHERE id = $1`, srcID).Scan(&afterCommit)
+	})
+	require.NoError(t, err)
+	require.True(t, afterCommit.Equal(rd("400000")), "fresh read after commit must be 400000, got %s", afterCommit)
+}

@@ -63,13 +63,14 @@ func (s *Service) dayFigures(ctx context.Context, tx pgx.Tx, p *auth.Principal, 
 	return byMethod, paysIn, expenses, money.Money(expected), nil
 }
 
-// DaySummary returns end-of-day figures and any existing closing record for the date.
+// DaySummary returns end-of-day figures and any existing closing record for the date under
+// a single REPEATABLE READ snapshot so takings, expenses, and expected cash cannot tear.
 func (s *Service) DaySummary(ctx context.Context, p *auth.Principal, date string) (map[string]any, error) {
 	if p.BranchID == nil {
 		return nil, httpx.BadRequest("branch_required", "Choose a branch first")
 	}
 	var out map[string]any
-	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorReadTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		d := strings.TrimSpace(date)
 		if d == "" {
 			var err error

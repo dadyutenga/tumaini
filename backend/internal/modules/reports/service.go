@@ -78,19 +78,16 @@ func (f Filter) subtitle() string {
 	return "All dates"
 }
 
-// tx runs fn in a read-only actor transaction for the caller's tenant, with the
-// tenant timezone and business date loaded into f.
+// tx runs fn in a REPEATABLE READ, READ ONLY actor transaction for the caller's tenant, with the
+// tenant timezone and business date loaded into f so multi-query reports read one atomic MVCC snapshot.
 func (s *Service) tx(ctx context.Context, p *auth.Principal, f *Filter, fn func(ctx context.Context, tx pgx.Tx) error) error {
-	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InActorReadTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		f.tz = setting.String(ctx, tx, "system.timezone", "Africa/Dar_es_Salaam")
 		day, err := clock.BusinessDate(s.Clock.Now(), f.tz, setting.String(ctx, tx, "system.business_day_start", "00:00"))
 		if err != nil {
 			day = s.Clock.Now().UTC()
 		}
 		f.today = day.Format("2006-01-02")
-		if _, err := tx.Exec(ctx, `SET TRANSACTION READ ONLY`); err != nil {
-			return err
-		}
 		if _, err := tx.Exec(ctx, `SELECT set_config('TimeZone', $1, true)`, f.tz); err != nil {
 			return err
 		}

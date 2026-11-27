@@ -310,10 +310,11 @@ func (s *Service) Deactivate(ctx context.Context, p *auth.Principal, id uuid.UUI
 }
 
 // Statement lists the movements of one account with opening, running and closing balance. The
-// balance is the running sum of the append-only money ledger (app.financial_transactions).
+// balance is the running sum of the append-only money ledger (app.financial_transactions) read
+// under a single REPEATABLE READ snapshot so opening balance and lines always reconcile.
 func (s *Service) Statement(ctx context.Context, p *auth.Principal, id uuid.UUID, from, to string) (map[string]any, error) {
 	var out map[string]any
-	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InActorReadTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		a, err := s.account(ctx, tx, p, id)
 		if err != nil {
 			return err
