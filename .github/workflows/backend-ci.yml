@@ -4,6 +4,10 @@ on:
     paths: ["backend/**", "docs/api/**", "docs/spec/API reference.md", "backend/database/**", ".github/workflows/backend-ci.yml"]
   pull_request:
     paths: ["backend/**", "docs/api/**", "docs/spec/API reference.md", "backend/database/**", ".github/workflows/backend-ci.yml"]
+
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -32,6 +36,8 @@ jobs:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
       - run: go mod verify
+      - name: Vulnerability scan (govulncheck)
+        run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
       - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
       - run: go vet ./...
       - run: go build ./...
