@@ -1,1 +1,25 @@
-export default {};
+export default {
+  noAttendanceRecordedYet: "No attendance recorded yet",
+  in: "In",
+  worked: "Worked",
+  min: "{late_minutes} min",
+  noPayslipsYet: "No payslips yet",
+  payslip: "Payslip",
+  noLoansOrAdvances: "No loans or advances",
+  borrowed: "Borrowed",
+  noEmployeeProfileLinked: "No employee profile linked",
+  youCanSignInBut:
+    "You can sign in, but this account is not connected to an employee record. Payslips, attendance, loans, leave requests and clock-in need that connection.",
+  howToLinkIt: "How to link it",
+  ifThisPersonHasNo: "If this person has no employee record yet, add one under People.",
+  inTeamAndRolesChoose:
+    "In Team and roles, choose Edit next to the account, pick the record under “Link to employee profile” and save.",
+  anOwnerWhoDoesNot: "An owner who does not need payslips or attendance can leave it unlinked.",
+  addEmployee: "Add employee",
+  openTeamAndRoles: "Open Team and roles",
+  askAnAdminToLink: "Ask an Admin to link it. Tell them which account is yours:",
+  yourAttendancePayslipsAndLoans: "Your attendance, payslips and loans.",
+  couldNotLoadYourWork: "Could not load your work",
+  payslips: "Payslips",
+  loans: "Loans",
+};

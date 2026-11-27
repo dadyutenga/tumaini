@@ -19,6 +19,8 @@ import { useAuth } from "@/features/auth/auth";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, today, toNumber } from "@/lib/formatters";
 import type { Customer, MoneyAccount } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 interface Line {
   date: string;
@@ -37,6 +39,7 @@ interface Statement {
 }
 
 export default function CustomerDetail() {
+  const { t } = useI18n();
   const { id = "" } = useParams();
   const { can, canAny } = useAuth();
   const [from, setFrom] = useState("");
@@ -66,7 +69,7 @@ export default function CustomerDetail() {
   const receive = useWrite<unknown>("POST", `/customers/${id}/payments`, {
     idempotent: true,
     invalidate: ["/customers", "/money"],
-    success: "Payment received",
+    success: t.customers.paymentReceived,
     onSuccess: () => {
       setPaying(false);
       setPay({ amount: "", method: "cash", money_account_id: "", reference: "" });
@@ -74,7 +77,7 @@ export default function CustomerDetail() {
   });
   const setCredit = useWrite<unknown>("PUT", `/customers/${id}/credit-limit`, {
     invalidate: ["/customers"],
-    success: "Credit limit updated",
+    success: t.customers.creditLimitUpdated,
     onSuccess: () => setLimiting(false),
   });
 
@@ -83,9 +86,11 @@ export default function CustomerDetail() {
   if (!c)
     return (
       <div className="od-card items-center py-10 text-center">
-        <p className="text-[14px] font-semibold text-[var(--od-bad)]">Customer not found.</p>
+        <p className="text-[14px] font-semibold text-[var(--od-bad)]">
+          {t.customers.customerNotFound}
+        </p>
         <Button asChild variant="outline" size="sm" className="mt-3">
-          <Link to="/customers">Back to customers</Link>
+          <Link to="/customers">{t.customers.backToCustomers}</Link>
         </Button>
       </div>
     );
@@ -96,7 +101,7 @@ export default function CustomerDetail() {
     <div className="space-y-6">
       <PageHeader
         backTo="/customers"
-        backLabel="Customers"
+        backLabel={t.common.customers}
         title={c.name}
         badge={<StatusBadge value={c.is_active ? "active" : "inactive"} />}
         description={[c.phone, c.email].filter(Boolean).join(" · ") || undefined}
@@ -111,12 +116,12 @@ export default function CustomerDetail() {
                   setLimiting(true);
                 }}
               >
-                Credit limit
+                {t.customers.creditLimit}
               </Button>
             )}
             {can("finance.payment.receive") && (
               <Button size="sm" onClick={() => setPaying(true)} disabled={toNumber(c.balance) <= 0}>
-                Receive payment
+                {t.common.receivePayment}
               </Button>
             )}
           </>
@@ -125,13 +130,13 @@ export default function CustomerDetail() {
 
       <div className="grid gap-4 sm:grid-cols-3">
         <StatCard
-          label="Owes"
+          label={t.common.owes}
           value={formatMoney(c.balance)}
           tone={toNumber(c.balance) > 0 ? "bad" : "good"}
         />
-        <StatCard label="Credit limit" value={formatMoney(c.credit_limit)} />
+        <StatCard label={t.customers.creditLimit} value={formatMoney(c.credit_limit)} />
         <StatCard
-          label="Available credit"
+          label={t.customers.availableCredit}
           value={formatMoney(availableCredit)}
           tone={availableCredit > 0 ? "good" : "neutral"}
         />
@@ -141,20 +146,20 @@ export default function CustomerDetail() {
         <section className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <h2 className="od-section-title">Statement</h2>
-              <p className="od-caption">Chronological sales and payment ledger</p>
+              <h2 className="od-section-title">{t.common.statement}</h2>
+              <p className="od-caption">{t.customers.chronologicalSalesAndPaymentLedger}</p>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <Input
                 type="date"
-                aria-label="Statement from date"
+                aria-label={t.common.statementFromDate}
                 className="w-36"
                 value={from}
                 onChange={(e) => setFrom(e.target.value)}
               />
               <Input
                 type="date"
-                aria-label="Statement to date"
+                aria-label={t.common.statementToDate}
                 className="w-36"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
@@ -167,24 +172,27 @@ export default function CustomerDetail() {
                     query={{ from, to }}
                     filename={`statement-${c.name}.pdf`}
                   >
-                    Print statement
+                    {t.common.printStatement}
                   </PdfButton>
                   <SendOutboundButton
                     size="sm"
-                    label="Send statement"
-                    title="Send customer statement"
+                    label={t.common.sendStatement}
+                    title={t.customers.sendCustomerStatement}
                     path={`/customers/${id}/statement/send`}
                     extraBody={{ from: from || undefined, to: to || undefined }}
-                    successMessage="Statement queued"
+                    successMessage={t.common.statementQueued}
                     phone={c.phone}
-                    whatsappText={`Statement for ${c.name}: closing balance ${formatMoney(statement.data?.closing_balance ?? c.balance)}.`}
+                    whatsappText={fmt(t.customers.statementForClosingBalance, {
+                      name: c.name,
+                      closing_balance: formatMoney(statement.data?.closing_balance ?? c.balance),
+                    })}
                   />
                 </>
               )}
             </div>
           </div>
           {invalidRange && (
-            <p className="text-xs font-medium text-[var(--od-bad)]">to must not be before from</p>
+            <p className="text-xs font-medium text-[var(--od-bad)]">{t.common.toMustNotBeBefore}</p>
           )}
           <DataGrid
             rows={invalidRange ? [] : statement.data?.lines}
@@ -192,20 +200,20 @@ export default function CustomerDetail() {
             rowKey={(l) =>
               `${l.date}-${l.created_at ?? ""}-${l.number}-${l.type}-${l.debit}-${l.credit}`
             }
-            empty={invalidRange ? "Fix the date range to view the statement" : "No activity yet"}
+            empty={invalidRange ? t.customers.fixTheDateRangeTo : t.customers.noActivityYet}
             columns={[
               {
-                header: "Date",
+                header: t.common.date,
                 cell: (l) => (
                   <span className="text-[var(--od-ink-secondary)]">{formatDate(l.date)}</span>
                 ),
               },
               {
-                header: "Document",
+                header: t.common.document,
                 cell: (l) => <span className="od-mono font-medium">{l.number || "—"}</span>,
               },
               {
-                header: "Type",
+                header: t.common.type,
                 cell: (l) => (
                   <span className="capitalize">
                     {(l.type || l.description || "—").replaceAll("_", " ")}
@@ -213,12 +221,12 @@ export default function CustomerDetail() {
                 ),
               },
               {
-                header: "Debit",
+                header: t.customers.debit,
                 align: "right",
                 cell: (l) => (toNumber(l.debit) > 0 ? formatMoney(l.debit) : "—"),
               },
               {
-                header: "Credit",
+                header: t.customers.credit,
                 align: "right",
                 cell: (l) =>
                   toNumber(l.credit) > 0 ? (
@@ -228,7 +236,7 @@ export default function CustomerDetail() {
                   ),
               },
               {
-                header: "Balance",
+                header: t.common.balance,
                 align: "right",
                 cell: (l) => <span className="font-medium">{formatMoney(l.balance)}</span>,
               },
@@ -238,7 +246,7 @@ export default function CustomerDetail() {
       )}
 
       {id && (
-        <SectionCard title="Attachments">
+        <SectionCard title={t.common.attachments2}>
           <AttachmentsSection entityType="customer" entityId={id} />
         </SectionCard>
       )}
@@ -246,11 +254,11 @@ export default function CustomerDetail() {
       <FormDialog
         open={paying}
         onOpenChange={setPaying}
-        title="Receive payment"
+        title={t.common.receivePayment}
         busy={receive.isPending}
         onSubmit={() => receive.mutate({ ...pay, date: today() })}
       >
-        <Field label="Amount">
+        <Field label={t.common.amount}>
           <Input
             required
             inputMode="decimal"
@@ -258,25 +266,25 @@ export default function CustomerDetail() {
             onChange={(e) => setPay((p) => ({ ...p, amount: e.target.value }))}
           />
         </Field>
-        <Field label="Method">
+        <Field label={t.common.method}>
           <NativeSelect
             value={pay.method}
             onChange={(e) =>
               setPay((p) => ({ ...p, method: e.target.value, money_account_id: "" }))
             }
           >
-            <option value="cash">Cash</option>
-            <option value="mobile_money">Mobile money</option>
-            <option value="bank">Bank</option>
+            <option value="cash">{t.common.cash}</option>
+            <option value="mobile_money">{t.common.mobileMoney}</option>
+            <option value="bank">{t.common.bank}</option>
           </NativeSelect>
         </Field>
-        <Field label="Into account">
+        <Field label={t.customers.intoAccount}>
           <NativeSelect
             required
             value={pay.money_account_id}
             onChange={(e) => setPay((p) => ({ ...p, money_account_id: e.target.value }))}
           >
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {typed.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
@@ -284,20 +292,20 @@ export default function CustomerDetail() {
             ))}
           </NativeSelect>
         </Field>
-        <Field label={pay.method === "cash" ? "Reference (optional)" : "Reference *"}>
+        <Field label={pay.method === "cash" ? t.common.referenceOptional : t.customers.reference}>
           <Input
             required={pay.method !== "cash"}
             value={pay.reference}
             onChange={(e) => setPay((p) => ({ ...p, reference: e.target.value }))}
           />
         </Field>
-        <p className="od-caption">The payment clears the oldest unpaid sales first.</p>
+        <p className="od-caption">{t.customers.thePaymentClearsTheOldest}</p>
       </FormDialog>
 
       <FormDialog
         open={limiting}
         onOpenChange={setLimiting}
-        title="Credit limit"
+        title={t.customers.creditLimit}
         busy={setCredit.isPending}
         onSubmit={() =>
           setCredit.mutate({
@@ -305,7 +313,7 @@ export default function CustomerDetail() {
           })
         }
       >
-        <Field label="Credit limit">
+        <Field label={t.customers.creditLimit}>
           <Input
             required
             inputMode="decimal"

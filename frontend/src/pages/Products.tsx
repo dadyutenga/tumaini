@@ -33,6 +33,8 @@ import { download, session, uploadFile } from "@/lib/api";
 import { formatMoney, formatQty, toNumber } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import type { Category, Product, Unit } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 interface Draft {
   name: string;
@@ -66,6 +68,7 @@ const blank: Draft = {
 };
 
 export default function Products() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const navigate = useNavigate();
   const manage = can("shop.product.manage");
@@ -108,7 +111,7 @@ export default function Products() {
     editing && editing !== "new" ? `/products/${editing.id}` : "/products",
     {
       invalidate: ["/products", "/stock"],
-      success: "Product saved",
+      success: t.products.productSaved,
       onSuccess: () => setEditing(null),
     },
   );
@@ -117,7 +120,7 @@ export default function Products() {
     (p) => `/products/${p.id}/${p.is_active ? "deactivate" : "activate"}`,
     {
       invalidate: ["/products"],
-      success: "Product updated",
+      success: t.products.productUpdated,
     },
   );
   const saveCategory = useWrite<{ name: string }>(
@@ -125,7 +128,7 @@ export default function Products() {
     catDialog && catDialog !== "new" ? `/categories/${catDialog.id}` : "/categories",
     {
       invalidate: ["/categories"],
-      success: "Category saved",
+      success: t.products.categorySaved,
       onSuccess: () => {
         setCatDialog(null);
         setCatName("");
@@ -134,7 +137,7 @@ export default function Products() {
   );
   const deleteCategory = useWrite<{ id: string }>("DELETE", (b) => `/categories/${b.id}`, {
     invalidate: ["/categories"],
-    success: "Category removed",
+    success: t.products.categoryRemoved,
   });
 
   function open(product: Product | "new") {
@@ -180,9 +183,12 @@ export default function Products() {
         data?: { created?: number; updated?: number; errors?: unknown[] };
         error?: { message?: string };
       };
-      if (!res.ok) throw new Error(json.error?.message ?? "Import failed");
+      if (!res.ok) throw new Error(json.error?.message ?? t.products.importFailed);
       toast.success(
-        `Imported: ${json.data?.created ?? 0} created, ${json.data?.updated ?? 0} updated.`,
+        fmt(t.products.importedCreatedUpdated, {
+          created: json.data?.created ?? 0,
+          updated: json.data?.updated ?? 0,
+        }),
       );
       void refetch();
     } catch (e) {
@@ -195,21 +201,21 @@ export default function Products() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Products"
+        title={t.common.products}
         description={
           manage
-            ? "Manage products, prices, warranties, serial tracking and categories."
-            : "Product catalog: search, check stock and tap Sell to add to POS."
+            ? t.products.manageProductsPricesWarrantiesSerial
+            : t.products.productCatalogSearchCheckStock
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <SegmentedChips
-              ariaLabel="View mode"
+              ariaLabel={t.common.viewMode}
               value={view}
               onChange={setView}
               options={[
-                { value: "catalog", label: "Catalog" },
-                { value: "table", label: "Table" },
+                { value: "catalog", label: t.common.catalog },
+                { value: "table", label: t.common.table },
               ]}
             />
             {canImport && (
@@ -231,7 +237,8 @@ export default function Products() {
                   disabled={importing}
                   onClick={() => importInput.current?.click()}
                 >
-                  <Upload size={14} /> {importing ? "Importing…" : "Import Excel/CSV"}
+                  <Upload size={14} />{" "}
+                  {importing ? t.products.importing : t.products.importExcelCsv}
                 </Button>
               </>
             )}
@@ -244,11 +251,11 @@ export default function Products() {
                 )
               }
             >
-              <Download size={14} /> Excel
+              <Download size={14} /> {t.products.excel}
             </Button>
             {manage && (
               <Button size="sm" onClick={() => open("new")}>
-                <Plus size={14} /> New product
+                <Plus size={14} /> {t.products.newProduct}
               </Button>
             )}
           </div>
@@ -258,8 +265,8 @@ export default function Products() {
       <Tabs defaultValue="products">
         {canCategories && (
           <TabsList>
-            <TabsTrigger value="products">Products</TabsTrigger>
-            <TabsTrigger value="categories">Categories</TabsTrigger>
+            <TabsTrigger value="products">{t.common.products}</TabsTrigger>
+            <TabsTrigger value="categories">{t.common.categories}</TabsTrigger>
           </TabsList>
         )}
 
@@ -271,8 +278,8 @@ export default function Products() {
                 className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
               />
               <Input
-                aria-label="Search products"
-                placeholder="Search products by name, SKU or barcode…"
+                aria-label={t.products.searchProducts}
+                placeholder={t.products.searchProductsByNameSku}
                 className="pl-9"
                 value={q}
                 onChange={(e) => {
@@ -295,7 +302,7 @@ export default function Products() {
               )}
             >
               <AlertCircle size={14} />
-              Low stock only
+              {t.products.lowStockOnly}
             </button>
           </FilterBar>
 
@@ -314,7 +321,7 @@ export default function Products() {
                     : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
                 )}
               >
-                All items
+                {t.common.allItems}
               </button>
               {(categories.data ?? []).map((c) => (
                 <button
@@ -356,15 +363,15 @@ export default function Products() {
                 <div className="grid h-11 w-11 place-items-center rounded-full bg-[var(--od-surface-subtle)] text-[var(--od-ink-muted)]">
                   <Package size={20} />
                 </div>
-                <p className="mt-3 text-[14px] font-semibold">No products found</p>
+                <p className="mt-3 text-[14px] font-semibold">{t.products.noProductsFound}</p>
                 <p className="od-caption mt-1">
                   {q || catFilter || low
-                    ? "Try clearing your search or category filter."
-                    : "Add your first product to start selling from the catalog."}
+                    ? t.products.tryClearingYourSearchOr
+                    : t.products.addYourFirstProductTo}
                 </p>
                 {manage && !q && !catFilter && !low && (
                   <Button className="mt-4" size="sm" onClick={() => open("new")}>
-                    <Plus size={14} /> New product
+                    <Plus size={14} /> {t.products.newProduct}
                   </Button>
                 )}
               </div>
@@ -404,9 +411,9 @@ export default function Products() {
                           )}
                         >
                           {!p.is_active
-                            ? "Inactive"
+                            ? t.products.inactive
                             : outOfStock
-                              ? "Out of stock"
+                              ? t.common.outOfStock
                               : `${formatQty(p.qty_on_hand)} ${p.unit}`}
                         </span>
                       </button>
@@ -422,7 +429,9 @@ export default function Products() {
                           </button>
                           <p className="od-mono mt-1 truncate text-[11px] text-[var(--od-ink-muted)]">
                             {p.sku}
-                            {p.warranty_months ? ` · ${p.warranty_months}m warranty` : ""}
+                            {p.warranty_months
+                              ? ` ${fmt(t.common.mWarranty, { warranty_months: p.warranty_months })}`
+                              : ""}
                           </p>
                         </div>
 
@@ -433,7 +442,7 @@ export default function Products() {
                             </p>
                             {showCost && p.avg_cost && (
                               <span className="od-tabular truncate text-[11px] text-[var(--od-ink-muted)]">
-                                Cost {formatMoney(p.avg_cost)}
+                                {fmt(t.products.cost, { avg_cost: formatMoney(p.avg_cost) })}
                               </span>
                             )}
                           </div>
@@ -447,7 +456,7 @@ export default function Products() {
                                 onClick={() => navigate(`/pos?add=${p.id}`)}
                               >
                                 <ShoppingCart size={13} />
-                                {outOfStock ? "Out of stock" : "Sell"}
+                                {outOfStock ? t.common.outOfStock : t.products.sell}
                               </Button>
                             ) : (
                               <Button
@@ -456,7 +465,7 @@ export default function Products() {
                                 className="flex-1"
                                 onClick={() => navigate(`/products/${p.id}`)}
                               >
-                                View
+                                {t.common.view}
                               </Button>
                             )}
                             {manage && (
@@ -464,7 +473,7 @@ export default function Products() {
                                 size="icon"
                                 variant="outline"
                                 className="h-8 w-8 shrink-0"
-                                aria-label={`Edit ${p.name}`}
+                                aria-label={fmt(t.common.edit2, { name: p.name })}
                                 onClick={() => open(p)}
                               >
                                 <Pencil size={13} />
@@ -483,11 +492,11 @@ export default function Products() {
               rows={data?.data}
               loading={isLoading}
               rowKey={(p) => p.id}
-              empty="No products found"
+              empty={t.products.noProductsFound}
               onRowClick={(p) => navigate(`/products/${p.id}`)}
               columns={[
                 {
-                  header: "Product",
+                  header: t.common.product,
                   sortValue: (p) => p.name,
                   cell: (p) => (
                     <div className="flex items-center gap-3">
@@ -510,7 +519,7 @@ export default function Products() {
                   ),
                 },
                 {
-                  header: "Price",
+                  header: t.common.price,
                   align: "right",
                   sortValue: (p) => toNumber(p.sell_price),
                   cell: (p) => <span className="font-medium">{formatMoney(p.sell_price)}</span>,
@@ -518,20 +527,20 @@ export default function Products() {
                 ...(showCost
                   ? [
                       {
-                        header: "Avg cost",
+                        header: t.common.avgCost,
                         align: "right" as const,
                         cell: (p: Product) => (p.avg_cost ? formatMoney(p.avg_cost) : "—"),
                       },
                     ]
                   : []),
                 {
-                  header: "On hand",
+                  header: t.common.onHand,
                   align: "right",
                   sortValue: (p) => toNumber(p.qty_on_hand),
                   cell: (p) => `${formatQty(p.qty_on_hand)} ${p.unit}`,
                 },
                 {
-                  header: "Status",
+                  header: t.common.status,
                   cell: (p) => <StatusBadge value={p.is_active ? "active" : "inactive"} />,
                 },
                 {
@@ -545,16 +554,16 @@ export default function Products() {
                           variant="outline"
                           onClick={() => navigate(`/pos?add=${p.id}`)}
                         >
-                          Sell
+                          {t.products.sell}
                         </Button>
                       )}
                       {manage && (
                         <>
                           <Button variant="ghost" size="sm" onClick={() => open(p)}>
-                            Edit
+                            {t.common.edit}
                           </Button>
                           <Button variant="ghost" size="sm" onClick={() => toggle.mutate(p)}>
-                            {p.is_active ? "Deactivate" : "Activate"}
+                            {p.is_active ? t.common.deactivate : t.common.activate}
                           </Button>
                         </>
                       )}
@@ -577,18 +586,21 @@ export default function Products() {
                   setCatDialog("new");
                 }}
               >
-                <Plus size={14} /> New category
+                <Plus size={14} /> {t.common.newCategory}
               </Button>
             </div>
             <DataGrid
               rows={categories.data}
               loading={categories.isLoading}
               rowKey={(c) => c.id}
-              empty="No categories yet"
+              empty={t.products.noCategoriesYet}
               columns={[
-                { header: "Name", cell: (c) => <span className="font-medium">{c.name}</span> },
                 {
-                  header: "Status",
+                  header: t.common.name2,
+                  cell: (c) => <span className="font-medium">{c.name}</span>,
+                },
+                {
+                  header: t.common.status,
                   cell: (c) => <StatusBadge value={c.is_active ? "active" : "inactive"} />,
                 },
                 {
@@ -604,7 +616,7 @@ export default function Products() {
                           setCatDialog(c);
                         }}
                       >
-                        Rename
+                        {t.products.rename}
                       </Button>
                       <Button
                         size="sm"
@@ -612,7 +624,7 @@ export default function Products() {
                         className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                         onClick={() => deleteCategory.mutate({ id: c.id })}
                       >
-                        Delete
+                        {t.common.delete}
                       </Button>
                     </div>
                   ),
@@ -627,7 +639,7 @@ export default function Products() {
       <FormDialog
         open={editing !== null}
         onOpenChange={(o) => !o && setEditing(null)}
-        title={editing === "new" ? "New product" : "Edit product"}
+        title={editing === "new" ? t.products.newProduct : t.products.editProduct}
         busy={save.isPending || uploadingPhoto}
         onSubmit={() => {
           const payload: Record<string, unknown> = {
@@ -648,19 +660,19 @@ export default function Products() {
           save.mutate(payload);
         }}
       >
-        <Field label="Name *">
+        <Field label={t.common.name}>
           <Input required value={draft.name} onChange={set("name")} />
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="SKU">
-            <Input value={draft.sku} onChange={set("sku")} placeholder="Auto if blank" />
+            <Input value={draft.sku} onChange={set("sku")} placeholder={t.products.autoIfBlank} />
           </Field>
-          <Field label="Barcode">
+          <Field label={t.products.barcode}>
             <Input value={draft.barcode} onChange={set("barcode")} />
           </Field>
-          <Field label="Category">
+          <Field label={t.common.category}>
             <NativeSelect value={draft.category_id} onChange={set("category_id")}>
-              <option value="">None</option>
+              <option value="">{t.common.none}</option>
               {categories.data?.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -668,7 +680,7 @@ export default function Products() {
               ))}
             </NativeSelect>
           </Field>
-          <Field label="Unit">
+          <Field label={t.products.unit}>
             <NativeSelect value={draft.unit} onChange={set("unit")}>
               {units.data?.map((u) => (
                 <option key={u.id} value={u.id}>
@@ -677,7 +689,7 @@ export default function Products() {
               ))}
             </NativeSelect>
           </Field>
-          <Field label="Selling price *">
+          <Field label={t.products.sellingPrice}>
             <Input
               required
               inputMode="decimal"
@@ -686,18 +698,18 @@ export default function Products() {
             />
           </Field>
           {showCost && (
-            <Field label="Buying price">
+            <Field label={t.products.buyingPrice}>
               <Input inputMode="decimal" value={draft.buy_price} onChange={set("buy_price")} />
             </Field>
           )}
-          <Field label="Minimum stock level">
+          <Field label={t.products.minimumStockLevel}>
             <Input
               inputMode="decimal"
               value={draft.reorder_level}
               onChange={set("reorder_level")}
             />
           </Field>
-          <Field label="Warranty (months)">
+          <Field label={t.products.warrantyMonths}>
             <Input
               inputMode="numeric"
               value={draft.warranty_months}
@@ -706,11 +718,11 @@ export default function Products() {
           </Field>
         </div>
         {editing !== "new" && editing && draft.sell_price !== editing.sell_price && (
-          <Field label="Reason for price change">
+          <Field label={t.products.reasonForPriceChange}>
             <Input
               value={draft.reason}
               onChange={set("reason")}
-              placeholder="Optional note recorded in price history"
+              placeholder={t.products.optionalNoteRecordedInPrice}
             />
           </Field>
         )}
@@ -720,9 +732,9 @@ export default function Products() {
             checked={draft.track_serial}
             onChange={(e) => setDraft((d) => ({ ...d, track_serial: e.target.checked }))}
           />
-          Track serial numbers / IMEI at POS
+          {t.products.trackSerialNumbersImeiAt}
         </label>
-        <Field label="Product photo">
+        <Field label={t.products.productPhoto}>
           <input
             ref={photoInput}
             type="file"
@@ -736,7 +748,7 @@ export default function Products() {
               try {
                 const fid = await uploadFile(f);
                 setDraft((d) => ({ ...d, photo_file: fid }));
-                toast.success("Photo uploaded");
+                toast.success(t.products.photoUploaded);
               } catch (err) {
                 toast.error(errorMessage(err));
               } finally {
@@ -752,10 +764,12 @@ export default function Products() {
               disabled={uploadingPhoto}
               onClick={() => photoInput.current?.click()}
             >
-              <Upload size={14} /> {uploadingPhoto ? "Uploading…" : "Upload photo"}
+              <Upload size={14} /> {uploadingPhoto ? t.common.uploading : t.products.uploadPhoto}
             </Button>
             {draft.photo_file && (
-              <span className="text-xs font-medium text-[var(--od-good)]">Photo attached</span>
+              <span className="text-xs font-medium text-[var(--od-good)]">
+                {t.products.photoAttached}
+              </span>
             )}
           </div>
         </Field>
@@ -764,11 +778,11 @@ export default function Products() {
       <FormDialog
         open={catDialog !== null}
         onOpenChange={(o) => !o && setCatDialog(null)}
-        title={catDialog === "new" ? "New category" : "Rename category"}
+        title={catDialog === "new" ? t.common.newCategory : t.products.renameCategory}
         busy={saveCategory.isPending}
         onSubmit={() => saveCategory.mutate({ name: catName })}
       >
-        <Field label="Category name *">
+        <Field label={t.products.categoryName}>
           <Input required value={catName} onChange={(e) => setCatName(e.target.value)} />
         </Field>
       </FormDialog>

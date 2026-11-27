@@ -18,6 +18,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatMoney, toNumber } from "@/lib/formatters";
 import type { Customer } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
 
 interface Debt {
   customer_id: string;
@@ -32,6 +33,7 @@ interface Debt {
 }
 
 function DebtsTab() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const debts = useGet<Debt[]>("/customers/debts");
   const rows = debts.data ?? [];
@@ -40,16 +42,16 @@ function DebtsTab() {
       rows={rows}
       loading={debts.isLoading}
       rowKey={(d) => d.customer_id}
-      empty="Nobody owes you anything"
+      empty={t.customers.nobodyOwesYouAnything}
       onRowClick={(d) => navigate(`/customers/${d.customer_id}`)}
       columns={[
         {
-          header: "Customer",
+          header: t.common.customer,
           sortValue: (d) => d.name,
           cell: (d) => <span className="font-medium">{d.name}</span>,
         },
         {
-          header: "0–30 days",
+          header: t.common.n030Days,
           align: "right",
           sortValue: (d) => toNumber(d.bucket_0_30),
           cell: (d) => formatMoney(d.bucket_0_30),
@@ -67,7 +69,7 @@ function DebtsTab() {
           cell: (d) => formatMoney(d.bucket_61_90),
         },
         {
-          header: "Over 90",
+          header: t.customers.over90,
           align: "right",
           sortValue: (d) => toNumber(d.bucket_over_90),
           cell: (d) => (
@@ -79,7 +81,7 @@ function DebtsTab() {
           ),
         },
         {
-          header: "Owes",
+          header: t.common.owes,
           align: "right",
           sortValue: (d) => toNumber(d.balance),
           cell: (d) => <span className="font-semibold">{formatMoney(d.balance)}</span>,
@@ -88,7 +90,7 @@ function DebtsTab() {
       totals={
         rows.length > 0
           ? [
-              "Total",
+              t.common.total,
               formatMoney(rows.reduce((s, d) => s + toNumber(d.bucket_0_30), 0)),
               formatMoney(rows.reduce((s, d) => s + toNumber(d.bucket_31_60), 0)),
               formatMoney(rows.reduce((s, d) => s + toNumber(d.bucket_61_90), 0)),
@@ -113,6 +115,7 @@ const blank = {
 };
 
 export default function Customers() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
@@ -122,7 +125,7 @@ export default function Customers() {
   const [draft, setDraft] = useState(blank);
   const create = useWrite<unknown, Customer>("POST", "/customers", {
     invalidate: ["/customers"],
-    success: "Customer added",
+    success: t.common.customerAdded,
     onSuccess: (c) => {
       setOpen(false);
       setDraft(blank);
@@ -139,26 +142,26 @@ export default function Customers() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Customers"
-        description="Shop customers, credit limits and receivable aging."
+        title={t.common.customers}
+        description={t.customers.shopCustomersCreditLimitsAnd}
         actions={
           can("shop.customer.manage") && (
             <Button size="sm" onClick={() => setOpen(true)}>
-              <Plus size={14} /> New customer
+              <Plus size={14} /> {t.customers.newCustomer}
             </Button>
           )
         }
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Total customers" value={list.length} />
+        <StatCard label={t.customers.totalCustomers} value={list.length} />
         <StatCard
-          label="With open balance"
+          label={t.customers.withOpenBalance}
           value={withBalance}
           tone={withBalance > 0 ? "bad" : "neutral"}
         />
         <StatCard
-          label="Total owed to us"
+          label={t.customers.totalOwedToUs}
           value={formatMoney(owed)}
           tone={owed > 0 ? "bad" : "good"}
         />
@@ -166,8 +169,10 @@ export default function Customers() {
 
       <Tabs defaultValue="all">
         <TabsList>
-          <TabsTrigger value="all">All customers</TabsTrigger>
-          {can("finance.debt.view") && <TabsTrigger value="debts">Who owes</TabsTrigger>}
+          <TabsTrigger value="all">{t.customers.allCustomers}</TabsTrigger>
+          {can("finance.debt.view") && (
+            <TabsTrigger value="debts">{t.customers.whoOwes}</TabsTrigger>
+          )}
         </TabsList>
 
         <TabsContent value="all" className="space-y-4">
@@ -178,9 +183,9 @@ export default function Customers() {
                 className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
               />
               <Input
-                aria-label="Search customers"
+                aria-label={t.customers.searchCustomers}
                 className="pl-9"
-                placeholder="Search name or phone…"
+                placeholder={t.common.searchNameOrPhone}
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
@@ -190,16 +195,16 @@ export default function Customers() {
             rows={list}
             loading={isLoading}
             rowKey={(c) => c.id}
-            empty="No customers yet"
+            empty={t.customers.noCustomersYet}
             onRowClick={(c) => navigate(`/customers/${c.id}`)}
             columns={[
               {
-                header: "Name",
+                header: t.common.name2,
                 sortValue: (c) => c.name,
                 cell: (c) => <span className="font-medium">{c.name}</span>,
               },
               {
-                header: "Phone",
+                header: t.common.phone,
                 cell: (c) => (
                   <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
                     {c.phone ?? "—"}
@@ -207,13 +212,13 @@ export default function Customers() {
                 ),
               },
               {
-                header: "Credit limit",
+                header: t.customers.creditLimit,
                 align: "right",
                 sortValue: (c) => toNumber(c.credit_limit),
                 cell: (c) => formatMoney(c.credit_limit),
               },
               {
-                header: "Owes",
+                header: t.common.owes,
                 align: "right",
                 sortValue: (c) => toNumber(c.balance),
                 cell: (c) => (
@@ -225,7 +230,7 @@ export default function Customers() {
                 ),
               },
               {
-                header: "Status",
+                header: t.common.status,
                 cell: (c) => <StatusBadge value={c.is_active ? "active" : "inactive"} />,
               },
             ]}
@@ -242,7 +247,7 @@ export default function Customers() {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title="New customer"
+        title={t.customers.newCustomer}
         busy={create.isPending}
         onSubmit={() =>
           create.mutate({ ...draft, payment_terms_days: Number(draft.payment_terms_days) || 0 })
@@ -250,20 +255,20 @@ export default function Customers() {
         wide
       >
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Name" className="sm:col-span-2">
+          <Field label={t.common.name2} className="sm:col-span-2">
             <Input required value={draft.name} onChange={set("name")} />
           </Field>
-          <Field label="Phone">
+          <Field label={t.common.phone}>
             <Input value={draft.phone} onChange={set("phone")} />
           </Field>
-          <Field label="Email">
+          <Field label={t.common.email}>
             <Input type="email" value={draft.email} onChange={set("email")} />
           </Field>
-          <Field label="Address" className="sm:col-span-2">
+          <Field label={t.common.address} className="sm:col-span-2">
             <Input value={draft.address} onChange={set("address")} />
           </Field>
           {can("finance.debt.view") && (
-            <Field label="Credit limit">
+            <Field label={t.customers.creditLimit}>
               <Input
                 inputMode="decimal"
                 value={draft.credit_limit}
@@ -271,7 +276,7 @@ export default function Customers() {
               />
             </Field>
           )}
-          <Field label="Payment terms (days)">
+          <Field label={t.common.paymentTermsDays}>
             <Input
               inputMode="numeric"
               value={draft.payment_terms_days}
