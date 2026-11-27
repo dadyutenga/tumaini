@@ -296,9 +296,41 @@ func (p *Principal) Can(key string) (Grant, bool) {
 	return g, ok
 }
 
-// AllowsBranch is true for every location: the approved model has no per-person location
-// assignment, and row-level security already confines ids to the caller's tenant.
-func (p *Principal) AllowsBranch(id uuid.UUID) bool { return true }
+// CanAccessAllBranches reports whether the caller may switch to other branches or query
+// across all branches ("X-Branch-Id: all"). Users pinned to a default location without
+// cross-branch oversight permissions are restricted to their assigned branch.
+func (p *Principal) CanAccessAllBranches() bool {
+	if p.IsOwner || len(p.BranchIDs) == 0 {
+		return true
+	}
+	for _, perm := range []string{
+		"settings.manage",
+		"reports.business.view",
+		"reports.operations.view",
+		"dashboard.business.view",
+		"dashboard.operations.view",
+		"finance.account.view",
+		"shop.stock.manage",
+	} {
+		if p.Has(perm) {
+			return true
+		}
+	}
+	return false
+}
+
+// AllowsBranch reports whether the caller is authorized to operate on branch id.
+func (p *Principal) AllowsBranch(id uuid.UUID) bool {
+	if p.CanAccessAllBranches() {
+		return true
+	}
+	for _, b := range p.BranchIDs {
+		if b == id {
+			return true
+		}
+	}
+	return false
+}
 
 // BranchFilter returns the branches a list query must be limited to for a grant.
 // nil means no branch filter. An active branch (X-Branch-Id or default) always

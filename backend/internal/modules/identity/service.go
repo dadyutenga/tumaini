@@ -755,20 +755,23 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var active bool
 		var roleCode string
-		var employee *uuid.UUID
+		var employee, defaultLoc *uuid.UUID
 		if err := tx.QueryRow(ctx, `
 			SELECT m.status = 'active' AND t.status = 'active' AND (e.id IS NULL OR e.status = 'active'),
-			       coalesce(r.code::text, ''), r.id, coalesce(r.rank, 0), e.id
+			       coalesce(r.code::text, ''), r.id, coalesce(r.rank, 0), e.id, m.default_location_id
 			FROM app.memberships m
 			JOIN app.tenants t ON t.id = m.tenant_id
 			LEFT JOIN app.membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.membership_id = m.id
 			LEFT JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id
 			LEFT JOIN app.employees e ON e.tenant_id = m.tenant_id AND e.membership_id = m.id
-			WHERE m.id = $1`, claims.MembershipID).Scan(&active, &roleCode, &p.RoleID, &p.RoleRank, &employee); err != nil || !active {
+			WHERE m.id = $1`, claims.MembershipID).Scan(&active, &roleCode, &p.RoleID, &p.RoleRank, &employee, &defaultLoc); err != nil || !active {
 			inactiveSeat = true
 			return ended
 		}
 		p.RoleSlug, p.IsOwner, p.EmployeeID = roleCode, roleCode == "admin", employee
+		if defaultLoc != nil {
+			p.BranchIDs = []uuid.UUID{*defaultLoc}
+		}
 		// Effective permissions: a user override (allow or deny, unexpired) beats the role, exactly as app.has_permission does.
 		rows, err := tx.Query(ctx, `
 			SELECT p.code FROM app.permissions p

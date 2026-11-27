@@ -170,21 +170,22 @@ func Principal(c fiber.Ctx) *auth.Principal {
 	return p
 }
 
-// Branch resolves the location a request is about. X-Branch-Id names a location (kept under its
-// old header name so clients do not change); "all" means no location filter; no header means the
-// member's default location. The approved model has no per-person location assignment, so any
-// active location of the tenant is allowed; row-level security already limits ids to the tenant.
+// Branch resolves the location a request is about and enforces branch-level access restrictions.
+// X-Branch-Id names a location; "all" means no location filter (cross-branch callers only);
+// no header defaults to the member's default location.
 func Branch(database *db.DB) fiber.Handler {
 	return func(c fiber.Ctx) error {
 		p := Principal(c)
 		if p == nil {
 			return httpx.Unauthorized("invalid_token", "Sign in again")
 		}
-		raw := c.Get("X-Branch-Id")
-		if raw == "all" {
-			return c.Next()
-		}
-		if raw == "" {
+		setDefault := func() error {
+			if len(p.BranchIDs) > 0 {
+				id := p.BranchIDs[0]
+				p.BranchID = &id
+				c.Locals(principalKey, p)
+				return c.Next()
+			}
 			var id *uuid.UUID
 			err := database.InActorTx(c.Context(), p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 				return tx.QueryRow(ctx, `SELECT default_location_id FROM app.memberships WHERE id = $1`, p.MembershipID).Scan(&id)
@@ -195,15 +196,45 @@ func Branch(database *db.DB) fiber.Handler {
 			}
 			return c.Next()
 		}
+		// Self-profile and auth lifecycle routes must remain accessible even if a shared browser
+		// still carries a stale X-Branch-Id header from a previous session.
+		path := c.Path()
+		isSelfAuthPath := path == "/api/v1/me" || strings.HasPrefix(path, "/api/v1/me/") || strings.HasPrefix(path, "/api/v1/auth/")
+
+		raw := c.Get("X-Branch-Id")
+		if raw == "" {
+			return setDefault()
+		}
+		if raw == "all" {
+			if !p.CanAccessAllBranches() {
+				if isSelfAuthPath {
+					return setDefault()
+				}
+				return httpx.Forbidden("branch_forbidden", "You do not have access to all branches")
+			}
+			return c.Next()
+		}
 		id, err := uuid.Parse(raw)
 		if err != nil {
+			if isSelfAuthPath {
+				return setDefault()
+			}
 			return httpx.BadRequest("invalid_branch", "X-Branch-Id must be a location id")
+		}
+		if !p.AllowsBranch(id) {
+			if isSelfAuthPath {
+				return setDefault()
+			}
+			return httpx.Forbidden("branch_forbidden", "You do not have access to this branch")
 		}
 		var active bool
 		err = database.InActorTx(c.Context(), p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 			return tx.QueryRow(ctx, `SELECT status = 'active' FROM app.locations WHERE id = $1`, id).Scan(&active)
 		})
 		if err != nil || !active {
+			if isSelfAuthPath {
+				return setDefault()
+			}
 			return httpx.NotFound("not_found", "Branch not found")
 		}
 		p.BranchID = &id

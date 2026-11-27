@@ -848,6 +848,9 @@ func (s *Service) GetUserPermissions(ctx context.Context, p *auth.Principal, use
 }
 
 func (s *Service) PutUserPermissions(ctx context.Context, p *auth.Principal, userID uuid.UUID, overrides []UserPermissionOverride) (map[string]any, error) {
+	if p.UserID == userID {
+		return nil, httpx.Forbidden("permission_denied", "You cannot modify your own permissions")
+	}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		u, err := s.getUser(ctx, tx, p.TenantID, userID)
 		if err != nil {

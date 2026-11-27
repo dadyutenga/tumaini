@@ -243,12 +243,21 @@ func (s *Service) CancelReturn(ctx context.Context, p *auth.Principal, id uuid.U
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var st string
-		err := tx.QueryRow(ctx, `SELECT status::text FROM app.sale_returns WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&st)
+		var requestedBy uuid.UUID
+		err := tx.QueryRow(ctx, `SELECT status::text, requested_by FROM app.sale_returns WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&st, &requestedBy)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFound("not_found", "Return not found")
 		}
 		if err != nil {
 			return err
+		}
+		if !p.Has("shop.return.approve") {
+			if requestedBy != p.MembershipID {
+				return httpx.NotFound("not_found", "Return not found")
+			}
+			if st != "requested" {
+				return httpx.Forbidden("permission_denied", "Only an approver can cancel an approved return")
+			}
 		}
 		if st != "requested" && st != "approved" {
 			return httpx.Conflict("invalid_status", "This return cannot be cancelled")

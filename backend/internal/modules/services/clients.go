@@ -185,7 +185,10 @@ func (s *Service) UpdateClient(ctx context.Context, p *auth.Principal, id uuid.U
 		}
 	}
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		before, err := one(ctx, tx, "Client", `SELECT `+clientCols+clientFrom+` WHERE c.tenant_id = $1 AND c.id = $2 AND c.client_status IS NOT NULL FOR UPDATE OF c`, p.TenantID, id)
+		q := sqlq.New(p.TenantID, id)
+		q.Add("c.tenant_id = $1 AND c.id = $2 AND c.client_status IS NOT NULL")
+		ownClient(q, p)
+		before, err := one(ctx, tx, "Client", `SELECT `+clientCols+clientFrom+q.Where()+` FOR UPDATE OF c`, q.Args...)
 		if err != nil {
 			return err
 		}
@@ -232,8 +235,11 @@ func (s *Service) UpdateClient(ctx context.Context, p *auth.Principal, id uuid.U
 // SetClientStatus converts a lead (active) or updates client_status.
 func (s *Service) SetClientStatus(ctx context.Context, p *auth.Principal, id uuid.UUID, status string) (map[string]any, error) {
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
+		q := sqlq.New(p.TenantID, id)
+		q.Add("c.tenant_id = $1 AND c.id = $2 AND c.client_status IS NOT NULL")
+		ownClient(q, p)
 		var cur string
-		if err := tx.QueryRow(ctx, `SELECT client_status::text FROM app.customers WHERE tenant_id = $1 AND id = $2 AND client_status IS NOT NULL FOR UPDATE`, p.TenantID, id).Scan(&cur); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT c.client_status::text FROM app.customers c`+q.Where()+` FOR UPDATE`, q.Args...).Scan(&cur); err != nil {
 			return httpx.NotFound("not_found", "Client not found")
 		}
 		if _, err := tx.Exec(ctx, `UPDATE app.customers SET client_status = $3::app.client_status, archived_at = CASE WHEN $3 = 'inactive' THEN COALESCE(archived_at, now()) ELSE NULL END WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, status); err != nil {
@@ -249,7 +255,10 @@ func (s *Service) SetClientStatus(ctx context.Context, p *auth.Principal, id uui
 
 func (s *Service) DeactivateClient(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		c, err := one(ctx, tx, "Client", `SELECT `+clientCols+clientFrom+` WHERE c.tenant_id = $1 AND c.id = $2 AND c.client_status IS NOT NULL FOR UPDATE OF c`, p.TenantID, id)
+		q := sqlq.New(p.TenantID, id)
+		q.Add("c.tenant_id = $1 AND c.id = $2 AND c.client_status IS NOT NULL")
+		ownClient(q, p)
+		c, err := one(ctx, tx, "Client", `SELECT `+clientCols+clientFrom+q.Where()+` FOR UPDATE OF c`, q.Args...)
 		if err != nil {
 			return err
 		}

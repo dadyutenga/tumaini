@@ -185,7 +185,14 @@ func scanBranch(row pgx.Row) (Branch, error) {
 func (s *Service) ListBranches(ctx context.Context, p *auth.Principal) ([]Branch, error) {
 	out := []Branch{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, branchSelect+` AND (status = 'active' OR $2) ORDER BY is_default DESC, name`, p.TenantID, p.Has("settings.manage"))
+		sql := branchSelect + ` AND (status = 'active' OR $2)`
+		args := []any{p.TenantID, p.Has("settings.manage")}
+		if !p.CanAccessAllBranches() {
+			sql += ` AND id = ANY($3)`
+			args = append(args, p.BranchIDs)
+		}
+		sql += ` ORDER BY is_default DESC, name`
+		rows, err := tx.Query(ctx, sql, args...)
 		if err != nil {
 			return err
 		}
@@ -257,6 +264,9 @@ func (s *Service) CreateBranch(ctx context.Context, p *auth.Principal, in Branch
 }
 
 func (s *Service) GetBranch(ctx context.Context, p *auth.Principal, id uuid.UUID) (Branch, error) {
+	if !p.AllowsBranch(id) {
+		return Branch{}, httpx.Forbidden("branch_forbidden", "You do not have access to this branch")
+	}
 	var b Branch
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) (err error) {
 		if b, err = scanBranch(tx.QueryRow(ctx, branchSelect+` AND id = $2`, p.TenantID, id)); err != nil {
@@ -475,34 +485,143 @@ func (s *Service) Upload(ctx context.Context, p *auth.Principal, name, _ string,
 
 // OpenFile returns a stored file after checking the caller may see it.
 func (s *Service) OpenFile(ctx context.Context, p *auth.Principal, id uuid.UUID) (string, string, io.ReadCloser, error) {
-	var path, name, mime string
+	var path, name, mime, class string
+	var createdBy *uuid.UUID
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT storage_key, original_name, mime_type FROM app.files WHERE id = $1 AND deleted_at IS NULL`, id).Scan(&path, &name, &mime); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT storage_key, original_name, mime_type, classification::text, created_by FROM app.files WHERE id = $1 AND deleted_at IS NULL`, id).
+			Scan(&path, &name, &mime, &class, &createdBy); err != nil {
 			return httpx.NotFound("not_found", "File not found")
 		}
-		// A data export holds the whole business; only someone who manages backups may download it.
-		var isExport bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.backup_runs WHERE tenant_id = $1 AND storage_uri = $2)`, p.TenantID, path).Scan(&isExport); err != nil {
-			return err
-		}
-		if isExport && !p.Has("security.backup.manage") {
-			return httpx.NotFound("not_found", "File not found")
-		}
-		// Employee documents (contracts, ID copies) are for people who manage employees, and the employee.
-		var docEmployee uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT employee_id FROM app.attachments WHERE file_id = $1 AND employee_id IS NOT NULL LIMIT 1`, id).Scan(&docEmployee); err == nil {
-			own := p.EmployeeID != nil && *p.EmployeeID == docEmployee
-			if !own && !p.Has("hr.employee.manage") && !p.Has("hr.employee.view") {
-				return httpx.NotFound("not_found", "File not found")
-			}
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return err
-		}
-		return nil
+		return s.authorizeFileLoaded(ctx, tx, p, id, path, class, createdBy)
 	})
 	if err != nil {
 		return "", "", nil, err
 	}
 	rc, err := s.Store.Open(ctx, path)
 	return name, mime, rc, err
+}
+
+// authorizeFileLoaded verifies that principal p may read the stored file id.
+// Always returns 404 on denial so callers cannot enumerate file UUIDs.
+func (s *Service) authorizeFileLoaded(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID, storageKey, class string, createdBy *uuid.UUID) error {
+	notFound := httpx.NotFound("not_found", "File not found")
+
+	// 1. A data export holds the whole business; only someone who manages backups may download it.
+	var isExport bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.backup_runs WHERE tenant_id = $1 AND storage_uri = $2)`, p.TenantID, storageKey).Scan(&isExport); err != nil {
+		return err
+	}
+	if isExport {
+		if !p.Has("security.backup.manage") {
+			return notFound
+		}
+		return nil
+	}
+
+	// 2. Public assets (business/branch logos) and owner/uploader access.
+	if class == "public" || p.IsOwner || (createdBy != nil && *createdBy == p.MembershipID) {
+		return nil
+	}
+
+	// 3. Payslip PDFs: payroll managers or the payslip's own employee.
+	var payslipEmp uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT pl.employee_id FROM app.payslips ps JOIN app.payroll_lines pl ON pl.tenant_id = ps.tenant_id AND pl.id = ps.payroll_line_id WHERE ps.tenant_id = $1 AND ps.file_id = $2 LIMIT 1`, p.TenantID, id).Scan(&payslipEmp); err == nil {
+		if hasAnyPerm(p, "hr.payroll.view", "hr.payroll.manage", "hr.payroll.approve") || (p.EmployeeID != nil && *p.EmployeeID == payslipEmp) {
+			return nil
+		}
+		return notFound
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	// 4. Expense receipts: expense viewers/approvers or the requester.
+	var expRequester uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT requested_by FROM app.expenses WHERE tenant_id = $1 AND receipt_file_id = $2 LIMIT 1`, p.TenantID, id).Scan(&expRequester); err == nil {
+		if canViewAllExpenses(p) || expRequester == p.MembershipID {
+			return nil
+		}
+		return notFound
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	// 5. Client documents: services viewers or own client/project.
+	var docCustomer uuid.UUID
+	var docProject *uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT customer_id, project_id FROM app.client_documents WHERE tenant_id = $1 AND file_id = $2 LIMIT 1`, p.TenantID, id).Scan(&docCustomer, &docProject); err == nil {
+		if hasAnyPerm(p, "services.client.view_all", "services.project.view_all") {
+			return nil
+		}
+		if docProject != nil && authorizeAttachmentEntity(ctx, tx, p, "project", *docProject, false) == nil {
+			return nil
+		}
+		if authorizeAttachmentEntity(ctx, tx, p, "client", docCustomer, false) == nil {
+			return nil
+		}
+		return notFound
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	// 6. Design previews and final assets: design viewers or the job's designer/creator.
+	var designJobID uuid.UUID
+	if err := tx.QueryRow(ctx, `
+		SELECT design_job_id FROM app.design_versions WHERE tenant_id = $1 AND preview_file_id = $2
+		UNION ALL
+		SELECT v.design_job_id FROM app.design_final_assets a JOIN app.design_versions v ON v.tenant_id = a.tenant_id AND v.id = a.design_version_id WHERE a.tenant_id = $1 AND a.file_id = $2
+		LIMIT 1`, p.TenantID, id).Scan(&designJobID); err == nil {
+		if authorizeAttachmentEntity(ctx, tx, p, "design_job", designJobID, false) == nil {
+			return nil
+		}
+		return notFound
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+
+	// 7. Generic attachments: caller must be authorized to read at least one linked entity.
+	attRows, err := tx.Query(ctx, `
+		SELECT created_by,
+		       sale_id, purchase_id, expense_id, payment_received_id, payment_made_id, customer_id,
+		       supplier_id, contractor_id, project_id, design_job_id, task_id, employee_id,
+		       contractor_bill_id, stock_adjustment_id
+		FROM app.attachments
+		WHERE tenant_id = $1 AND file_id = $2`, p.TenantID, id)
+	if err != nil {
+		return err
+	}
+	var targets []attachmentTarget
+	for attRows.Next() {
+		t, err := scanAttachmentTarget(attRows)
+		if err != nil {
+			attRows.Close()
+			return err
+		}
+		targets = append(targets, t)
+	}
+	attRows.Close()
+	if err := attRows.Err(); err != nil {
+		return err
+	}
+	if len(targets) > 0 {
+		for _, t := range targets {
+			if authorizeAttachmentEntity(ctx, tx, p, t.entityType, t.entityID, false) == nil {
+				return nil
+			}
+		}
+		return notFound
+	}
+
+	// 8. Product photos & employee avatars are readable by any tenant member.
+	var isCatalogOrAvatar bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM app.products WHERE tenant_id = $1 AND photo_file_id = $2)
+		    OR EXISTS (SELECT 1 FROM app.employees WHERE tenant_id = $1 AND photo_file_id = $2)`, p.TenantID, id).Scan(&isCatalogOrAvatar); err != nil {
+		return err
+	}
+	if isCatalogOrAvatar {
+		return nil
+	}
+
+	// Unattached confidential files are readable only by their uploader or tenant owner.
+	return notFound
 }

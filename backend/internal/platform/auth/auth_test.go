@@ -54,9 +54,17 @@ func TestScopeHelpers(t *testing.T) {
 	require.Equal(t, p.UserID, *p.OwnOnly("sales.view"))
 	require.Nil(t, p.OwnOnly("stock.view"))
 	require.True(t, p.SeesBranch("stock.view", a))
-	require.True(t, p.SeesBranch("stock.view", b), "no per-person location assignment in the approved model")
+	require.False(t, p.SeesBranch("stock.view", b), "branch-assigned staff cannot access another branch")
+	require.False(t, p.AllowsBranch(b))
+	require.True(t, p.AllowsBranch(a))
+	require.False(t, p.CanAccessAllBranches())
 	require.True(t, p.SeesBranch("reports.sales", b))
 	require.False(t, p.SeesBranch("missing.perm", a))
+	mgr := &Principal{UserID: uuid.New(), BranchIDs: []uuid.UUID{a}, Perms: map[string]Grant{
+		"reports.business.view": {Scope: "all"},
+	}}
+	require.True(t, mgr.CanAccessAllBranches())
+	require.True(t, mgr.AllowsBranch(b))
 	p.BranchID = &b
 	require.Equal(t, []uuid.UUID{b}, p.ScopeBranches("reports.sales"), "an active branch always narrows")
 	g, ok := p.Can("expenses.create")

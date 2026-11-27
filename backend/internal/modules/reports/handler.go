@@ -43,8 +43,14 @@ func filter(c fiber.Ctx) (Filter, error) {
 	if err != nil {
 		return Filter{}, err
 	}
+	p := middleware.Principal(c)
 	if branch != nil {
+		if p != nil && !p.AllowsBranch(*branch) {
+			return Filter{}, httpx.Forbidden("branch_forbidden", "You do not have access to this branch")
+		}
 		f.Branches = []uuid.UUID{*branch}
+	} else if p != nil && !p.CanAccessAllBranches() && p.BranchID != nil {
+		f.Branches = []uuid.UUID{*p.BranchID}
 	}
 	return f, nil
 }
