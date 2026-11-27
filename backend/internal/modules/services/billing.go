@@ -133,6 +133,31 @@ func totals(sub, discount decimal.Decimal) (decimal.Decimal, error) {
 	return sub.Sub(discount), nil
 }
 
+// checkServiceDiscount enforces discount permissions and authority percentage limits
+// on service quotations and invoices so staff cannot apply unauthorized discounts.
+func checkServiceDiscount(p *auth.Principal, sub, discount decimal.Decimal) error {
+	disc := money.Money(discount)
+	if !disc.IsPositive() || p.IsOwner {
+		return nil
+	}
+	if !p.Has("shop.discount.apply") && !p.Has("services.price.approve") {
+		return httpx.Forbidden("permission_denied", "You do not have permission to apply discounts")
+	}
+	if sub.IsPositive() {
+		pct := disc.Mul(decimal.NewFromInt(100)).Div(sub).Round(2)
+		if p.Has("services.price.approve") {
+			if lim, capped := p.Limits["price_change_approve_pct"]; capped && pct.GreaterThan(lim) {
+				return httpx.Forbidden("discount_limit_exceeded", "Discount exceeds your approval limit of "+lim.StringFixed(2)+"%")
+			}
+			return nil
+		}
+		if lim, capped := p.Limits["sale_discount_pct"]; capped && pct.GreaterThan(lim) {
+			return httpx.Forbidden("discount_limit_exceeded", "Discount exceeds your discount limit of "+lim.StringFixed(2)+"%")
+		}
+	}
+	return nil
+}
+
 // ---------- quotations ----------
 
 type QuotationIn struct {
@@ -225,6 +250,9 @@ func (s *Service) CreateQuotation(ctx context.Context, p *auth.Principal, in Quo
 		if err != nil {
 			return err
 		}
+		if err := checkServiceDiscount(p, sub, in.Discount); err != nil {
+			return err
+		}
 		today, err := s.bizDate(ctx, tx)
 		if err != nil {
 			return err
@@ -273,6 +301,9 @@ func (s *Service) UpdateQuotation(ctx context.Context, p *auth.Principal, id uui
 		}
 		total, err := totals(sub, in.Discount)
 		if err != nil {
+			return err
+		}
+		if err := checkServiceDiscount(p, sub, in.Discount); err != nil {
 			return err
 		}
 		var validUntil any
@@ -672,6 +703,9 @@ func (s *Service) CreateInvoice(ctx context.Context, p *auth.Principal, in Invoi
 		if err != nil {
 			return err
 		}
+		if err := checkServiceDiscount(p, sub, in.Discount); err != nil {
+			return err
+		}
 		if !total.IsPositive() {
 			return httpx.BadRequest("invalid_total", "An invoice total must be greater than zero")
 		}
@@ -743,6 +777,9 @@ func (s *Service) UpdateInvoice(ctx context.Context, p *auth.Principal, id uuid.
 		}
 		total, err := totals(sub, in.Discount)
 		if err != nil {
+			return err
+		}
+		if err := checkServiceDiscount(p, sub, in.Discount); err != nil {
 			return err
 		}
 		if !total.IsPositive() {

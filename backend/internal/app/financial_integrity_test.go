@@ -725,3 +725,64 @@ func TestFinancialIntegrity_NegativePaymentsAndConcurrentCreditLimit(t *testing.
 	require.Equal(t, 1, created, "exactly one concurrent credit sale should succeed: %v", codes)
 	require.Equal(t, 1, conflicted, "second concurrent credit sale must hit 409 credit_limit_exceeded: %v", codes)
 }
+
+// TestFinancialIntegrity_ServiceDiscountAuthorityControls verifies that discounts on service
+// quotations and invoices enforce permission controls and authority percentage limits.
+func TestFinancialIntegrity_ServiceDiscountAuthorityControls(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	clientRes := e.owner.call(t, http.MethodPost, "/api/v1/clients", map[string]any{"name": "Discount Test Client"}, "")
+	require.Equal(t, 201, clientRes.code, clientRes.raw)
+	clientID := str(clientRes.data["id"])
+
+	// 1. User with services.quotation.draft & services.invoice.draft ONLY (no discount permission)
+	//    cannot apply discounts, while zero-discount drafts succeed.
+	noDiscUser, _, _, _ := createCustomRoleUser(t, e, "Draft Only Clerk", []string{
+		"services.client.view_all", "services.quotation.draft", "services.invoice.draft",
+	}, e.branch)
+
+	deniedQuote := noDiscUser.call(t, http.MethodPost, "/api/v1/service-quotations", map[string]any{
+		"client_id": clientID,
+		"discount":  "5000",
+		"lines":     []map[string]any{{"description": "Logo Design", "quantity": "1", "unit_price": "50000"}},
+	}, "")
+	require.Equal(t, 403, deniedQuote.code, deniedQuote.raw)
+
+	deniedInv := noDiscUser.call(t, http.MethodPost, "/api/v1/service-invoices", map[string]any{
+		"client_id": clientID,
+		"discount":  "5000",
+		"lines":     []map[string]any{{"description": "Logo Design", "quantity": "1", "unit_price": "50000"}},
+	}, "")
+	require.Equal(t, 403, deniedInv.code, deniedInv.raw)
+
+	// Zero-discount draft succeeds, but updating it to add a discount is rejected with 403.
+	okInv := noDiscUser.call(t, http.MethodPost, "/api/v1/service-invoices", map[string]any{
+		"client_id": clientID,
+		"lines":     []map[string]any{{"description": "Logo Design", "quantity": "1", "unit_price": "50000"}},
+	}, "")
+	require.Equal(t, 201, okInv.code, okInv.raw)
+	invID := str(okInv.data["id"])
+	editDenied := noDiscUser.call(t, http.MethodPut, "/api/v1/service-invoices/"+invID, map[string]any{
+		"client_id": clientID,
+		"discount":  "1000",
+		"lines":     []map[string]any{{"description": "Logo Design", "quantity": "1", "unit_price": "50000"}},
+	}, "")
+	require.Equal(t, 403, editDenied.code, editDenied.raw)
+
+	// 2. Staff with provisional 0% sale_discount_pct cap cannot apply a 10% invoice discount,
+	//    while Owner (unlimited) can.
+	staff, _ := e.user(t, "staff")
+	cappedInv := staff.call(t, http.MethodPost, "/api/v1/service-invoices", map[string]any{
+		"client_id": clientID,
+		"discount":  "5000",
+		"lines":     []map[string]any{{"description": "Consulting", "quantity": "1", "unit_price": "50000"}},
+	}, "")
+	require.Equal(t, 403, cappedInv.code, cappedInv.raw)
+
+	ownerInv := e.owner.call(t, http.MethodPost, "/api/v1/service-invoices", map[string]any{
+		"client_id": clientID,
+		"discount":  "5000",
+		"lines":     []map[string]any{{"description": "Consulting", "quantity": "1", "unit_price": "50000"}},
+	}, "")
+	require.Equal(t, 201, ownerInv.code, ownerInv.raw)
+	require.True(t, dec(ownerInv.data["total"]).Equal(rd("45000")), ownerInv.raw)
+}
