@@ -114,3 +114,12 @@ func TestLatenessDeduction(t *testing.T) {
 	off := Compute(Input{PayType: "monthly", Base: d("520000"), WorkingDays: 26, LateMinutes: 30})
 	eq(t, "0", off.TotalDeductions)
 }
+
+func TestToDecimalPrecision(t *testing.T) {
+	eq(t, "123456.78", toDecimal(" 123456.78 "))
+	eq(t, "0.30", toDecimal(0.1+0.2).Round(2))
+	eq(t, "19.99", toDecimal(float64(19.99)))
+	v := d("500.25")
+	eq(t, "500.25", toDecimal(&v))
+	eq(t, "0", toDecimal((*decimal.Decimal)(nil)))
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1473,15 +1474,24 @@ func toDecimal(v any) decimal.Decimal {
 	switch x := v.(type) {
 	case decimal.Decimal:
 		return x
+	case *decimal.Decimal:
+		if x != nil {
+			return *x
+		}
+		return decimal.Zero
+	case json.Number:
+		d, _ := decimal.NewFromString(x.String())
+		return d
 	case string:
-		d, _ := decimal.NewFromString(x)
+		d, _ := decimal.NewFromString(strings.TrimSpace(x))
 		return d
 	case int64:
 		return decimal.NewFromInt(x)
 	case int:
 		return decimal.NewFromInt(int64(x))
 	case float64:
-		return decimal.NewFromFloat(x)
+		d, _ := decimal.NewFromString(strconv.FormatFloat(x, 'f', -1, 64))
+		return d
 	default:
 		return decimal.Zero
 	}
