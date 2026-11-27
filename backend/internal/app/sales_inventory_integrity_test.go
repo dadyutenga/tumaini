@@ -3,6 +3,8 @@ package app_test
 import (
 	"context"
 	"net/http"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -273,4 +275,320 @@ func TestSalesIntegrity_InvoiceStatusAndPaymentConsistency(t *testing.T) {
 	final := e.owner.call(t, http.MethodGet, "/api/v1/service-invoices/"+inv1ID.String(), nil, "")
 	require.Equal(t, "paid", str(final.data["status"]))
 	require.True(t, dec(final.data["balance"]).Equal(rd("0")))
+}
+
+// TestInventoryIntegrity_ConcurrentOversellNegativeStockAndReturns verifies:
+//   - Stock cannot go negative unless explicitly enabled by tenant settings
+//   - Stock deductions happen atomically with sales (failed sales leave stock untouched)
+//   - Concurrent sales against the last unit cannot oversell inventory
+//   - Stock returns link to the original sale and damaged returns are never restocked
+func TestInventoryIntegrity_ConcurrentOversellNegativeStockAndReturns(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	till := e.cashAccount(t)
+	cashierA, _ := e.user(t, "staff")
+	cashierB, _ := e.user(t, "staff")
+
+	// 1. Default rule: cannot oversell / go negative, and failed sales never deduct stock.
+	limited := e.product(t, "Limited Edition Headphones", "50000", "1", "30000")
+	oversell := cashierA.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+		"items":    []map[string]any{{"product_id": limited, "qty": "2"}},
+		"payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "100000"}},
+	}, key())
+	require.Equal(t, 409, oversell.code, oversell.raw)
+	require.True(t, stockQty(t, e.owner, limited).Equal(rd("1")))
+
+	// Underpaid walk-in sale fails atomically (409 customer_required) without deducting stock.
+	failedSale := cashierA.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+		"items":    []map[string]any{{"product_id": limited, "qty": "1"}},
+		"payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "1000"}},
+	}, key())
+	require.Equal(t, 409, failedSale.code, failedSale.raw)
+	require.True(t, stockQty(t, e.owner, limited).Equal(rd("1")), "failed sale must not deduct stock")
+
+	// 2. Concurrent sales of the last remaining unit: exactly 1 succeeds (201), 1 fails (409), stock ends at 0.
+	start := make(chan struct{})
+	codes := make([]int, 2)
+	var wg sync.WaitGroup
+	for i, c := range []*client{cashierA, cashierB} {
+		wg.Add(1)
+		go func(idx int, cl *client) {
+			defer wg.Done()
+			<-start
+			res := cl.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+				"items":    []map[string]any{{"product_id": limited, "qty": "1"}},
+				"payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "50000"}},
+			}, key())
+			codes[idx] = res.code
+		}(i, c)
+	}
+	close(start)
+	wg.Wait()
+
+	succeeded, rejected := 0, 0
+	for _, code := range codes {
+		switch code {
+		case 201:
+			succeeded++
+		case 409:
+			rejected++
+		}
+	}
+	require.Equal(t, 1, succeeded, "exactly one concurrent cashier should buy the last unit, got codes=%v", codes)
+	require.Equal(t, 1, rejected, "the second concurrent cashier must be blocked from overselling, got codes=%v", codes)
+	require.True(t, stockQty(t, e.owner, limited).Equal(rd("0")), "stock must never go negative from concurrent sales")
+
+	// 3. Explicit business rule opt-in: enabling allow_negative_stock permits selling below zero.
+	require.Equal(t, 200, e.owner.call(t, http.MethodPut, "/api/v1/settings/system", map[string]any{"allow_negative_stock": true}, "").code)
+	negAllowed := cashierA.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+		"items":    []map[string]any{{"product_id": limited, "qty": "1"}},
+		"payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "50000"}},
+	}, key())
+	require.Equal(t, 201, negAllowed.code, negAllowed.raw)
+	require.True(t, stockQty(t, e.owner, limited).Equal(rd("-1")))
+
+	// Turning allow_negative_stock back off immediately re-enforces the guard.
+	require.Equal(t, 200, e.owner.call(t, http.MethodPut, "/api/v1/settings/system", map[string]any{"allow_negative_stock": false}, "").code)
+	blockedAgain := cashierA.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+		"items":    []map[string]any{{"product_id": limited, "qty": "1"}},
+		"payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "50000"}},
+	}, key())
+	require.Equal(t, 409, blockedAgain.code, blockedAgain.raw)
+
+	// 4. Stock returns link to the original sale: resellable returns restock, damaged returns do NOT restock.
+	mug := e.product(t, "Ceramic Mug", "10000", "5", "4000")
+	sale := cashierA.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+		"items":    []map[string]any{{"product_id": mug, "qty": "3"}},
+		"payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "30000"}},
+	}, key())
+	require.Equal(t, 201, sale.code, sale.raw)
+	saleID := str(sale.data["id"])
+	saleDetail := e.owner.call(t, http.MethodGet, "/api/v1/sales/"+saleID, nil, "")
+	saleItemID := str(asList(saleDetail.data["items"])[0]["id"])
+	require.True(t, stockQty(t, e.owner, mug).Equal(rd("2")))
+
+	// Contradictory request (damaged + restock:true) is rejected.
+	badRet := cashierA.call(t, http.MethodPost, "/api/v1/sales/"+saleID+"/returns", map[string]any{
+		"reason": "Cracked handle",
+		"items":  []map[string]any{{"sale_item_id": saleItemID, "qty": "1", "condition": "damaged", "restock": true}},
+	}, key())
+	require.Equal(t, 400, badRet.code, badRet.raw)
+
+	// Resellable return (restock:true) increases stock from 2 -> 3 and links to sale_id.
+	retGood := cashierA.call(t, http.MethodPost, "/api/v1/sales/"+saleID+"/returns", map[string]any{
+		"reason": "Unopened return",
+		"items":  []map[string]any{{"sale_item_id": saleItemID, "qty": "1", "condition": "resellable", "restock": true}},
+	}, key())
+	require.Equal(t, 201, retGood.code, retGood.raw)
+	retGoodID := str(retGood.data["id"])
+	require.Equal(t, saleID, str(retGood.data["sale_id"]))
+	require.Equal(t, 200, e.owner.call(t, http.MethodPost, "/api/v1/sale-returns/"+retGoodID+"/approve", nil, "").code)
+	require.Equal(t, 200, e.owner.call(t, http.MethodPost, "/api/v1/sale-returns/"+retGoodID+"/complete", map[string]any{
+		"money_account_id": till, "method": "cash",
+	}, key()).code)
+	require.True(t, stockQty(t, e.owner, mug).Equal(rd("3")), "resellable return must restore stock")
+
+	// Damaged return (restock:false) refunds customer but MUST NOT add unsellable stock back to stock_balances.
+	retDmg := cashierA.call(t, http.MethodPost, "/api/v1/sales/"+saleID+"/returns", map[string]any{
+		"reason": "Broken in transit",
+		"items":  []map[string]any{{"sale_item_id": saleItemID, "qty": "1", "condition": "damaged", "restock": false}},
+	}, key())
+	require.Equal(t, 201, retDmg.code, retDmg.raw)
+	retDmgID := str(retDmg.data["id"])
+	require.Equal(t, saleID, str(retDmg.data["sale_id"]))
+	require.Equal(t, 200, e.owner.call(t, http.MethodPost, "/api/v1/sale-returns/"+retDmgID+"/approve", nil, "").code)
+	require.Equal(t, 200, e.owner.call(t, http.MethodPost, "/api/v1/sale-returns/"+retDmgID+"/complete", map[string]any{
+		"money_account_id": till, "method": "cash",
+	}, key()).code)
+	require.True(t, stockQty(t, e.owner, mug).Equal(rd("3")), "damaged return must not restock sellable inventory")
+}
+
+// TestInventoryIntegrity_AdjustmentsTransfersPOReconciliationValuationAndImmutability verifies:
+//   - Stock adjustments and entries require explicit authorization
+//   - Damaged and expired stock have separate loss tracking
+//   - Stock transfers record source & destination and enforce available stock
+//   - PO and goods receipts reconcile ordered vs received quantities
+//   - Low-stock alerts and inventory valuation match underlying balances
+//   - Inventory history cannot be silently rewritten and products with history cannot be hard-deleted
+func TestInventoryIntegrity_AdjustmentsTransfersPOReconciliationValuationAndImmutability(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	till := e.cashAccount(t)
+	staff, _ := e.user(t, "staff")
+	mgr, _ := e.user(t, "manager")
+
+	// Create a product with reorder_level = 5 and opening stock 10 @ 2,000.
+	prodRes := e.owner.call(t, http.MethodPost, "/api/v1/products", map[string]any{
+		"name": "Olive Oil 1L", "sell_price": "5000", "reorder_level": "5",
+	}, "")
+	require.Equal(t, 201, prodRes.code, prodRes.raw)
+	prodID := str(prodRes.data["id"])
+	require.Equal(t, 201, e.owner.call(t, http.MethodPost, "/api/v1/stock-entries", map[string]any{
+		"direction": "in", "reason": "opening",
+		"items": []map[string]any{{"product_id": prodID, "qty": "10", "unit_cost": "2000"}},
+	}, key()).code)
+
+	// 1. Authorization: cashier/staff without inventory permissions cannot adjust or enter stock.
+	require.Equal(t, 403, staff.call(t, http.MethodPost, "/api/v1/stock-entries", map[string]any{
+		"direction": "out", "reason": "damaged",
+		"items": []map[string]any{{"product_id": prodID, "qty": "1"}},
+	}, key()).code)
+	require.Equal(t, 403, staff.call(t, http.MethodPost, "/api/v1/stock-adjustments", map[string]any{
+		"reason": "Unauthorized tweak",
+		"items":  []map[string]any{{"product_id": prodID, "qty_counted": "100"}},
+	}, "").code)
+
+	// Authorized manager creates and posts a stock adjustment (10 -> 9), and audit logs record it.
+	adj := mgr.call(t, http.MethodPost, "/api/v1/stock-adjustments", map[string]any{
+		"reason": "Cycle count variance",
+		"items":  []map[string]any{{"product_id": prodID, "qty_counted": "9"}},
+	}, "")
+	require.Equal(t, 201, adj.code, adj.raw)
+	adjID := str(adj.data["id"])
+	require.Equal(t, 200, mgr.call(t, http.MethodPost, "/api/v1/stock-adjustments/"+adjID+"/post", nil, key()).code)
+	require.True(t, stockQty(t, e.owner, prodID).Equal(rd("9")))
+
+	// 2. Damaged & Expired stock have separate stock-out handling and appear in loss reporting.
+	dmg := e.owner.call(t, http.MethodPost, "/api/v1/stock-entries", map[string]any{
+		"direction": "out", "reason": "damaged",
+		"items": []map[string]any{{"product_id": prodID, "qty": "1"}},
+	}, key())
+	require.Equal(t, 201, dmg.code, dmg.raw)
+	exp := e.owner.call(t, http.MethodPost, "/api/v1/stock-entries", map[string]any{
+		"direction": "out", "reason": "expired",
+		"items": []map[string]any{{"product_id": prodID, "qty": "1"}},
+	}, key())
+	require.Equal(t, 201, exp.code, exp.raw)
+	require.True(t, stockQty(t, e.owner, prodID).Equal(rd("7")))
+
+	losses := e.owner.call(t, http.MethodGet, "/api/v1/reports/inventory/losses", nil, "")
+	require.Equal(t, 200, losses.code, losses.raw)
+	require.NotEmpty(t, asList(losses.data["rows"]), "damaged and expired entries must appear in inventory losses report")
+
+	// 3. Stock transfers record source & destination, block over-dispatch, and trigger accurate low-stock alerts.
+	br := e.owner.call(t, http.MethodPost, "/api/v1/branches", map[string]any{"name": "Warehouse B"}, "")
+	require.Equal(t, 201, br.code, br.raw)
+	branchB := str(br.data["id"])
+
+	overTr := e.owner.call(t, http.MethodPost, "/api/v1/stock-transfers", map[string]any{
+		"to_branch_id": branchB,
+		"items":        []map[string]any{{"product_id": prodID, "qty": "50"}},
+	}, "")
+	require.Equal(t, 201, overTr.code, overTr.raw)
+	require.Equal(t, 409, e.owner.call(t, http.MethodPost, "/api/v1/stock-transfers/"+str(overTr.data["id"])+"/dispatch", nil, key()).code)
+
+	tr := e.owner.call(t, http.MethodPost, "/api/v1/stock-transfers", map[string]any{
+		"to_branch_id": branchB,
+		"items":        []map[string]any{{"product_id": prodID, "qty": "4"}},
+	}, "")
+	require.Equal(t, 201, tr.code, tr.raw)
+	trID := str(tr.data["id"])
+	require.Equal(t, 200, e.owner.call(t, http.MethodPost, "/api/v1/stock-transfers/"+trID+"/dispatch", nil, key()).code)
+	cB := &client{app: e.owner.app, token: e.owner.token, branch: branchB}
+	require.Equal(t, 200, cB.call(t, http.MethodPost, "/api/v1/stock-transfers/"+trID+"/receive", map[string]any{
+		"items": []map[string]any{{"product_id": prodID, "qty_received": "4"}},
+	}, key()).code)
+
+	trView := e.owner.call(t, http.MethodGet, "/api/v1/stock-transfers/"+trID, nil, "")
+	require.Equal(t, 200, trView.code, trView.raw)
+	require.Equal(t, e.branch, str(trView.data["from_branch_id"]), "transfer must record source branch")
+	require.Equal(t, branchB, str(trView.data["to_branch_id"]), "transfer must record destination branch")
+	require.True(t, stockQty(t, e.owner, prodID).Equal(rd("3")), "Main branch must have 7 - 4 = 3")
+	require.True(t, stockQty(t, cB, prodID).Equal(rd("4")), "Branch B must have 4")
+
+	// Low-stock report reflects Main branch qty_on_hand=3 (<= reorder_level=5).
+	lowRep := e.owner.call(t, http.MethodGet, "/api/v1/reports/inventory/low-stock", nil, "")
+	require.Equal(t, 200, lowRep.code, lowRep.raw)
+	lowRow := find(asList(lowRep.data["rows"]), "product_id", prodID)
+	require.NotNil(t, lowRow, "low-stock report must flag Olive Oil when Main qty=3 <= reorder_level=5: %s", lowRep.raw)
+	require.True(t, dec(lowRow["qty_on_hand"]).Equal(rd("3")), "low-stock alert must use accurate quantity: %v", lowRow)
+
+	// 4. PO & Goods Receipt reconciliation + consistent inventory valuation across endpoints.
+	sup := e.owner.call(t, http.MethodPost, "/api/v1/suppliers", map[string]any{"name": "Med Imports"}, "")
+	require.Equal(t, 201, sup.code, sup.raw)
+	supID := str(sup.data["id"])
+	po := mgr.call(t, http.MethodPost, "/api/v1/purchase-orders", map[string]any{
+		"supplier_id": supID,
+		"items":       []map[string]any{{"product_id": prodID, "qty": "10", "unit_cost": "3000"}},
+	}, "")
+	require.Equal(t, 201, po.code, po.raw)
+	poID := str(po.data["id"])
+	require.Equal(t, 200, mgr.call(t, http.MethodPost, "/api/v1/purchase-orders/"+poID+"/submit", nil, "").code)
+
+	// Cannot receive more than ordered (11 > 10).
+	require.Equal(t, 409, mgr.call(t, http.MethodPost, "/api/v1/goods-receipts", map[string]any{
+		"po_id": poID, "items": []map[string]any{{"product_id": prodID, "qty": "11", "unit_cost": "3000"}},
+	}, key()).code)
+
+	gr1 := mgr.call(t, http.MethodPost, "/api/v1/goods-receipts", map[string]any{
+		"po_id": poID, "items": []map[string]any{{"product_id": prodID, "qty": "6", "unit_cost": "3000"}},
+	}, key())
+	require.Equal(t, 201, gr1.code, gr1.raw)
+	require.Equal(t, "partially_received", str(gr1.data["po_status"]))
+	gr1ID := str(gr1.data["id"])
+
+	gr2 := mgr.call(t, http.MethodPost, "/api/v1/goods-receipts", map[string]any{
+		"po_id": poID, "items": []map[string]any{{"product_id": prodID, "qty": "4", "unit_cost": "3000"}},
+	}, key())
+	require.Equal(t, 201, gr2.code, gr2.raw)
+	require.Equal(t, "received", str(gr2.data["po_status"]))
+	require.True(t, stockQty(t, e.owner, prodID).Equal(rd("13")))
+
+	// Inventory valuation reconciles identically across /stock/valuation (per-branch) and /reports/inventory/valuation (all-branch):
+	// 7 remaining units @ 2,000 (14,000) + 10 received units @ 3,000 (30,000) = 44,000.00 across 17 units (13 Main + 4 Branch B).
+	mainVal := e.owner.call(t, http.MethodGet, "/api/v1/stock/valuation?as_of=2099-12-31", nil, "")
+	require.Equal(t, 200, mainVal.code, mainVal.raw)
+	branchBVal := cB.call(t, http.MethodGet, "/api/v1/stock/valuation?as_of=2099-12-31", nil, "")
+	require.Equal(t, 200, branchBVal.code, branchBVal.raw)
+	repVal := e.owner.call(t, http.MethodGet, "/api/v1/reports/inventory/valuation", nil, "")
+	require.Equal(t, 200, repVal.code, repVal.raw)
+	repTotal := dec(repVal.data["totals"].(map[string]any)["value"])
+	require.True(t, repTotal.Equal(rd("44000")), "expected exact weighted-average inventory value 44000, got: %s", repVal.raw)
+	require.True(t, dec(mainVal.data["total"]).Add(dec(branchBVal.data["total"])).Equal(repTotal),
+		"sum of per-branch /stock/valuation (%s + %s) must reconcile to /reports/inventory/valuation (%s)",
+		mainVal.data["total"], branchBVal.data["total"], repTotal)
+
+	// 5. Inventory history cannot be silently rewritten, and products with historical transactions remain traceable.
+	sale := e.owner.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
+		"items":    []map[string]any{{"product_id": prodID, "qty": "1"}},
+		"payments": []map[string]any{{"method": "cash", "money_account_id": till, "amount": "5000"}},
+	}, key())
+	require.Equal(t, 201, sale.code, sale.raw)
+	saleID := str(sale.data["id"])
+
+	for name, tc := range map[string]struct {
+		sql string
+		arg uuid.UUID
+	}{
+		"update stock_movements":         {`UPDATE app.stock_movements SET quantity_delta = 999 WHERE tenant_id = $1`, e.tenantID},
+		"delete stock_movements":         {`DELETE FROM app.stock_movements WHERE tenant_id = $1`, e.tenantID},
+		"update posted stock_adj":        {`UPDATE app.stock_adjustments SET reason = 'theft' WHERE id = $1`, uuid.MustParse(adjID)},
+		"delete posted stock_adj":        {`DELETE FROM app.stock_adjustments WHERE id = $1`, uuid.MustParse(adjID)},
+		"update received transfer":       {`UPDATE app.stock_transfers SET note = 'Tampered' WHERE id = $1`, uuid.MustParse(trID)},
+		"delete received transfer":       {`DELETE FROM app.stock_transfers WHERE id = $1`, uuid.MustParse(trID)},
+		"update goods_receipts":          {`UPDATE app.goods_receipts SET notes = 'Tampered' WHERE id = $1`, uuid.MustParse(gr1ID)},
+		"delete goods_receipts":          {`DELETE FROM app.goods_receipts WHERE id = $1`, uuid.MustParse(gr1ID)},
+		"hard delete historical product": {`DELETE FROM app.products WHERE id = $1`, uuid.MustParse(prodID)},
+	} {
+		err := e.app.DB.InActorTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+			_, qErr := tx.Exec(ctx, tc.sql, tc.arg)
+			return qErr
+		})
+		require.Error(t, err, "DB immutability guard must block %s", name)
+		msg := err.Error()
+		require.True(t, strings.Contains(msg, "BM004") || strings.Contains(msg, "42501"),
+			"DB immutability trigger (BM004) or role privilege denial (42501) must fire for %s, got: %v", name, err)
+	}
+
+	// Deactivating the product blocks new sales while keeping historical sale & stock card completely traceable.
+	require.Equal(t, 200, e.owner.call(t, http.MethodPost, "/api/v1/products/"+prodID+"/deactivate", nil, "").code)
+	require.Equal(t, 404, e.owner.call(t, http.MethodPost, "/api/v1/sales/preview", map[string]any{
+		"items": []map[string]any{{"product_id": prodID, "qty": "1"}},
+	}, "").code)
+
+	histSale := e.owner.call(t, http.MethodGet, "/api/v1/sales/"+saleID, nil, "")
+	require.Equal(t, 200, histSale.code, histSale.raw)
+	require.Equal(t, "Olive Oil 1L", str(asList(histSale.data["items"])[0]["product_name"]))
+
+	stockCard := e.owner.call(t, http.MethodGet, "/api/v1/products/"+prodID+"/stock-card", nil, "")
+	require.Equal(t, 200, stockCard.code, stockCard.raw)
+	require.NotEmpty(t, asList(stockCard.body["data"]), "deactivated product must preserve full stock movement history")
 }
