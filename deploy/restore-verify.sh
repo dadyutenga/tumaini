@@ -107,11 +107,10 @@ BEGIN
   SELECT count(*) INTO fin_mismatch
     FROM app.financial_accounts a
     LEFT JOIN (
-      SELECT tenant_id, account_id,
-             SUM(CASE WHEN direction = 'in' THEN amount ELSE -amount END) AS net
+      SELECT account_id, SUM(CASE WHEN direction = 'in' THEN amount ELSE -amount END) AS net
       FROM app.financial_transactions
-      GROUP BY tenant_id, account_id
-    ) t ON t.tenant_id = a.tenant_id AND t.account_id = a.id
+      GROUP BY account_id
+    ) t ON t.account_id = a.id
    WHERE a.current_balance <> COALESCE(t.net, 0);
 
   IF fin_mismatch <> 0 THEN
@@ -121,19 +120,21 @@ BEGIN
   SELECT count(*) INTO stk_mismatch
     FROM app.stock_balances sb
     LEFT JOIN (
-      SELECT tenant_id, location_id, product_id, SUM(quantity_delta) AS qty
+      SELECT location_id, product_id, SUM(quantity_delta) AS qty
       FROM app.stock_movements
-      GROUP BY tenant_id, location_id, product_id
-    ) m ON m.tenant_id = sb.tenant_id AND m.location_id = sb.location_id AND m.product_id = sb.product_id
+      GROUP BY location_id, product_id
+    ) m ON m.location_id = sb.location_id AND m.product_id = sb.product_id
    WHERE sb.quantity_on_hand <> COALESCE(m.qty, 0);
 
   IF stk_mismatch <> 0 THEN
     RAISE EXCEPTION 'post-recovery stock reconciliation failed: % mismatched stock balances', stk_mismatch;
   END IF;
 
-  -- Every business, and the chain of events that belong to none.
+  -- Every sealed chain, including any written before the single-business migration. The query
+  -- also works on backups taken before it.
   SELECT count(*) INTO bad_seals
-    FROM (SELECT id FROM app.tenants UNION ALL SELECT NULL) t, LATERAL audit.verify_tenant(t.id) v;
+    FROM (SELECT DISTINCT tenant_key FROM audit.audit_seals) k,
+         LATERAL audit.verify_tenant(nullif(k.tenant_key, '00000000-0000-0000-0000-000000000000')) v;
 
   IF bad_seals <> 0 THEN
     RAISE EXCEPTION 'post-recovery audit seal verification failed: % broken seals', bad_seals;

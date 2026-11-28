@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Nightly full database backup via direct PostgreSQL connection (FR-SEC-07).
 # Must connect with a BYPASSRLS / superuser role (e.g. postgres) because FORCE ROW LEVEL SECURITY
-# is enabled on tenant tables.
+# is enabled on the payroll and notification tables.
 #   BACKUP_DATABASE_URL=postgres://postgres:...@127.0.0.1:5433/bms BACKUP_ENCRYPTION_KEY=... ./backup.sh
 # Database only; production uses backup-prod.sh, which also saves uploaded files.
 # Keeps BACKUP_KEEP_DAYS (default 30) days locally. Set BACKUP_UPLOAD_CMD to copy each

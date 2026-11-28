@@ -55,7 +55,7 @@ if [ ! -f "$APP_DIR/.env" ]; then
       -e "s|^BMS_API_DB_PASSWORD=.*|BMS_API_DB_PASSWORD=$(openssl rand -hex 24)|" \
       -e "s|^BMS_JOBS_DB_PASSWORD=.*|BMS_JOBS_DB_PASSWORD=$(openssl rand -hex 24)|" \
       -e "s|^JWT_SECRET=.*|JWT_SECRET=$(openssl rand -base64 48 | tr -d '\n=+/')|" \
-      -e "s|^MFA_ENCRYPTION_KEY=.*|MFA_ENCRYPTION_KEY=$(openssl rand -hex 32)|" \
+      -e "s|^DATA_ENCRYPTION_KEY=.*|DATA_ENCRYPTION_KEY=$(openssl rand -hex 32)|" \
       -e "s|^BACKUP_ENCRYPTION_KEY=.*|BACKUP_ENCRYPTION_KEY=$(openssl rand -hex 32)|" \
       "$APP_DIR/.env.production.example" > "$APP_DIR/.env"
   echo "created $APP_DIR/.env with generated secrets"

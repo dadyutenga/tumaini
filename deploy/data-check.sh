@@ -40,12 +40,12 @@ fi
 report "uploaded files present and unchanged" "$bad"
 
 report "archived or inactive customers who still owe money" "$(q "
-  SELECT 'tenant ' || c.tenant_id || ' customer ' || c.id
+  SELECT 'customer ' || c.id
     FROM app.customers c
    WHERE (c.archived_at IS NOT NULL OR c.client_status = 'inactive')
-     AND (EXISTS (SELECT 1 FROM app.sales s WHERE s.tenant_id = c.tenant_id AND s.customer_id = c.id
+     AND (EXISTS (SELECT 1 FROM app.sales s WHERE s.customer_id = c.id
                     AND s.status = 'completed' AND s.balance_due > 0)
-       OR EXISTS (SELECT 1 FROM app.invoices i WHERE i.tenant_id = c.tenant_id AND i.customer_id = c.id
+       OR EXISTS (SELECT 1 FROM app.invoices i WHERE i.customer_id = c.id
                     AND i.status IN ('issued', 'partially_paid') AND i.balance_due > 0))")"
 
 report "national ID numbers still stored in clear text" "$(q "
@@ -60,19 +60,20 @@ report "audit entries holding a national ID number in clear text (append-only: r
 
 report "money account balances match the ledger" "$(q "
   SELECT 'account ' || a.id FROM app.financial_accounts a
-    LEFT JOIN (SELECT tenant_id, account_id, sum(CASE WHEN direction = 'in' THEN amount ELSE -amount END) AS net
-                 FROM app.financial_transactions GROUP BY 1, 2) t ON t.tenant_id = a.tenant_id AND t.account_id = a.id
+    LEFT JOIN (SELECT account_id, sum(CASE WHEN direction = 'in' THEN amount ELSE -amount END) AS net
+                 FROM app.financial_transactions GROUP BY 1) t ON t.account_id = a.id
    WHERE a.current_balance <> coalesce(t.net, 0)")"
 
 report "stock balances match movements" "$(q "
   SELECT 'product ' || b.product_id || ' at ' || b.location_id FROM app.stock_balances b
-    LEFT JOIN (SELECT tenant_id, location_id, product_id, sum(quantity_delta) AS q FROM app.stock_movements GROUP BY 1, 2, 3) m
-      USING (tenant_id, location_id, product_id)
+    LEFT JOIN (SELECT location_id, product_id, sum(quantity_delta) AS q FROM app.stock_movements GROUP BY 1, 2) m
+      USING (location_id, product_id)
    WHERE b.quantity_on_hand <> coalesce(m.q, 0)")"
 
 report "audit seals intact" "$(q "
-  SELECT 'tenant ' || coalesce(t.id::text, 'platform') || ' seal ' || v.seal_no || ': ' || v.problem
-    FROM (SELECT id FROM app.tenants UNION ALL SELECT NULL) t, LATERAL audit.verify_tenant(t.id) v")"
+  SELECT 'chain ' || k.tenant_key || ' seal ' || v.seal_no || ': ' || v.problem
+    FROM (SELECT DISTINCT tenant_key FROM audit.audit_seals) k,
+         LATERAL audit.verify_tenant(nullif(k.tenant_key, '00000000-0000-0000-0000-000000000000')) v")"
 
 missing=""
 for v in BACKUP_ENCRYPTION_KEY BACKUP_UPLOAD_CMD BACKUP_ALERT_WEBHOOK_URL BACKUP_HEARTBEAT_URL; do

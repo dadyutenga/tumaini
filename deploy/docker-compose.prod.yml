@@ -57,6 +57,8 @@ services:
       DATABASE_URL: postgres://bms_api:${BMS_API_DB_PASSWORD:?set BMS_API_DB_PASSWORD}@postgres:5432/bms?sslmode=disable
       JOBS_DATABASE_URL: postgres://bms_jobs:${BMS_JOBS_DB_PASSWORD:?set BMS_JOBS_DB_PASSWORD}@postgres:5432/bms?sslmode=disable
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      # Key for data encrypted at rest. MFA_ENCRYPTION_KEY is its old name and still works.
+      DATA_ENCRYPTION_KEY: ${DATA_ENCRYPTION_KEY:-}
       MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:?set CORS_ORIGINS}
       COOKIE_SECURE: ${COOKIE_SECURE:-true}

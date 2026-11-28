@@ -11,9 +11,9 @@ esac
 PASS="${SEED_PASSWORD:?Set SEED_PASSWORD (min 8 chars) to seed local dev accounts}"
 j() { python3 -c "import sys,json;d=json.load(sys.stdin);print(eval('d'+sys.argv[1]))" "$1"; }
 
-reg=$(curl -sS -X POST "$API/auth/register" -H 'Content-Type: application/json' \
+reg=$(curl -sS -X POST "$API/setup" -H 'Content-Type: application/json' \
   -d "{\"business_name\":\"Demo Duka\",\"owner_name\":\"Demo Owner\",\"phone\":\"0700000001\",\"email\":\"owner@demo.test\",\"password\":\"$PASS\"}")
-echo "$reg" | grep -q '"error"' && { echo "register: $reg"; echo "(owner may already exist; logging in)"; }
+echo "$reg" | grep -q '"error"' && { echo "setup: $reg"; echo "(the business may already be set up; logging in)"; }
 tok=$(curl -sS -X POST "$API/auth/login" -H 'Content-Type: application/json' \
   -d "{\"identifier\":\"owner@demo.test\",\"password\":\"$PASS\"}" | j "['data']['access_token']")
 H=(-H "Authorization: Bearer $tok" -H 'Content-Type: application/json')

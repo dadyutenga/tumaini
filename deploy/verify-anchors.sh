@@ -33,7 +33,8 @@ BEGIN
     INTO total, changed
     FROM anchors a LEFT JOIN audit.audit_seals s USING (tenant_key, seal_no);
   SELECT count(*) INTO broken
-    FROM (SELECT id FROM app.tenants UNION ALL SELECT NULL) t, LATERAL audit.verify_tenant(t.id) v;
+    FROM (SELECT DISTINCT tenant_key FROM audit.audit_seals) k,
+         LATERAL audit.verify_tenant(nullif(k.tenant_key, '00000000-0000-0000-0000-000000000000')) v;
   IF changed <> 0 OR broken <> 0 THEN
     RAISE EXCEPTION 'AUDIT TRAIL ALTERED: % of % saved seals missing or different, % broken chains', changed, total, broken;
   END IF;
