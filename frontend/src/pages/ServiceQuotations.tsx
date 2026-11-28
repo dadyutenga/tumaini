@@ -31,6 +31,7 @@ import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { CatalogItem, Quotation } from "@/types/services";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 interface Draft {
   id?: string;
@@ -320,7 +321,7 @@ export default function ServiceQuotations() {
   const canCreate = canAny("services.quotation.manage", "services.quotation.draft");
   const [params, setParams] = useSearchParams();
   const [status, setStatus] = useState("");
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox();
   const list = useGet<Quotation[]>("/service-quotations", { status, q, per_page: 100 });
   const [form, setForm] = useState<Draft | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);

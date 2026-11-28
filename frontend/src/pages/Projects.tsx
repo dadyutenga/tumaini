@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import type { ProjectRow } from "@/types/services";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 function Board() {
   const { t } = useI18n();
@@ -88,7 +89,7 @@ export default function Projects() {
   const { t } = useI18n();
   const { can } = useAuth();
   const navigate = useNavigate();
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox();
   const [status, setStatus] = useState("");
   const [late, setLate] = useState(false);
   const search = useDebounce(q, 300);

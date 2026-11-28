@@ -27,6 +27,7 @@ import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
 import type { Translations } from "@/features/i18n/i18n";
 import { statusLabel } from "@/features/i18n/status";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 interface Employee {
   id: string;
@@ -122,7 +123,7 @@ function EmployeesTab() {
   const { can, canAny } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox(() => setPage(1));
   const [page, setPage] = useState(1);
   const list = useGetPage<Employee>("/employees", { q: q || undefined, page });
   const canGrantAccess = can("security.user.manage");

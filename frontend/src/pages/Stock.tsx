@@ -18,6 +18,7 @@ import { formatMoney, formatQty, toNumber } from "@/lib/formatters";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
 import type { Translations } from "@/features/i18n/i18n";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 interface Level {
   product_id: string;
@@ -53,7 +54,7 @@ export default function Stock() {
   const { can } = useAuth();
   const levels = useGet<Level[]>("/stock/levels");
   const low = useGet<LowRow[]>("/stock/low");
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox();
   const [direction, setDirection] = useState<Direction | null>(null);
   const [form, setForm] = useState({
     product_id: "",

@@ -69,6 +69,8 @@ export interface RequestOptions {
   signal?: AbortSignal;
   /** Do not try to refresh the session on 401 (used by auth calls). */
   noRefresh?: boolean;
+  /** Send this as X-Branch-Id instead of the branch selected in the top bar. */
+  branch?: string;
 }
 
 function buildUrl(path: string, query?: Query) {
@@ -111,7 +113,8 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
   const headers: Record<string, string> = {};
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
-  if (branchId) headers["X-Branch-Id"] = branchId;
+  const branch = options.branch ?? branchId;
+  if (branch) headers["X-Branch-Id"] = branch;
   if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
   try {
     return await fetch(buildUrl(path, options.query), {

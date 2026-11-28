@@ -25,6 +25,7 @@ import type { MoneyAccount, SaleRow } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
 import { statusLabel } from "@/features/i18n/status";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 interface ReturnRow {
   id: string;
@@ -47,7 +48,7 @@ export default function Sales() {
   const canManageReturn = canAny("shop.return.create", "shop.return.approve");
   const [page, setPage] = useState(1);
   const [retPage, setRetPage] = useState(1);
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox(() => setPage(1));
   const [status, setStatus] = useState("");
   const [method, setMethod] = useState("");
   const [from, setFrom] = useState("");

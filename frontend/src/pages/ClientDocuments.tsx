@@ -27,6 +27,7 @@ import { formatDate } from "@/lib/formatters";
 import type { ClientDocument, ProjectRow } from "@/types/services";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 const TYPES = ["required", "id", "photo", "certificate", "contract", "other"];
 
@@ -164,7 +165,7 @@ export default function ClientDocuments() {
   const clientFilter = params.get("client") ?? "";
   const [client, setClient] = useState(clientFilter);
   const [status, setStatus] = useState("");
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox();
   const search = useDebounce(q, 300);
   const docs = useGet<ClientDocument[]>("/client-documents", {
     client_id: client,
