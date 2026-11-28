@@ -9,9 +9,10 @@ COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/bms ./cmd/api \
  && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/migrate ./cmd/migrate
 
-FROM alpine:3.20
+FROM alpine:3.24.4
 # tzdata: the API validates DEFAULT_TIMEZONE (Africa/Dar_es_Salaam) at start-up and refuses to run without it.
-RUN apk add --no-cache tzdata \
+RUN apk upgrade --no-cache \
+ && apk add --no-cache tzdata \
  && adduser -D -u 65532 -h /app app \
  && mkdir -p /app/data && chown app:app /app/data
 WORKDIR /app
