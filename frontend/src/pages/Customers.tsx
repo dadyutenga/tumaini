@@ -19,6 +19,7 @@ import { useGet, useWrite } from "@/hooks/useApi";
 import { formatMoney, toNumber } from "@/lib/formatters";
 import type { Customer } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 interface Debt {
   customer_id: string;
@@ -118,7 +119,7 @@ export default function Customers() {
   const { t } = useI18n();
   const { can } = useAuth();
   const navigate = useNavigate();
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox();
   const search = useDebounce(q, 300);
   const { data, isLoading } = useGet<Customer[]>("/customers", { q: search });
   const [open, setOpen] = useState(false);

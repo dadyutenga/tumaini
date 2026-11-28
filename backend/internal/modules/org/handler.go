@@ -3,6 +3,7 @@ package org
 import (
 	"io"
 	"mime"
+	"strings"
 
 	"github.com/gofiber/fiber/v3"
 	"github.com/google/uuid"
@@ -48,6 +49,34 @@ func (h *Handler) Logo(c fiber.Ctx) error {
 		return err
 	}
 	return c.JSON(httpx.Data(fiber.Map{"file_id": id}))
+}
+
+func (h *Handler) BusinessUnits(c fiber.Ctx) error {
+	list, err := h.Svc.BusinessUnits(c.Context(), middleware.Principal(c))
+	return httpx.OK(c, list, err)
+}
+
+func (h *Handler) UpdateBusinessUnit(c fiber.Ctx) error {
+	var in BusinessUnitInput
+	if err := httpx.Bind(c, &in); err != nil {
+		return err
+	}
+	unit, err := h.Svc.UpdateBusinessUnit(c.Context(), middleware.Principal(c), strings.ToUpper(c.Params("code")), in)
+	return httpx.OK(c, unit, err)
+}
+
+func (h *Handler) BusinessUnitLogo(c fiber.Ctx) error {
+	fh, err := c.FormFile("file")
+	if err != nil {
+		return httpx.BadRequest("invalid_body", "Upload a file field named file")
+	}
+	f, err := fh.Open()
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	id, err := h.Svc.SaveUnitLogo(c.Context(), middleware.Principal(c), strings.ToUpper(c.Params("code")), fh.Filename, f)
+	return httpx.OK(c, fiber.Map{"file_id": id}, err)
 }
 
 func (h *Handler) Branches(c fiber.Ctx) error {
@@ -269,6 +298,9 @@ func Register(r fiber.Router, h *Handler) {
 	r.Get("/business", h.Business)
 	r.Put("/business", middleware.Require("settings.manage"), h.UpdateBusiness)
 	r.Post("/business/logo", middleware.Require("settings.manage"), h.Logo)
+	r.Get("/business-units", h.BusinessUnits)
+	r.Patch("/business-units/:code", middleware.Require("settings.manage"), h.UpdateBusinessUnit)
+	r.Post("/business-units/:code/logo", middleware.Require("settings.manage"), h.BusinessUnitLogo)
 	r.Get("/branches", h.Branches)
 	r.Post("/branches", middleware.Require("settings.manage"), h.CreateBranch)
 	r.Get("/branches/:id", h.Branch)

@@ -33,6 +33,7 @@ import { cn } from "@/lib/utils";
 import type { InvoiceDetail, InvoiceRow, ProjectRow } from "@/types/services";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 interface Draft {
   id?: string;
@@ -410,7 +411,7 @@ export default function ServiceInvoices() {
   const [params, setParams] = useSearchParams();
   const [status, setStatus] = useState("");
   const [overdue, setOverdue] = useState(false);
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox();
   const list = useGet<InvoiceRow[]>("/service-invoices", {
     status,
     q,

@@ -2,7 +2,7 @@
 components:
   parameters:
     BranchId:
-      description: Active branch. Users whose scope is `all` may send `all` on GET routes. Defaults to the user's default branch.
+      description: Active branch. Users whose scope is `all` may send `all` on GET routes. Defaults to the user's default branch. A separate X-Business-Unit header (A, B or all) narrows what shared pages show to one business; changes are always checked against every business the user works in. 403 `business_forbidden` or `branch_forbidden` when the user may not use it.
       in: header
       name: X-Branch-Id
       required: false
@@ -104,6 +104,43 @@ components:
             $ref: '#/components/schemas/Error'
       description: Field validation failed
   schemas:
+    BusinessUnit:
+      properties:
+        address:
+          nullable: true
+          type: string
+        code:
+          enum:
+            - A
+            - B
+          type: string
+        display_name:
+          nullable: true
+          type: string
+        id:
+          format: uuid
+          type: string
+        kind:
+          type: string
+        logo_file_id:
+          format: uuid
+          nullable: true
+          type: string
+        name:
+          type: string
+        phone:
+          nullable: true
+          type: string
+        receipt_footer:
+          nullable: true
+          type: string
+        receipt_header:
+          nullable: true
+          type: string
+        tin:
+          nullable: true
+          type: string
+      type: object
     Error:
       properties:
         error:
@@ -177,6 +214,32 @@ components:
           type: string
         totals:
           type: object
+      type: object
+    SearchHit:
+      properties:
+        business_unit:
+          enum:
+            - A
+            - B
+          nullable: true
+          type: string
+        highlight:
+          description: The field the text matched.
+          type: string
+        id:
+          format: uuid
+          type: string
+        kind:
+          type: string
+        link:
+          type: string
+        meta:
+          description: Facts for the row (price, stock, balance, total, status, due_date, phone and so on). Never a cost.
+          type: object
+        subtitle:
+          type: string
+        title:
+          type: string
       type: object
   securitySchemes:
     bearerAuth:
@@ -2030,6 +2093,129 @@ paths:
       tags:
         - Business and settings
       x-permission: business.manage
+  /business-units:
+    get:
+      operationId: get_business_units
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    items:
+                      $ref: '#/components/schemas/BusinessUnit'
+                    type: array
+                type: object
+          description: OK
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+      summary: The businesses the caller works in, with what each prints
+      tags:
+        - Business and settings
+  /business-units/{code}:
+    patch:
+      operationId: patch_business_units_code
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: code
+          required: true
+          schema:
+            enum:
+              - A
+              - B
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              description: Only the fields sent change; an empty string clears one back to the business profile's value.
+              properties:
+                address:
+                  maxLength: 500
+                  type: string
+                display_name:
+                  maxLength: 200
+                  type: string
+                phone:
+                  type: string
+                receipt_footer:
+                  maxLength: 500
+                  type: string
+                receipt_header:
+                  maxLength: 500
+                  type: string
+                tin:
+                  maxLength: 40
+                  type: string
+              type: object
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: OK
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+      summary: Change what one business prints
+      tags:
+        - Business and settings
+      x-permission: settings.manage
+  /business-units/{code}/logo:
+    post:
+      operationId: post_business_units_code_logo
+      parameters:
+        - $ref: '#/components/parameters/BranchId'
+        - in: path
+          name: code
+          required: true
+          schema:
+            enum:
+              - A
+              - B
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              properties:
+                file:
+                  format: binary
+                  type: string
+              required:
+                - file
+              type: object
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: object
+                type: object
+          description: OK
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+      summary: Upload the logo of one business (multipart field file)
+      tags:
+        - Business and settings
+      x-permission: settings.manage
   /business/logo:
     post:
       operationId: post_business_logo
@@ -5801,6 +5987,14 @@ paths:
       operationId: get_employees
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Only people whose pay belongs to this business
+          in: query
+          name: business
+          schema:
+            enum:
+              - A
+              - B
+            type: string
         - in: query
           name: page
           schema:
@@ -5853,6 +6047,13 @@ paths:
         content:
           application/json:
             schema:
+              properties:
+                business_unit:
+                  description: The business their pay is posted to; defaults to the branch's business.
+                  enum:
+                    - A
+                    - B
+                  type: string
               type: object
         required: false
       responses:
@@ -6877,6 +7078,12 @@ paths:
                 amount:
                   example: "2500.00"
                   pattern: ^-?\d+(\.\d{1,2})?$
+                  type: string
+                business_unit:
+                  description: The business the cost belongs to; defaults to the branch's business.
+                  enum:
+                    - A
+                    - B
                   type: string
                 category_id:
                   format: uuid
@@ -16924,6 +17131,12 @@ paths:
                 branch_id:
                   format: uuid
                   type: string
+                business_unit:
+                  description: The business the cost belongs to; defaults to the branch's business.
+                  enum:
+                    - A
+                    - B
+                  type: string
                 category_id:
                   format: uuid
                   type: string
@@ -17652,6 +17865,14 @@ paths:
       operationId: reportBalanceSheet
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -17787,6 +18008,14 @@ paths:
       operationId: reportBranches
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -17917,6 +18146,14 @@ paths:
       operationId: reportCashFlow
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -18047,6 +18284,14 @@ paths:
       operationId: reportCustomerDebt
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -18230,6 +18475,14 @@ paths:
       operationId: reportExpenses
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -18370,6 +18623,14 @@ paths:
       operationId: reportInventoryDeadStock
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -18505,6 +18766,14 @@ paths:
       operationId: get_reports_inventory_expiring
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -18641,6 +18910,14 @@ paths:
       operationId: reportInventoryLosses
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -18771,6 +19048,14 @@ paths:
       operationId: reportInventoryLowStock
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -18901,6 +19186,14 @@ paths:
       operationId: reportInventoryMovements
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -19061,6 +19354,14 @@ paths:
       operationId: reportInventoryOnHand
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -19200,6 +19501,14 @@ paths:
       operationId: reportInventoryValuation
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -19344,6 +19653,14 @@ paths:
       operationId: reportPayrollByDepartment
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -19474,6 +19791,14 @@ paths:
       operationId: reportPayrollDeductions
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -19604,6 +19929,14 @@ paths:
       operationId: reportPayrollLoans
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -19744,6 +20077,14 @@ paths:
       operationId: reportPayrollSummary
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -19874,6 +20215,14 @@ paths:
       operationId: reportProfitLoss
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -20063,6 +20412,14 @@ paths:
       operationId: reportPurchases
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -20202,6 +20559,14 @@ paths:
       operationId: reportSalesByCashier
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -20336,6 +20701,14 @@ paths:
       operationId: reportSalesByCategory
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -20475,6 +20848,14 @@ paths:
       operationId: reportSalesByCustomer
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -20609,6 +20990,14 @@ paths:
       operationId: reportSalesByPaymentMethod
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -20739,6 +21128,14 @@ paths:
       operationId: reportSalesByProduct
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -20889,6 +21286,14 @@ paths:
       operationId: reportSalesSummary
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -21028,6 +21433,14 @@ paths:
       operationId: reportStaffPerformance
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -21158,6 +21571,14 @@ paths:
       operationId: reportSupplierDebt
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -21288,6 +21709,14 @@ paths:
       operationId: reportTax
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -21418,6 +21847,14 @@ paths:
       operationId: reportTills
       parameters:
         - $ref: '#/components/parameters/BranchId'
+        - description: Narrow to one business; 403 when the caller does not work in it
+          in: query
+          name: business
+          schema:
+            enum:
+              - shop
+              - services
+            type: string
         - description: Start date (inclusive)
           in: query
           name: from
@@ -23146,12 +23583,49 @@ paths:
       x-permission: schedules.manage
   /search:
     get:
+      description: 'Only the kinds the caller may view are searched, each limited to the records they may see. Matching is exact (document number, barcode, SKU or phone) before prefix, similar name and contains. Kinds that do not answer within 800 ms are returned with `partial: true`. A single character finds only an exact number or code. Limited to 240 requests a minute per user.'
       operationId: get_search
       parameters:
         - $ref: '#/components/parameters/BranchId'
         - in: query
           name: q
           required: true
+          schema:
+            maxLength: 100
+            type: string
+        - description: Search one kind only.
+          in: query
+          name: scope
+          schema:
+            enum:
+              - product
+              - customer
+              - client
+              - sale
+              - service_invoice
+              - quotation
+              - project
+              - design_job
+            type: string
+        - description: Records returned per kind.
+          in: query
+          name: limit
+          schema:
+            default: 5
+            maximum: 25
+            type: integer
+        - description: A, B or all; overrides the X-Business-Unit header.
+          in: query
+          name: business_unit
+          schema:
+            enum:
+              - A
+              - B
+              - all
+            type: string
+        - description: A location id or `all`; overrides the X-Branch-Id header.
+          in: query
+          name: location
           schema:
             type: string
       responses:
@@ -23161,14 +23635,38 @@ paths:
               schema:
                 properties:
                   data:
-                    items:
-                      type: object
-                    type: array
+                    properties:
+                      best:
+                        allOf:
+                          - $ref: '#/components/schemas/SearchHit'
+                        nullable: true
+                      groups:
+                        items:
+                          properties:
+                            hits:
+                              items:
+                                $ref: '#/components/schemas/SearchHit'
+                              type: array
+                            kind:
+                              type: string
+                            partial:
+                              type: boolean
+                            total:
+                              type: integer
+                          type: object
+                        type: array
+                    type: object
                 type: object
           description: OK
+        "400":
+          description: Unknown scope or text too long
         "401":
           $ref: '#/components/responses/Unauthorized'
-      summary: Global search across products, customers, clients, projects, design jobs, sales and invoices
+        "403":
+          description: No access to the requested location
+        "429":
+          description: Too many requests
+      summary: Global search across products, customers, clients, sales, invoices, quotations, projects and design jobs
       tags:
         - Search
   /service-catalog:
@@ -28874,6 +29372,14 @@ paths:
                     format: uuid
                     type: string
                   type: array
+                business_units:
+                  description: The businesses the person works in, at least one. An Admin always has both.
+                  items:
+                    enum:
+                      - A
+                      - B
+                    type: string
+                  type: array
                 email:
                   type: string
                 employee_id:
@@ -28884,11 +29390,22 @@ paths:
                     - en
                     - sw
                   type: string
+                locations:
+                  description: Branches the person is limited to; empty allows every branch of their businesses.
+                  items:
+                    format: uuid
+                    type: string
+                  type: array
                 name:
                   type: string
                 password:
                   type: string
                 phone:
+                  type: string
+                primary_business_unit:
+                  enum:
+                    - A
+                    - B
                   type: string
                 role_id:
                   format: uuid
@@ -28977,6 +29494,14 @@ paths:
                     format: uuid
                     type: string
                   type: array
+                business_units:
+                  description: The businesses the person works in, at least one. An Admin always has both.
+                  items:
+                    enum:
+                      - A
+                      - B
+                    type: string
+                  type: array
                 email:
                   type: string
                 employee_id:
@@ -28987,9 +29512,20 @@ paths:
                     - en
                     - sw
                   type: string
+                locations:
+                  description: Branches the person is limited to; empty allows every branch of their businesses.
+                  items:
+                    format: uuid
+                    type: string
+                  type: array
                 name:
                   type: string
                 phone:
+                  type: string
+                primary_business_unit:
+                  enum:
+                    - A
+                    - B
                   type: string
                 role_id:
                   format: uuid

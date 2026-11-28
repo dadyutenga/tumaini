@@ -23,6 +23,9 @@ export interface SessionUser {
   is_active: boolean;
   branch_ids: string[];
   must_change_password: boolean;
+  business_units?: BusinessCode[];
+  primary_business_unit?: BusinessCode;
+  locations?: string[];
 }
 
 export interface Me {
@@ -32,6 +35,28 @@ export interface Me {
   branches: string[];
   is_owner: boolean;
   membership_id?: string;
+  /** The businesses the person works in; "A" is the shop, "B" the services business. */
+  business_units?: BusinessCode[];
+  primary_business_unit?: BusinessCode;
+  /** Branches the person is limited to; empty means no such limit. */
+  locations?: string[];
+}
+
+export type BusinessCode = "A" | "B";
+export type BusinessChoice = BusinessCode | "all";
+
+/** One business and what it prints; an empty field uses the business profile's value. */
+export interface BusinessUnit {
+  id: string;
+  code: BusinessCode;
+  name: string;
+  display_name: string | null;
+  logo_file_id: string | null;
+  phone: string | null;
+  address: string | null;
+  tin: string | null;
+  receipt_header: string | null;
+  receipt_footer: string | null;
 }
 
 export interface Branch {
@@ -42,6 +67,7 @@ export interface Branch {
   address: string | null;
   phone: string | null;
   manager_id?: string | null;
+  business_unit?: BusinessCode;
   is_main: boolean;
   is_active: boolean;
 }

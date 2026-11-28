@@ -1,8 +1,12 @@
 package inbox
 
 import (
-	"github.com/gofiber/fiber/v3"
+	"strconv"
 
+	"github.com/gofiber/fiber/v3"
+	"github.com/google/uuid"
+
+	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
 	"bms/internal/platform/middleware"
 )
@@ -192,8 +196,58 @@ func (h *Handler) Export(c fiber.Ctx) error {
 }
 
 func (h *Handler) Search(c fiber.Ctx) error {
-	hits, err := h.Svc.GlobalSearch(c.Context(), middleware.Principal(c), c.Query("q"))
-	return httpx.OK(c, hits, err)
+	p, err := searchPlace(c, *middleware.Principal(c))
+	if err != nil {
+		return err
+	}
+	if p, err = searchBusiness(c, p); err != nil {
+		return err
+	}
+	limit, _ := strconv.Atoi(c.Query("limit"))
+	result, err := h.Svc.Search(c.Context(), &p, SearchRequest{Text: c.Query("q"), Scope: c.Query("scope"), Limit: limit})
+	return httpx.OK(c, result, err)
+}
+
+// searchBusiness applies the business_unit parameter ("A", "B" or "all"), which overrides the
+// X-Business-Unit header under the same access rules.
+func searchBusiness(c fiber.Ctx, p auth.Principal) (auth.Principal, error) {
+	switch code := c.Query("business_unit"); code {
+	case "":
+	case "all":
+		p.Active = p.Units
+	default:
+		for _, u := range p.Units {
+			if u.Code == code {
+				p.Active = []auth.Unit{u}
+				return p, nil
+			}
+		}
+		return p, httpx.Forbidden("business_forbidden", "You do not work in that business")
+	}
+	return p, nil
+}
+
+// searchPlace applies the location parameter, which overrides the X-Branch-Id header under the same
+// access rules.
+func searchPlace(c fiber.Ctx, p auth.Principal) (auth.Principal, error) {
+	switch raw := c.Query("location"); raw {
+	case "":
+	case "all":
+		if !p.CanAccessAllBranches() {
+			return p, httpx.Forbidden("branch_forbidden", "You do not have access to all branches")
+		}
+		p.BranchID = nil
+	default:
+		id, err := uuid.Parse(raw)
+		if err != nil {
+			return p, httpx.BadRequest("invalid_branch", "location must be a location id")
+		}
+		if !p.AllowsBranch(id) {
+			return p, httpx.Forbidden("branch_forbidden", "You do not have access to this branch")
+		}
+		p.BranchID = &id
+	}
+	return p, nil
 }
 
 func Register(r fiber.Router, h *Handler) {

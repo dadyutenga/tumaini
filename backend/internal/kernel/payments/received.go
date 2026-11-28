@@ -113,6 +113,8 @@ type Alloc struct {
 }
 
 type ReceiveInput struct {
+	// Business tags the money "A" (shop) or "B" (services); empty takes the branch's business.
+	Business     string
 	LocationID   uuid.UUID
 	AccountID    uuid.UUID
 	CustomerID   *uuid.UUID
@@ -147,7 +149,7 @@ func Receive(ctx context.Context, tx pgx.Tx, in ReceiveInput) (Receipt, error) {
 	}
 	var r Receipt
 	r.Number = number
-	if err := tx.QueryRow(ctx, "\n\t\tINSERT INTO app.payments_received ( receipt_no, customer_id, business_unit_id, location_id, account_id, method, purpose,\n\t\t                                   amount, reference, business_date, client_ref, notes)\n\t\tVALUES ($1,$2,(SELECT business_unit_id FROM app.locations WHERE id = $3),$3,$4,$5::app.payment_method,$6::app.payment_purpose,\n\t\t        $7,NULLIF($8,''),$9::date,$10,NULLIF($11,''))\n\t\tRETURNING id", number, in.CustomerID, in.LocationID, in.AccountID, method, in.Purpose, in.Amount, in.Reference, in.BusinessDate, in.ClientRef, in.Notes).Scan(&r.ID); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tINSERT INTO app.payments_received ( receipt_no, customer_id, business_unit_id, location_id, account_id, method, purpose,\n\t\t                                   amount, reference, business_date, client_ref, notes)\n\t\tVALUES ($1,$2,coalesce((SELECT id FROM app.business_units WHERE code = $12), (SELECT business_unit_id FROM app.locations WHERE id = $3)),$3,$4,$5::app.payment_method,$6::app.payment_purpose,\n\t\t        $7,NULLIF($8,''),$9::date,$10,NULLIF($11,''))\n\t\tRETURNING id", number, in.CustomerID, in.LocationID, in.AccountID, method, in.Purpose, in.Amount, in.Reference, in.BusinessDate, in.ClientRef, in.Notes, in.Business).Scan(&r.ID); err != nil {
 		return Receipt{}, err
 	}
 	for _, a := range in.Allocations {
@@ -159,6 +161,8 @@ func Receive(ctx context.Context, tx pgx.Tx, in ReceiveInput) (Receipt, error) {
 }
 
 type PayInput struct {
+	// Business tags the money "A" (shop) or "B" (services); empty takes the branch's business.
+	Business     string
 	LocationID   uuid.UUID
 	AccountID    uuid.UUID
 	SupplierID   *uuid.UUID
@@ -193,8 +197,8 @@ func Pay(ctx context.Context, tx pgx.Tx, in PayInput) (Receipt, error) {
 		return Receipt{}, err
 	}
 	r := Receipt{Number: number}
-	if err := tx.QueryRow(ctx, "\n\t\tINSERT INTO app.payments_made ( payment_no, business_unit_id, location_id, account_id, method, amount, reference, business_date,\n\t\t                               supplier_id, contractor_id, employee_id, customer_id, other_payee_name, client_ref, notes)\n\t\tVALUES ($1,(SELECT business_unit_id FROM app.locations WHERE id = $2),$2,$3,$4::app.payment_method,$5,NULLIF($6,''),$7::date,\n\t\t        $8,$9,$10,$11,NULLIF($12,''),$13,NULLIF($14,''))\n\t\tRETURNING id", number, in.LocationID, in.AccountID, method, in.Amount, in.Reference, in.BusinessDate,
-		in.SupplierID, in.ContractorID, in.EmployeeID, in.CustomerID, in.OtherPayee, in.ClientRef, in.Notes).Scan(&r.ID); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tINSERT INTO app.payments_made ( payment_no, business_unit_id, location_id, account_id, method, amount, reference, business_date,\n\t\t                               supplier_id, contractor_id, employee_id, customer_id, other_payee_name, client_ref, notes)\n\t\tVALUES ($1,coalesce((SELECT id FROM app.business_units WHERE code = $15), (SELECT business_unit_id FROM app.locations WHERE id = $2)),$2,$3,$4::app.payment_method,$5,NULLIF($6,''),$7::date,\n\t\t        $8,$9,$10,$11,NULLIF($12,''),$13,NULLIF($14,''))\n\t\tRETURNING id", number, in.LocationID, in.AccountID, method, in.Amount, in.Reference, in.BusinessDate,
+		in.SupplierID, in.ContractorID, in.EmployeeID, in.CustomerID, in.OtherPayee, in.ClientRef, in.Notes, in.Business).Scan(&r.ID); err != nil {
 		return Receipt{}, err
 	}
 	for _, a := range in.Allocations {

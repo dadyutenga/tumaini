@@ -1,7 +1,6 @@
 import type { Translations } from "../en";
 
 export default {
-  saleReceipt: "Mauzo / risiti",
   currentLanguageSwitch: "Lugha ya sasa: {language}. Badilisha lugha",
   signIn: "Ingia",
   signOut: "Toka",
@@ -85,14 +84,6 @@ export default {
   serviceClient: "Mteja wa huduma",
   project: "Mradi",
   designJob: "Kazi ya ubunifu",
-  serviceInvoice: "Ankara ya huduma",
-  globalSearch: "Utafutaji wa jumla",
-  findClientsCustomersProductsInvoices: "Tafuta wateja, bidhaa, ankara, miradi, risiti au kurasa.",
-  globalSearchInput: "Kisanduku cha utafutaji wa jumla",
-  typeANamePhoneNumber: "Andika jina, simu, namba, SKU au barcode…",
-  records: "Rekodi {value}",
-  noMatchingRecords: "Hakuna rekodi inayolingana.",
-  pages: "Kurasa",
   newSalePos: "Mauzo mapya (POS)",
   newClient: "Mteja mpya wa huduma",
   newProject: "Mradi mpya",

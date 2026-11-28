@@ -17,6 +17,7 @@ import {
 } from "@/components/shared/kit";
 import { FilePreviewDialog } from "@/components/shared/FilePreview";
 import { useAuth } from "@/features/auth/auth";
+import { BusinessSelect, useBusinessChoice } from "@/features/business/BusinessSelect";
 import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { isPendingApproval, uploadFile } from "@/lib/api";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
@@ -87,8 +88,10 @@ export default function Expenses() {
     description: "",
     date: today(),
     receipt_file_id: "",
+    business_unit: undefined as string | undefined,
   };
   const [draft, setDraft] = useState(blankDraft);
+  const business = useBusinessChoice(draft.business_unit);
 
   const create = useWrite<Record<string, unknown>, Expense & { status: string }>(
     "POST",
@@ -100,13 +103,7 @@ export default function Expenses() {
       onSuccess: (result) => {
         setOpen(false);
         setReceiptName("");
-        setDraft({
-          category_id: "",
-          amount: "",
-          description: "",
-          date: today(),
-          receipt_file_id: "",
-        });
+        setDraft(blankDraft);
         if (isPendingApproval(result)) return;
       },
     },
@@ -342,6 +339,7 @@ export default function Expenses() {
             date: draft.date,
           };
           if (draft.receipt_file_id) payload.receipt_file_id = draft.receipt_file_id;
+          if (business) payload.business_unit = business;
           create.mutate(payload);
         }}
       >
@@ -359,6 +357,10 @@ export default function Expenses() {
             ))}
           </NativeSelect>
         </Field>
+        <BusinessSelect
+          value={draft.business_unit}
+          onChange={(business_unit) => setDraft((d) => ({ ...d, business_unit }))}
+        />
         <div className="grid grid-cols-2 gap-3">
           <Field label={t.common.amount}>
             <Input

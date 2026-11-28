@@ -33,7 +33,11 @@ components:
       name: X-Branch-Id
       in: header
       required: false
-      description: Active branch. Users whose scope is `all` may send `all` on GET routes. Defaults to the user's default branch.
+      description: >-
+        Active branch. Users whose scope is `all` may send `all` on GET routes. Defaults to the user's default branch.
+        A separate X-Business-Unit header (A, B or all) narrows what shared pages show to one business; changes are
+        always checked against every business the user works in. 403 `business_forbidden` or `branch_forbidden` when
+        the user may not use it.
       schema:
         type: string
     IdempotencyKey:
@@ -85,6 +89,44 @@ components:
         type: string
         enum: [json, csv, xlsx, pdf]
   schemas:
+    BusinessUnit:
+      type: object
+      properties:
+        id: {type: string, format: uuid}
+        code: {type: string, enum: [A, B]}
+        name: {type: string}
+        kind: {type: string}
+        display_name: {type: string, nullable: true}
+        logo_file_id: {type: string, format: uuid, nullable: true}
+        phone: {type: string, nullable: true}
+        address: {type: string, nullable: true}
+        tin: {type: string, nullable: true}
+        receipt_header: {type: string, nullable: true}
+        receipt_footer: {type: string, nullable: true}
+    SearchHit:
+      type: object
+      properties:
+        kind:
+          type: string
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        subtitle:
+          type: string
+        link:
+          type: string
+        meta:
+          type: object
+          description: Facts for the row (price, stock, balance, total, status, due_date, phone and so on). Never a cost.
+        business_unit:
+          type: string
+          nullable: true
+          enum: [A, B]
+        highlight:
+          type: string
+          description: The field the text matched.
     Error:
       type: object
       required: [error]

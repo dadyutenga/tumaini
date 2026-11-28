@@ -1,5 +1,4 @@
 export default {
-  saleReceipt: "Sale / receipt",
   currentLanguageSwitch: "Current language: {language}. Switch language",
   signIn: "Sign in",
   signOut: "Sign out",
@@ -82,15 +81,6 @@ export default {
   serviceClient: "Service client",
   project: "Project",
   designJob: "Design job",
-  serviceInvoice: "Service invoice",
-  globalSearch: "Global search",
-  findClientsCustomersProductsInvoices:
-    "Find clients, customers, products, invoices, projects, receipts or pages.",
-  globalSearchInput: "Global search input",
-  typeANamePhoneNumber: "Type a name, phone, number, SKU or barcode…",
-  records: "Records {value}",
-  noMatchingRecords: "No matching records.",
-  pages: "Pages",
   newSalePos: "New sale (POS)",
   newClient: "New client",
   newProject: "New project",

@@ -385,6 +385,7 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, customerID uui
 		}
 		cust := customerID
 		rec, err := payments.Receive(ctx, tx, payments.ReceiveInput{
+			Business:   auth.Shop,
 			LocationID: *p.BranchID,
 			AccountID:  in.MoneyAccountID, CustomerID: &cust, Purpose: purpose,
 			Method: method, Amount: in.Amount, Reference: ref, BusinessDate: date, Allocations: targets,

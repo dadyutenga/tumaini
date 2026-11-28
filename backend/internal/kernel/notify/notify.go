@@ -55,6 +55,28 @@ var legacy = map[string]string{
 	"task_due": "task_overdue",
 }
 
+// typeBusiness is the business a notification type is about; types not listed concern both.
+var typeBusiness = map[string]string{
+	"low_stock":   "A",
+	"renewal_due": "B", "design_brief_assigned": "B", "design_feedback": "B", "design_deadline": "B", "design_approved": "B",
+	"print_ready": "B", "project_stage_changed": "B", "task_assigned": "B", "task_overdue": "B",
+}
+
+// businessOf is the business ("A", "B" or "" for both) a person must work in to be told. A request
+// for a shop or services decision carries that business even though its type is general.
+func businessOf(typ, permission string) string {
+	if code := typeBusiness[typ]; code != "" {
+		return code
+	}
+	switch {
+	case strings.HasPrefix(permission, "shop."):
+		return "A"
+	case strings.HasPrefix(permission, "services."):
+		return "B"
+	}
+	return ""
+}
+
 func resolve(t string) (string, bool) {
 	if Types[t] {
 		return t, true
@@ -80,7 +102,12 @@ func (s *Service) ToUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, m Mes
 		return nil
 	}
 	var membership uuid.UUID
-	if err := tx.QueryRow(ctx, "SELECT id FROM app.memberships WHERE user_id = $1 AND status = 'active'", userID).Scan(&membership); err != nil {
+	if err := tx.QueryRow(ctx, `
+		SELECT m.id FROM app.memberships m
+		WHERE m.user_id = $1 AND m.status = 'active'
+		  AND ($2 = '' OR EXISTS (SELECT 1 FROM app.membership_business_units b
+		                            JOIN app.business_units u ON u.id = b.business_unit_id
+		                           WHERE b.membership_id = m.id AND u.code = $2))`, userID, businessOf(typ, "")).Scan(&membership); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
@@ -137,6 +164,9 @@ func (s *Service) DaysBefore(ctx context.Context, tx pgx.Tx, typ string, fallbac
 const holders = `
 	SELECT DISTINCT m.user_id, m.id FROM app.memberships m
 	WHERE m.status = 'active' AND ($2::uuid IS NULL OR m.user_id <> $2)
+	  AND ($3 = '' OR EXISTS (SELECT 1 FROM app.membership_business_units b
+	                            JOIN app.business_units u ON u.id = b.business_unit_id
+	                           WHERE b.membership_id = m.id AND u.code = $3))
 	  AND coalesce(
 	    (SELECT o.effect = 'allow' FROM app.membership_permission_overrides o
 	      WHERE o.membership_id = m.id AND o.permission_code = $1 AND (o.expires_at IS NULL OR o.expires_at > now())),
@@ -158,7 +188,7 @@ func (s *Service) toHolders(ctx context.Context, tx pgx.Tx, permission string, e
 	if !enabled || !inApp {
 		return nil
 	}
-	rows, err := tx.Query(ctx, holders, permission, except)
+	rows, err := tx.Query(ctx, holders, permission, except, businessOf(typ, permission))
 	if err != nil {
 		return err
 	}

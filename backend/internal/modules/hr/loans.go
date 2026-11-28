@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"bms/internal/kernel/business"
 	"bms/internal/kernel/payments"
 	"bms/internal/modules/hr/hrkit"
 	"bms/internal/platform/auth"
@@ -156,7 +157,12 @@ func (s *Service) CreateLoan(ctx context.Context, p *auth.Principal, in LoanIn) 
 				return err
 			}
 			empID := in.EmployeeID
+			unit, err := business.EmployeeBusiness(ctx, tx, empID)
+			if err != nil {
+				return err
+			}
 			res, err := payments.Pay(ctx, tx, payments.PayInput{
+				Business:   unit,
 				LocationID: locID,
 				AccountID:  *in.MoneyAccountID, EmployeeID: &empID,
 				Amount: principal, Reference: strings.TrimSpace(in.Reference), BusinessDate: issuedOn,
@@ -228,7 +234,12 @@ func (s *Service) Disburse(ctx context.Context, p *auth.Principal, loanID, accou
 			return err
 		}
 		date := s.today(ctx, tx)
+		unit, err := business.EmployeeBusiness(ctx, tx, empID)
+		if err != nil {
+			return err
+		}
 		res, err := payments.Pay(ctx, tx, payments.PayInput{
+			Business:   unit,
 			LocationID: locID,
 			AccountID:  account, EmployeeID: &empID,
 			Amount: amount, BusinessDate: date, Notes: "Staff " + asString(l["kind"]) + " disbursement",

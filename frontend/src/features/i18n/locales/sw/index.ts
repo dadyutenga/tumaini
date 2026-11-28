@@ -21,6 +21,8 @@ import admin from "./admin";
 import settings from "./settings";
 import errors from "./errors";
 import status from "./status";
+import search from "./search";
+import business from "./business";
 
 const sw = {
   common,
@@ -45,6 +47,8 @@ const sw = {
   settings,
   errors,
   status,
+  search,
+  business,
 } satisfies Translations;
 
 export default sw;

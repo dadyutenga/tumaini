@@ -166,7 +166,7 @@ func (s *Service) CreatePO(ctx context.Context, p *auth.Principal, in POIn) (map
 			d, _ := time.Parse("2006-01-02", date)
 			due = d.AddDate(0, 0, terms).Format("2006-01-02")
 		}
-		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.purchases ( purchase_no, supplier_id, business_unit_id, location_id, status,\n\t\t\t                           order_date, expected_date, due_date, supplier_invoice_ref, notes)\n\t\t\tVALUES ($1,$2,(SELECT business_unit_id FROM app.locations WHERE id = $3),$3,'draft',\n\t\t\t        $4::date,NULLIF($5,'')::date,NULLIF($6,'')::date,NULLIF($7,''),NULLIF($8,''))\n\t\t\tRETURNING id", number, in.SupplierID, *p.BranchID, date,
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.purchases ( purchase_no, supplier_id, business_unit_id, location_id, status,\n\t\t\t                           order_date, expected_date, due_date, supplier_invoice_ref, notes)\n\t\t\tVALUES ($1,$2,(SELECT id FROM app.business_units WHERE code = 'A'),$3,'draft',\n\t\t\t        $4::date,NULLIF($5,'')::date,NULLIF($6,'')::date,NULLIF($7,''),NULLIF($8,''))\n\t\t\tRETURNING id", number, in.SupplierID, *p.BranchID, date,
 			strings.TrimSpace(in.ExpectedDate), due, strings.TrimSpace(in.SupplierInvoiceRef), strings.TrimSpace(in.Note)).Scan(&id); err != nil {
 			return err
 		}
@@ -380,7 +380,7 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, in ReceiptIn) 
 				d, _ := time.Parse("2006-01-02", date)
 				due = d.AddDate(0, 0, terms).Format("2006-01-02")
 			}
-			if err := tx.QueryRow(ctx, "\n\t\t\t\tINSERT INTO app.purchases ( purchase_no, supplier_id, business_unit_id, location_id, status,\n\t\t\t\t                           order_date, due_date, supplier_invoice_ref, notes)\n\t\t\t\tVALUES ($1,$2,(SELECT business_unit_id FROM app.locations WHERE id = $3),$3,'ordered',\n\t\t\t\t        $4::date,NULLIF($5,'')::date,NULLIF($6,''),'Direct receipt')\n\t\t\t\tRETURNING id", number, supplier, branch, date, due, strings.TrimSpace(in.SupplierInvoiceRef)).Scan(&poID); err != nil {
+			if err := tx.QueryRow(ctx, "\n\t\t\t\tINSERT INTO app.purchases ( purchase_no, supplier_id, business_unit_id, location_id, status,\n\t\t\t\t                           order_date, due_date, supplier_invoice_ref, notes)\n\t\t\t\tVALUES ($1,$2,(SELECT id FROM app.business_units WHERE code = 'A'),$3,'ordered',\n\t\t\t\t        $4::date,NULLIF($5,'')::date,NULLIF($6,''),'Direct receipt')\n\t\t\t\tRETURNING id", number, supplier, branch, date, due, strings.TrimSpace(in.SupplierInvoiceRef)).Scan(&poID); err != nil {
 				return 0, nil, err
 			}
 			poItems := make([]POItem, len(in.Items))
@@ -626,6 +626,7 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, supplierID uuid.UU
 			date = s.bizDate(ctx, tx)
 		}
 		res, err := payments.Pay(ctx, tx, payments.PayInput{
+			Business:   auth.Shop,
 			LocationID: *p.BranchID,
 			AccountID:  in.MoneyAccountID, SupplierID: &supplierID,
 			Method: method, Amount: amt, Reference: strings.TrimSpace(in.Reference), BusinessDate: date,

@@ -61,7 +61,10 @@ func (h *Handler) run(fn reportFn) fiber.Handler {
 		if err != nil {
 			return err
 		}
-		p := middleware.Principal(c)
+		p, err := forBusiness(middleware.Principal(c), f)
+		if err != nil {
+			return err
+		}
 		if h.exporting(c) && !p.Has("reports.export") {
 			return httpx.Forbidden("permission_denied", "You do not have permission to export reports")
 		}
@@ -97,8 +100,33 @@ func (h *Handler) Dashboard(c fiber.Ctx) error {
 	if err != nil {
 		return err
 	}
-	out, err := h.Svc.Dashboard(c.Context(), middleware.Principal(c), f)
+	p, err := forBusiness(middleware.Principal(c), f)
+	if err != nil {
+		return err
+	}
+	// Without a choice the dashboard shows what the request covers: "all" needs both businesses.
+	if f.Q("business") == "" && len(p.Active) == 1 {
+		f.Query["business"] = map[string]string{auth.Shop: "shop", auth.Services: "services"}[p.Active[0].Code]
+	}
+	out, err := h.Svc.Dashboard(c.Context(), p, f)
 	return httpx.OK(c, out, err)
+}
+
+// forBusiness narrows a report to the business named by ?business=shop or services, which the
+// caller must work in. Row security then keeps every figure to it.
+func forBusiness(p *auth.Principal, f Filter) (*auth.Principal, error) {
+	code := map[string]string{"shop": auth.Shop, "services": auth.Services}[f.Q("business")]
+	if code == "" {
+		return p, nil
+	}
+	for _, u := range p.Units {
+		if u.Code == code {
+			narrowed := *p
+			narrowed.Active = []auth.Unit{u}
+			return &narrowed, nil
+		}
+	}
+	return nil, httpx.Forbidden("business_forbidden", "You do not work in that business")
 }
 
 func (h *Handler) Me(c fiber.Ctx) error {

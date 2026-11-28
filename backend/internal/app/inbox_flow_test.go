@@ -136,7 +136,7 @@ func TestInboxApprovalsNotificationsAuditBackups(t *testing.T) {
 	require.Equal(t, 201, e.owner.call(t, http.MethodPost, "/api/v1/clients", map[string]any{"name": "Kilimanjaro Roasters", "phone": "+255712000111"}, "").code)
 	hits := e.owner.call(t, http.MethodGet, "/api/v1/search?q=Kilimanjaro", nil, "")
 	require.Equal(t, 200, hits.code, hits.raw)
-	require.NotEmpty(t, asList(hits.body["data"]))
+	require.NotEmpty(t, searchHits(hits, "client"))
 	myLogins := staff.call(t, http.MethodGet, "/api/v1/me/login-history", nil, "")
 	require.Equal(t, 200, myLogins.code, myLogins.raw)
 	require.NotEmpty(t, asList(myLogins.body["data"]))

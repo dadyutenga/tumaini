@@ -67,6 +67,8 @@ type EmployeeIn struct {
 	EmergencyContactPhone *string          `json:"emergency_contact_phone"`
 	PhotoFileID           *uuid.UUID       `json:"photo_file_id"`
 	Status                string           `json:"status" validate:"omitempty,oneof=active suspended"`
+	// BusinessUnit ("A" or "B") is where the person's pay is posted; empty keeps or defaults it.
+	BusinessUnit string `json:"business_unit" validate:"omitempty,oneof=A B"`
 }
 
 const employeeCols = `e.id, e.employee_no, e.full_name::text AS name, e.phone::text AS phone, e.email::text AS email,
@@ -76,7 +78,8 @@ const employeeCols = `e.id, e.employee_no, e.full_name::text AS name, e.phone::t
 	e.membership_id, m.user_id, r.id AS role_id, r.name::text AS role_name, r.code::text AS role_slug,
 	e.created_at, e.updated_at,
 	comp.basic_salary AS base_pay, comp.pay_method::text AS pay_method,
-	comp.payout_account_last4 AS pay_account_last4, comp.payout_provider AS pay_provider`
+	comp.payout_account_last4 AS pay_account_last4, comp.payout_provider AS pay_provider,
+	(SELECT bu.code FROM app.business_units bu WHERE bu.id = e.business_unit_id) AS business_unit`
 
 const employeeFrom = ` FROM app.employees e
 	LEFT JOIN app.locations l ON l.id = e.location_id
@@ -119,6 +122,7 @@ type EmployeeFilter struct {
 	Q        string
 	Status   string
 	BranchID *uuid.UUID
+	Business string // "A" or "B"
 	Sort     string
 }
 
@@ -133,6 +137,7 @@ func (s *Service) ListEmployees(ctx context.Context, p *auth.Principal, f Employ
 		}
 		q.If(branch != nil, "e.location_id = ?", branch)
 		q.If(f.Status != "", "e.status = ?::app.employee_status", f.Status)
+		q.If(f.Business != "", "e.business_unit_id = (SELECT bu.id FROM app.business_units bu WHERE bu.code = ?)", f.Business)
 		q.If(f.Q != "", "(e.full_name ILIKE ? OR e.employee_no ILIKE ? OR e.phone ILIKE ? OR e.position ILIKE ?)", "%"+f.Q+"%", "%"+f.Q+"%", "%"+f.Q+"%", "%"+f.Q+"%")
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.employees e`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
@@ -247,6 +252,9 @@ func (s *Service) CreateEmployee(ctx context.Context, p *auth.Principal, in Empl
 	if err != nil {
 		return nil, httpx.BadRequest("invalid_phone", err.Error())
 	}
+	if in.BusinessUnit != "" && !p.MayUseBusiness(in.BusinessUnit) {
+		return nil, httpx.Forbidden("business_forbidden", "You do not work in that business")
+	}
 	loc := in.BranchID
 	if loc == nil {
 		loc = p.BranchID
@@ -275,9 +283,10 @@ func (s *Service) CreateEmployee(ctx context.Context, p *auth.Principal, in Empl
 		var id uuid.UUID
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO app.employees
-				( employee_no, full_name, phone, email, position, location_id, start_date, photo_file_id, emergency_contact_name, emergency_contact_phone)
-			VALUES ($1,$2,NULLIF($3,'')::app.phone_e164,NULLIF($4,'')::app.email,$5,$6,$7::date,$8,NULLIF($9,''),NULLIF($10,'')::app.phone_e164)
-			RETURNING id`, number, in.Name, ph, deref(in.Email), pos, loc, startDate, in.PhotoFileID, deref(in.EmergencyContact), eph).Scan(&id); err != nil {
+				( employee_no, full_name, phone, email, position, location_id, start_date, photo_file_id, emergency_contact_name, emergency_contact_phone, business_unit_id)
+			VALUES ($1,$2,NULLIF($3,'')::app.phone_e164,NULLIF($4,'')::app.email,$5,$6,$7::date,$8,NULLIF($9,''),NULLIF($10,'')::app.phone_e164,
+			        (SELECT bu.id FROM app.business_units bu WHERE bu.code = $11))
+			RETURNING id`, number, in.Name, ph, deref(in.Email), pos, loc, startDate, in.PhotoFileID, deref(in.EmergencyContact), eph, in.BusinessUnit).Scan(&id); err != nil {
 			return err
 		}
 		if in.BasePay != nil {
@@ -309,6 +318,9 @@ func deref(s *string) string {
 }
 
 func (s *Service) UpdateEmployee(ctx context.Context, p *auth.Principal, id uuid.UUID, in EmployeeIn) (map[string]any, error) {
+	if in.BusinessUnit != "" && !p.MayUseBusiness(in.BusinessUnit) {
+		return nil, httpx.Forbidden("business_forbidden", "You do not work in that business")
+	}
 	if in.BasePay != nil && in.BasePay.IsNegative() {
 		return nil, httpx.BadRequest("invalid_body", "Base pay cannot be negative")
 	}
@@ -344,8 +356,8 @@ func (s *Service) UpdateEmployee(ctx context.Context, p *auth.Principal, id uuid
 				return httpx.BadRequest("invalid_branch", "Location not found")
 			}
 		}
-		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.employees SET\n\t\t\t  full_name = COALESCE(NULLIF($2,''), full_name),\n\t\t\t  phone = CASE WHEN $3 THEN NULLIF($4,'')::app.phone_e164 ELSE phone END,\n\t\t\t  email = CASE WHEN $5::text IS NULL THEN email ELSE NULLIF($5,'')::app.email END,\n\t\t\t  position = COALESCE(NULLIF($6,''), position),\n\t\t\t  location_id = COALESCE($7, location_id),\n\t\t\t  start_date = COALESCE(NULLIF($8,'')::date, start_date),\n\t\t\t  photo_file_id = COALESCE($9, photo_file_id),\n\t\t\t  emergency_contact_name = CASE WHEN $10::text IS NULL THEN emergency_contact_name ELSE NULLIF($10,'') END,\n\t\t\t  emergency_contact_phone = CASE WHEN $11 THEN NULLIF($12,'')::app.phone_e164 ELSE emergency_contact_phone END,\n\t\t\t  status = COALESCE(NULLIF($13,'')::app.employee_status, status)\n\t\t\tWHERE id = $1", id, strings.TrimSpace(in.Name), in.Phone != nil, ph, in.Email, strings.TrimSpace(in.Position),
-			in.BranchID, strings.TrimSpace(in.HireDate), in.PhotoFileID, in.EmergencyContact, in.EmergencyContactPhone != nil, eph, strings.TrimSpace(in.Status)); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.employees SET\n\t\t\t  full_name = COALESCE(NULLIF($2,''), full_name),\n\t\t\t  phone = CASE WHEN $3 THEN NULLIF($4,'')::app.phone_e164 ELSE phone END,\n\t\t\t  email = CASE WHEN $5::text IS NULL THEN email ELSE NULLIF($5,'')::app.email END,\n\t\t\t  position = COALESCE(NULLIF($6,''), position),\n\t\t\t  location_id = COALESCE($7, location_id),\n\t\t\t  start_date = COALESCE(NULLIF($8,'')::date, start_date),\n\t\t\t  photo_file_id = COALESCE($9, photo_file_id),\n\t\t\t  emergency_contact_name = CASE WHEN $10::text IS NULL THEN emergency_contact_name ELSE NULLIF($10,'') END,\n\t\t\t  emergency_contact_phone = CASE WHEN $11 THEN NULLIF($12,'')::app.phone_e164 ELSE emergency_contact_phone END,\n\t\t\t  status = COALESCE(NULLIF($13,'')::app.employee_status, status),\n\t\t\t  business_unit_id = COALESCE((SELECT bu.id FROM app.business_units bu WHERE bu.code = $14), business_unit_id)\n\t\t\tWHERE id = $1", id, strings.TrimSpace(in.Name), in.Phone != nil, ph, in.Email, strings.TrimSpace(in.Position),
+			in.BranchID, strings.TrimSpace(in.HireDate), in.PhotoFileID, in.EmergencyContact, in.EmergencyContactPhone != nil, eph, strings.TrimSpace(in.Status), in.BusinessUnit); err != nil {
 			return err
 		}
 		// Suspending an employee immediately suspends their linked login seat and revokes all active sessions.
@@ -446,6 +458,10 @@ type UserIn struct {
 	RoleID    uuid.UUID   `json:"role_id" validate:"required"`
 	BranchIDs []uuid.UUID `json:"branch_ids"`
 	Language  string      `json:"language" validate:"omitempty,oneof=en sw"`
+	// Without these the login works in the employee's business (a Manager in all the creator's).
+	BusinessUnits []string     `json:"business_units"`
+	PrimaryUnit   string       `json:"primary_business_unit"`
+	Locations     *[]uuid.UUID `json:"locations"`
 }
 
 // CreateLogin creates an iam.users account and app.memberships seat linked to the employee.
@@ -526,6 +542,10 @@ func (s *Service) CreateLogin(ctx context.Context, p *auth.Principal, id uuid.UU
 			return err
 		}
 		if _, err := tx.Exec(ctx, "UPDATE app.employees SET membership_id = $2 WHERE id = $1", id, membershipID); err != nil {
+			return err
+		}
+		if err := identity.AssignEmployeeLogin(ctx, tx, p, membershipID, in.RoleID, id, identity.UserInput{
+			BusinessUnits: in.BusinessUnits, PrimaryUnit: in.PrimaryUnit, Locations: in.Locations, BranchIDs: in.BranchIDs}); err != nil {
 			return err
 		}
 		out = map[string]any{"id": userID, "membership_id": membershipID, "employee_id": id, "name": name, "phone": ph, "email": email, "role_id": in.RoleID}

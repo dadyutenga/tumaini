@@ -27,10 +27,6 @@ export default {
     invalid_value: "Kuna taarifa inayokosekana au isiyoruhusiwa",
     last_owner: "Biashara lazima ibaki na angalau Msimamizi mmoja anayetumika",
     leave_balance_exceeded: "Ombi hili linazidi siku za likizo zilizobaki",
-    mfa_already_enabled: "Uthibitishaji wa hatua mbili tayari umewashwa",
-    mfa_not_pending: "Anza kwanza kuweka uthibitishaji wa hatua mbili",
-    multi_tenant_user:
-      "Mtumiaji huyu yuko kwenye biashara zaidi ya moja, lazima aweke nenosiri upya mwenyewe",
     negative_net: "Mshahara halisi hauwezi kuwa chini ya sifuri",
     network_not_allowed:
       "Ingia kazini ukiwa kwenye mtandao wa tawi. Kama uko kwingine, muombe meneja akuingize.",
@@ -57,6 +53,9 @@ export default {
     too_many_rows: "Ingiza bidhaa zisizozidi 5,000 kwa mara moja",
     unsupported_file:
       "Aina hiyo ya faili hairuhusiwi. Tumia picha, PDF, maandishi, CSV, au faili la Excel/Word.",
+    branch_forbidden: "Tawi hilo ni la biashara usiyofanyia kazi",
+    business_forbidden: "Hufanyi kazi katika biashara hiyo",
+    invalid_business: "Chagua duka, huduma au zote mbili",
   },
   messages: {
     wrongSignIn: "Simu, barua pepe au nenosiri si sahihi",
@@ -78,5 +77,19 @@ export default {
     methodOff: "Njia hii ya malipo imezimwa kwenye mipangilio",
     channelOff: "Njia hii haijawekwa. Muombe msimamizi aiweke.",
     branchForbidden: "Huna ruhusa ya tawi hili",
+    chooseBusiness: "Chagua angalau biashara moja",
+    unknownBusiness: "Biashara ni A (duka) au B (huduma)",
+    noBusinessAssigned: "Akaunti yako haijapangiwa biashara. Muombe Msimamizi.",
+    ownBusinessAccess: "Huwezi kubadilisha ruhusa yako mwenyewe ya biashara",
+    giveBusinessNotYours: "Huwezi kutoa ruhusa ya biashara usiyofanyia kazi",
+    adminBothBusinesses: "Msimamizi hufanya kazi katika biashara zote mbili",
+    primaryAmongChosen: "Biashara kuu lazima iwe mojawapo ya zilizochaguliwa",
+    adminNoBranchLimit: "Msimamizi hawezi kuwekewa kikomo cha baadhi ya matawi",
+    activeBranchOfChosen: "Kila tawi lazima liwe tawi linalotumika la biashara zilizochaguliwa",
+    branchNotTheirs: "Tawi hilo halipo au ni la biashara ambayo mtu huyu hafanyii kazi",
+    notYourRecordsBusiness: "Hufanyi kazi katika biashara inayomiliki rekodi hii",
+    payrollBothBusinesses:
+      "Mishahara inahusu biashara zote mbili; ni anayefanya kazi katika zote mbili tu anaweza kuibadilisha",
+    branchOfOtherBusiness: "Tawi hilo ni la biashara usiyofanyia kazi",
   },
 } satisfies Translations["errors"];

@@ -20,6 +20,9 @@ import { FilePreviewDialog } from "@/components/shared/FilePreview";
 import { RecordHistoryTab } from "@/components/shared/RecordHistoryTab";
 import { AttachmentsSection } from "@/components/shared/AttachmentsSection";
 import { useAuth } from "@/features/auth/auth";
+import { useBusinessName } from "@/features/business/BusinessBadges";
+import { useBusiness } from "@/features/business/useBusiness";
+import type { BusinessCode } from "@/types";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { session } from "@/lib/api";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
@@ -47,6 +50,7 @@ interface EmployeeDetailData {
   pay_provider?: string | null;
   emergency_contact?: string | null;
   emergency_contact_phone?: string | null;
+  business_unit?: BusinessCode;
   user_id?: string | null;
 }
 
@@ -164,7 +168,10 @@ export default function EmployeeDetail() {
 
   const [editing, setEditing] = useState(false);
   const [updateComp, setUpdateComp] = useState(false);
+  const { units } = useBusiness();
+  const businessName = useBusinessName();
   const [form, setForm] = useState({
+    business_unit: "",
     name: "",
     phone: "",
     email: "",
@@ -211,6 +218,7 @@ export default function EmployeeDetail() {
   useEffect(() => {
     if (emp.data) {
       setForm({
+        business_unit: emp.data.business_unit ?? "",
         name: emp.data.name ?? "",
         phone: emp.data.phone ?? "",
         email: emp.data.email ?? "",
@@ -384,6 +392,10 @@ export default function EmployeeDetail() {
                   { label: t.common.phone, value: e.phone || "-" },
                   { label: t.common.email, value: e.email || "-" },
                   { label: t.hr.position, value: e.position || e.position_name || "-" },
+                  {
+                    label: t.business.business,
+                    value: e.business_unit ? businessName(e.business_unit) : "-",
+                  },
                   { label: t.hr.hireDate, value: e.hire_date ? formatDate(e.hire_date) : "-" },
                   {
                     label: t.hr.emergencyContact,
@@ -859,6 +871,7 @@ export default function EmployeeDetail() {
             position: form.position,
             emergency_contact: form.emergency_contact,
             emergency_contact_phone: form.emergency_contact_phone,
+            business_unit: form.business_unit || undefined,
           };
           if (canManageComp && updateComp && form.base_pay.trim() !== "") {
             payload.base_pay = form.base_pay.trim();
@@ -882,6 +895,17 @@ export default function EmployeeDetail() {
             onChange={(ev) => setForm((f) => ({ ...f, name: ev.target.value }))}
           />
         </Field>
+        {units.length > 1 && (
+          <Field label={t.business.business} hint={t.business.payBusinessHint}>
+            <NativeSelect
+              value={form.business_unit}
+              onChange={(ev) => setForm((f) => ({ ...f, business_unit: ev.target.value }))}
+            >
+              <option value="A">{t.business.shopA}</option>
+              <option value="B">{t.business.servicesB}</option>
+            </NativeSelect>
+          </Field>
+        )}
         <div className="grid grid-cols-2 gap-3">
           <Field label={t.common.phone}>
             <Input

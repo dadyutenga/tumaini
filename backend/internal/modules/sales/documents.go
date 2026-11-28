@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"bms/internal/kernel/business"
 	"bms/internal/kernel/outbound"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/export"
@@ -19,13 +20,12 @@ import (
 )
 
 func businessHeader(ctx context.Context, tx pgx.Tx) (map[string]any, error) {
-	var name, currency string
-	var taxNo, regNo, phone, email, address *string
-	if err := tx.QueryRow(ctx, "\n\t\tSELECT business_name::text, tin, registration_no, phone::text, email::text, address, currency::text\n\t\tFROM app.business_settings WHERE true").
-		Scan(&name, &taxNo, &regNo, &phone, &email, &address, &currency); err != nil {
+	h, err := business.HeaderFor(ctx, tx, auth.Shop)
+	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"name": name, "legal_name": name, "tax_number": taxNo, "reg_number": regNo, "phone": phone, "email": email, "address": address, "currency": currency}, nil
+	return map[string]any{"name": h.Name, "legal_name": h.Name, "tax_number": h.TaxNumber, "reg_number": h.RegNumber, "phone": h.Phone,
+		"email": h.Email, "address": h.Address, "currency": h.Currency, "header": h.ReceiptHeader, "logo_file_id": h.LogoFileID}, nil
 }
 
 // Receipt returns print data. When recordPrint is true (PDF download), it records a
@@ -162,6 +162,9 @@ func ReceiptPDF(m map[string]any) []byte {
 	d := pdf.NewThermal(paper)
 	biz, _ := m["business"].(map[string]any)
 	d.Heading(str(biz["name"]), 11)
+	if v := str(biz["header"]); v != "" {
+		d.Text(v)
+	}
 	if v := str(biz["address"]); v != "" {
 		d.Text(v)
 	}

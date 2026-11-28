@@ -45,6 +45,8 @@ type Input struct {
 	DesignJobID    *uuid.UUID      `json:"design_job_id,omitempty"`
 	ReceiptFileID  *uuid.UUID      `json:"receipt_file_id,omitempty"`
 	MoneyAccountID *uuid.UUID      `json:"money_account_id,omitempty"`
+	// BusinessUnit is "A" or "B"; empty takes the branch's business (or keeps it on an edit).
+	BusinessUnit string `json:"business_unit,omitempty" validate:"omitempty,oneof=A B"`
 }
 
 func (s *Service) bizDate(ctx context.Context, tx pgx.Tx) (string, error) {
@@ -97,9 +99,13 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in Input) (int,
 			return err
 		}
 		amount := money.Money(in.Amount)
+		unit, err := businessFor(ctx, tx, p, in.BusinessUnit, *p.BranchID)
+		if err != nil {
+			return err
+		}
 		var id uuid.UUID
-		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.expenses ( expense_no, category_id, description, amount, expense_date,\n\t\t\t                          business_unit_id, location_id, project_id, design_job_id, account_id, receipt_file_id, status)\n\t\t\tVALUES ($1,$2,$3,$4,$5::date,\n\t\t\t        (SELECT business_unit_id FROM app.locations WHERE id = $6), $6, $7, $8, $9, $10, 'submitted')\n\t\t\tRETURNING id", number, in.CategoryID, in.Description, amount, date, *p.BranchID,
-			in.ProjectID, in.DesignJobID, in.MoneyAccountID, in.ReceiptFileID).Scan(&id); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.expenses ( expense_no, category_id, description, amount, expense_date,\n\t\t\t                          business_unit_id, location_id, project_id, design_job_id, account_id, receipt_file_id, status)\n\t\t\tVALUES ($1,$2,$3,$4,$5::date,\n\t\t\t        $11, $6, $7, $8, $9, $10, 'submitted')\n\t\t\tRETURNING id", number, in.CategoryID, in.Description, amount, date, *p.BranchID,
+			in.ProjectID, in.DesignJobID, in.MoneyAccountID, in.ReceiptFileID, unit).Scan(&id); err != nil {
 			return err
 		}
 		amtCopy := amount
@@ -144,8 +150,12 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 			date = before["expense_date"].(string)
 		}
 		amount := money.Money(in.Amount)
-		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.expenses\n\t\t\tSET category_id = $2, amount = $3, description = $4, expense_date = $5::date,\n\t\t\t    project_id = $6, design_job_id = $7, account_id = COALESCE($8, account_id),\n\t\t\t    receipt_file_id = COALESCE($9, receipt_file_id)\n\t\t\tWHERE id = $1", id, in.CategoryID, amount, in.Description, date,
-			in.ProjectID, in.DesignJobID, in.MoneyAccountID, in.ReceiptFileID); err != nil {
+		chosen, err := chosenBusiness(p, in.BusinessUnit)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.expenses\n\t\t\tSET business_unit_id = coalesce($10, business_unit_id), category_id = $2, amount = $3, description = $4, expense_date = $5::date,\n\t\t\t    project_id = $6, design_job_id = $7, account_id = COALESCE($8, account_id),\n\t\t\t    receipt_file_id = COALESCE($9, receipt_file_id)\n\t\t\tWHERE id = $1", id, in.CategoryID, amount, in.Description, date,
+			in.ProjectID, in.DesignJobID, in.MoneyAccountID, in.ReceiptFileID, chosen); err != nil {
 			return err
 		}
 		out, err = s.get(ctx, tx, p, id)
@@ -281,7 +291,8 @@ func (s *Service) Reverse(ctx context.Context, p *auth.Principal, id uuid.UUID, 
 const expenseCols = `e.id, e.expense_no, e.location_id, COALESCE(l.name::text, ''), e.category_id, ec.name::text, e.expense_date::text, e.amount, e.description::text,
 	e.status::text, e.account_id, e.receipt_file_id, e.recurring_expense_id, e.project_id, e.design_job_id,
 	e.requested_by, COALESCE(m.user_id, e.requested_by), COALESCE(u.full_name::text, ''),
-	e.decided_by, e.decided_at, e.paid_at, e.paid_business_date::text, COALESCE(e.rejection_reason, ''), e.created_at`
+	e.decided_by, e.decided_at, e.paid_at, e.paid_business_date::text, COALESCE(e.rejection_reason, ''), e.created_at,
+	(SELECT bu.code FROM app.business_units bu WHERE bu.id = e.business_unit_id)`
 
 const expenseFrom = ` FROM app.expenses e
 	LEFT JOIN app.locations l ON l.id = e.location_id
@@ -297,9 +308,10 @@ func scanExpense(row pgx.Row) (map[string]any, error) {
 	var decidedAt, paidAt *time.Time
 	var paidDate *string
 	var created time.Time
+	var unit string
 	if err := row.Scan(&id, &number, &branch, &locationName, &category, &catName, &date, &amount, &desc, &status, &account,
 		&receiptFile, &recurring, &project, &designJob, &requestedBy, &submitterUser, &submitterName,
-		&decidedBy, &decidedAt, &paidAt, &paidDate, &reject, &created); err != nil {
+		&decidedBy, &decidedAt, &paidAt, &paidDate, &reject, &created, &unit); err != nil {
 		return nil, err
 	}
 	return map[string]any{
@@ -309,7 +321,7 @@ func scanExpense(row pgx.Row) (map[string]any, error) {
 		"project_id": project, "design_job_id": designJob,
 		"requested_by": requestedBy, "submitted_by": submitterUser, "submitted_by_name": submitterName,
 		"approved_by": decidedBy, "approved_at": decidedAt, "paid_at": paidAt, "paid_business_date": paidDate,
-		"reject_reason": reject, "created_at": created,
+		"reject_reason": reject, "created_at": created, "business_unit": unit,
 	}, nil
 }
 

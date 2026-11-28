@@ -49,6 +49,8 @@ export interface AppRoute {
   navigation: boolean;
   /** Any one of these permissions is enough to see the page. */
   permission?: string[];
+  /** The page belongs to one business and is only for people who work in it. */
+  business?: "A" | "B";
   /** Heading shown above this item in the sidebar. A heading starts a new group until the next one. */
   group?: string;
 }
@@ -80,6 +82,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/pos",
+    business: "A",
     group: "Shop",
     label: "Point of sale",
     icon: ShoppingCart,
@@ -89,6 +92,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/sales",
+    business: "A",
     label: "Sales",
     icon: ReceiptText,
     component: lazy(() => import("@/pages/Sales")),
@@ -102,6 +106,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/sales/:id",
+    business: "A",
     label: "Sale",
     icon: ReceiptText,
     component: lazy(() => import("@/pages/SaleDetail")),
@@ -115,6 +120,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/products",
+    business: "A",
     label: "Products",
     icon: Package,
     component: lazy(() => import("@/pages/Products")),
@@ -123,6 +129,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/products/:id",
+    business: "A",
     label: "Product",
     icon: Package,
     component: lazy(() => import("@/pages/ProductDetail")),
@@ -131,6 +138,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/stock",
+    business: "A",
     label: "Stock",
     icon: Warehouse,
     component: lazy(() => import("@/pages/Stock")),
@@ -139,6 +147,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/purchasing",
+    business: "A",
     label: "Purchasing",
     icon: Truck,
     component: lazy(() => import("@/pages/Purchasing")),
@@ -152,6 +161,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/purchasing/:id",
+    business: "A",
     label: "Purchase order",
     icon: Truck,
     component: lazy(() => import("@/pages/PurchaseOrderDetail")),
@@ -160,6 +170,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/stock-ops",
+    business: "A",
     label: "Transfers and counts",
     icon: ArrowLeftRight,
     component: lazy(() => import("@/pages/StockOps")),
@@ -168,6 +179,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/customers",
+    business: "A",
     label: "Customers",
     icon: Users,
     component: lazy(() => import("@/pages/Customers")),
@@ -176,6 +188,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/customers/:id",
+    business: "A",
     label: "Customer",
     icon: Users,
     component: lazy(() => import("@/pages/CustomerDetail")),
@@ -184,6 +197,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/services",
+    business: "B",
     label: "Services",
     group: "Services",
     icon: Briefcase,
@@ -193,6 +207,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/clients",
+    business: "B",
     label: "Clients and leads",
     icon: UserRoundPlus,
     component: lazy(() => import("@/pages/Clients")),
@@ -201,6 +216,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/clients/:id",
+    business: "B",
     label: "Client",
     icon: UserRoundPlus,
     component: lazy(() => import("@/pages/ClientDetail")),
@@ -209,6 +225,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/projects",
+    business: "B",
     label: "Projects",
     icon: FolderKanban,
     component: lazy(() => import("@/pages/Projects")),
@@ -217,6 +234,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/projects/:id",
+    business: "B",
     label: "Project",
     icon: FolderKanban,
     component: lazy(() => import("@/pages/ProjectDetail")),
@@ -225,6 +243,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/service-catalog",
+    business: "B",
     label: "Service catalog",
     icon: BookOpen,
     component: lazy(() => import("@/pages/ServiceCatalog")),
@@ -238,6 +257,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/service-quotations",
+    business: "B",
     label: "Service quotations",
     icon: FileSpreadsheet,
     component: lazy(() => import("@/pages/ServiceQuotations")),
@@ -246,6 +266,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/service-invoices",
+    business: "B",
     label: "Service invoices",
     icon: Receipt,
     component: lazy(() => import("@/pages/ServiceInvoices")),
@@ -254,6 +275,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/design-jobs",
+    business: "B",
     label: "Design jobs",
     icon: Palette,
     component: lazy(() => import("@/pages/DesignJobs")),
@@ -262,6 +284,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/design-jobs/:id",
+    business: "B",
     label: "Design job",
     icon: Palette,
     component: lazy(() => import("@/pages/DesignJobDetail")),
@@ -270,6 +293,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/client-documents",
+    business: "B",
     label: "Client documents",
     icon: Files,
     component: lazy(() => import("@/pages/ClientDocuments")),
@@ -282,6 +306,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/service-tasks",
+    business: "B",
     label: "Tasks and calendar",
     icon: ClipboardList,
     component: lazy(() => import("@/pages/ServiceTasks")),
@@ -290,6 +315,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/renewals",
+    business: "B",
     label: "Renewals",
     icon: BellRing,
     component: lazy(() => import("@/pages/Renewals")),
@@ -298,6 +324,7 @@ export const routes: AppRoute[] = [
   },
   {
     path: "/contractors",
+    business: "B",
     label: "Contractors",
     icon: Hammer,
     component: lazy(() => import("@/pages/Contractors")),

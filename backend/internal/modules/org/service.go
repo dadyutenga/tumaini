@@ -168,28 +168,38 @@ type Branch struct {
 	Address        *string   `json:"address"`
 	Phone          *string   `json:"phone"`
 	BusinessUnitID uuid.UUID `json:"business_unit_id"`
+	BusinessUnit   string    `json:"business_unit"`
 	// IsMain marks the business's default location (app.locations.is_default).
 	IsMain   bool `json:"is_main"`
 	IsActive bool `json:"is_active"`
 }
 
 const branchSelect = `
-	SELECT id, name::text, kind::text, address, phone::text, business_unit_id, is_default, status = 'active'
+	SELECT id, name::text, kind::text, address, phone::text, business_unit_id,
+	       (SELECT u.code FROM app.business_units u WHERE u.id = business_unit_id), is_default, status = 'active'
 	FROM app.locations WHERE true`
 
 func scanBranch(row pgx.Row) (Branch, error) {
 	var b Branch
-	err := row.Scan(&b.ID, &b.Name, &b.Kind, &b.Address, &b.Phone, &b.BusinessUnitID, &b.IsMain, &b.IsActive)
+	err := row.Scan(&b.ID, &b.Name, &b.Kind, &b.Address, &b.Phone, &b.BusinessUnitID, &b.BusinessUnit, &b.IsMain, &b.IsActive)
 	return b, err
 }
 
 func (s *Service) ListBranches(ctx context.Context, p *auth.Principal) ([]Branch, error) {
 	out := []Branch{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		sql := branchSelect + ` AND (status = 'active' OR $1)`
-		args := []any{p.Has("settings.manage")}
-		if !p.CanAccessAllBranches() {
-			sql += ` AND id = ANY($2)`
+		var units []uuid.UUID
+		for _, u := range p.Units {
+			units = append(units, u.ID)
+		}
+		sql := branchSelect + ` AND (status = 'active' OR $1) AND business_unit_id = ANY($2)`
+		args := []any{p.Has("settings.manage"), units}
+		switch {
+		case len(p.Locations) > 0:
+			sql += ` AND id = ANY($3)`
+			args = append(args, p.Locations)
+		case !p.CanAccessAllBranches():
+			sql += ` AND id = ANY($3)`
 			args = append(args, p.BranchIDs)
 		}
 		sql += ` ORDER BY is_default DESC, name`
@@ -237,6 +247,9 @@ func (s *Service) CreateBranch(ctx context.Context, p *auth.Principal, in Branch
 				return err
 			}
 		}
+		if !p.MayUseUnit(unit) {
+			return httpx.Forbidden("business_forbidden", "You do not work in that business")
+		}
 		var id uuid.UUID
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO app.locations ( business_unit_id, name, kind, address, phone)
@@ -269,6 +282,9 @@ func (s *Service) GetBranch(ctx context.Context, p *auth.Principal, id uuid.UUID
 	var b Branch
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) (err error) {
 		if b, err = scanBranch(tx.QueryRow(ctx, branchSelect+` AND id = $1`, id)); err != nil {
+			return httpx.NotFound("not_found", "Branch not found")
+		}
+		if !p.MayUseUnit(b.BusinessUnitID) {
 			return httpx.NotFound("not_found", "Branch not found")
 		}
 		return nil

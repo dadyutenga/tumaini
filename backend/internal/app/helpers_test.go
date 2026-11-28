@@ -50,8 +50,8 @@ func newEnv(t *testing.T, now time.Time) *env {
 	return newEnvWithClock(t, clock.Fixed{T: now})
 }
 
-// newEnvWithClock is newEnv with any clock, for tests that move time.
-func newEnvWithClock(t *testing.T, clk clock.Clock) *env {
+// newApp starts the app on a database of its own, before anyone has set up the business.
+func newApp(t *testing.T, clk clock.Clock) *app.App {
 	t.Helper()
 	freshDatabase(t)
 	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
@@ -66,6 +66,13 @@ func newEnvWithClock(t *testing.T, clk clock.Clock) *env {
 	a, err := app.New(context.Background(), cfg, clk)
 	require.NoError(t, err)
 	t.Cleanup(a.Close)
+	return a
+}
+
+// newEnvWithClock is newEnv with any clock, for tests that move time.
+func newEnvWithClock(t *testing.T, clk clock.Clock) *env {
+	t.Helper()
+	a := newApp(t, clk)
 	c := &client{app: a.Fiber}
 	phone := uniquePhone()
 	reg := c.call(t, http.MethodPost, "/api/v1/setup", map[string]any{

@@ -32,7 +32,7 @@ var labels = map[string]string{
 	"deductions": "Deductions", "employer": "Employer cost", "department": "Department", "label": "Item", "kind": "Kind",
 	"employee": "Employee", "principal": "Principal", "repaid": "Repaid", "monthly_deduction": "Monthly deduction",
 	"days_present": "Present", "days_absent": "Absent", "late_count": "Late", "late_minutes": "Late minutes",
-	"attendance_rate": "Attendance %", "commission": "Commission", "leave_days": "Leave", "overtime_hours": "Overtime hours",
+	"attendance_rate": "Attendance %", "business": "Business", "commission": "Commission", "leave_days": "Leave", "overtime_hours": "Overtime hours",
 	"expenses": "Expenses", "other_income": "Other income", "net_profit": "Net profit", "stock_value": "Stock value",
 	"account": "Account", "account_type": "Account type", "opening": "Opening", "money_in": "In", "money_out": "Out", "closing": "Closing",
 	"code": "Code", "name": "Name", "debit": "Debit", "credit": "Credit", "section": "Section",

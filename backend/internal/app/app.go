@@ -120,7 +120,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	fiberApp.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.CORSOrigins,
 		AllowCredentials: true,
-		AllowHeaders:     []string{"Authorization", "Content-Type", "X-Branch-Id", "Idempotency-Key"},
+		AllowHeaders:     []string{"Authorization", "Content-Type", "X-Branch-Id", "X-Business-Unit", "Idempotency-Key"},
 	}))
 	fiberApp.Get("/healthz", func(c fiber.Ctx) error { return c.SendString("ok") })
 	fiberApp.Get("/readyz", func(c fiber.Ctx) error {
@@ -146,7 +146,8 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	svcHandler := services.Build(d)
 	svcHandler.RegisterPublic(api.Group("/public"), limit)
 
-	private := api.Group("", middleware.Auth(auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, ident.Load), middleware.Branch(database))
+	private := api.Group("", middleware.Auth(auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, ident.Load), middleware.Branch(database),
+		middleware.BusinessRoutes())
 	identity.Register(private, &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL, Shared: shared})
 	limitCostly(private, shared)
 	for _, mount := range []func(fiber.Router, deps.Deps){
@@ -163,11 +164,13 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 }
 
 // limitCostly gives each member a per-minute budget on the routes that spend money (messages to
-// customers) or capacity (a full export). It must be registered before the modules' own handlers.
+// customers) or capacity (a full export, search). It must be registered before the modules' own handlers.
 func limitCostly(r fiber.Router, shared middleware.Counter) {
 	export := middleware.NewLimiter(5, time.Minute).Share(shared, "export").HandlerByUser()
 	send := middleware.NewLimiter(60, time.Minute).Share(shared, "send").HandlerByUser()
 	r.Post("/backups/export", export)
+	// Search runs several queries per request. Typing sends a few requests a second at most.
+	r.Get("/search", middleware.NewLimiter(240, time.Minute).HandlerByUser())
 	for _, path := range []string{
 		"/sales/:id/send-receipt", "/customers/:id/statement/send", "/customers/:id/debt-reminder",
 		"/clients/:id/statement/send", "/clients/:id/debt-reminder", "/service-quotations/:id/send",

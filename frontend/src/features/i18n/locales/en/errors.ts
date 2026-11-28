@@ -25,10 +25,6 @@ export default {
     invalid_value: "A value is missing or not allowed",
     last_owner: "The business must keep at least one active admin",
     leave_balance_exceeded: "This request is more than the remaining leave balance",
-    mfa_already_enabled: "Two-factor authentication is already enabled",
-    mfa_not_pending: "Start two-factor setup first",
-    multi_tenant_user:
-      "This user belongs to multiple businesses and must reset their password themselves",
     negative_net: "Net pay cannot be negative",
     network_not_allowed:
       "Clock in from the branch network. Ask your manager to clock you in if you are elsewhere.",
@@ -57,6 +53,9 @@ export default {
     too_many_rows: "Import at most 5,000 products at a time",
     unsupported_file:
       "That file type is not allowed. Use an image, PDF, text, CSV, or Excel/Word file.",
+    branch_forbidden: "That branch belongs to a business you do not work in",
+    business_forbidden: "You do not work in that business",
+    invalid_business: "Choose the shop, services or both",
   },
   messages: {
     wrongSignIn: "Phone, email or password is wrong",
@@ -78,5 +77,20 @@ export default {
     methodOff: "This payment method is switched off in the settings",
     channelOff: "This channel is not set up. Ask an administrator to configure it.",
     branchForbidden: "You do not have access to this branch",
+    chooseBusiness: "Choose at least one business",
+    unknownBusiness: "A business is A (shop) or B (services)",
+    noBusinessAssigned: "Your account is not assigned to a business. Ask an Admin.",
+    ownBusinessAccess: "You cannot change your own business access",
+    giveBusinessNotYours: "You cannot give access to a business you do not work in",
+    adminBothBusinesses: "An Admin always works in both businesses",
+    primaryAmongChosen: "The main business must be one of the chosen businesses",
+    adminNoBranchLimit: "An Admin cannot be limited to some branches",
+    activeBranchOfChosen: "Each branch must be an active branch of the chosen businesses",
+    branchNotTheirs:
+      "That branch does not exist or belongs to a business this person does not work in",
+    notYourRecordsBusiness: "You do not work in the business this belongs to",
+    payrollBothBusinesses:
+      "Payroll covers both businesses; only someone who works in both can change it",
+    branchOfOtherBusiness: "That branch belongs to a business you do not work in",
   },
 };

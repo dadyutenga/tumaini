@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"bms/internal/kernel/business"
 	"bms/internal/kernel/payments"
 	"bms/internal/kernel/sequence"
 	"bms/internal/platform/auth"
@@ -441,11 +442,21 @@ func (s *Service) AcceptQuotation(ctx context.Context, p *auth.Principal, id uui
 	return q, nil
 }
 
-func quotationPDF(biz string, q map[string]any) []byte { return docPDF(biz, "Quotation", q, false) }
+func quotationPDF(head business.Header, q map[string]any) []byte {
+	return docPDF(head, "Quotation", q, false)
+}
 
-func docPDF(biz, title string, m map[string]any, withPaid bool) []byte {
+func docPDF(head business.Header, title string, m map[string]any, withPaid bool) []byte {
 	d := pdf.New()
-	d.Heading(biz, 15)
+	d.Heading(head.Name, 15)
+	for _, line := range []*string{head.ReceiptHeader, head.Address, head.Phone} {
+		if line != nil && *line != "" {
+			d.Text(*line)
+		}
+	}
+	if head.TaxNumber != nil && *head.TaxNumber != "" {
+		d.Text("TIN: " + *head.TaxNumber)
+	}
 	d.Heading(title+" "+export.Cell(m["number"]), 12)
 	d.KV("Client", export.Cell(m["client_name"]))
 	if v := export.Cell(m["issue_date"]); v != "" {
@@ -487,7 +498,11 @@ func (s *Service) QuotationPDF(ctx context.Context, p *auth.Principal, id uuid.U
 		if err != nil {
 			return err
 		}
-		out = quotationPDF(s.businessName(ctx, tx), q)
+		head, err := s.header(ctx, tx)
+		if err != nil {
+			return err
+		}
+		out = quotationPDF(head, q)
 		return nil
 	})
 	return out, err
@@ -949,7 +964,11 @@ func (s *Service) InvoicePDF(ctx context.Context, p *auth.Principal, id uuid.UUI
 		if st, _ := inv["status"].(string); st == "void" {
 			title = "Invoice (VOID)"
 		}
-		out = docPDF(s.businessName(ctx, tx), title, inv, true)
+		head, err := s.header(ctx, tx)
+		if err != nil {
+			return err
+		}
+		out = docPDF(head, title, inv, true)
 		return nil
 	})
 	return out, err
@@ -1078,6 +1097,7 @@ func (s *Service) receive(ctx context.Context, tx pgx.Tx, p *auth.Principal, sc 
 	}
 	clientID := sc.client
 	res, err := payments.Receive(ctx, tx, payments.ReceiveInput{
+		Business:   auth.Services,
 		LocationID: *p.BranchID,
 		AccountID:  in.MoneyAccountID,
 		CustomerID: &clientID, Purpose: purpose, Method: payments.Method(in.Method),
@@ -1184,11 +1204,10 @@ func (s *Service) PaymentReceipt(ctx context.Context, p *auth.Principal, id uuid
 		if err != nil {
 			return err
 		}
-		var bName, bPhone, bAddr, bTin string
-		_ = tx.QueryRow(ctx, `
-			SELECT COALESCE(NULLIF(s.business_name::text,''), b.name::text),
-			       COALESCE(s.phone::text, ''), COALESCE(s.address, ''), COALESCE(s.tin, '')
-			FROM app.business_profile b CROSS JOIN app.business_settings s`).Scan(&bName, &bPhone, &bAddr, &bTin)
+		head, err := s.header(ctx, tx)
+		if err != nil {
+			return err
+		}
 
 		allocs, err := rows(ctx, tx, `
 			SELECT a.invoice_id, i.invoice_no AS invoice_number, a.amount, i.project_id, i.design_job_id
@@ -1276,7 +1295,8 @@ func (s *Service) PaymentReceipt(ctx context.Context, p *auth.Principal, id uuid
 			row["receipt_prints"] = prints
 			row["copy"] = prints >= 1
 		}
-		row["business"] = map[string]any{"name": bName, "phone": bPhone, "address": bAddr, "tax_number": bTin}
+		row["business"] = map[string]any{"name": head.Name, "phone": text(head.Phone), "address": text(head.Address), "tax_number": text(head.TaxNumber),
+			"header": text(head.ReceiptHeader), "footer": text(head.ReceiptFooter), "logo_file_id": head.LogoFileID}
 		row["purpose"] = purpose
 		row["total_paid_so_far"] = totalPaid
 		row["balance_remaining"] = balance
@@ -1505,6 +1525,7 @@ func (s *Service) addCostTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, i
 		if in.MoneyAccountID != nil {
 			status = "paid"
 			if _, err := payments.Pay(ctx, tx, payments.PayInput{
+				Business:     auth.Services,
 				LocationID:   *p.BranchID,
 				AccountID:    *in.MoneyAccountID,
 				ContractorID: in.ContractorID, Method: payments.Method(in.Method), Amount: amount,
@@ -1750,7 +1771,11 @@ func (s *Service) ContractorStatement(ctx context.Context, p *auth.Principal, id
 			ln["balance"] = bal
 			delete(ln, "created_at")
 		}
-		out = map[string]any{"contractor": c, "lines": lines, "owed": c["owed"], "business_name": s.businessName(ctx, tx)}
+		head, err := s.header(ctx, tx)
+		if err != nil {
+			return err
+		}
+		out = map[string]any{"contractor": c, "lines": lines, "owed": c["owed"], "business_name": head.Name}
 		return nil
 	})
 	return out, err
@@ -1841,6 +1866,7 @@ func (s *Service) PayContractor(ctx context.Context, p *auth.Principal, id uuid.
 			}
 		}
 		res, err := payments.Pay(ctx, tx, payments.PayInput{
+			Business:     auth.Services,
 			LocationID:   *p.BranchID,
 			AccountID:    in.MoneyAccountID,
 			ContractorID: &id, Method: payments.Method(in.Method), Amount: amount,
@@ -1854,4 +1880,12 @@ func (s *Service) PayContractor(ctx context.Context, p *auth.Principal, id uuid.
 		}
 		return 201, map[string]any{"id": res.ID, "number": res.Number, "amount": amount, "date": date}, nil
 	})
+}
+
+// text is the value of an optional field, or "".
+func text(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
 }

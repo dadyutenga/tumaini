@@ -30,6 +30,10 @@ type User struct {
 	IsActive     bool        `json:"is_active"`
 	Branches     []uuid.UUID `json:"branch_ids"`
 	MustChange   bool        `json:"must_change_password"`
+	// The businesses the person works in, the main one, and the branches they are limited to.
+	BusinessUnits []string    `json:"business_units"`
+	PrimaryUnit   string      `json:"primary_business_unit"`
+	Locations     []uuid.UUID `json:"locations"`
 }
 
 type UserInput struct {
@@ -41,11 +45,22 @@ type UserInput struct {
 	EmployeeID *uuid.UUID  `json:"employee_id"`
 	BranchIDs  []uuid.UUID `json:"branch_ids"`
 	Language   string      `json:"language"`
+	// BusinessUnits ("A", "B") and PrimaryUnit say which businesses the person works in; nil keeps
+	// what they have (new people start with both).
+	BusinessUnits []string `json:"business_units"`
+	PrimaryUnit   string   `json:"primary_business_unit"`
+	// Locations limits the person to these branches; an empty list removes the limit, nil keeps it.
+	Locations *[]uuid.UUID `json:"locations"`
 }
 
 const userSelect = `
 	SELECT u.id, m.id, u.full_name::text, u.phone::text, u.email::text, r.id, coalesce(r.name::text, ''), coalesce(r.code::text, ''),
-	       e.id, u.preferred_locale, (m.status = 'active' AND u.status = 'active'), c.must_change_password, m.default_location_id
+	       e.id, u.preferred_locale, (m.status = 'active' AND u.status = 'active'), c.must_change_password, m.default_location_id,
+	       coalesce((SELECT array_agg(bu.code ORDER BY bu.code) FROM app.membership_business_units mb
+	                  JOIN app.business_units bu ON bu.id = mb.business_unit_id WHERE mb.membership_id = m.id), '{}'),
+	       coalesce((SELECT bu.code FROM app.membership_business_units mb
+	                  JOIN app.business_units bu ON bu.id = mb.business_unit_id WHERE mb.membership_id = m.id AND mb.is_primary), ''),
+	       coalesce((SELECT array_agg(ml.location_id ORDER BY ml.location_id) FROM app.membership_locations ml WHERE ml.membership_id = m.id), '{}')
 	FROM app.memberships m
 	JOIN iam.users u ON u.id = m.user_id
 	JOIN iam.user_credentials c ON c.user_id = u.id
@@ -56,7 +71,8 @@ const userSelect = `
 func scanUser(row pgx.Row) (User, error) {
 	var u User
 	var loc *uuid.UUID
-	err := row.Scan(&u.ID, &u.MembershipID, &u.Name, &u.Phone, &u.Email, &u.RoleID, &u.RoleName, &u.RoleSlug, &u.EmployeeID, &u.Language, &u.IsActive, &u.MustChange, &loc)
+	err := row.Scan(&u.ID, &u.MembershipID, &u.Name, &u.Phone, &u.Email, &u.RoleID, &u.RoleName, &u.RoleSlug, &u.EmployeeID, &u.Language, &u.IsActive, &u.MustChange, &loc,
+		&u.BusinessUnits, &u.PrimaryUnit, &u.Locations)
 	u.Branches = []uuid.UUID{}
 	if loc != nil {
 		u.Branches = append(u.Branches, *loc)
@@ -152,18 +168,20 @@ func (s *Service) CreateUser(ctx context.Context, p *auth.Principal, in UserInpu
 		if _, err := tx.Exec(ctx, `INSERT INTO iam.password_history (user_id, password_hash) VALUES ($1,$2)`, userID, hash); err != nil {
 			return err
 		}
-		var loc *uuid.UUID
-		if len(in.BranchIDs) > 0 {
-			loc = &in.BranchIDs[0]
-		} else {
-			_ = tx.QueryRow(ctx, "SELECT id FROM app.locations WHERE is_default").Scan(&loc)
-		}
+		// The default branch is set with the business access below.
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.memberships (user_id, status, default_location_id, joined_at)
-			VALUES ($1, 'active', $2, now()) RETURNING id`, userID, loc).Scan(&membershipID); err != nil {
-			return httpx.BadRequest("invalid_branch", "That branch does not exist")
+			INSERT INTO app.memberships (user_id, status, joined_at)
+			VALUES ($1, 'active', now()) RETURNING id`, userID).Scan(&membershipID); err != nil {
+			return err
 		}
 		if _, err := tx.Exec(ctx, "INSERT INTO app.membership_roles (membership_id, role_id) VALUES ($1, $2)", membershipID, in.RoleID); err != nil {
+			return err
+		}
+		roleCode, err := roleCodeOf(ctx, tx, in.RoleID)
+		if err != nil {
+			return err
+		}
+		if err := setBusinessAccess(ctx, tx, p, membershipID, roleCode, nil, in); err != nil {
 			return err
 		}
 		if in.EmployeeID != nil {
@@ -175,10 +193,10 @@ func (s *Service) CreateUser(ctx context.Context, p *auth.Principal, in UserInpu
 				return httpx.BadRequest("invalid_body", "That employee does not exist or already has a login")
 			}
 		}
-		if err := s.Audit.Record(ctx, tx, p, "user.created", "users", userID, nil, map[string]any{"name": name, "role_id": in.RoleID}); err != nil {
+		if err := s.Audit.Record(ctx, tx, p, "user.created", "users", userID, nil, map[string]any{"name": name, "role_id": in.RoleID,
+			"business_units": in.BusinessUnits, "locations": in.Locations}); err != nil {
 			return err
 		}
-		var err error
 		out, err = s.getUser(ctx, tx, userID)
 		return err
 	})
@@ -222,7 +240,11 @@ func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUI
 		roleChanged := cur.RoleID == nil || newRole != *cur.RoleID
 		phoneChanged := phone != "" && (cur.Phone == nil || *cur.Phone != phone)
 		emailChanged := email != "" && (cur.Email == nil || strings.ToLower(*cur.Email) != email)
-		if roleChanged || phoneChanged || emailChanged {
+		accessChanged := accessChange(cur, in)
+		if accessChanged && p.UserID == id {
+			return httpx.Forbidden("permission_denied", "You cannot change your own business access")
+		}
+		if roleChanged || phoneChanged || emailChanged || accessChanged {
 			if p.ReauthenticatedAt.IsZero() || s.Clock.Now().Sub(p.ReauthenticatedAt) > s.reauthWindow() {
 				return httpx.Forbidden("reauth_required", "Please confirm your password to continue")
 			}
@@ -243,9 +265,13 @@ func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUI
 		if _, err := tx.Exec(ctx, "UPDATE app.membership_roles SET role_id = $2 WHERE membership_id = $1", cur.MembershipID, newRole); err != nil {
 			return err
 		}
-		if len(in.BranchIDs) > 0 {
-			if _, err := tx.Exec(ctx, `UPDATE app.memberships SET default_location_id = $2 WHERE id = $1`, cur.MembershipID, in.BranchIDs[0]); err != nil {
-				return httpx.BadRequest("invalid_branch", "That branch does not exist")
+		if accessChanged || len(in.BranchIDs) > 0 {
+			roleCode, err := roleCodeOf(ctx, tx, newRole)
+			if err != nil {
+				return err
+			}
+			if err := setBusinessAccess(ctx, tx, p, cur.MembershipID, roleCode, &cur, in); err != nil {
+				return err
 			}
 		}
 		if in.EmployeeID != nil {
@@ -256,10 +282,26 @@ func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUI
 		if err := s.Audit.Record(ctx, tx, p, "user.updated", "users", id, nil, map[string]any{"name": in.Name, "role_id": newRole}); err != nil {
 			return err
 		}
-		out, err = s.getUser(ctx, tx, id)
-		return err
+		if out, err = s.getUser(ctx, tx, id); err != nil {
+			return err
+		}
+		if accessChanged {
+			return s.Audit.Record(ctx, tx, p, "user.business_access_changed", "users", id,
+				map[string]any{"business_units": cur.BusinessUnits, "primary_business_unit": cur.PrimaryUnit, "locations": cur.Locations},
+				map[string]any{"business_units": out.BusinessUnits, "primary_business_unit": out.PrimaryUnit, "locations": out.Locations})
+		}
+		return nil
 	})
 	return out, err
+}
+
+func roleCodeOf(ctx context.Context, tx pgx.Tx, role uuid.UUID) (string, error) {
+	var code string
+	err := tx.QueryRow(ctx, `SELECT code::text FROM app.roles WHERE id = $1`, role).Scan(&code)
+	if err != nil {
+		return "", httpx.BadRequest("invalid_role", "That role does not exist")
+	}
+	return code, nil
 }
 
 // SetActive suspends or restores the person's seat and ends their sessions.
@@ -751,9 +793,17 @@ func (s *Service) Me(ctx context.Context, p *auth.Principal) (map[string]any, er
 	for k, v := range p.Limits {
 		limits[k] = v
 	}
+	primary := ""
+	for _, unit := range p.Units {
+		if unit.Primary {
+			primary = unit.Code
+		}
+	}
 	return map[string]any{
 		"user": u, "permissions": perms, "limits": limits, "branches": u.Branches,
 		"is_owner": p.IsOwner, "membership_id": p.MembershipID,
+		"business_units": auth.UnitCodes(p.Units), "primary_business_unit": primary,
+		"locations": append([]uuid.UUID{}, p.Locations...),
 	}, nil
 }
 

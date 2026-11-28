@@ -21,6 +21,7 @@ import { formatMoney, toNumber } from "@/lib/formatters";
 import type { CatalogDetail, CatalogItem } from "@/types/services";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 const CATEGORIES = [
   "business",
@@ -87,7 +88,7 @@ export default function ServiceCatalog() {
   const { can } = useAuth();
   const manage = can("services.catalog.manage");
   const [category, setCategory] = useState("");
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox();
   const list = useGet<CatalogItem[]>("/service-catalog", {
     category,
     q,

@@ -1,21 +1,11 @@
 import { useEffect, useState } from "react";
-import { Bell, KeyRound, Plus, Search, SunMoon } from "lucide-react";
+import { Bell, KeyRound, Plus, SunMoon } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
-import { useVisibleRoutes } from "@/app/useVisibleRoutes";
-import { useDebounce } from "@/hooks/useDebounce";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDateTime } from "@/lib/formatters";
 import { useAuth } from "@/features/auth/auth";
 import { useI18n } from "@/features/i18n/i18n";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   DropdownMenu,
@@ -27,181 +17,12 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { fmt } from "@/features/i18n/format";
-import type { Translations } from "@/features/i18n/i18n";
-
-interface SearchHit {
-  kind: string;
-  id: string;
-  title: string;
-  subtitle: string;
-  link: string;
-}
-
-const kindLabels = (t: Translations): Record<string, string> => ({
-  product: t.common.product,
-  customer: t.common.shopCustomer,
-  client: t.common.serviceClient,
-  project: t.common.project,
-  design_job: t.common.designJob,
-  sale: t.common.saleReceipt,
-  service_invoice: t.common.serviceInvoice,
-});
-
-export function SearchPalette() {
-  const { t, routeLabel } = useI18n();
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const debounced = useDebounce(query.trim(), 220);
-  const navigate = useNavigate();
-  const routes = useVisibleRoutes();
-  const hits = useGet<SearchHit[]>(
-    "/search",
-    { q: debounced },
-    { enabled: open && debounced.length >= 2 },
-  );
-
-  useEffect(() => {
-    const listener = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        setOpen(true);
-      }
-    };
-    window.addEventListener("keydown", listener);
-    return () => window.removeEventListener("keydown", listener);
-  }, []);
-
-  const matchedRoutes = routes
-    .filter((route) => route.navigation)
-    .filter(
-      (route) =>
-        !query.trim() ||
-        routeLabel(route.path, route.label).toLowerCase().includes(query.toLowerCase()),
-    );
-
-  const go = (to: string) => {
-    setOpen(false);
-    setQuery("");
-    navigate(to);
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button
-          variant="outline"
-          size="sm"
-          className="h-8 gap-2 border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] px-2.5 text-[var(--od-ink-muted)] shadow-none hover:text-[var(--od-ink)]"
-          aria-label={t.common.globalSearch}
-        >
-          <Search size={14} />
-          <span className="hidden text-xs lg:inline">{t.common.globalSearchPlaceholder}</span>
-          <kbd className="od-mono hidden rounded border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--od-ink-muted)] xl:inline">
-            Ctrl K
-          </kbd>
-        </Button>
-      </DialogTrigger>
-      <DialogContent className="sm:max-w-xl">
-        <DialogTitle>{t.common.globalSearch}</DialogTitle>
-        <DialogDescription>{t.common.findClientsCustomersProductsInvoices}</DialogDescription>
-        <Input
-          autoFocus
-          aria-label={t.common.globalSearchInput}
-          placeholder={t.common.typeANamePhoneNumber}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <div className="scrollbar-thin max-h-80 space-y-3 overflow-auto">
-          {debounced.length >= 2 && (
-            <div>
-              <p className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--od-ink-muted)]">
-                {fmt(t.common.records, {
-                  value: hits.isFetching ? "…" : `(${hits.data?.length ?? 0})`,
-                })}
-              </p>
-              {(hits.data ?? []).length === 0 && !hits.isFetching ? (
-                <p className="px-2 py-2 text-[13px] text-[var(--od-ink-muted)]">
-                  {t.common.noMatchingRecords}
-                </p>
-              ) : (
-                <ul className="space-y-0.5">
-                  {(hits.data ?? []).map((h) => (
-                    <li key={`${h.kind}-${h.id}`}>
-                      <button
-                        type="button"
-                        className="flex w-full items-center justify-between gap-2 rounded-[var(--od-radius-sm,8px)] px-2.5 py-2 text-left text-[13px] transition-colors hover:bg-[var(--od-surface-subtle)] focus-visible:bg-[var(--od-surface-subtle)]"
-                        onClick={() => go(h.link)}
-                      >
-                        <span className="min-w-0 truncate">
-                          <span className="font-medium text-[var(--od-ink)]">{h.title}</span>
-                          {h.subtitle && (
-                            <span className="ml-2 text-xs text-[var(--od-ink-muted)]">
-                              {h.subtitle}
-                            </span>
-                          )}
-                        </span>
-                        <span className="shrink-0 rounded-full bg-[var(--od-neutral-soft)] px-2 py-0.5 text-[11px] font-medium text-[var(--od-ink-secondary)]">
-                          {kindLabels(t)[h.kind] ?? h.kind}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-          {matchedRoutes.length > 0 && (
-            <div>
-              <p className="mb-1.5 px-2 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--od-ink-muted)]">
-                {t.common.pages}
-              </p>
-              <ul className="space-y-0.5">
-                {matchedRoutes.slice(0, 8).map((route) => (
-                  <li key={route.path}>
-                    <button
-                      type="button"
-                      className="w-full rounded-[var(--od-radius-sm,8px)] px-2.5 py-2 text-left text-[13px] text-[var(--od-ink)] transition-colors hover:bg-[var(--od-surface-subtle)] focus-visible:bg-[var(--od-surface-subtle)]"
-                      onClick={() => go(route.path)}
-                    >
-                      {routeLabel(route.path, route.label)}
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
+import { useQuickActions } from "@/features/search/searchActions";
 
 export function QuickNewMenu({ floating = false }: { floating?: boolean }) {
   const { t } = useI18n();
-  const { can, canAny } = useAuth();
   const navigate = useNavigate();
-  const actions = [
-    { label: t.common.newSalePos, to: "/pos", show: can("shop.sale.create") },
-    { label: t.common.newClient, to: "/clients", show: can("services.client.manage") },
-    { label: t.common.newProject, to: "/projects", show: can("services.project.manage") },
-    { label: t.common.newDesignJob, to: "/design-jobs", show: can("services.design.manage") },
-    {
-      label: t.common.receivePayment,
-      to: "/service-invoices",
-      show: canAny("services.invoice.manage", "finance.payment.receive"),
-    },
-    {
-      label: t.common.customerPayment,
-      to: "/customers",
-      show: canAny("shop.customer.view_all", "shop.customer.manage", "finance.payment.receive"),
-    },
-    {
-      label: t.common.newExpense,
-      to: "/expenses",
-      show: canAny("finance.expense.submit", "finance.expense.enter"),
-    },
-    { label: t.common.newTask, to: "/service-tasks", show: can("services.task.manage") },
-  ].filter((a) => a.show);
+  const actions = useQuickActions().create;
 
   if (actions.length === 0) return null;
 

@@ -20,6 +20,8 @@ import admin from "./admin";
 import settings from "./settings";
 import errors from "./errors";
 import status from "./status";
+import search from "./search";
+import business from "./business";
 
 // English is the source of truth: its shape is the type every other language must satisfy.
 const en = {
@@ -45,6 +47,8 @@ const en = {
   settings,
   errors,
   status,
+  search,
+  business,
 };
 
 export type Translations = typeof en;

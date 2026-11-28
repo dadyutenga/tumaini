@@ -222,27 +222,36 @@ func Branch(database *db.DB) fiber.Handler {
 		if p == nil {
 			return httpx.Unauthorized("invalid_token", "Sign in again")
 		}
-		setDefault := func() error {
-			if len(p.BranchIDs) > 0 {
-				id := p.BranchIDs[0]
-				p.BranchID = &id
-				c.Locals(principalKey, p)
-				return c.Next()
-			}
-			var id *uuid.UUID
-			err := database.InActorTx(c.Context(), p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-				return tx.QueryRow(ctx, `SELECT default_location_id FROM app.memberships WHERE id = $1`, p.MembershipID).Scan(&id)
-			})
-			if err == nil && id != nil {
-				p.BranchID = id
-				c.Locals(principalKey, p)
-			}
-			return c.Next()
-		}
 		// Self-profile and auth lifecycle routes must remain accessible even if a shared browser
-		// still carries a stale X-Branch-Id header from a previous session.
+		// still carries a stale header from a previous session.
 		path := c.Path()
 		isSelfAuthPath := path == "/api/v1/me" || strings.HasPrefix(path, "/api/v1/me/") || strings.HasPrefix(path, "/api/v1/auth/")
+
+		if err := businessScope(c.Get("X-Business-Unit"), p); err != nil && !isSelfAuthPath {
+			return err
+		}
+		setDefault := func() error {
+			if len(p.BranchIDs) == 0 {
+				return c.Next()
+			}
+			id := p.BranchIDs[0]
+			// A default branch of the business the switcher left out would show nothing.
+			if len(p.Active) < len(p.Units) {
+				var active bool
+				err := database.InActorTx(c.Context(), p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
+					return tx.QueryRow(ctx, `SELECT app.can_access_business(business_unit_id) FROM app.locations WHERE id = $1`, id).Scan(&active)
+				})
+				if err != nil {
+					return err
+				}
+				if !active && p.CanAccessAllBranches() {
+					return c.Next()
+				}
+			}
+			p.BranchID = &id
+			c.Locals(principalKey, p)
+			return c.Next()
+		}
 
 		raw := c.Get("X-Branch-Id")
 		if raw == "" {
@@ -271,9 +280,16 @@ func Branch(database *db.DB) fiber.Handler {
 			return httpx.Forbidden("branch_forbidden", "You do not have access to this branch")
 		}
 		var active bool
+		var unit uuid.UUID
 		err = database.InActorTx(c.Context(), p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-			return tx.QueryRow(ctx, `SELECT status = 'active' FROM app.locations WHERE id = $1`, id).Scan(&active)
+			return tx.QueryRow(ctx, `SELECT status = 'active', business_unit_id FROM app.locations WHERE id = $1`, id).Scan(&active, &unit)
 		})
+		if err == nil && active && !p.MayUseUnit(unit) {
+			if isSelfAuthPath {
+				return setDefault()
+			}
+			return httpx.Forbidden("branch_forbidden", "That branch belongs to a business you do not work in")
+		}
 		if err != nil || !active {
 			if isSelfAuthPath {
 				return setDefault()
@@ -284,6 +300,23 @@ func Branch(database *db.DB) fiber.Handler {
 		c.Locals(principalKey, p)
 		return c.Next()
 	}
+}
+
+// businessScope narrows the request to the business named by X-Business-Unit ("A", "B" or "all").
+func businessScope(header string, p *auth.Principal) error {
+	switch header {
+	case "", "all":
+		return nil
+	case auth.Shop, auth.Services:
+		for _, u := range p.Units {
+			if u.Code == header {
+				p.Active = []auth.Unit{u}
+				return nil
+			}
+		}
+		return httpx.Forbidden("business_forbidden", "You do not work in that business")
+	}
+	return httpx.BadRequest("invalid_business", "X-Business-Unit must be A, B or all")
 }
 
 func hasAllScope(p *auth.Principal) bool {

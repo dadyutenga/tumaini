@@ -330,6 +330,10 @@ paths:
             schema:
               type: object
               properties:
+                business_unit:
+                  type: string
+                  enum: [A, B]
+                  description: The business the cost belongs to; defaults to the branch's business.
                 category_id:
                   type: string
                   format: uuid
@@ -1048,6 +1052,10 @@ paths:
             schema:
               type: object
               properties:
+                business_unit:
+                  type: string
+                  enum: [A, B]
+                  description: The business the cost belongs to; defaults to the branch's business.
                 branch_id:
                   type: string
                   format: uuid

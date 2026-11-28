@@ -9,6 +9,7 @@ Every endpoint, the permission it needs and what it does. Base path `/api/v1`.
 | Base | `/api/v1`, JSON in and out, UTF-8 |
 | Auth | `Authorization: Bearer <access token>` on every route except `/setup`, `/setup/status`, `/auth/login`, `/auth/refresh` |
 | Branch | `X-Branch-Id: <uuid>` on branch-scoped routes. Users with scope `all` may send `all` on GET routes |
+| Business | `X-Business-Unit: A`, `B` or `all` narrows what shared pages show. Shop routes need business A and services routes business B, on top of permissions |
 | Idempotency | `Idempotency-Key: <uuid>` on POST routes marked (I). Same key and same body returns the first response. Same key and different body returns 409 |
 | Pagination | `?page=1&per_page=25`, maximum 100. Response has `meta: {page, per_page, total}` |
 | Sorting | `?sort=-created_at` (minus for descending), whitelisted fields only |
@@ -53,6 +54,9 @@ In the tables below the Permission column is the key checked by the route. Scope
 | GET `/business` | `settings.view` | Business profile |
 | PUT `/business` | `business.manage` | Update profile |
 | POST `/business/logo` | `business.manage` | Upload logo |
+| GET `/business-units` | any | The businesses the caller works in and what each prints |
+| PATCH `/business-units/:code` | `settings.manage` | Change one business's receipt and invoice details |
+| POST `/business-units/:code/logo` | `settings.manage` | Upload one business's logo |
 | GET `/branches` | `branches.view` | List branches |
 | POST `/branches` | `branches.manage` | Create branch with sequences and default cash account |
 | GET `/branches/:id` | `branches.view` | Branch detail |

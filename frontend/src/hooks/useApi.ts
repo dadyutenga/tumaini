@@ -1,16 +1,33 @@
 import { useRef } from "react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ApiError, api, get, getPage, isPendingApproval, newIdempotencyKey } from "@/lib/api";
+import {
+  ApiError,
+  api,
+  get,
+  getPage,
+  isPendingApproval,
+  newIdempotencyKey,
+  request,
+} from "@/lib/api";
 import { useI18n } from "@/features/i18n/i18n";
 import { activeT } from "@/features/i18n/active";
 
 type Query = Record<string, string | number | boolean | undefined | null>;
 
-export function useGet<T>(path: string, query?: Query, options: { enabled?: boolean } = {}) {
+export function useGet<T>(
+  path: string,
+  query?: Query,
+  /** `branch` asks about another branch than the one in the top bar, or "all" of them. */
+  options: { enabled?: boolean; branch?: string } = {},
+) {
+  const { branch } = options;
   return useQuery({
-    queryKey: [path, query ?? {}],
-    queryFn: ({ signal }) => get<T>(path, query, signal),
+    queryKey: branch ? [path, query ?? {}, branch] : [path, query ?? {}],
+    queryFn: ({ signal }) =>
+      branch
+        ? request<{ data: T }>(path, { query, signal, branch }).then((reply) => reply.data)
+        : get<T>(path, query, signal),
     enabled: options.enabled,
     staleTime: 15_000,
   });
@@ -50,7 +67,7 @@ interface BodyOption<B> {
 
 /** POST, PUT, or DELETE with toast feedback, approval handling, and retry-safe idempotency keys. */
 export function useWrite<B = unknown, R = unknown>(
-  method: "POST" | "PUT" | "DELETE",
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
   path: string | ((body: B) => string),
   options: MutateOptions<R, B> & BodyOption<B> = {},
 ) {
@@ -75,6 +92,7 @@ export function useWrite<B = unknown, R = unknown>(
       }
       if (method === "POST") return api.post<R>(target, payload, { idempotencyKey: key });
       if (method === "PUT") return api.put<R>(target, payload);
+      if (method === "PATCH") return api.patch<R>(target, payload);
       return api.del<R>(target);
     },
     onSuccess: (result) => {

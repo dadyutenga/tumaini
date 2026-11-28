@@ -20,11 +20,11 @@ export const router = createBrowserRouter([
       </ProtectedRoute>
     ),
     errorElement: <ErrorBoundary />,
-    children: routes.map(({ path, component: Component, permission }) => ({
+    children: routes.map(({ path, component: Component, permission, business }) => ({
       index: path === "/" ? true : undefined,
       path: path === "/" ? undefined : path.slice(1),
       element: (
-        <ProtectedRoute permission={permission}>
+        <ProtectedRoute permission={permission} business={business}>
           <Suspense fallback={<PageLoader />}>
             <Component />
           </Suspense>

@@ -15,6 +15,7 @@ import { formatMoney } from "@/lib/formatters";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
 import type { Translations } from "@/features/i18n/i18n";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 interface DebtRow {
   id: string;
@@ -57,7 +58,7 @@ export default function Debts() {
   const res = useGet<UnifiedDebtsRes>("/debts");
   const [tab, setTab] = useState("owed");
   const [sourceFilter, setSourceFilter] = useState("");
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useSearchBox();
   const [waFallback, setWaFallback] = useState<Record<string, boolean>>({});
 
   const remind = useWrite<{ id: string; source: "shop_customer" | "service_client" }>(
