@@ -36,6 +36,9 @@ import { label } from "@/features/services/helpers";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, today, toNumber } from "@/lib/formatters";
 import type { CatalogItem } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import type { Translations } from "@/features/i18n/i18n";
 
 interface DashboardPayload {
   sales?: { total: string; count: number; previous_total: string; change_pct?: string | null };
@@ -115,11 +118,11 @@ interface StaffMePayload {
   low_stock?: { id: string; name: string; qty_on_hand: string; reorder_level: string }[];
 }
 
-function greeting() {
+function greeting(t: Translations) {
   const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 17) return "Good afternoon";
-  return "Good evening";
+  if (h < 12) return t.dashboard.goodMorning;
+  if (h < 17) return t.dashboard.goodAfternoon;
+  return t.dashboard.goodEvening;
 }
 
 function trendInfo(pct?: string | null, invertGood = false) {
@@ -135,15 +138,16 @@ function trendInfo(pct?: string | null, invertGood = false) {
 }
 
 function DashboardError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const { t } = useI18n();
   return (
     <div className="od-card items-center py-12 text-center">
       <div className="flex h-11 w-11 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--od-bad-mark)_12%,transparent)] text-[var(--od-bad)]">
         <AlertTriangle size={20} />
       </div>
-      <h2 className="od-section-title mt-3">Could not load dashboard data</h2>
+      <h2 className="od-section-title mt-3">{t.dashboard.couldNotLoadDashboardData}</h2>
       <p className="od-caption mt-1 max-w-md">{message}</p>
       <Button className="mt-4" variant="outline" size="sm" onClick={onRetry}>
-        <RefreshCw size={14} /> Try again
+        <RefreshCw size={14} /> {t.dashboard.tryAgain}
       </Button>
     </div>
   );
@@ -209,6 +213,7 @@ function QuickJobDialog({
   open: boolean;
   onOpenChange: (o: boolean) => void;
 }) {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const catalog = useGet<CatalogItem[]>("/service-catalog", { per_page: 100 }, { enabled: open });
   const [d, setD] = useState({
@@ -223,7 +228,7 @@ function QuickJobDialog({
 
   const createProject = useWrite<unknown, { id: string }>("POST", "/projects", {
     invalidate: ["/projects", "/dashboard/me", "/services"],
-    success: "Job registered",
+    success: t.dashboard.jobRegistered,
     onSuccess: (res) => {
       onOpenChange(false);
       navigate(`/projects/${res.id}`);
@@ -231,7 +236,7 @@ function QuickJobDialog({
   });
   const createDesign = useWrite<unknown, { id: string }>("POST", "/design-jobs", {
     invalidate: ["/design-jobs", "/dashboard/me", "/services"],
-    success: "Design job registered",
+    success: t.dashboard.designJobRegistered,
     onSuccess: (res) => {
       onOpenChange(false);
       navigate(`/design-jobs/${res.id}`);
@@ -263,15 +268,15 @@ function QuickJobDialog({
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="New job"
-      description="Register a service or design job quickly. Price comes from the Service Catalog."
+      title={t.common.newJob}
+      description={t.dashboard.registerAServiceOrDesign}
       busy={createProject.isPending || createDesign.isPending}
       onSubmit={submit}
     >
-      <Field label="Client *">
+      <Field label={t.common.client2}>
         <ClientSelect required value={d.client_id} onChange={(v) => setD({ ...d, client_id: v })} />
       </Field>
-      <Field label="Service / job type">
+      <Field label={t.dashboard.serviceJobType}>
         <NativeSelect
           value={d.service_id}
           onChange={(e) => {
@@ -279,7 +284,7 @@ function QuickJobDialog({
             setD({ ...d, service_id: e.target.value, title: d.title || item?.name || "" });
           }}
         >
-          <option value="">Choose from Service Catalog…</option>
+          <option value="">{t.dashboard.chooseFromServiceCatalog}</option>
           {(catalog.data ?? []).map((s) => (
             <option key={s.id} value={s.id}>
               {s.name} ({label(s.category)}) · {formatMoney(s.standard_price)}
@@ -289,30 +294,30 @@ function QuickJobDialog({
       </Field>
       {selected && (
         <p className="rounded-[var(--od-radius-sm,8px)] bg-[var(--od-surface-subtle)] px-3 py-2 text-xs text-[var(--od-ink-secondary)]">
-          Catalog price:{" "}
+          {t.dashboard.catalogPrice}{" "}
           <strong className="od-tabular text-[var(--od-ink)]">
             {formatMoney(selected.standard_price)}
           </strong>{" "}
-          (fixed; ask a Manager to change price)
+          {t.dashboard.fixedAskAManagerTo}
         </p>
       )}
-      <Field label="Job title *">
+      <Field label={t.dashboard.jobTitle}>
         <Input
           required
-          placeholder="e.g. Company registration or Logo design"
+          placeholder={t.dashboard.eGCompanyRegistrationOr}
           value={d.title}
           onChange={(e) => setD({ ...d, title: e.target.value })}
         />
       </Field>
-      <Field label="Details">
+      <Field label={t.common.details}>
         <Textarea
           rows={3}
-          placeholder="What does the client want?"
+          placeholder={t.dashboard.whatDoesTheClientWant}
           value={d.details}
           onChange={(e) => setD({ ...d, details: e.target.value })}
         />
       </Field>
-      <Field label="Deadline">
+      <Field label={t.common.deadline}>
         <Input
           type="date"
           value={d.deadline}
@@ -325,21 +330,22 @@ function QuickJobDialog({
 
 /** SRS Section 2A: Staff Home Screen. */
 function StaffHome() {
+  const { t } = useI18n();
   const { user, can } = useAuth();
   const navigate = useNavigate();
   const [newJobOpen, setNewJobOpen] = useState(false);
   const meDash = useGet<StaffMePayload>("/dashboard/me");
   const clockIn = useWrite("POST", "/attendance/clock-in", {
     invalidate: ["/dashboard/me", "/attendance"],
-    success: "Clocked in",
+    success: t.common.clockedIn,
   });
   const clockOut = useWrite("POST", "/attendance/clock-out", {
     invalidate: ["/dashboard/me", "/attendance"],
-    success: "Clocked out",
+    success: t.common.clockedOut,
   });
   const completeTask = useWrite<{ id: string }>("PUT", (b) => `/tasks/${b.id}`, {
     invalidate: ["/dashboard/me", "/tasks"],
-    success: "Task marked done",
+    success: t.dashboard.taskMarkedDone,
     toBody: () => ({ status: "done" }),
   });
 
@@ -355,8 +361,8 @@ function StaffHome() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={`${greeting()}, ${user?.name.split(" ")[0] ?? ""}`}
-        description="Your sales, assigned jobs, tasks and stock alerts for today."
+        title={`${greeting(t)}, ${user?.name.split(" ")[0] ?? ""}`}
+        description={t.dashboard.yourSalesAssignedJobsTasks}
         actions={
           d?.attendance !== null && (
             <Button
@@ -364,7 +370,7 @@ function StaffHome() {
               disabled={clockIn.isPending || clockOut.isPending}
               onClick={() => (clockedIn ? clockOut.mutate({}) : clockIn.mutate({}))}
             >
-              <Clock size={15} /> {clockedIn ? "Clock out" : "Clock in"}
+              <Clock size={15} /> {clockedIn ? t.common.clockOut : t.common.clockIn}
             </Button>
           )
         }
@@ -379,7 +385,7 @@ function StaffHome() {
             onClick={() => navigate("/pos")}
           >
             <ShoppingCart size={18} />
-            <span>New sale (POS)</span>
+            <span>{t.common.newSalePos}</span>
             <ArrowUpRight size={15} className="ml-auto opacity-70" />
           </Button>
         )}
@@ -391,7 +397,7 @@ function StaffHome() {
             onClick={() => setNewJobOpen(true)}
           >
             <Briefcase size={18} />
-            <span>New job</span>
+            <span>{t.common.newJob}</span>
             <ArrowUpRight size={15} className="ml-auto opacity-50" />
           </Button>
         )}
@@ -408,7 +414,7 @@ function StaffHome() {
             }
           >
             <CreditCard size={18} />
-            <span>Receive payment</span>
+            <span>{t.common.receivePayment}</span>
             <ArrowUpRight size={15} className="ml-auto opacity-50" />
           </Button>
         )}
@@ -416,18 +422,21 @@ function StaffHome() {
 
       {/* 4 Staff Dashboard Panels */}
       <div className="grid gap-5 lg:grid-cols-2">
-        <SectionCard title="My sales today" subtitle="Recorded under your account">
+        <SectionCard
+          title={t.dashboard.mySalesToday}
+          subtitle={t.dashboard.recordedUnderYourAccount}
+        >
           <div className="grid grid-cols-2 gap-4 pt-1">
             <div className="rounded-[var(--od-radius-md,12px)] bg-[var(--od-surface-subtle)] p-4">
-              <p className="od-kpi-label">Sales count</p>
+              <p className="od-kpi-label">{t.dashboard.salesCount}</p>
               <p className="od-kpi-value mt-1.5">{d?.sales_today?.count ?? 0}</p>
             </div>
             <div className="rounded-[var(--od-radius-md,12px)] bg-[var(--od-surface-subtle)] p-4">
-              <p className="od-kpi-label">Total sold</p>
+              <p className="od-kpi-label">{t.dashboard.totalSold}</p>
               <p className="od-kpi-value mt-1.5">{formatMoney(d?.sales_today?.total)}</p>
             </div>
             <div className="col-span-2 flex items-center justify-between border-t border-[var(--od-border)] pt-3">
-              <span className="od-caption">My commission this month</span>
+              <span className="od-caption">{t.dashboard.myCommissionThisMonth}</span>
               <span className="od-tabular text-[15px] font-semibold text-[var(--od-ink)]">
                 {formatMoney(d?.commission_month ?? "0")}
               </span>
@@ -436,18 +445,18 @@ function StaffHome() {
         </SectionCard>
 
         <SectionCard
-          title="My jobs"
+          title={t.dashboard.myJobs}
           actions={
             <Link
               to="/projects"
               className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
             >
-              All jobs
+              {t.dashboard.allJobs}
             </Link>
           }
         >
           {(d?.my_jobs ?? []).length === 0 ? (
-            <p className="od-caption py-4">No open jobs assigned to you.</p>
+            <p className="od-caption py-4">{t.dashboard.noOpenJobsAssignedTo}</p>
           ) : (
             <ul className="divide-y divide-[var(--od-border)] text-[13px]">
               {(d?.my_jobs ?? []).map((j) => (
@@ -460,7 +469,9 @@ function StaffHome() {
                       <p className="truncate font-medium">{j.title}</p>
                       <p className="od-caption">
                         {j.client_name}
-                        {j.due_date ? ` · Due ${formatDate(j.due_date)}` : ""}
+                        {j.due_date
+                          ? ` ${fmt(t.dashboard.due, { due_date: formatDate(j.due_date) })}`
+                          : ""}
                       </p>
                     </div>
                     <StatusBadge value={j.status} />
@@ -472,39 +483,41 @@ function StaffHome() {
         </SectionCard>
 
         <SectionCard
-          title="My tasks"
+          title={t.dashboard.myTasks}
           actions={
             <Link
               to="/service-tasks"
               className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
             >
-              Tasks & calendar
+              {t.dashboard.tasksCalendar}
             </Link>
           }
         >
           {(d?.my_tasks ?? []).length === 0 ? (
-            <p className="od-caption py-4">No pending tasks.</p>
+            <p className="od-caption py-4">{t.dashboard.noPendingTasks}</p>
           ) : (
             <ul className="divide-y divide-[var(--od-border)] text-[13px]">
-              {(d?.my_tasks ?? []).map((t) => (
-                <li key={t.id} className="flex items-center justify-between gap-2 py-2.5">
+              {(d?.my_tasks ?? []).map((item) => (
+                <li key={item.id} className="flex items-center justify-between gap-2 py-2.5">
                   <div className="min-w-0">
-                    <p className="truncate font-medium">{t.title}</p>
+                    <p className="truncate font-medium">{item.title}</p>
                     <p
                       className={
-                        t.overdue ? "text-xs font-medium text-[var(--od-bad)]" : "od-caption"
+                        item.overdue ? "text-xs font-medium text-[var(--od-bad)]" : "od-caption"
                       }
                     >
-                      {t.due_date ? `Due ${formatDate(t.due_date)}` : "No deadline"}
-                      {t.project_number ? ` · ${t.project_number}` : ""}
+                      {item.due_date
+                        ? fmt(t.common.due, { due_date: formatDate(item.due_date) })
+                        : t.dashboard.noDeadline}
+                      {item.project_number ? ` · ${item.project_number}` : ""}
                     </p>
                   </div>
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => completeTask.mutate({ id: t.id })}
+                    onClick={() => completeTask.mutate({ id: item.id })}
                   >
-                    <Check size={13} /> Done
+                    <Check size={13} /> {t.common.done}
                   </Button>
                 </li>
               ))}
@@ -513,25 +526,25 @@ function StaffHome() {
         </SectionCard>
 
         <SectionCard
-          title="Products running low"
+          title={t.dashboard.productsRunningLow}
           actions={
             <Link
               to="/products"
               className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
             >
-              Catalog
+              {t.common.catalog}
             </Link>
           }
         >
           {(d?.low_stock ?? []).length === 0 ? (
-            <p className="od-caption py-4">All stocked products look good.</p>
+            <p className="od-caption py-4">{t.dashboard.allStockedProductsLookGood}</p>
           ) : (
             <ul className="divide-y divide-[var(--od-border)] text-[13px]">
               {(d?.low_stock ?? []).map((p) => (
                 <li key={p.id} className="flex items-center justify-between py-2.5">
                   <span className="truncate font-medium">{p.name}</span>
                   <span className="od-tabular shrink-0 text-xs font-semibold text-[var(--od-warning)]">
-                    {toNumber(p.qty_on_hand)} left
+                    {fmt(t.dashboard.left, { qty_on_hand: toNumber(p.qty_on_hand) })}
                   </span>
                 </li>
               ))}
@@ -547,6 +560,7 @@ function StaffHome() {
 
 /** SRS Section 5: Unified Admin & Manager Dashboard. */
 export default function Dashboard() {
+  const { t } = useI18n();
   const { me, can, canAny, user } = useAuth();
   const navigate = useNavigate();
   const isStaffHome =
@@ -573,12 +587,12 @@ export default function Dashboard() {
   const approve = useWrite<{ id: string }>("POST", (b) => `/approvals/${b.id}/approve`, {
     idempotent: true,
     invalidate: ["/dashboard", "/approvals"],
-    success: "Approved",
+    success: t.common.approved,
     toBody: () => ({}),
   });
   const reject = useWrite<{ id: string }>("POST", (b) => `/approvals/${b.id}/reject`, {
     invalidate: ["/dashboard", "/approvals"],
-    success: "Rejected",
+    success: t.common.rejected,
     toBody: () => ({ note: "Rejected from dashboard" }),
   });
 
@@ -612,34 +626,34 @@ export default function Dashboard() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title={`${greeting()}, ${user?.name.split(" ")[0] ?? ""}`}
-        description="Business performance across Shop and Services."
+        title={`${greeting(t)}, ${user?.name.split(" ")[0] ?? ""}`}
+        description={t.dashboard.businessPerformanceAcrossShopAnd}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <SegmentedChips
-              ariaLabel="Period"
+              ariaLabel={t.common.period}
               value={period}
               onChange={setPeriod}
               options={[
-                { value: "today", label: "Today" },
-                { value: "week", label: "Week" },
-                { value: "month", label: "Month" },
-                { value: "custom", label: "Custom" },
+                { value: "today", label: t.common.today },
+                { value: "week", label: t.dashboard.week },
+                { value: "month", label: t.common.month },
+                { value: "custom", label: t.common.custom },
               ]}
             />
             <SegmentedChips
-              ariaLabel="Business"
+              ariaLabel={t.common.business}
               value={business}
               onChange={setBusiness}
               options={[
-                { value: "all", label: "All" },
-                { value: "shop", label: "Shop" },
-                { value: "services", label: "Services" },
+                { value: "all", label: t.common.all },
+                { value: "shop", label: t.common.shop },
+                { value: "services", label: t.common.services },
               ]}
             />
             {can("shop.sale.create") && (
               <Button size="sm" onClick={() => navigate("/pos")}>
-                <ShoppingCart size={14} /> Open POS
+                <ShoppingCart size={14} /> {t.dashboard.openPos}
               </Button>
             )}
           </div>
@@ -648,18 +662,20 @@ export default function Dashboard() {
 
       {period === "custom" && (
         <div className="flex flex-wrap items-center gap-2.5 rounded-[var(--od-radius-md,12px)] border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] px-4 py-2.5">
-          <span className="text-xs font-medium text-[var(--od-ink-secondary)]">Date range</span>
+          <span className="text-xs font-medium text-[var(--od-ink-secondary)]">
+            {t.dashboard.dateRange}
+          </span>
           <Input
             type="date"
-            aria-label="Start date"
+            aria-label={t.common.startDate}
             className="h-8 w-36 text-xs"
             value={from}
             onChange={(e) => setFrom(e.target.value)}
           />
-          <span className="text-xs text-[var(--od-ink-muted)]">to</span>
+          <span className="text-xs text-[var(--od-ink-muted)]">{t.dashboard.to}</span>
           <Input
             type="date"
-            aria-label="End date"
+            aria-label={t.dashboard.endDate}
             className="h-8 w-36 text-xs"
             value={to}
             onChange={(e) => setTo(e.target.value)}
@@ -671,9 +687,9 @@ export default function Dashboard() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {showSalesKpi && (
           <KpiCard
-            label="Shop sales"
+            label={t.dashboard.shopSales}
             value={formatMoney(d?.sales?.total ?? "0")}
-            sub={`${d?.sales?.count ?? 0} sales`}
+            sub={fmt(t.dashboard.sales, { count: d?.sales?.count ?? 0 })}
             trend={trendInfo(d?.sales?.change_pct)}
             icon={ShoppingBag}
             to="/reports?path=/reports/sales/summary"
@@ -681,9 +697,9 @@ export default function Dashboard() {
         )}
         {showServicesKpi && (
           <KpiCard
-            label="Service income"
+            label={t.dashboard.serviceIncome}
             value={formatMoney(d?.service_income?.total ?? "0")}
-            sub="Services revenue"
+            sub={t.dashboard.servicesRevenue}
             trend={trendInfo(d?.service_income?.change_pct)}
             icon={Briefcase}
             to="/reports?path=/reports/projects"
@@ -691,9 +707,9 @@ export default function Dashboard() {
         )}
         {showExpensesKpi && (
           <KpiCard
-            label="Expenses"
+            label={t.common.expenses}
             value={formatMoney(d?.expenses?.total ?? "0")}
-            sub="Approved & paid"
+            sub={t.dashboard.approvedPaid}
             trend={trendInfo(d?.expenses?.change_pct, true)}
             icon={Receipt}
             to="/reports?path=/reports/expenses"
@@ -701,9 +717,11 @@ export default function Dashboard() {
         )}
         {showProfitKpi && (
           <KpiCard
-            label="Net profit"
+            label={t.common.netProfit}
             value={formatMoney(d?.profit?.net_profit ?? "0")}
-            sub={`Gross ${formatMoney(d?.profit?.gross_profit ?? "0")}`}
+            sub={fmt(t.dashboard.gross, {
+              gross_profit: formatMoney(d?.profit?.gross_profit ?? "0"),
+            })}
             trend={trendInfo(d?.profit?.change_pct)}
             icon={TrendingUp}
             to="/reports?path=/reports/profit-loss"
@@ -715,35 +733,37 @@ export default function Dashboard() {
       <div className="grid gap-5 lg:grid-cols-3">
         <div className={d?.cash ? "lg:col-span-2" : "lg:col-span-3"}>
           <ChartCard
-            title="Income vs expenses by day"
-            description="Click any day on the chart to inspect transactions"
+            title={t.dashboard.incomeVsExpensesByDay}
+            description={t.dashboard.clickAnyDayOnThe}
           >
             {chartData.length > 0 ? (
               <IncomeExpenseChart data={chartData} onDayClick={() => navigate("/money")} />
             ) : (
               <div className="flex h-64 items-center justify-center text-[13px] text-[var(--od-ink-muted)]">
-                No income or expense transactions recorded for this period yet.
+                {t.dashboard.noIncomeOrExpenseTransactions}
               </div>
             )}
           </ChartCard>
         </div>
         {d?.cash && (
           <SectionCard
-            title="Cash balances"
-            subtitle="Active money accounts"
+            title={t.dashboard.cashBalances}
+            subtitle={t.dashboard.activeMoneyAccounts}
             actions={
               <Link
                 to="/money"
                 className="inline-flex items-center gap-1 text-xs font-medium text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]"
               >
-                <Wallet size={13} /> Accounts
+                <Wallet size={13} /> {t.common.accounts}
               </Link>
             }
           >
             <p className="od-kpi-value pt-1">{formatMoney(d.cash.total)}</p>
             <ul className="divide-y divide-[var(--od-border)] text-[13px]">
               {d.cash.accounts.length === 0 ? (
-                <li className="py-3 text-xs text-[var(--od-ink-muted)]">No money accounts yet.</li>
+                <li className="py-3 text-xs text-[var(--od-ink-muted)]">
+                  {t.dashboard.noMoneyAccountsYet}
+                </li>
               ) : (
                 d.cash.accounts.slice(0, 6).map((a) => (
                   <li key={a.id} className="flex items-center justify-between gap-2 py-2.5">
@@ -766,19 +786,19 @@ export default function Dashboard() {
       <div className="grid gap-5 lg:grid-cols-2">
         {d?.projects_by_stage && (
           <SectionCard
-            title="Projects by stage"
-            subtitle="Active service work distribution"
+            title={t.common.projectsByStage}
+            subtitle={t.dashboard.activeServiceWorkDistribution}
             actions={
               <Link
                 to="/projects"
                 className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
               >
-                Open board
+                {t.common.openBoard}
               </Link>
             }
           >
             {d.projects_by_stage.length === 0 ? (
-              <p className="od-caption py-4">No active projects.</p>
+              <p className="od-caption py-4">{t.dashboard.noActiveProjects}</p>
             ) : (
               <ul className="space-y-3.5 pt-1 text-[13px]">
                 {d.projects_by_stage.map((st) => (
@@ -792,7 +812,7 @@ export default function Dashboard() {
                           <strong className="text-[var(--od-ink)]">{st.count}</strong>
                           {st.late > 0 && (
                             <span className="ml-1.5 font-medium text-[var(--od-bad)]">
-                              ({st.late} late)
+                              {fmt(t.dashboard.late, { late: st.late })}
                             </span>
                           )}
                         </span>
@@ -816,32 +836,32 @@ export default function Dashboard() {
 
         {d?.outstanding && (
           <SectionCard
-            title="Debts & payables"
-            subtitle="Receivables and outstanding obligations"
+            title={t.dashboard.debtsPayables}
+            subtitle={t.dashboard.receivablesAndOutstandingObligations}
             actions={
               <Link
                 to="/debts"
                 className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
               >
-                View debts
+                {t.dashboard.viewDebts}
               </Link>
             }
           >
             <div className="grid gap-3 pt-1 sm:grid-cols-2">
               <div className="rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4">
-                <p className="od-kpi-label">Owed to us</p>
+                <p className="od-kpi-label">{t.common.owedToUs}</p>
                 <p className="od-tabular mt-1.5 text-[20px] font-semibold tracking-tight text-[var(--od-ink)]">
                   {formatMoney(owedToUs)}
                 </p>
                 <div className="mt-3 space-y-1.5 text-xs text-[var(--od-ink-secondary)]">
                   <div className="flex justify-between">
-                    <span>Shop customers</span>
+                    <span>{t.common.shopCustomers}</span>
                     <span className="od-tabular font-medium text-[var(--od-ink)]">
                       {formatMoney(d.outstanding.customers_owe ?? "0")}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Service clients</span>
+                    <span>{t.common.serviceClients}</span>
                     <span className="od-tabular font-medium text-[var(--od-ink)]">
                       {formatMoney(d.outstanding.clients_owe ?? "0")}
                     </span>
@@ -849,19 +869,19 @@ export default function Dashboard() {
                 </div>
               </div>
               <div className="rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4">
-                <p className="od-kpi-label">We owe</p>
+                <p className="od-kpi-label">{t.common.weOwe}</p>
                 <p className="od-tabular mt-1.5 text-[20px] font-semibold tracking-tight text-[var(--od-bad)]">
                   {formatMoney(weOwe)}
                 </p>
                 <div className="mt-3 space-y-1.5 text-xs text-[var(--od-ink-secondary)]">
                   <div className="flex justify-between">
-                    <span>Suppliers</span>
+                    <span>{t.common.suppliers}</span>
                     <span className="od-tabular font-medium text-[var(--od-ink)]">
                       {formatMoney(d.outstanding.we_owe_suppliers ?? "0")}
                     </span>
                   </div>
                   <div className="flex justify-between">
-                    <span>Contractors</span>
+                    <span>{t.common.contractors}</span>
                     <span className="od-tabular font-medium text-[var(--od-ink)]">
                       {formatMoney(d.outstanding.we_owe_contractors ?? "0")}
                     </span>
@@ -874,7 +894,9 @@ export default function Dashboard() {
                 to="/payroll"
                 className="flex items-center justify-between rounded-[var(--od-radius-md,12px)] border border-[var(--od-border-strong)] px-4 py-2.5 text-[13px] transition-colors hover:bg-[var(--od-surface-subtle)]"
               >
-                <span className="font-medium text-[var(--od-ink-secondary)]">Salaries due</span>
+                <span className="font-medium text-[var(--od-ink-secondary)]">
+                  {t.dashboard.salariesDue}
+                </span>
                 <span className="od-tabular font-semibold text-[var(--od-ink)]">
                   {formatMoney(d.outstanding.salaries_due)}
                 </span>
@@ -888,26 +910,28 @@ export default function Dashboard() {
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {d?.overdue_tasks && (
           <SectionCard
-            title={`Overdue tasks (${d.overdue_tasks.length})`}
+            title={fmt(t.dashboard.overdueTasks, { count: d.overdue_tasks.length })}
             actions={
               <Link
                 to="/service-tasks"
                 className="text-xs font-medium text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]"
               >
-                All
+                {t.common.all}
               </Link>
             }
           >
             {d.overdue_tasks.length === 0 ? (
-              <p className="od-caption py-2">No overdue tasks.</p>
+              <p className="od-caption py-2">{t.dashboard.noOverdueTasks}</p>
             ) : (
               <ul className="divide-y divide-[var(--od-border)] text-xs">
-                {d.overdue_tasks.map((t) => (
-                  <li key={t.id} className="py-2.5">
-                    <p className="font-medium text-[var(--od-ink)]">{t.title}</p>
+                {d.overdue_tasks.map((item) => (
+                  <li key={item.id} className="py-2.5">
+                    <p className="font-medium text-[var(--od-ink)]">{item.title}</p>
                     <p className="mt-0.5 font-medium text-[var(--od-bad)]">
-                      Due {formatDate(t.due_date)}
-                      {t.assignee_name ? ` · ${t.assignee_name}` : ""}
+                      {fmt(t.dashboard.due2, {
+                        due_date: formatDate(item.due_date),
+                        value: item.assignee_name ? ` · ${item.assignee_name}` : "",
+                      })}
                     </p>
                   </li>
                 ))}
@@ -918,13 +942,13 @@ export default function Dashboard() {
 
         {d?.stock && (
           <SectionCard
-            title={`Low stock (${d.stock.low_stock_count})`}
+            title={fmt(t.dashboard.lowStock, { low_stock_count: d.stock.low_stock_count })}
             actions={
               <Link
                 to="/products"
                 className="text-xs font-medium text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]"
               >
-                Products
+                {t.common.products}
               </Link>
             }
           >
@@ -937,21 +961,23 @@ export default function Dashboard() {
                 }
                 className="flex items-center justify-between rounded-[var(--od-radius-sm,8px)] bg-[var(--od-surface-subtle)] px-3 py-2 text-xs transition-colors hover:bg-[var(--od-border)]"
               >
-                <span className="font-medium text-[var(--od-ink-secondary)]">Stock value</span>
+                <span className="font-medium text-[var(--od-ink-secondary)]">
+                  {t.dashboard.stockValue}
+                </span>
                 <span className="od-tabular font-semibold text-[var(--od-ink)]">
                   {formatMoney(d.stock.value)}
                 </span>
               </Link>
             )}
             {(d.stock.items ?? []).length === 0 ? (
-              <p className="od-caption py-2">Stock levels are healthy.</p>
+              <p className="od-caption py-2">{t.dashboard.stockLevelsAreHealthy}</p>
             ) : (
               <ul className="divide-y divide-[var(--od-border)] text-xs">
                 {(d.stock.items ?? []).map((p) => (
                   <li key={p.id} className="flex items-center justify-between gap-2 py-2.5">
                     <span className="truncate font-medium text-[var(--od-ink)]">{p.name}</span>
                     <span className="od-tabular shrink-0 font-semibold text-[var(--od-warning)]">
-                      {toNumber(p.qty_on_hand)} left
+                      {fmt(t.dashboard.left, { qty_on_hand: toNumber(p.qty_on_hand) })}
                     </span>
                   </li>
                 ))}
@@ -962,18 +988,18 @@ export default function Dashboard() {
 
         {d?.renewals_due && (
           <SectionCard
-            title={`Renewals due (${d.renewals_due.length})`}
+            title={fmt(t.dashboard.renewalsDue, { count: d.renewals_due.length })}
             actions={
               <Link
                 to="/renewals"
                 className="text-xs font-medium text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]"
               >
-                All
+                {t.common.all}
               </Link>
             }
           >
             {d.renewals_due.length === 0 ? (
-              <p className="od-caption py-2">None due in the next 30 days.</p>
+              <p className="od-caption py-2">{t.dashboard.noneDueInTheNext}</p>
             ) : (
               <ul className="divide-y divide-[var(--od-border)] text-xs">
                 {d.renewals_due.map((r) => (
@@ -986,7 +1012,9 @@ export default function Dashboard() {
                           r.days_left <= 7 ? "font-semibold text-[var(--od-bad)]" : undefined
                         }
                       >
-                        {r.days_left < 0 ? `${-r.days_left}d late` : `${r.days_left}d left`}
+                        {r.days_left < 0
+                          ? fmt(t.common.dLate, { value: -r.days_left })
+                          : fmt(t.dashboard.dLeft, { days_left: r.days_left })}
                       </span>
                     </p>
                   </li>
@@ -998,18 +1026,18 @@ export default function Dashboard() {
 
         {d?.pending_approvals && (
           <SectionCard
-            title={`Approvals (${d.pending_approvals.count})`}
+            title={fmt(t.dashboard.approvals, { count: d.pending_approvals.count })}
             actions={
               <Link
                 to="/approvals"
                 className="text-xs font-medium text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]"
               >
-                All
+                {t.common.all}
               </Link>
             }
           >
             {d.pending_approvals.latest.length === 0 ? (
-              <p className="od-caption py-2">Nothing waiting for approval.</p>
+              <p className="od-caption py-2">{t.dashboard.nothingWaitingForApproval}</p>
             ) : (
               <ul className="divide-y divide-[var(--od-border)] text-xs">
                 {d.pending_approvals.latest.map((a) => (
@@ -1033,7 +1061,7 @@ export default function Dashboard() {
                           disabled={approve.isPending}
                           onClick={() => approve.mutate({ id: a.id })}
                         >
-                          <Check size={12} /> Approve
+                          <Check size={12} /> {t.common.approve}
                         </Button>
                         <Button
                           size="sm"
@@ -1042,7 +1070,7 @@ export default function Dashboard() {
                           disabled={reject.isPending}
                           onClick={() => reject.mutate({ id: a.id })}
                         >
-                          <X size={12} /> Reject
+                          <X size={12} /> {t.common.reject}
                         </Button>
                       </div>
                     )}

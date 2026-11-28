@@ -20,6 +20,8 @@ import { download } from "@/lib/api";
 import { formatDate, formatMoney } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
 import type { Run } from "@/pages/Payroll";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 interface Slip {
   id: string;
@@ -42,6 +44,7 @@ interface ManualLineDraft {
 }
 
 export default function PayrollRun() {
+  const { t } = useI18n();
   const { id } = useParams();
   const { can, canAny } = useAuth();
   const run = useGet<Detail>(`/payroll-runs/${id}`);
@@ -69,17 +72,17 @@ export default function PayrollRun() {
   ];
   const calculate = useWrite("POST", `/payroll-runs/${id}/calculate`, {
     invalidate: refresh,
-    success: "Payroll calculated",
+    success: t.payroll.payrollCalculated,
   });
   const approve = useWrite("POST", `/payroll-runs/${id}/approve`, {
     idempotent: true,
     invalidate: refresh,
-    success: "Payroll approved",
+    success: t.payroll.payrollApproved,
   });
   const pay = useWrite<{ money_account_id: string }, unknown>("POST", `/payroll-runs/${id}/pay`, {
     idempotent: true,
     invalidate: refresh,
-    success: "Salaries paid",
+    success: t.payroll.salariesPaid,
     onSuccess: () => setPaying(false),
   });
   const putLines = useWrite<{ lines: ManualLineDraft[]; reason: string }, unknown>(
@@ -87,7 +90,7 @@ export default function PayrollRun() {
     () => `/payroll-runs/${id}/payslips/${editingSlip?.id}/lines`,
     {
       invalidate: refresh,
-      success: "Payslip lines updated",
+      success: t.payroll.payslipLinesUpdated,
       onSuccess: () => {
         setEditingSlip(null);
         setManualLines([{ kind: "bonus", label: "", amount: "" }]);
@@ -98,7 +101,7 @@ export default function PayrollRun() {
   const reverse = useWrite<{ reason: string }, unknown>("POST", `/payroll-runs/${id}/reverse`, {
     idempotent: true,
     invalidate: refresh,
-    success: "Payroll run reversed",
+    success: t.payroll.payrollRunReversed,
     onSuccess: () => {
       setReversing(false);
       setReverseReason("");
@@ -120,7 +123,7 @@ export default function PayrollRun() {
     <div className="space-y-6">
       <PageHeader
         backTo="/payroll"
-        backLabel="Payroll"
+        backLabel={t.common.payroll}
         title={r.number}
         description={`${formatDate(r.period_start)} – ${formatDate(r.period_end)}`}
         badge={<StatusBadge value={r.status} />}
@@ -132,14 +135,14 @@ export default function PayrollRun() {
                 onClick={() => calculate.mutate({})}
                 disabled={calculate.isPending}
               >
-                {hasSlips ? "Recalculate" : "Calculate"}
+                {hasSlips ? t.payroll.recalculate : t.payroll.calculate}
               </Button>
             )}
             {["draft", "calculated", "pending_approval"].includes(r.status) &&
               hasSlips &&
               canApprove && (
                 <Button onClick={() => approve.mutate({})} disabled={approve.isPending}>
-                  Approve
+                  {t.common.approve}
                 </Button>
               )}
             {r.status === "approved" && canApprove && (
@@ -154,9 +157,9 @@ export default function PayrollRun() {
                     )
                   }
                 >
-                  <Download size={15} /> Payment list
+                  <Download size={15} /> {t.payroll.paymentList}
                 </Button>
-                <Button onClick={() => setPaying(true)}>Pay salaries</Button>
+                <Button onClick={() => setPaying(true)}>{t.payroll.paySalaries}</Button>
               </>
             )}
             {["draft", "approved"].includes(r.status) && (canApprove || canManage) && (
@@ -166,7 +169,7 @@ export default function PayrollRun() {
                 onClick={() => setReversing(true)}
               >
                 <RotateCcw size={15} />{" "}
-                {r.status === "approved" ? "Reopen to draft" : "Cancel draft"}
+                {r.status === "approved" ? t.payroll.reopenToDraft : t.payroll.cancelDraft}
               </Button>
             )}
           </div>
@@ -174,13 +177,16 @@ export default function PayrollRun() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Staff on run" value={String(r.payslips?.length ?? r.payslip_count ?? 0)} />
-        <StatCard label="Gross pay" value={formatMoney(r.gross_total)} />
-        <StatCard label="Deductions" value={formatMoney(r.deduction_total)} />
         <StatCard
-          label="Net payable"
+          label={t.payroll.staffOnRun}
+          value={String(r.payslips?.length ?? r.payslip_count ?? 0)}
+        />
+        <StatCard label={t.payroll.grossPay} value={formatMoney(r.gross_total)} />
+        <StatCard label={t.common.deductions} value={formatMoney(r.deduction_total)} />
+        <StatCard
+          label={t.payroll.netPayable}
           value={formatMoney(r.net_total)}
-          trend={`Paid ${formatMoney(r.paid_total)}`}
+          trend={fmt(t.payroll.paid, { paid_total: formatMoney(r.paid_total) })}
           tone={
             Number(r.paid_total) >= Number(r.net_total) && Number(r.net_total) > 0
               ? "good"
@@ -192,10 +198,10 @@ export default function PayrollRun() {
       <DataGrid
         rows={r.payslips}
         rowKey={(s) => s.id}
-        empty="Calculate the run to generate payslips"
+        empty={t.payroll.calculateTheRunToGenerate}
         columns={[
           {
-            header: "Employee",
+            header: t.common.employee,
             cell: (s) => (
               <div>
                 <p className="font-medium text-[var(--od-ink)]">{s.name}</p>
@@ -206,22 +212,22 @@ export default function PayrollRun() {
             ),
           },
           {
-            header: "Base pay",
+            header: t.common.basePay,
             align: "right",
             cell: (s) => <span className="od-tabular">{formatMoney(s.base_pay)}</span>,
           },
           {
-            header: "Gross",
+            header: t.common.gross,
             align: "right",
             cell: (s) => <span className="od-tabular">{formatMoney(s.gross)}</span>,
           },
           {
-            header: "Deductions",
+            header: t.common.deductions,
             align: "right",
             cell: (s) => <span className="od-tabular">{formatMoney(s.total_deductions)}</span>,
           },
           {
-            header: "Net",
+            header: t.common.net,
             align: "right",
             cell: (s) => (
               <span className="od-tabular font-semibold text-[var(--od-ink)]">
@@ -230,7 +236,7 @@ export default function PayrollRun() {
             ),
           },
           {
-            header: "Paid",
+            header: t.common.paid,
             align: "right",
             cell: (s) => <span className="od-tabular">{formatMoney(s.paid_total)}</span>,
           },
@@ -248,7 +254,7 @@ export default function PayrollRun() {
                       setLineReason("");
                     }}
                   >
-                    <Pencil size={13} /> Edit lines
+                    <Pencil size={13} /> {t.payroll.editLines}
                   </Button>
                 )}
                 {canViewSlips && (
@@ -274,7 +280,7 @@ export default function PayrollRun() {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        <MessageCircle size={14} /> Share
+                        <MessageCircle size={14} /> {t.payroll.share}
                       </a>
                     </Button>
                   </>
@@ -288,20 +294,20 @@ export default function PayrollRun() {
       <FormDialog
         open={paying}
         onOpenChange={setPaying}
-        title="Pay salaries"
-        submitLabel={`Pay ${formatMoney(r.net_total)}`}
+        title={t.payroll.paySalaries}
+        submitLabel={fmt(t.payroll.pay, { net_total: formatMoney(r.net_total) })}
         busy={pay.isPending}
         onSubmit={() => pay.mutate({ money_account_id: account })}
       >
         <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3.5 py-2.5 text-sm text-[var(--od-ink-secondary)]">
-          Total net salaries to disburse:{" "}
+          {t.payroll.totalNetSalariesToDisburse}{" "}
           <strong className="od-tabular font-semibold text-[var(--od-ink)]">
             {formatMoney(r.net_total)}
           </strong>
         </div>
-        <Field label="Pay from">
+        <Field label={t.common.payFrom}>
           <NativeSelect required value={account} onChange={(e) => setAccount(e.target.value)}>
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {accounts.data
               ?.filter((a) => a.is_active)
               .map((a) => (
@@ -316,8 +322,8 @@ export default function PayrollRun() {
       <FormDialog
         open={editingSlip !== null}
         onOpenChange={(o) => !o && setEditingSlip(null)}
-        title={`Edit manual lines — ${editingSlip?.name ?? ""}`}
-        submitLabel="Save lines"
+        title={fmt(t.payroll.editManualLines, { name: editingSlip?.name ?? "" })}
+        submitLabel={t.payroll.saveLines}
         busy={putLines.isPending}
         onSubmit={() =>
           putLines.mutate({
@@ -326,10 +332,7 @@ export default function PayrollRun() {
           })
         }
       >
-        <p className="od-caption">
-          Replaces manual earning/deduction lines on this payslip and recalculates net pay. Leave
-          rows empty to remove manual lines.
-        </p>
+        <p className="od-caption">{t.payroll.replacesManualEarningDeductionLines}</p>
         <div className="space-y-2">
           {manualLines.map((line, idx) => (
             <div
@@ -346,14 +349,14 @@ export default function PayrollRun() {
                   )
                 }
               >
-                <option value="bonus">Bonus</option>
-                <option value="allowance">Allowance</option>
-                <option value="overtime">Overtime</option>
-                <option value="commission">Commission</option>
-                <option value="deduction">Deduction</option>
+                <option value="bonus">{t.common.bonus}</option>
+                <option value="allowance">{t.payroll.allowance}</option>
+                <option value="overtime">{t.common.overtime}</option>
+                <option value="commission">{t.payroll.commission}</option>
+                <option value="deduction">{t.common.deduction}</option>
               </NativeSelect>
               <Input
-                placeholder="Description"
+                placeholder={t.common.description}
                 value={line.label}
                 onChange={(e) =>
                   setManualLines((prev) =>
@@ -364,7 +367,7 @@ export default function PayrollRun() {
               <Input
                 inputMode="decimal"
                 className="od-tabular"
-                placeholder="Amount"
+                placeholder={t.common.amount}
                 value={line.amount}
                 onChange={(e) =>
                   setManualLines((prev) =>
@@ -391,15 +394,15 @@ export default function PayrollRun() {
               setManualLines((prev) => [...prev, { kind: "bonus", label: "", amount: "" }])
             }
           >
-            <Plus size={13} /> Add line
+            <Plus size={13} /> {t.common.addLine}
           </Button>
         </div>
-        <Field label="Reason (required)">
+        <Field label={t.payroll.reasonRequired}>
           <Input
             required
             value={lineReason}
             onChange={(e) => setLineReason(e.target.value)}
-            placeholder="e.g. Special sales bonus approved by owner"
+            placeholder={t.payroll.eGSpecialSalesBonus}
           />
         </Field>
       </FormDialog>
@@ -407,22 +410,26 @@ export default function PayrollRun() {
       <FormDialog
         open={reversing}
         onOpenChange={setReversing}
-        title={r.status === "approved" ? `Reopen payroll ${r.number}` : `Cancel draft ${r.number}`}
-        submitLabel={r.status === "approved" ? "Reopen to draft" : "Cancel draft"}
+        title={
+          r.status === "approved"
+            ? fmt(t.payroll.reopenPayroll, { number: r.number })
+            : fmt(t.payroll.cancelDraft2, { number: r.number })
+        }
+        submitLabel={r.status === "approved" ? t.payroll.reopenToDraft : t.payroll.cancelDraft}
         busy={reverse.isPending}
         onSubmit={() => reverse.mutate({ reason: reverseReason })}
       >
         <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3.5 py-2.5 text-sm text-[var(--od-ink-secondary)]">
           {r.status === "approved"
-            ? "Reopening moves this unpaid payroll run back to draft so it can be edited and recalculated."
-            : "Cancelling releases any linked pay adjustments and accrued commissions back for future runs."}
+            ? t.payroll.reopeningMovesThisUnpaidPayroll
+            : t.payroll.cancellingReleasesAnyLinkedPay}
         </div>
-        <Field label="Reason">
+        <Field label={t.common.reason}>
           <Textarea
             rows={3}
             value={reverseReason}
             onChange={(e) => setReverseReason(e.target.value)}
-            placeholder="Optional note explaining why…"
+            placeholder={t.payroll.optionalNoteExplainingWhy}
           />
         </Field>
       </FormDialog>

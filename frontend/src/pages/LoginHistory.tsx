@@ -13,6 +13,9 @@ import {
 import { useGetPage } from "@/hooks/useApi";
 import { downloadCsv } from "@/lib/csv";
 import { formatDateTime } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface LoginEvent {
   id: string;
@@ -26,6 +29,7 @@ interface LoginEvent {
 }
 
 export default function LoginHistory() {
+  const { t } = useI18n();
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [page, setPage] = useState(1);
@@ -34,11 +38,13 @@ export default function LoginHistory() {
 
   function exportCsv() {
     downloadCsv("login-history.csv", [
-      ["Time", "Identifier", "Result", "IP", "Device"],
+      [t.common.time, t.admin.identifier, t.common.result, "IP", t.common.device],
       ...rows.map((r) => [
         formatDateTime(r.created_at),
         r.identifier,
-        r.success ? "Success" : `Failed (${r.reason ?? "error"})`,
+        r.success
+          ? t.admin.success
+          : fmt(t.admin.failedReason, { reason: statusLabel(t, r.reason ?? "error") }),
         r.ip ?? "",
         r.user_agent ?? "",
       ]),
@@ -48,18 +54,18 @@ export default function LoginHistory() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Login history"
-        description="Every sign-in attempt, including device, IP address and failures."
+        title={t.common.loginHistory}
+        description={t.admin.everySignInAttemptIncluding}
         actions={
           rows.length > 0 && (
             <Button variant="outline" size="sm" onClick={exportCsv}>
-              <Download size={14} /> Export CSV
+              <Download size={14} /> {t.common.exportCsv}
             </Button>
           )
         }
       />
       <FilterBar className="items-end">
-        <Field label="From">
+        <Field label={t.common.from}>
           <Input
             type="date"
             value={from}
@@ -69,7 +75,7 @@ export default function LoginHistory() {
             }}
           />
         </Field>
-        <Field label="To">
+        <Field label={t.common.to}>
           <Input
             type="date"
             value={to}
@@ -89,7 +95,7 @@ export default function LoginHistory() {
               setPage(1);
             }}
           >
-            <RotateCcw size={13} /> Clear
+            <RotateCcw size={13} /> {t.common.clear}
           </Button>
         )}
       </FilterBar>
@@ -97,10 +103,10 @@ export default function LoginHistory() {
         rows={rows}
         loading={query.isLoading}
         rowKey={(e) => e.id}
-        empty="No sign-in attempts recorded"
+        empty={t.admin.noSignInAttemptsRecorded}
         columns={[
           {
-            header: "Time",
+            header: t.common.time,
             cell: (e) => (
               <span className="od-tabular text-xs text-[var(--od-ink-secondary)]">
                 {formatDateTime(e.created_at)}
@@ -108,13 +114,13 @@ export default function LoginHistory() {
             ),
           },
           {
-            header: "User / identifier",
+            header: t.admin.userIdentifier,
             cell: (e) => (
               <span className="od-mono font-medium text-[var(--od-ink)]">{e.identifier}</span>
             ),
           },
           {
-            header: "Result",
+            header: t.common.result,
             cell: (e) => (
               <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge value={e.success ? "active" : "rejected"} />
@@ -125,13 +131,13 @@ export default function LoginHistory() {
             ),
           },
           {
-            header: "IP address",
+            header: t.admin.ipAddress,
             cell: (e) => (
               <span className="od-mono text-xs text-[var(--od-ink-secondary)]">{e.ip ?? "-"}</span>
             ),
           },
           {
-            header: "Device",
+            header: t.common.device,
             cell: (e) => (
               <span
                 className="line-clamp-1 max-w-xs text-xs text-[var(--od-ink-muted)]"

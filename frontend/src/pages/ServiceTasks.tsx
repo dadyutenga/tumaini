@@ -22,6 +22,9 @@ import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDate, today } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import type { ProjectRow, Task } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import { intlLocale } from "@/features/i18n/active";
 
 const blank = {
   title: "",
@@ -33,18 +36,19 @@ const blank = {
 };
 
 function TaskForm({ onClose }: { onClose: () => void }) {
+  const { t } = useI18n();
   const [d, setD] = useState(blank);
   const projects = useGet<ProjectRow[]>("/projects", { status: "in_progress", per_page: 100 });
   const create = useWrite("POST", "/tasks", {
     invalidate: ["/tasks", "/services"],
-    success: "Task added",
+    success: t.services.taskAdded,
     onSuccess: onClose,
   });
   return (
     <FormDialog
       open
       onOpenChange={(o) => !o && onClose()}
-      title="New task"
+      title={t.common.newTask}
       busy={create.isPending}
       onSubmit={() =>
         create.mutate({
@@ -57,15 +61,15 @@ function TaskForm({ onClose }: { onClose: () => void }) {
         })
       }
     >
-      <Field label="Task *">
+      <Field label={t.services.task}>
         <Input
           required
-          placeholder="Call the client about the TIN"
+          placeholder={t.services.callTheClientAboutThe}
           value={d.title}
           onChange={(e) => setD({ ...d, title: e.target.value })}
         />
       </Field>
-      <Field label="Details">
+      <Field label={t.common.details}>
         <Textarea
           rows={2}
           value={d.description}
@@ -73,28 +77,28 @@ function TaskForm({ onClose }: { onClose: () => void }) {
         />
       </Field>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Due date">
+        <Field label={t.common.dueDate}>
           <Input
             type="date"
             value={d.due_date}
             onChange={(e) => setD({ ...d, due_date: e.target.value })}
           />
         </Field>
-        <Field label="Priority">
+        <Field label={t.common.priority}>
           <NativeSelect
             value={d.priority}
             onChange={(e) => setD({ ...d, priority: e.target.value })}
           >
-            <option value="normal">Normal</option>
-            <option value="urgent">Urgent</option>
+            <option value="normal">{t.common.normal}</option>
+            <option value="urgent">{t.common.urgent}</option>
           </NativeSelect>
         </Field>
-        <Field label="Project">
+        <Field label={t.common.project}>
           <NativeSelect
             value={d.project_id}
             onChange={(e) => setD({ ...d, project_id: e.target.value })}
           >
-            <option value="">None</option>
+            <option value="">{t.common.none}</option>
             {projects.data?.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.number} · {p.client_name}
@@ -102,11 +106,11 @@ function TaskForm({ onClose }: { onClose: () => void }) {
             ))}
           </NativeSelect>
         </Field>
-        <Field label="Assign to">
+        <Field label={t.services.assignTo}>
           <StaffSelect
             value={d.assignee_id}
             onChange={(v) => setD({ ...d, assignee_id: v })}
-            empty="Me"
+            empty={t.common.me}
           />
         </Field>
       </div>
@@ -115,15 +119,16 @@ function TaskForm({ onClose }: { onClose: () => void }) {
 }
 
 function Calendar({ tasks }: { tasks: Task[] }) {
+  const { t } = useI18n();
   const [month, setMonth] = useState(() => {
-    const t = new Date();
-    return new Date(t.getFullYear(), t.getMonth(), 1);
+    const item = new Date();
+    return new Date(item.getFullYear(), item.getMonth(), 1);
   });
   const byDay = useMemo(() => {
     const map = new Map<string, Task[]>();
-    for (const t of tasks) {
-      if (!t.due_date) continue;
-      map.set(t.due_date, [...(map.get(t.due_date) ?? []), t]);
+    for (const item of tasks) {
+      if (!item.due_date) continue;
+      map.set(item.due_date, [...(map.get(item.due_date) ?? []), item]);
     }
     return map;
   }, [tasks]);
@@ -142,25 +147,33 @@ function Calendar({ tasks }: { tasks: Task[] }) {
         <Button
           variant="outline"
           size="icon"
-          aria-label="Previous month"
+          aria-label={t.services.previousMonth}
           onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() - 1, 1))}
         >
           <ChevronLeft size={15} />
         </Button>
         <h2 className="w-44 text-center text-[14px] font-semibold">
-          {month.toLocaleString("en-US", { month: "long", year: "numeric" })}
+          {month.toLocaleString(intlLocale(), { month: "long", year: "numeric" })}
         </h2>
         <Button
           variant="outline"
           size="icon"
-          aria-label="Next month"
+          aria-label={t.services.nextMonth}
           onClick={() => setMonth(new Date(month.getFullYear(), month.getMonth() + 1, 1))}
         >
           <ChevronRight size={15} />
         </Button>
       </div>
       <div className="od-card-flush grid grid-cols-7 gap-px overflow-hidden bg-[var(--od-border-strong)] text-xs">
-        {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d) => (
+        {[
+          t.services.mon,
+          t.services.tue,
+          t.services.wed,
+          t.services.thu,
+          t.services.fri,
+          t.services.sat,
+          t.services.sun,
+        ].map((d) => (
           <div
             key={d}
             className="bg-[var(--od-surface-subtle)] px-2.5 py-2 text-[11px] font-semibold text-[var(--od-ink-muted)]"
@@ -195,23 +208,27 @@ function Calendar({ tasks }: { tasks: Task[] }) {
                     </span>
                   </p>
                   <div className="space-y-1">
-                    {items.slice(0, 3).map((t) => (
+                    {items.slice(0, 3).map((item) => (
                       <p
-                        key={t.id}
-                        title={t.title}
+                        key={item.id}
+                        title={item.title}
                         className={cn(
                           "truncate rounded px-1.5 py-0.5 text-[11px] font-medium",
-                          t.status === "done"
+                          item.status === "done"
                             ? "bg-[color-mix(in_srgb,var(--od-good-mark)_12%,transparent)] text-[var(--od-good)] line-through"
-                            : t.overdue
+                            : item.overdue
                               ? "bg-[color-mix(in_srgb,var(--od-bad-mark)_12%,transparent)] text-[var(--od-bad)]"
                               : "bg-[var(--od-warning-soft)] text-[var(--od-warning)]",
                         )}
                       >
-                        {t.title}
+                        {item.title}
                       </p>
                     ))}
-                    {items.length > 3 && <p className="od-caption">+{items.length - 3} more</p>}
+                    {items.length > 3 && (
+                      <p className="od-caption">
+                        {fmt(t.services.more, { count: items.length - 3 })}
+                      </p>
+                    )}
                   </div>
                 </>
               )}
@@ -224,6 +241,7 @@ function Calendar({ tasks }: { tasks: Task[] }) {
 }
 
 export default function ServiceTasks() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const [status, setStatus] = useState("");
   const [assignee, setAssignee] = useState("");
@@ -245,12 +263,12 @@ export default function ServiceTasks() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Tasks and calendar"
-        description="Assign follow-ups, track deadlines and view monthly workload."
+        title={t.common.tasksAndCalendar}
+        description={t.services.assignFollowUpsTrackDeadlines}
         actions={
           manage && (
             <Button size="sm" onClick={() => setAdding(true)}>
-              <Plus size={14} /> New task
+              <Plus size={14} /> {t.common.newTask}
             </Button>
           )
         }
@@ -259,31 +277,31 @@ export default function ServiceTasks() {
       <Tabs defaultValue="list">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <TabsList>
-            <TabsTrigger value="list">List</TabsTrigger>
-            <TabsTrigger value="calendar">Calendar</TabsTrigger>
+            <TabsTrigger value="list">{t.common.list}</TabsTrigger>
+            <TabsTrigger value="calendar">{t.services.calendar}</TabsTrigger>
           </TabsList>
 
           <FilterBar className="mb-0">
             <SegmentedChips
-              ariaLabel="Task status"
+              ariaLabel={t.services.taskStatus}
               value={status}
               onChange={setStatus}
               options={[
-                { value: "", label: "All" },
-                { value: "todo", label: "To do" },
-                { value: "in_progress", label: "In progress" },
-                { value: "done", label: "Done" },
-                { value: "cancelled", label: "Cancelled" },
+                { value: "", label: t.common.all },
+                { value: "todo", label: t.services.toDo },
+                { value: "in_progress", label: t.services.inProgress },
+                { value: "done", label: t.common.done },
+                { value: "cancelled", label: t.common.cancelled },
               ]}
             />
             {staff.length > 0 && (
               <NativeSelect
-                aria-label="Person"
+                aria-label={t.services.person}
                 className="w-40"
                 value={assignee}
                 onChange={(e) => setAssignee(e.target.value)}
               >
-                <option value="">Everyone</option>
+                <option value="">{t.services.everyone}</option>
                 {staff.map((u) => (
                   <option key={u.id} value={u.id}>
                     {u.name}
@@ -301,7 +319,7 @@ export default function ServiceTasks() {
                   : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
               )}
             >
-              <AlertCircle size={14} /> Overdue only
+              <AlertCircle size={14} /> {t.services.overdueOnly}
             </button>
           </FilterBar>
         </div>
@@ -310,60 +328,60 @@ export default function ServiceTasks() {
           <DataGrid
             rows={tasks.data}
             loading={tasks.isLoading}
-            rowKey={(t) => t.id}
-            empty="No tasks. Add one to keep track of a follow-up."
+            rowKey={(item) => item.id}
+            empty={t.services.noTasksAddOneTo}
             columns={[
               {
-                header: "Task",
-                sortValue: (t) => t.title,
-                cell: (t) => (
+                header: t.services.task2,
+                sortValue: (item) => item.title,
+                cell: (item) => (
                   <div>
                     <p
                       className={cn(
                         "font-medium",
-                        t.status === "done" && "text-[var(--od-ink-muted)] line-through",
+                        item.status === "done" && "text-[var(--od-ink-muted)] line-through",
                       )}
                     >
-                      {t.title}
+                      {item.title}
                     </p>
-                    {t.project_id && (
+                    {item.project_id && (
                       <Link
                         className="od-mono od-caption underline underline-offset-4 hover:text-[var(--od-ink)]"
-                        to={`/projects/${t.project_id}`}
+                        to={`/projects/${item.project_id}`}
                       >
-                        {t.project_number}
+                        {item.project_number}
                       </Link>
                     )}
                   </div>
                 ),
               },
-              { header: "Assigned to", cell: (t) => t.assignee_name ?? "—" },
+              { header: t.services.assignedTo, cell: (item) => item.assignee_name ?? "—" },
               {
-                header: "Due",
-                sortValue: (t) => t.due_date ?? "",
-                cell: (t) => (
-                  <span className={t.overdue ? "font-semibold text-[var(--od-bad)]" : undefined}>
-                    {t.due_date ? formatDate(t.due_date) : "—"}
+                header: t.common.due2,
+                sortValue: (item) => item.due_date ?? "",
+                cell: (item) => (
+                  <span className={item.overdue ? "font-semibold text-[var(--od-bad)]" : undefined}>
+                    {item.due_date ? formatDate(item.due_date) : "—"}
                   </span>
                 ),
               },
               {
-                header: "Priority",
-                cell: (t) =>
-                  t.priority === "urgent" ? (
+                header: t.common.priority,
+                cell: (item) =>
+                  item.priority === "urgent" ? (
                     <StatusBadge value="urgent" />
                   ) : (
-                    <span className="text-[var(--od-ink-secondary)]">Normal</span>
+                    <span className="text-[var(--od-ink-secondary)]">{t.common.normal}</span>
                   ),
               },
               {
-                header: "Status",
-                cell: (t) => (
+                header: t.common.status,
+                cell: (item) => (
                   <NativeSelect
-                    aria-label={`Status of ${t.title}`}
+                    aria-label={fmt(t.services.statusOf, { title: item.title })}
                     className="h-8 w-36 text-xs"
-                    value={t.status}
-                    onChange={(e) => setTaskStatus.mutate({ id: t.id, status: e.target.value })}
+                    value={item.status}
+                    onChange={(e) => setTaskStatus.mutate({ id: item.id, status: e.target.value })}
                   >
                     {["todo", "in_progress", "done", "cancelled"].map((s) => (
                       <option key={s} value={s}>

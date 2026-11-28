@@ -5,6 +5,7 @@ import { Field, FormDialog, NativeSelect } from "@/components/shared/kit";
 import { whatsappUrl } from "@/features/services/helpers";
 import { useWrite } from "@/hooks/useApi";
 import { ApiError } from "@/lib/api";
+import { useI18n } from "@/features/i18n/i18n";
 
 export type OutboundChannel = "sms" | "whatsapp" | "email";
 
@@ -37,6 +38,7 @@ export function SendOutboundButton({
   variant?: "default" | "outline" | "ghost" | "secondary";
   disabled?: boolean;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [channel, setChannel] = useState<OutboundChannel>("sms");
   const [unavailable, setUnavailable] = useState(false);
@@ -80,8 +82,8 @@ export function SendOutboundButton({
         open={open}
         onOpenChange={setOpen}
         title={title}
-        description="Choose how to deliver this message through the business outbox."
-        submitLabel="Send"
+        description={t.common.chooseHowToDeliverThis}
+        submitLabel={t.common.send}
         busy={send.isPending}
         onSubmit={() => {
           setUnavailable(false);
@@ -89,7 +91,7 @@ export function SendOutboundButton({
           send.mutate({ channel, ...(extraBody ?? {}) });
         }}
       >
-        <Field label="Channel">
+        <Field label={t.common.channel}>
           <NativeSelect
             value={channel}
             onChange={(e) => {
@@ -100,19 +102,18 @@ export function SendOutboundButton({
           >
             <option value="sms">SMS</option>
             <option value="whatsapp">WhatsApp</option>
-            <option value="email">Email</option>
+            <option value="email">{t.common.email}</option>
           </NativeSelect>
         </Field>
         {noRecipient && (
           <p className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            This customer has no phone number or email for the selected channel.
+            {t.common.thisCustomerHasNoPhone}
           </p>
         )}
         {unavailable && (
           <div className="space-y-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs">
             <p className="text-amber-800 dark:text-amber-300">
-              Automatic delivery is not configured for this channel. You can still send it manually
-              in WhatsApp:
+              {t.common.automaticDeliveryIsNotConfigured}
             </p>
             <Button type="button" size="sm" variant="outline" asChild>
               <a
@@ -120,7 +121,7 @@ export function SendOutboundButton({
                 target="_blank"
                 rel="noreferrer"
               >
-                <MessageCircle size={14} /> Open in WhatsApp
+                <MessageCircle size={14} /> {t.common.openInWhatsapp}
               </a>
             </Button>
           </div>

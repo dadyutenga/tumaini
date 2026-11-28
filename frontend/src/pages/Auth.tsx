@@ -7,8 +7,10 @@ import { Input } from "@/components/ui/input";
 import { Field } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { ApiError } from "@/lib/api";
+import { useI18n } from "@/features/i18n/i18n";
 
 export default function AuthPage({ mode }: { mode: string }) {
+  const { t } = useI18n();
   const { status, login } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
@@ -61,7 +63,7 @@ export default function AuthPage({ mode }: { mode: string }) {
       }
       navigate(from, { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err : new ApiError("Something went wrong", 0));
+      setError(err instanceof ApiError ? err : new ApiError(t.common.somethingWentWrong, 0));
     } finally {
       setBusy(false);
     }
@@ -70,14 +72,14 @@ export default function AuthPage({ mode }: { mode: string }) {
   return (
     <AuthLayout>
       <div>
-        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--od-ink)]">Sign in</h1>
-        <p className="mt-1 text-sm text-[var(--od-ink-secondary)]">
-          Use your phone number or email and your password.
-        </p>
+        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--od-ink)]">
+          {t.common.signIn}
+        </h1>
+        <p className="mt-1 text-sm text-[var(--od-ink-secondary)]">{t.auth.useYourPhoneNumberOr}</p>
       </div>
 
       <form onSubmit={submit} className="mt-6 space-y-4" noValidate>
-        <Field label="Phone or email" error={error?.fields.identifier}>
+        <Field label={t.auth.phoneOrEmail} error={error?.fields.identifier}>
           <Input
             required
             autoFocus
@@ -87,7 +89,7 @@ export default function AuthPage({ mode }: { mode: string }) {
           />
         </Field>
 
-        <Field label="Password" error={error?.fields.password}>
+        <Field label={t.auth.password} error={error?.fields.password}>
           <div className="relative">
             <Input
               required
@@ -100,7 +102,7 @@ export default function AuthPage({ mode }: { mode: string }) {
             />
             <button
               type="button"
-              aria-label={showPassword ? "Hide password" : "Show password"}
+              aria-label={showPassword ? t.common.hidePassword : t.common.showPassword}
               onClick={() => setShowPassword((s) => !s)}
               className="absolute right-2.5 top-1/2 -translate-y-1/2 rounded-md p-1 text-[var(--od-ink-muted)] transition hover:text-[var(--od-ink)]"
             >
@@ -116,13 +118,13 @@ export default function AuthPage({ mode }: { mode: string }) {
               checked={remember}
               onChange={(e) => setRemember(e.target.checked)}
             />
-            Remember me
+            {t.auth.rememberMe}
           </label>
           <Link
             className="font-medium text-[var(--od-link)] underline-offset-4 hover:underline"
             to="/forgot-password"
           >
-            Forgot password?
+            {t.auth.forgotPassword2}
           </Link>
         </div>
 
@@ -137,7 +139,7 @@ export default function AuthPage({ mode }: { mode: string }) {
         )}
 
         <Button type="submit" className="w-full" disabled={busy}>
-          {busy ? "Please wait…" : "Sign in"}
+          {busy ? t.auth.pleaseWait : t.common.signIn}
         </Button>
       </form>
     </AuthLayout>

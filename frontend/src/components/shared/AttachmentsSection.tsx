@@ -7,6 +7,8 @@ import { FilePreviewDialog } from "@/components/shared/FilePreview";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { download, uploadFile } from "@/lib/api";
 import { formatDateTime } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 interface Attachment {
   id: string;
@@ -34,6 +36,7 @@ export function AttachmentsSection({
   entityId: string;
   readOnly?: boolean;
 }) {
+  const { t } = useI18n();
   const list = useGet<Attachment[]>(
     "/attachments",
     { entity_type: entityType, entity_id: entityId },
@@ -48,13 +51,13 @@ export function AttachmentsSection({
     unknown
   >("POST", "/attachments", {
     invalidate: ["/attachments"],
-    success: "File attached",
+    success: t.common.fileAttached,
     onSuccess: () => setLabel(""),
   });
 
   const remove = useWrite<string, unknown>("DELETE", (id) => `/attachments/${id}`, {
     invalidate: ["/attachments"],
-    success: "Attachment removed",
+    success: t.common.attachmentRemoved,
   });
 
   async function onPick(file: File | undefined) {
@@ -82,19 +85,21 @@ export function AttachmentsSection({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Paperclip size={15} className="text-[var(--od-ink-muted)]" />
-          <h3 className="od-card-title text-[var(--od-ink)]">Attachments ({items.length})</h3>
+          <h3 className="od-card-title text-[var(--od-ink)]">
+            {fmt(t.common.attachments, { count: items.length })}
+          </h3>
         </div>
         {!readOnly && (
           <div className="flex flex-wrap items-center gap-2">
             <Input
               className="h-8 w-44 text-xs"
-              placeholder="Optional label…"
+              placeholder={t.common.optionalLabel}
               value={label}
               onChange={(e) => setLabel(e.target.value)}
             />
             <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-3 text-xs font-medium text-[var(--od-ink)] transition hover:bg-[var(--od-surface-subtle)]">
               <Upload size={13} />
-              <span>{uploading ? "Uploading…" : "Attach file"}</span>
+              <span>{uploading ? t.common.uploading : t.common.attachFile}</span>
               <input
                 type="file"
                 className="hidden"
@@ -110,9 +115,9 @@ export function AttachmentsSection({
       </div>
 
       {list.isLoading ? (
-        <p className="od-caption">Loading attachments…</p>
+        <p className="od-caption">{t.common.loadingAttachments}</p>
       ) : items.length === 0 ? (
-        <p className="od-caption">No files attached yet.</p>
+        <p className="od-caption">{t.common.noFilesAttachedYet}</p>
       ) : (
         <div className="divide-y divide-[var(--od-border)] overflow-hidden rounded-xl border border-[var(--od-border)]">
           {items.map((a) => (
@@ -127,7 +132,7 @@ export function AttachmentsSection({
                 </p>
                 <p className="od-caption">
                   <span className="od-tabular">{formatSize(a.size_bytes)}</span> ·{" "}
-                  {a.uploaded_by_name ?? "User"} · {formatDateTime(a.created_at)}
+                  {a.uploaded_by_name ?? t.common.user} · {formatDateTime(a.created_at)}
                 </p>
               </div>
               <div className="flex items-center gap-1">
@@ -137,7 +142,7 @@ export function AttachmentsSection({
                   className="h-7 px-2 text-xs"
                   onClick={() => setPreview({ id: a.file_id, name: a.file_name })}
                 >
-                  <Eye size={13} /> Preview
+                  <Eye size={13} /> {t.common.preview}
                 </Button>
                 <Button
                   size="sm"

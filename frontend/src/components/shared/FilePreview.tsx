@@ -11,6 +11,8 @@ import {
 } from "@/components/ui/dialog";
 import { errorMessage } from "@/hooks/useApi";
 import { download, fetchFileBlob } from "@/lib/api";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 /** Authenticated thumbnail preview for an image or PDF stored at `/files/:id`. */
 export function FileThumbnail({
@@ -24,6 +26,7 @@ export function FileThumbnail({
   mimeType?: string | null;
   onOpen?: () => void;
 }) {
+  const { t } = useI18n();
   const [blob, setBlob] = useState<{ url: string; mime: string } | null>(null);
   const [failed, setFailed] = useState(false);
   const isImage = (mimeType ?? blob?.mime ?? "").startsWith("image/");
@@ -51,22 +54,22 @@ export function FileThumbnail({
       type="button"
       onClick={onOpen}
       className="group relative flex h-28 w-40 items-center justify-center overflow-hidden rounded-lg border bg-muted text-xs text-muted-foreground transition hover:border-primary"
-      title={fileName ?? "Preview file"}
+      title={fileName ?? t.common.previewFile}
     >
       {isImage && blob && !failed ? (
         <img
           src={blob.url}
-          alt={fileName ?? "Preview"}
+          alt={fileName ?? t.common.preview}
           className="h-full w-full object-cover transition group-hover:scale-105"
         />
       ) : (
         <div className="flex flex-col items-center gap-1 p-2 text-center">
           <FileText size={20} />
-          <span className="line-clamp-2">{fileName ?? "Preview file"}</span>
+          <span className="line-clamp-2">{fileName ?? t.common.previewFile}</span>
         </div>
       )}
       <span className="absolute bottom-1 right-1 rounded bg-background/90 px-1.5 py-0.5 text-[10px] font-medium text-foreground shadow-sm">
-        <Eye size={10} className="mr-0.5 inline" /> Preview
+        <Eye size={10} className="mr-0.5 inline" /> {t.common.preview}
       </span>
     </button>
   );
@@ -82,6 +85,7 @@ export function FilePreviewDialog({
   fileName?: string | null;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [blob, setBlob] = useState<{ url: string; mime: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -121,7 +125,7 @@ export function FilePreviewDialog({
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-4xl">
         <DialogHeader>
           <DialogTitle className="flex items-center justify-between gap-3 pr-8">
-            <span className="truncate">{fileName ?? "File preview"}</span>
+            <span className="truncate">{fileName ?? t.common.filePreview}</span>
             {fileId && (
               <Button
                 size="sm"
@@ -132,31 +136,35 @@ export function FilePreviewDialog({
                   )
                 }
               >
-                <Download size={14} /> Download
+                <Download size={14} /> {t.common.download}
               </Button>
             )}
           </DialogTitle>
-          <DialogDescription>Inline preview</DialogDescription>
+          <DialogDescription>{t.common.inlinePreview}</DialogDescription>
         </DialogHeader>
-        {loading && <p className="py-12 text-center text-sm text-muted-foreground">Loading…</p>}
+        {loading && (
+          <p className="py-12 text-center text-sm text-muted-foreground">{t.common.loading2}</p>
+        )}
         {error && <p className="py-8 text-center text-sm text-destructive">{error}</p>}
         {!loading && !error && blob && (
           <div className="flex justify-center">
             {isImage ? (
               <img
                 src={blob.url}
-                alt={fileName ?? "Preview"}
+                alt={fileName ?? t.common.preview}
                 className="max-h-[70vh] rounded-lg border object-contain"
               />
             ) : isPdf ? (
               <iframe
                 src={blob.url}
-                title={fileName ?? "PDF preview"}
+                title={fileName ?? t.common.pdfPreview}
                 className="h-[70vh] w-full rounded-lg border"
               />
             ) : (
               <div className="py-10 text-center text-sm text-muted-foreground">
-                <p>Preview is not available for this file type ({blob.mime || "unknown"}).</p>
+                <p>
+                  {fmt(t.common.previewIsNotAvailableFor, { mime: blob.mime || t.common.unknown })}
+                </p>
                 {fileId && (
                   <Button
                     className="mt-3"
@@ -167,7 +175,7 @@ export function FilePreviewDialog({
                       )
                     }
                   >
-                    <Download size={14} /> Download file
+                    <Download size={14} /> {t.common.downloadFile}
                   </Button>
                 )}
               </div>

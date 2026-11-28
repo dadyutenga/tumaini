@@ -26,6 +26,9 @@ import { api, download, get, isPendingApproval, newIdempotencyKey } from "@/lib/
 import { formatMoney, toNumber } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import type { Category, Customer, MoneyAccount, Product, Sale } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt, plural } from "@/features/i18n/format";
+import { activeLocale, activeT } from "@/features/i18n/active";
 
 interface CartLine {
   product: Product;
@@ -78,6 +81,7 @@ function writeStorage(key: string, value: unknown) {
 }
 
 export default function Pos() {
+  const { t, locale } = useI18n();
   const { can, canAny, limit } = useAuth();
   const [params, setParams] = useSearchParams();
   const queryClient = useQueryClient();
@@ -120,7 +124,7 @@ export default function Pos() {
 
   const addQuickCustomer = useWrite<typeof quickCust, Customer>("POST", "/customers", {
     invalidate: ["/customers"],
-    success: "Customer added",
+    success: t.common.customerAdded,
     onSuccess: (c) => {
       setCustomerId(c.id);
       setQuickCust({ name: "", phone: "" });
@@ -152,7 +156,9 @@ export default function Pos() {
     setOfflineQueue(remaining);
     setSyncing(false);
     if (synced > 0) {
-      toast.success(`Synced ${synced} offline sale${synced === 1 ? "" : "s"}`);
+      // Read the language when the message is shown, so switching it does not restart the sync.
+      const text = plural(activeLocale(), synced, activeT().pos.syncedSales);
+      toast.success(fmt(text, { count: synced }));
       void queryClient.invalidateQueries({
         predicate: (q) => /^\/(sales|products|stock|customers|money)/.test(String(q.queryKey[0])),
       });
@@ -269,7 +275,7 @@ export default function Pos() {
 
   function add(product: Product) {
     if (product.qty_on_hand !== undefined && toNumber(product.qty_on_hand) <= 0) {
-      toast.error(`${product.name} is out of stock.`);
+      toast.error(fmt(t.pos.isOutOfStock, { name: product.name }));
       return;
     }
     setCart((c) => {
@@ -307,7 +313,7 @@ export default function Pos() {
   async function holdCart() {
     try {
       await api.post("/sales/hold", { items, customer_id: customerId || null });
-      toast.success("Cart held. Resume it from Held carts.");
+      toast.success(t.pos.cartHeldResumeItFrom);
       setCart([]);
       setCustomerId("");
       setDiscountValue("");
@@ -393,7 +399,7 @@ export default function Pos() {
       setDueDate("");
       setPayments([{ id: "p1", method: "cash", money_account_id: "", amount: "", reference: "" }]);
       setBusy(false);
-      toast.info("Saved offline. Will sync automatically when internet returns.");
+      toast.info(t.pos.savedOfflineWillSyncAutomatically);
       return;
     }
 
@@ -402,7 +408,7 @@ export default function Pos() {
         idempotencyKey: idempotencyKey.current,
       });
       if (isPendingApproval(result)) {
-        toast.info("Waiting for Manager approval before this sale completes.");
+        toast.info(t.pos.waitingForManagerApprovalBefore);
         setCart([]);
         setDiscountValue("");
       } else {
@@ -440,15 +446,13 @@ export default function Pos() {
   return (
     <>
       <PageHeader
-        title="Point of sale"
-        description={
-          online ? "Sell items, record payments and print receipts." : "Offline POS mode"
-        }
+        title={t.common.pointOfSale}
+        description={online ? t.pos.sellItemsRecordPaymentsAnd : t.pos.offlinePosMode}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {!online && (
               <span className="inline-flex items-center gap-1.5 rounded-full bg-[var(--od-warning-soft)] px-3 py-1 text-xs font-semibold text-[var(--od-warning)]">
-                <CloudOff size={13} /> Offline
+                <CloudOff size={13} /> {t.pos.offline}
               </span>
             )}
             {offlineQueue.length > 0 && (
@@ -458,15 +462,15 @@ export default function Pos() {
                 disabled={!online || syncing}
                 onClick={() => void syncOfflineSales()}
               >
-                <RefreshCw size={13} /> Sync offline ({offlineQueue.length})
+                <RefreshCw size={13} /> {fmt(t.pos.syncOffline, { count: offlineQueue.length })}
               </Button>
             )}
             <Button variant="outline" size="sm" onClick={() => setHeldOpen(true)}>
-              Held carts{held.data?.length ? ` (${held.data.length})` : ""}
+              {fmt(t.pos.heldCarts, { value: held.data?.length ? ` (${held.data.length})` : "" })}
             </Button>
             {can("finance.day.close") && (
               <Button variant="outline" size="sm" asChild>
-                <Link to="/day-closing">Day closing</Link>
+                <Link to="/day-closing">{t.common.dayClosing}</Link>
               </Button>
             )}
           </div>
@@ -483,9 +487,9 @@ export default function Pos() {
             />
             <Input
               autoFocus
-              aria-label="Find a product"
+              aria-label={t.pos.findAProduct}
               className="h-10 pl-10"
-              placeholder="Scan barcode or search product name / SKU…"
+              placeholder={t.pos.scanBarcodeOrSearchProduct}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               onKeyDown={async (e) => {
@@ -504,7 +508,7 @@ export default function Pos() {
           {activeCategories.length > 0 && (
             <div
               role="tablist"
-              aria-label="Product categories"
+              aria-label={t.pos.productCategories}
               className="no-scrollbar flex items-center gap-1.5 overflow-x-auto pb-0.5"
             >
               <button
@@ -519,7 +523,7 @@ export default function Pos() {
                     : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
                 )}
               >
-                All items
+                {t.common.allItems}
               </button>
               {activeCategories.map((c) => (
                 <button
@@ -588,7 +592,7 @@ export default function Pos() {
                                 : "bg-[var(--od-surface)]/90 text-[var(--od-ink)] ring-1 ring-[var(--od-border-strong)]",
                           )}
                         >
-                          {outOfStock ? "Out" : `${qtyOnHand} left`}
+                          {outOfStock ? t.common.out : fmt(t.pos.left, { qtyOnHand })}
                         </span>
                       )}
                     </button>
@@ -620,7 +624,7 @@ export default function Pos() {
                               size="icon"
                               variant="ghost"
                               className="h-7 w-7"
-                              aria-label={`Remove one ${p.name}`}
+                              aria-label={fmt(t.pos.removeOne, { name: p.name })}
                               onClick={() => decrementOrRemove(p.id)}
                             >
                               <Minus size={13} />
@@ -633,7 +637,7 @@ export default function Pos() {
                               size="icon"
                               variant="ghost"
                               className="h-7 w-7"
-                              aria-label={`Add one more ${p.name}`}
+                              aria-label={fmt(t.pos.addOneMore, { name: p.name })}
                               onClick={() => add(p)}
                             >
                               <Plus size={13} />
@@ -648,7 +652,7 @@ export default function Pos() {
                             onClick={() => add(p)}
                             className="h-8 w-full text-xs"
                           >
-                            <Plus size={13} /> {outOfStock ? "Out of stock" : "Add"}
+                            <Plus size={13} /> {outOfStock ? t.common.outOfStock : t.common.add}
                           </Button>
                         )}
                       </div>
@@ -660,7 +664,7 @@ export default function Pos() {
             {tiles.length === 0 && (
               <li className="od-card col-span-full items-center py-10 text-center">
                 <Package size={22} className="text-[var(--od-ink-muted)]" />
-                <p className="od-caption">No matching products.</p>
+                <p className="od-caption">{t.pos.noMatchingProducts}</p>
               </li>
             )}
           </ul>
@@ -671,7 +675,9 @@ export default function Pos() {
               <div className="flex items-center gap-2">
                 <ShoppingBag size={15} className="text-[var(--od-ink-secondary)]" />
                 <h2 className="od-card-title">
-                  Selected items{totalCartItems > 0 ? ` (${totalCartItems})` : ""}
+                  {fmt(t.pos.selectedItems, {
+                    value: totalCartItems > 0 ? ` (${totalCartItems})` : "",
+                  })}
                 </h2>
               </div>
               {cart.length > 0 && (
@@ -683,13 +689,13 @@ export default function Pos() {
                   }}
                   className="cursor-pointer text-xs font-medium text-[var(--od-ink-muted)] transition-colors hover:text-[var(--od-bad)]"
                 >
-                  Clear cart
+                  {t.pos.clearCart}
                 </button>
               )}
             </div>
             {cart.length === 0 ? (
               <p className="p-8 text-center text-[13px] text-[var(--od-ink-muted)]">
-                The cart is empty. Tap any product card above or scan a barcode to start.
+                {t.pos.theCartIsEmptyTap}
               </p>
             ) : (
               <ul className="divide-y divide-[var(--od-border)]">
@@ -710,17 +716,19 @@ export default function Pos() {
                             {l.product.name}
                           </p>
                           <p className="od-caption od-tabular">
-                            {formatMoney(l.product.sell_price)} each
-                            {l.product.warranty_months
-                              ? ` · ${l.product.warranty_months}m warranty`
-                              : ""}
+                            {fmt(t.pos.each, {
+                              sell_price: formatMoney(l.product.sell_price),
+                              value: l.product.warranty_months
+                                ? ` ${fmt(t.common.mWarranty, { warranty_months: l.product.warranty_months })}`
+                                : "",
+                            })}
                           </p>
                         </div>
                         <Button
                           variant="outline"
                           size="icon"
                           className="h-8 w-8"
-                          aria-label="Decrease quantity"
+                          aria-label={t.pos.decreaseQuantity}
                           onClick={() =>
                             setQty(l.product.id, String(Math.max(1, toNumber(l.qty) - 1)))
                           }
@@ -728,7 +736,7 @@ export default function Pos() {
                           <Minus size={13} />
                         </Button>
                         <Input
-                          aria-label={`Quantity of ${l.product.name}`}
+                          aria-label={fmt(t.pos.quantityOf, { name: l.product.name })}
                           className="od-tabular h-8 w-14 text-center"
                           inputMode="decimal"
                           value={l.qty}
@@ -738,7 +746,7 @@ export default function Pos() {
                           variant="outline"
                           size="icon"
                           className="h-8 w-8"
-                          aria-label="Increase quantity"
+                          aria-label={t.pos.increaseQuantity}
                           onClick={() => setQty(l.product.id, String(toNumber(l.qty) + 1))}
                         >
                           <Plus size={13} />
@@ -752,7 +760,7 @@ export default function Pos() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 text-[var(--od-ink-muted)] hover:text-[var(--od-bad)]"
-                          aria-label={`Remove ${l.product.name}`}
+                          aria-label={fmt(t.pos.remove, { name: l.product.name })}
                           onClick={() => setCart((c) => c.filter((x) => x !== l))}
                         >
                           <Trash2 size={14} />
@@ -760,9 +768,9 @@ export default function Pos() {
                       </div>
                       {l.product.track_serial && (
                         <Input
-                          aria-label={`Serial or IMEI for ${l.product.name}`}
+                          aria-label={fmt(t.pos.serialOrImeiFor, { name: l.product.name })}
                           className="od-mono h-8 text-xs"
-                          placeholder="Enter or scan Serial No / IMEI…"
+                          placeholder={t.pos.enterOrScanSerialNo}
                           value={l.serial_number ?? ""}
                           onChange={(e) => setSerial(l.product.id, e.target.value)}
                         />
@@ -778,14 +786,14 @@ export default function Pos() {
         {/* Checkout Sidebar */}
         <aside className="od-card h-fit gap-4 lg:sticky lg:top-20">
           {canViewCustomers && (
-            <Field label="Customer">
+            <Field label={t.common.customer}>
               <div className="flex gap-2">
                 <NativeSelect
                   className="flex-1"
                   value={customerId}
                   onChange={(e) => setCustomerId(e.target.value)}
                 >
-                  <option value="">Walk-in</option>
+                  <option value="">{t.common.walkIn}</option>
                   {customers.data
                     ?.filter((c) => !c.is_walk_in && c.is_active)
                     .map((c) => (
@@ -800,7 +808,7 @@ export default function Pos() {
                     variant="outline"
                     size="icon"
                     className="h-9 w-9 shrink-0"
-                    title="Quick add customer"
+                    title={t.pos.quickAddCustomer}
                     onClick={() => setQuickCustOpen(true)}
                   >
                     <UserPlus size={15} />
@@ -809,7 +817,7 @@ export default function Pos() {
               </div>
               {selectedCustomer && toNumber(selectedCustomer.balance) > 0 && (
                 <p className="od-tabular mt-1 text-xs font-medium text-[var(--od-warning)]">
-                  Current debt: {formatMoney(selectedCustomer.balance)}
+                  {fmt(t.pos.currentDebt, { balance: formatMoney(selectedCustomer.balance) })}
                 </p>
               )}
             </Field>
@@ -820,8 +828,10 @@ export default function Pos() {
             <Field
               label={
                 limit("sale_discount_pct")
-                  ? `Discount (up to ${limit("sale_discount_pct")}% without approval)`
-                  : "Discount"
+                  ? fmt(t.pos.discountUpToWithoutApproval, {
+                      value: limit("sale_discount_pct") ?? "",
+                    })
+                  : t.common.discount
               }
             >
               <div className="flex gap-2">
@@ -845,11 +855,14 @@ export default function Pos() {
 
           {/* Totals */}
           <dl className="space-y-1.5 rounded-[var(--od-radius-md,12px)] bg-[var(--od-surface-subtle)] p-4 text-[13px]">
-            <Row label="Subtotal" value={online ? preview.data?.subtotal : offlineSubtotal} />
-            <Row label="Discount" value={preview.data?.discount_total ?? "0"} />
-            <Row label="Tax included" value={preview.data?.tax_total ?? "0"} />
+            <Row
+              label={t.common.subtotal}
+              value={online ? preview.data?.subtotal : offlineSubtotal}
+            />
+            <Row label={t.common.discount} value={preview.data?.discount_total ?? "0"} />
+            <Row label={t.common.taxIncluded} value={preview.data?.tax_total ?? "0"} />
             <div className="flex items-baseline justify-between border-t border-[var(--od-border-strong)] pt-2.5">
-              <dt className="text-[13px] font-semibold text-[var(--od-ink)]">Total</dt>
+              <dt className="text-[13px] font-semibold text-[var(--od-ink)]">{t.common.total}</dt>
               <dd className="od-kpi-value text-[22px]">{formatMoney(total)}</dd>
             </div>
           </dl>
@@ -857,7 +870,9 @@ export default function Pos() {
           {/* Split Payments */}
           <div className="space-y-2.5 border-t border-[var(--od-border)] pt-3">
             <div className="flex items-center justify-between">
-              <span className="text-[13px] font-semibold text-[var(--od-ink)]">Payment</span>
+              <span className="text-[13px] font-semibold text-[var(--od-ink)]">
+                {t.pos.payment}
+              </span>
               <Button
                 type="button"
                 variant="ghost"
@@ -876,7 +891,7 @@ export default function Pos() {
                   ])
                 }
               >
-                <Plus size={12} /> Split payment
+                <Plus size={12} /> {t.pos.splitPayment}
               </Button>
             </div>
             {payments.map((p, idx) => {
@@ -903,15 +918,15 @@ export default function Pos() {
                         )
                       }
                     >
-                      <option value="cash">Cash</option>
-                      <option value="mobile_money">Mobile money</option>
-                      <option value="bank">Bank</option>
+                      <option value="cash">{t.common.cash}</option>
+                      <option value="mobile_money">{t.common.mobileMoney}</option>
+                      <option value="bank">{t.common.bank}</option>
                     </NativeSelect>
                     <Input
                       className="od-tabular w-28"
                       inputMode="decimal"
                       placeholder={
-                        payments.length === 1 && idx === 0 ? String(total || "") : "Amount"
+                        payments.length === 1 && idx === 0 ? String(total || "") : t.common.amount
                       }
                       value={p.amount}
                       onChange={(e) =>
@@ -946,7 +961,7 @@ export default function Pos() {
                           )
                         }
                       >
-                        <option value="">Account…</option>
+                        <option value="">{t.pos.account}</option>
                         {methodAccounts.map((a) => (
                           <option key={a.id} value={a.id}>
                             {a.name}
@@ -955,7 +970,7 @@ export default function Pos() {
                       </NativeSelect>
                       {p.method !== "cash" && (
                         <Input
-                          placeholder="Ref (optional)"
+                          placeholder={t.pos.refOptional}
                           value={p.reference}
                           onChange={(e) =>
                             setPayments((ps) =>
@@ -975,17 +990,17 @@ export default function Pos() {
 
           {paymentTotal > total && total > 0 && (
             <p className="od-tabular rounded-[var(--od-radius-sm,8px)] bg-[color-mix(in_srgb,var(--od-good-mark)_12%,transparent)] px-3 py-2 text-[13px] font-semibold text-[var(--od-good)]">
-              Change: {formatMoney(paymentTotal - total)}
+              {fmt(t.pos.change, { paymentTotal: formatMoney(paymentTotal - total) })}
             </p>
           )}
           {customerId && paymentTotal < total && (
-            <Field label="Credit due date">
+            <Field label={t.pos.creditDueDate}>
               <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
             </Field>
           )}
           {!customerId && paymentTotal < total && (
             <p className="rounded-[var(--od-radius-sm,8px)] bg-[color-mix(in_srgb,var(--od-bad-mark)_10%,transparent)] px-3 py-2 text-xs font-medium text-[var(--od-bad)]">
-              Walk-in sales must be paid in full. Pick a customer to sell on credit.
+              {t.pos.walkInSalesMustBe}
             </p>
           )}
 
@@ -999,7 +1014,7 @@ export default function Pos() {
                 setDiscountValue("");
               }}
             >
-              Cancel
+              {t.common.cancel}
             </Button>
             <Button
               className="flex-1"
@@ -1008,10 +1023,10 @@ export default function Pos() {
               onClick={() => void checkout()}
             >
               {busy
-                ? "Completing…"
+                ? t.pos.completing
                 : online
-                  ? `Complete ${total ? formatMoney(total) : ""}`
-                  : `Save offline ${total ? formatMoney(total) : ""}`}
+                  ? fmt(t.pos.complete, { value: total ? formatMoney(total) : "" })
+                  : fmt(t.pos.saveOffline, { value: total ? formatMoney(total) : "" })}
             </Button>
           </div>
           {online && (
@@ -1021,7 +1036,7 @@ export default function Pos() {
               disabled={cart.length === 0 || busy}
               onClick={() => void holdCart()}
             >
-              Hold cart for later
+              {t.pos.holdCartForLater}
             </Button>
           )}
         </aside>
@@ -1031,18 +1046,18 @@ export default function Pos() {
       <FormDialog
         open={quickCustOpen}
         onOpenChange={setQuickCustOpen}
-        title="Quick add customer"
+        title={t.pos.quickAddCustomer}
         busy={addQuickCustomer.isPending}
         onSubmit={() => addQuickCustomer.mutate(quickCust)}
       >
-        <Field label="Name *">
+        <Field label={t.common.name}>
           <Input
             required
             value={quickCust.name}
             onChange={(e) => setQuickCust({ ...quickCust, name: e.target.value })}
           />
         </Field>
-        <Field label="Phone">
+        <Field label={t.common.phone}>
           <Input
             value={quickCust.phone}
             onChange={(e) => setQuickCust({ ...quickCust, phone: e.target.value })}
@@ -1053,8 +1068,8 @@ export default function Pos() {
       <FormDialog
         open={heldOpen}
         onOpenChange={setHeldOpen}
-        title="Held carts"
-        submitLabel="Close"
+        title={t.pos.heldCarts2}
+        submitLabel={t.common.close}
         onSubmit={() => setHeldOpen(false)}
       >
         {held.data?.length ? (
@@ -1066,7 +1081,7 @@ export default function Pos() {
               >
                 <div className="mr-auto">
                   <p className="font-medium text-[var(--od-ink)]">
-                    {h.item_count} item{h.item_count === 1 ? "" : "s"}
+                    {fmt(plural(locale, h.item_count, t.pos.itemCount), { count: h.item_count })}
                     {h.customer_name ? ` · ${h.customer_name}` : ""}
                   </p>
                   <p className="od-caption">
@@ -1075,16 +1090,16 @@ export default function Pos() {
                   </p>
                 </div>
                 <Button size="sm" type="button" onClick={() => void resume(h)}>
-                  Resume
+                  {t.common.resume}
                 </Button>
                 <Button size="sm" type="button" variant="ghost" onClick={() => void discard(h)}>
-                  Discard
+                  {t.pos.discard}
                 </Button>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="od-caption py-2">No held carts.</p>
+          <p className="od-caption py-2">{t.pos.noHeldCarts}</p>
         )}
       </FormDialog>
 
@@ -1103,6 +1118,7 @@ function Row({ label, value }: { label: string; value: unknown }) {
 }
 
 function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
+  const { t } = useI18n();
   const [isCopy, setIsCopy] = useState(false);
   const [printing, setPrinting] = useState(false);
   const summaryText = `Receipt ${sale.number ?? ""}\nTotal: ${formatMoney(sale.total)}\nPaid: ${formatMoney(sale.paid_total)}${
@@ -1134,12 +1150,14 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
     <FormDialog
       open
       onOpenChange={(o) => !o && onClose()}
-      title={`Sale ${sale.number ?? ""} completed`}
-      submitLabel="New sale"
+      title={fmt(t.pos.saleCompleted, { number: sale.number ?? "" })}
+      submitLabel={t.common.newSale}
       onSubmit={onClose}
     >
       <div
         id="receipt"
+        /* The printed receipt is a document, so it is not translated. */
+        translate="no"
         className="print-document space-y-2.5 rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4 text-[13px]"
       >
         {isCopy && (
@@ -1193,7 +1211,7 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
             to={`/sales/${sale.id}`}
             onClick={onClose}
           >
-            Open sale
+            {t.pos.openSale}
           </Link>
         )}
       </div>
@@ -1205,7 +1223,7 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
           disabled={printing}
           onClick={() => void printReceipt()}
         >
-          {printing ? "Printing…" : "Print"}
+          {printing ? t.common.printing : t.common.print}
         </Button>
         {sale.id && (
           <Button
@@ -1220,15 +1238,15 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
               ).catch((e) => toast.error(errorMessage(e)))
             }
           >
-            <Download size={14} /> Receipt PDF
+            <Download size={14} /> {t.common.receiptPdf}
           </Button>
         )}
         {sale.id && (
           <SendOutboundButton
-            label="Send receipt"
-            title="Send receipt"
+            label={t.common.sendReceipt}
+            title={t.common.sendReceipt}
             path={`/sales/${sale.id}/send-receipt`}
-            successMessage="Receipt queued"
+            successMessage={t.common.receiptQueued}
             phone={sale.customer_phone}
             whatsappText={summaryText}
             size="sm"

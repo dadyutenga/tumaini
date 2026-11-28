@@ -15,6 +15,9 @@ import {
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatMoney, formatQty, toNumber } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import type { Translations } from "@/features/i18n/i18n";
 
 interface Level {
   product_id: string;
@@ -30,22 +33,23 @@ interface LowRow extends Level {
 }
 
 type Direction = "in" | "out";
-const REASONS: Record<Direction, [string, string][]> = {
+const reasons = (t: Translations): Record<Direction, [string, string][]> => ({
   in: [
-    ["opening", "Opening stock"],
-    ["purchase", "Stock received"],
-    ["other", "Other"],
+    ["opening", t.stock.openingStock],
+    ["purchase", t.stock.stockReceived],
+    ["other", t.common.other],
   ],
   out: [
-    ["damage", "Damaged"],
-    ["expired", "Expired"],
-    ["loss", "Lost or stolen"],
-    ["own_use", "Own use"],
-    ["other", "Other"],
+    ["damage", t.common.damaged],
+    ["expired", t.stock.expired],
+    ["loss", t.stock.lostOrStolen],
+    ["own_use", t.stock.ownUse],
+    ["other", t.common.other],
   ],
-};
+});
 
 export default function Stock() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const levels = useGet<Level[]>("/stock/levels");
   const low = useGet<LowRow[]>("/stock/low");
@@ -62,13 +66,13 @@ export default function Stock() {
   const post = useWrite<unknown>("POST", "/stock-entries", {
     idempotent: true,
     invalidate: ["/stock", "/products"],
-    success: "Stock updated",
+    success: t.stock.stockUpdated,
     onSuccess: () => setDirection(null),
   });
 
   function openDialog(d: Direction) {
     setDirection(d);
-    setForm({ product_id: "", qty: "", unit_cost: "", reason: REASONS[d][0][0], note: "" });
+    setForm({ product_id: "", qty: "", unit_cost: "", reason: reasons(t)[d][0][0], note: "" });
   }
   const set =
     (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
@@ -97,7 +101,7 @@ export default function Stock() {
 
   const columns = [
     {
-      header: "Product",
+      header: t.common.product,
       sortValue: (r: Level) => r.name,
       cell: (r: Level) => <span className="font-medium">{r.name}</span>,
     },
@@ -109,7 +113,7 @@ export default function Stock() {
       ),
     },
     {
-      header: "On hand",
+      header: t.common.onHand,
       align: "right" as const,
       sortValue: (r: Level) => toNumber(r.qty_on_hand),
       cell: (r: Level) => {
@@ -131,7 +135,7 @@ export default function Stock() {
       },
     },
     {
-      header: "Reorder at",
+      header: t.stock.reorderAt,
       align: "right" as const,
       sortValue: (r: Level) => toNumber(r.reorder_level),
       cell: (r: Level) => (
@@ -143,16 +147,16 @@ export default function Stock() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Stock"
-        description="Inventory quantities and valuation at the active location."
+        title={t.common.stock}
+        description={t.stock.inventoryQuantitiesAndValuationAt}
         actions={
           canManage && (
             <>
               <Button size="sm" onClick={() => openDialog("in")}>
-                <ArrowDownToLine size={14} /> Stock in
+                <ArrowDownToLine size={14} /> {t.stock.stockIn}
               </Button>
               <Button size="sm" variant="outline" onClick={() => openDialog("out")}>
-                <ArrowUpFromLine size={14} /> Stock out
+                <ArrowUpFromLine size={14} /> {t.stock.stockOut}
               </Button>
             </>
           )
@@ -162,21 +166,29 @@ export default function Stock() {
       <div
         className={`grid gap-4 sm:grid-cols-2 ${showCost ? "lg:grid-cols-4" : "lg:grid-cols-3"}`}
       >
-        <StatCard label="Tracked items" value={levels.data?.length ?? 0} />
+        <StatCard label={t.stock.trackedItems} value={levels.data?.length ?? 0} />
         <StatCard
-          label="Low stock"
+          label={t.common.lowStock}
           value={low.data?.length ?? 0}
           tone={(low.data?.length ?? 0) > 0 ? "bad" : "good"}
-          trend={(low.data?.length ?? 0) > 0 ? "Below reorder threshold" : "All levels healthy"}
+          trend={
+            (low.data?.length ?? 0) > 0 ? t.stock.belowReorderThreshold : t.stock.allLevelsHealthy
+          }
         />
-        <StatCard label="Out of stock" value={outCount} tone={outCount > 0 ? "bad" : "neutral"} />
-        {showCost && <StatCard label="Total stock value" value={formatMoney(totalValue)} />}
+        <StatCard
+          label={t.common.outOfStock}
+          value={outCount}
+          tone={outCount > 0 ? "bad" : "neutral"}
+        />
+        {showCost && <StatCard label={t.stock.totalStockValue} value={formatMoney(totalValue)} />}
       </div>
 
       <Tabs defaultValue="levels">
         <TabsList>
-          <TabsTrigger value="levels">Levels</TabsTrigger>
-          <TabsTrigger value="low">Low stock {low.data ? `(${low.data.length})` : ""}</TabsTrigger>
+          <TabsTrigger value="levels">{t.stock.levels}</TabsTrigger>
+          <TabsTrigger value="low">
+            {fmt(t.stock.lowStock, { value: low.data ? `(${low.data.length})` : "" })}
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="levels" className="space-y-4">
@@ -187,9 +199,9 @@ export default function Stock() {
                 className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
               />
               <Input
-                aria-label="Filter stock levels"
+                aria-label={t.stock.filterStockLevels}
                 className="pl-9"
-                placeholder="Search by product name or SKU…"
+                placeholder={t.stock.searchByProductNameOr}
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
@@ -199,19 +211,19 @@ export default function Stock() {
             rows={filteredLevels}
             loading={levels.isLoading}
             rowKey={(r) => r.product_id}
-            empty="No stock items match your filter"
+            empty={t.stock.noStockItemsMatchYour}
             columns={[
               ...columns,
               ...(showCost
                 ? [
                     {
-                      header: "Avg cost",
+                      header: t.common.avgCost,
                       align: "right" as const,
                       sortValue: (r: Level) => toNumber(r.avg_cost),
                       cell: (r: Level) => formatMoney(r.avg_cost),
                     },
                     {
-                      header: "Value",
+                      header: t.common.value,
                       align: "right" as const,
                       sortValue: (r: Level) => toNumber(r.value),
                       cell: (r: Level) => (
@@ -224,7 +236,7 @@ export default function Stock() {
             totals={
               showCost && filteredLevels.length > 0
                 ? [
-                    "Total",
+                    t.common.total,
                     "",
                     "",
                     "",
@@ -241,11 +253,11 @@ export default function Stock() {
             rows={low.data}
             loading={low.isLoading}
             rowKey={(r) => r.product_id}
-            empty="Nothing is running low"
+            empty={t.stock.nothingIsRunningLow}
             columns={[
               ...columns,
               {
-                header: "Suggested order",
+                header: t.stock.suggestedOrder,
                 align: "right",
                 sortValue: (r) => toNumber(r.suggested_qty),
                 cell: (r) => (
@@ -262,9 +274,9 @@ export default function Stock() {
       <FormDialog
         open={direction !== null}
         onOpenChange={(o) => !o && setDirection(null)}
-        title={direction === "in" ? "Stock in" : "Stock out"}
+        title={direction === "in" ? t.stock.stockIn : t.stock.stockOut}
         busy={post.isPending}
-        submitLabel="Post"
+        submitLabel={t.stock.post}
         onSubmit={() =>
           post.mutate({
             direction,
@@ -280,9 +292,9 @@ export default function Stock() {
           })
         }
       >
-        <Field label="Product">
+        <Field label={t.common.product}>
           <NativeSelect required value={form.product_id} onChange={set("product_id")}>
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {levels.data?.map((p) => (
               <option key={p.product_id} value={p.product_id}>
                 {p.name} ({p.sku})
@@ -291,11 +303,11 @@ export default function Stock() {
           </NativeSelect>
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Quantity">
+          <Field label={t.common.quantity}>
             <Input required inputMode="decimal" value={form.qty} onChange={set("qty")} />
           </Field>
           {direction === "in" && (
-            <Field label="Unit cost">
+            <Field label={t.common.unitCost}>
               <Input
                 required
                 inputMode="decimal"
@@ -305,17 +317,17 @@ export default function Stock() {
             </Field>
           )}
         </div>
-        <Field label="Reason">
+        <Field label={t.common.reason}>
           <NativeSelect value={form.reason} onChange={set("reason")}>
             {direction &&
-              REASONS[direction].map(([v, l]) => (
+              reasons(t)[direction].map(([v, l]) => (
                 <option key={v} value={v}>
                   {l}
                 </option>
               ))}
           </NativeSelect>
         </Field>
-        <Field label="Note">
+        <Field label={t.common.note}>
           <Input value={form.note} onChange={set("note")} />
         </Field>
       </FormDialog>

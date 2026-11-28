@@ -22,6 +22,9 @@ import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { api, download } from "@/lib/api";
 import { formatDate, formatMoney, formatQty, toNumber } from "@/lib/formatters";
 import type { MoneyAccount, Sale, SaleItem } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface ReceiptPreview {
   number?: string;
@@ -46,6 +49,7 @@ interface SaleReturnRow {
 }
 
 export default function SaleDetail() {
+  const { t } = useI18n();
   const { id = "" } = useParams();
   const { can, canAny, user } = useAuth();
   const { data: sale, isLoading, error } = useGet<Sale>(`/sales/${id}`);
@@ -86,7 +90,7 @@ export default function SaleDetail() {
   const ret = useWrite<unknown>("POST", `/sales/${id}/returns`, {
     idempotent: true,
     invalidate: refresh,
-    success: "Return requested for approval",
+    success: t.sales.returnRequestedForApproval,
     onSuccess: () => {
       setReturning(false);
       setQtys({});
@@ -101,7 +105,7 @@ export default function SaleDetail() {
     {
       toBody: () => ({}),
       invalidate: refresh,
-      success: "Return updated",
+      success: t.sales.returnUpdated,
     },
   );
 
@@ -111,7 +115,7 @@ export default function SaleDetail() {
     {
       idempotent: true,
       invalidate: refresh,
-      success: "Return completed",
+      success: t.sales.returnCompleted,
       onSuccess: () => {
         setCompleting(null);
         setAccount("");
@@ -123,7 +127,7 @@ export default function SaleDetail() {
   const voidSale = useWrite<{ reason: string }, unknown>("POST", `/sales/${id}/void`, {
     idempotent: true,
     invalidate: refresh,
-    success: "Sale void submitted",
+    success: t.sales.saleVoidSubmitted,
     onSuccess: () => {
       setVoiding(false);
       setVoidReason("");
@@ -135,10 +139,10 @@ export default function SaleDetail() {
     return (
       <div className="od-card items-center py-10 text-center">
         <p className="text-[14px] font-semibold text-[var(--od-bad)]">
-          This sale could not be loaded.
+          {t.sales.thisSaleCouldNotBe}
         </p>
         <Button asChild variant="outline" size="sm" className="mt-3">
-          <Link to="/sales">Back to sales</Link>
+          <Link to="/sales">{t.sales.backToSales}</Link>
         </Button>
       </div>
     );
@@ -172,13 +176,17 @@ export default function SaleDetail() {
     <div className="space-y-6">
       <PageHeader
         backTo="/sales"
-        backLabel="Sales & returns"
-        title={`Sale ${sale.number}`}
+        backLabel={t.sales.salesReturns}
+        title={fmt(t.sales.sale, { number: sale.number ?? "" })}
         badge={<StatusBadge value={sale.status} />}
         description={[
           sale.business_date ? formatDate(sale.business_date) : null,
-          sale.customer_name ? `Customer: ${sale.customer_name}` : "Walk-in customer",
-          receiptPreview.data?.cashier_name ? `Cashier: ${receiptPreview.data.cashier_name}` : null,
+          sale.customer_name
+            ? fmt(t.sales.customerLine, { name: sale.customer_name })
+            : t.sales.walkInCustomer,
+          receiptPreview.data?.cashier_name
+            ? fmt(t.sales.cashierLine, { name: receiptPreview.data.cashier_name })
+            : null,
         ]
           .filter(Boolean)
           .join(" · ")}
@@ -186,12 +194,12 @@ export default function SaleDetail() {
           <>
             {can("shop.return.create") && sale.status === "completed" && (
               <Button variant="outline" size="sm" onClick={() => setReturning(true)}>
-                Return items
+                {t.sales.returnItems}
               </Button>
             )}
             {canVoid && sale.status === "completed" && (
               <Button variant="outline" size="sm" onClick={() => setVoiding(true)}>
-                {can("shop.sale.void") ? "Void sale" : "Request void"}
+                {can("shop.sale.void") ? t.sales.voidSale : t.common.requestVoid}
               </Button>
             )}
             <Button
@@ -205,7 +213,7 @@ export default function SaleDetail() {
                 ).catch((e) => toast.error(errorMessage(e)))
               }
             >
-              <Download size={14} /> Receipt PDF
+              <Download size={14} /> {t.common.receiptPdf}
             </Button>
             <Button
               variant="outline"
@@ -216,13 +224,13 @@ export default function SaleDetail() {
                 )
               }
             >
-              Invoice PDF
+              {t.sales.invoicePdf}
             </Button>
             <SendOutboundButton
-              label="Send receipt"
-              title="Send receipt"
+              label={t.common.sendReceipt}
+              title={t.common.sendReceipt}
               path={`/sales/${id}/send-receipt`}
-              successMessage="Receipt queued"
+              successMessage={t.common.receiptQueued}
               phone={sale.customer_phone}
               size="sm"
               whatsappText={`Receipt ${sale.number}: Total ${formatMoney(sale.total)}, Paid ${formatMoney(sale.paid_total)}${
@@ -235,7 +243,7 @@ export default function SaleDetail() {
               disabled={printingReceipt}
               onClick={() => void printThermalReceipt()}
             >
-              <Printer size={14} /> {printingReceipt ? "Printing…" : "Print"}
+              <Printer size={14} /> {printingReceipt ? t.common.printing : t.common.print}
             </Button>
           </>
         }
@@ -243,30 +251,34 @@ export default function SaleDetail() {
 
       {/* Summary KPIs */}
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total" value={formatMoney(sale.total)} />
+        <StatCard label={t.common.total} value={formatMoney(sale.total)} />
         <StatCard
-          label="Paid"
+          label={t.common.paid}
           value={formatMoney(sale.paid_total)}
           tone={toNumber(sale.paid_total) > 0 ? "good" : "neutral"}
         />
         <StatCard
-          label="Balance due"
+          label={t.sales.balanceDue}
           value={formatMoney(sale.balance)}
           tone={toNumber(sale.balance) > 0 ? "bad" : "neutral"}
         />
         {sale.profit !== undefined ? (
           <StatCard
-            label="Profit"
+            label={t.common.profit}
             value={formatMoney(sale.profit)}
             tone={toNumber(sale.profit) >= 0 ? "good" : "bad"}
           />
         ) : (
-          <StatCard label="Items" value={sale.items.length} />
+          <StatCard label={t.sales.items} value={sale.items.length} />
         )}
       </div>
 
       {/* Thermal receipt print layout (visible only during window.print()) */}
-      <div className="print-document mx-auto hidden max-w-xs space-y-2 p-4 font-mono text-xs text-black print:block">
+      {/* The printed receipt is a document, so it is not translated. */}
+      <div
+        translate="no"
+        className="print-document mx-auto hidden max-w-xs space-y-2 p-4 font-mono text-xs text-black print:block"
+      >
         <div className="text-center">
           <p className="text-sm font-bold">{receiptPreview.data?.business?.name || "Receipt"}</p>
           {receiptPreview.data?.business?.address && <p>{receiptPreview.data.business.address}</p>}
@@ -323,14 +335,14 @@ export default function SaleDetail() {
           rowKey={(i) => i.id ?? i.product_id}
           columns={[
             {
-              header: "Product",
+              header: t.common.product,
               cell: (i) => <span className="font-medium">{i.product_name}</span>,
             },
-            { header: "Qty", align: "right", cell: (i) => formatQty(i.qty) },
-            { header: "Returned", align: "right", cell: (i) => formatQty(i.qty_returned) },
-            { header: "Unit price", align: "right", cell: (i) => formatMoney(i.unit_price) },
+            { header: t.common.qty, align: "right", cell: (i) => formatQty(i.qty) },
+            { header: t.sales.returned, align: "right", cell: (i) => formatQty(i.qty_returned) },
+            { header: t.common.unitPrice, align: "right", cell: (i) => formatMoney(i.unit_price) },
             {
-              header: "Total",
+              header: t.common.total,
               align: "right",
               cell: (i) => <span className="font-medium">{formatMoney(i.line_total)}</span>,
             },
@@ -342,12 +354,12 @@ export default function SaleDetail() {
             <dl className="space-y-2 text-[13px]">
               {(
                 [
-                  ["Subtotal", sale.subtotal],
-                  ["Discount", sale.discount_total],
-                  ["Tax included", sale.tax_total],
-                  ["Total", sale.total],
-                  ["Paid", sale.paid_total],
-                  ["Balance due", sale.balance],
+                  [t.common.subtotal, sale.subtotal],
+                  [t.common.discount, sale.discount_total],
+                  [t.common.taxIncluded, sale.tax_total],
+                  [t.common.total, sale.total],
+                  [t.common.paid, sale.paid_total],
+                  [t.sales.balanceDue, sale.balance],
                 ] as const
               ).map(([l, v]) => (
                 <div
@@ -364,7 +376,7 @@ export default function SaleDetail() {
               ))}
               {sale.profit !== undefined && (
                 <div className="flex justify-between border-t border-[var(--od-border)] pt-2 font-semibold">
-                  <dt>Profit</dt>
+                  <dt>{t.common.profit}</dt>
                   <dd className="od-tabular text-[var(--od-good)]">{formatMoney(sale.profit)}</dd>
                 </div>
               )}
@@ -375,24 +387,24 @@ export default function SaleDetail() {
 
       {canViewReturns && returnRows.length > 0 && (
         <section className="space-y-3">
-          <h2 className="od-section-title">Returns</h2>
+          <h2 className="od-section-title">{t.sales.returns}</h2>
           <DataGrid
             rows={returnRows}
             loading={saleReturns.isLoading}
             rowKey={(r) => r.id}
             columns={[
               {
-                header: "Return #",
+                header: t.sales.return,
                 cell: (r) => <span className="od-mono font-medium">{r.number}</span>,
               },
-              { header: "Date", cell: (r) => formatDate(r.created_at) },
+              { header: t.common.date, cell: (r) => formatDate(r.created_at) },
               {
-                header: "Resolution",
-                cell: (r) => <span className="capitalize">{r.resolution}</span>,
+                header: t.sales.resolution,
+                cell: (r) => <span className="capitalize">{statusLabel(t, r.resolution)}</span>,
               },
-              { header: "Reason", cell: (r) => r.reason || "—" },
-              { header: "Refund", align: "right", cell: (r) => formatMoney(r.refund_total) },
-              { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
+              { header: t.common.reason, cell: (r) => r.reason || "—" },
+              { header: t.sales.refund, align: "right", cell: (r) => formatMoney(r.refund_total) },
+              { header: t.common.status, cell: (r) => <StatusBadge value={r.status} /> },
               {
                 header: "",
                 cell: (r) => {
@@ -408,7 +420,7 @@ export default function SaleDetail() {
                             disabled={decideReturn.isPending}
                             onClick={() => decideReturn.mutate({ id: r.id, action: "approve" })}
                           >
-                            Approve
+                            {t.common.approve}
                           </Button>
                           <Button
                             size="sm"
@@ -416,7 +428,7 @@ export default function SaleDetail() {
                             disabled={decideReturn.isPending}
                             onClick={() => decideReturn.mutate({ id: r.id, action: "reject" })}
                           >
-                            Reject
+                            {t.common.reject}
                           </Button>
                         </>
                       )}
@@ -430,7 +442,7 @@ export default function SaleDetail() {
                             setRefundRef("");
                           }}
                         >
-                          Complete
+                          {t.sales.complete}
                         </Button>
                       )}
                       {(r.status === "requested" || r.status === "approved") && canManageReturn && (
@@ -440,7 +452,7 @@ export default function SaleDetail() {
                           disabled={decideReturn.isPending}
                           onClick={() => decideReturn.mutate({ id: r.id, action: "cancel" })}
                         >
-                          Cancel
+                          {t.common.cancel}
                         </Button>
                       )}
                     </div>
@@ -455,10 +467,10 @@ export default function SaleDetail() {
       <FormDialog
         open={returning}
         onOpenChange={setReturning}
-        title="Request item return"
-        description="Enter the quantity coming back. Another staff member with return-approval permission approves it before refund completion."
+        title={t.sales.requestItemReturn}
+        description={t.sales.enterTheQuantityComingBack}
         busy={ret.isPending}
-        submitLabel="Submit return request"
+        submitLabel={t.sales.submitReturnRequest}
         onSubmit={() =>
           ret.mutate({
             reason: reason.trim(),
@@ -483,18 +495,18 @@ export default function SaleDetail() {
               <span className="text-[13px]">
                 <span className="font-medium">{i.product_name}</span>{" "}
                 <span className="od-caption">
-                  (max {formatQty(toNumber(i.qty) - toNumber(i.qty_returned))})
+                  {fmt(t.sales.max, { qty: formatQty(toNumber(i.qty) - toNumber(i.qty_returned)) })}
                 </span>
               </span>
               <Input
-                aria-label={`Return quantity of ${i.product_name}`}
+                aria-label={fmt(t.sales.returnQuantityOf, { product_name: i.product_name })}
                 inputMode="decimal"
                 placeholder="0"
                 value={itemId ? (qtys[itemId] ?? "") : ""}
                 onChange={(e) => itemId && setQtys((q) => ({ ...q, [itemId]: e.target.value }))}
               />
               <NativeSelect
-                aria-label={`Condition of ${i.product_name}`}
+                aria-label={fmt(t.sales.conditionOf, { product_name: i.product_name })}
                 value={cond}
                 onChange={(e) =>
                   itemId &&
@@ -504,22 +516,22 @@ export default function SaleDetail() {
                   }))
                 }
               >
-                <option value="resellable">Resellable</option>
-                <option value="damaged">Damaged</option>
+                <option value="resellable">{t.sales.resellable}</option>
+                <option value="damaged">{t.common.damaged}</option>
               </NativeSelect>
             </div>
           );
         })}
-        <Field label="Resolution">
+        <Field label={t.sales.resolution}>
           <NativeSelect
             value={resolution}
             onChange={(e) => setResolution(e.target.value as "refund" | "exchange")}
           >
-            <option value="refund">Refund money</option>
-            <option value="exchange">Exchange</option>
+            <option value="refund">{t.sales.refundMoney}</option>
+            <option value="exchange">{t.sales.exchange}</option>
           </NativeSelect>
         </Field>
-        <Field label="Reason (min 3 characters)">
+        <Field label={t.sales.reasonMin3Characters}>
           <Input
             required
             minLength={3}
@@ -527,14 +539,14 @@ export default function SaleDetail() {
             onChange={(e) => setReason(e.target.value)}
           />
         </Field>
-        {lines.length === 0 && <p className="od-caption">Enter at least one quantity.</p>}
+        {lines.length === 0 && <p className="od-caption">{t.sales.enterAtLeastOneQuantity}</p>}
       </FormDialog>
 
       <FormDialog
         open={completing !== null}
         onOpenChange={(o) => !o && setCompleting(null)}
-        title={`Complete return ${completing?.number ?? ""}`}
-        submitLabel="Complete return"
+        title={fmt(t.sales.completeReturn, { number: completing?.number ?? "" })}
+        submitLabel={t.sales.completeReturn2}
         busy={completeReturn.isPending}
         onSubmit={() => {
           if (!completing) return;
@@ -556,21 +568,21 @@ export default function SaleDetail() {
         toNumber(completing.refund_total) > 0 ? (
           <>
             <p className="rounded-[var(--od-radius-sm,8px)] bg-[var(--od-surface-subtle)] px-3 py-2 text-[13px] text-[var(--od-ink-secondary)]">
-              Refund amount:{" "}
+              {t.sales.refundAmount}{" "}
               <strong className="od-tabular text-[var(--od-ink)]">
                 {formatMoney(completing.refund_total)}
               </strong>
             </p>
-            <Field label="Refund method">
+            <Field label={t.sales.refundMethod}>
               <NativeSelect value={refundMethod} onChange={(e) => setRefundMethod(e.target.value)}>
-                <option value="cash">Cash</option>
-                <option value="mobile_money">Mobile money</option>
-                <option value="bank">Bank transfer</option>
+                <option value="cash">{t.common.cash}</option>
+                <option value="mobile_money">{t.common.mobileMoney}</option>
+                <option value="bank">{t.sales.bankTransfer}</option>
               </NativeSelect>
             </Field>
-            <Field label="Refund from account">
+            <Field label={t.sales.refundFromAccount}>
               <NativeSelect required value={account} onChange={(e) => setAccount(e.target.value)}>
-                <option value="">Choose…</option>
+                <option value="">{t.common.choose}</option>
                 {activeAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name}
@@ -578,13 +590,13 @@ export default function SaleDetail() {
                 ))}
               </NativeSelect>
             </Field>
-            <Field label="Reference (optional)">
+            <Field label={t.common.referenceOptional}>
               <Input value={refundRef} onChange={(e) => setRefundRef(e.target.value)} />
             </Field>
           </>
         ) : (
           <p className="text-[13px] text-[var(--od-ink-secondary)]">
-            Confirm completion of this exchange return. Eligible resellable items will be restocked.
+            {t.sales.confirmCompletionOfThisExchange}
           </p>
         )}
       </FormDialog>
@@ -592,27 +604,24 @@ export default function SaleDetail() {
       <FormDialog
         open={voiding}
         onOpenChange={setVoiding}
-        title="Void this sale"
-        submitLabel="Void sale"
+        title={t.sales.voidThisSale}
+        submitLabel={t.sales.voidSale}
         busy={voidSale.isPending}
         onSubmit={() => voidSale.mutate({ reason: voidReason })}
       >
-        <p className="text-[13px] text-[var(--od-ink-secondary)]">
-          Stock goes back and the money is reversed. Only same-day sales can be voided without
-          approval.
-        </p>
-        <Field label="Reason">
+        <p className="text-[13px] text-[var(--od-ink-secondary)]">{t.sales.stockGoesBackAndThe}</p>
+        <Field label={t.common.reason}>
           <Input required value={voidReason} onChange={(e) => setVoidReason(e.target.value)} />
         </Field>
       </FormDialog>
 
       {id && (
-        <SectionCard title="Attachments">
+        <SectionCard title={t.common.attachments2}>
           <AttachmentsSection entityType="sale" entityId={id} />
         </SectionCard>
       )}
 
-      <SectionCard title="History" subtitle="Audit trail for this sale">
+      <SectionCard title={t.common.history} subtitle={t.sales.auditTrailForThisSale}>
         <RecordHistoryTab entityType="sale" entityId={id} />
       </SectionCard>
     </div>

@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Field, FormDialog } from "@/components/shared/kit";
 import { useGet, useWrite } from "@/hooks/useApi";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import type { Translations } from "@/features/i18n/i18n";
 
 interface PermissionInfo {
   key: string;
@@ -25,13 +28,13 @@ interface RoleDetail {
   permissions: Grant[];
 }
 
-const LIMIT_LABEL: Record<string, string> = {
-  sale_discount_pct: "Max sale discount %",
-  discount_approve_pct: "Max discount approve %",
-  refund_approve_amount: "Max refund amount",
-  expense_approve_amount: "Max expense amount",
-  price_change_approve_pct: "Max price change %",
-};
+const limitLabel = (t: Translations): Record<string, string> => ({
+  sale_discount_pct: t.admin.maxSaleDiscount,
+  discount_approve_pct: t.admin.maxDiscountApprove,
+  refund_approve_amount: t.admin.maxRefundAmount,
+  expense_approve_amount: t.admin.maxExpenseAmount,
+  price_change_approve_pct: t.admin.maxPriceChange,
+});
 
 /** Create a role, or edit the permissions & authority limits of an existing one. */
 export function RoleEditor({
@@ -43,6 +46,7 @@ export function RoleEditor({
   open: boolean;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const catalogue = useGet<PermissionInfo[]>("/permissions", undefined, { enabled: open });
   const role = useGet<RoleDetail>(`/roles/${roleId}`, undefined, { enabled: open && !!roleId });
   const [name, setName] = useState("");
@@ -72,12 +76,12 @@ export function RoleEditor({
 
   const save = useWrite<unknown, unknown>("PUT", `/roles/${roleId}`, {
     invalidate: ["/roles"],
-    success: "Role saved",
+    success: t.admin.roleSaved,
     onSuccess: onClose,
   });
   const create = useWrite<unknown, unknown>("POST", "/roles", {
     invalidate: ["/roles"],
-    success: "Role created",
+    success: t.admin.roleCreated,
     onSuccess: onClose,
   });
 
@@ -112,19 +116,17 @@ export function RoleEditor({
     <FormDialog
       open={open}
       onOpenChange={(o) => !o && onClose()}
-      title={roleId ? `Edit ${role.data?.name ?? "role"}` : "New role"}
-      submitLabel={locked ? "Close" : "Save role"}
+      title={
+        roleId ? fmt(t.common.edit2, { name: role.data?.name ?? t.admin.role }) : t.admin.newRole
+      }
+      submitLabel={locked ? t.common.close : t.admin.saveRole}
       busy={save.isPending || create.isPending}
       wide
       onSubmit={locked ? onClose : submit}
     >
-      {locked && (
-        <p className="text-sm text-muted-foreground">
-          The Admin role always has every permission and cannot be changed.
-        </p>
-      )}
+      {locked && <p className="text-sm text-muted-foreground">{t.admin.theAdminRoleAlwaysHas}</p>}
       <div className="grid gap-3 sm:grid-cols-[1fr_7rem]">
-        <Field label="Role name">
+        <Field label={t.admin.roleName}>
           <Input
             required
             disabled={role.data?.is_system}
@@ -132,7 +134,7 @@ export function RoleEditor({
             onChange={(e) => setName(e.target.value)}
           />
         </Field>
-        <Field label="Rank (1–100)">
+        <Field label={t.admin.rank1100}>
           <Input
             type="number"
             min={1}
@@ -143,18 +145,20 @@ export function RoleEditor({
           />
         </Field>
       </div>
-      <Field label="Description">
+      <Field label={t.common.description}>
         <Input
           disabled={locked || role.data?.is_system}
           value={description}
           onChange={(e) => setDescription(e.target.value)}
-          placeholder="Optional description of what this role covers"
+          placeholder={t.admin.optionalDescriptionOfWhatThis}
         />
       </Field>
       <div className="max-h-[50vh] space-y-4 overflow-y-auto pr-1">
         {modules.map(([module, perms]) => (
           <section key={module}>
-            <h3 className="mb-1 text-sm font-semibold capitalize">{module.replaceAll("_", " ")}</h3>
+            <h3 className="mb-1 text-sm font-semibold capitalize">
+              {(t.admin.modules as Record<string, string>)[module] ?? module.replaceAll("_", " ")}
+            </h3>
             <ul className="divide-y rounded-lg border">
               {perms.map((p) => {
                 const g = grants[p.key];
@@ -168,22 +172,26 @@ export function RoleEditor({
                         onChange={(e) => toggle(p.key, e.target.checked)}
                       />
                       <span>
-                        {p.description}
+                        {(t.admin.permissions as Record<string, string>)[p.key] ?? p.description}
                         <span className="ml-1.5 font-mono text-[11px] text-muted-foreground">
                           ({p.key})
                         </span>
                         {p.is_sensitive && (
-                          <span className="ml-1.5 text-xs text-destructive">sensitive</span>
+                          <span className="ml-1.5 text-xs text-destructive">
+                            {t.admin.sensitive}
+                          </span>
                         )}
                       </span>
                     </label>
                     {g && !locked && p.has_limit && (
                       <Input
-                        aria-label={`Limit for ${p.key}`}
+                        aria-label={fmt(t.admin.limitFor, { key: p.key })}
                         className="h-8 w-36"
                         inputMode="decimal"
                         placeholder={
-                          p.limit_code ? (LIMIT_LABEL[p.limit_code] ?? "No limit") : "No limit"
+                          p.limit_code
+                            ? (limitLabel(t)[p.limit_code] ?? t.admin.noLimit)
+                            : t.admin.noLimit
                         }
                         value={g.limit ?? ""}
                         onChange={(e) => patch(p.key, e.target.value || null)}

@@ -26,6 +26,7 @@ import {
 } from "@/features/auth/SettingsGroups";
 import { fetchFileBlob, session } from "@/lib/api";
 import type { Branch } from "@/types";
+import { statusLabel } from "@/features/i18n/status";
 
 interface Business {
   name: string;
@@ -86,7 +87,7 @@ export default function Settings() {
 
   const save = useWrite<Business, Business>("PUT", "/business", {
     invalidate: ["/business"],
-    success: "Business profile saved",
+    success: t.settings.businessProfileSaved,
   });
 
   const [branch, setBranch] = useState<{
@@ -97,13 +98,13 @@ export default function Settings() {
   } | null>(null);
   const addBranch = useWrite<unknown, unknown>("POST", "/branches", {
     invalidate: ["/branches"],
-    success: "Location created",
+    success: t.settings.locationCreated,
     onSuccess: () => setBranch(null),
   });
   const [tax, setTax] = useState<{ name: string; rate: string } | null>(null);
   const addTax = useWrite<unknown, unknown>("POST", "/tax-rates", {
     invalidate: ["/tax-rates"],
-    success: "Tax rate added",
+    success: t.settings.taxRateAdded,
     onSuccess: () => setTax(null),
   });
 
@@ -124,9 +125,9 @@ export default function Settings() {
       });
       if (!res.ok) {
         const j = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-        throw new Error(j?.error?.message ?? "Could not upload logo");
+        throw new Error(j?.error?.message ?? t.settings.couldNotUploadLogo);
       }
-      toast.success("Business logo updated");
+      toast.success(t.settings.businessLogoUpdated);
       void qc.invalidateQueries({ queryKey: ["/business"] });
     } catch (e) {
       toast.error(errorMessage(e));
@@ -148,12 +149,12 @@ export default function Settings() {
       <PageHeader title={t.settings.title} description={t.settings.subtitle} />
       <Tabs defaultValue="business">
         <TabsList className="mb-4 flex flex-wrap">
-          <TabsTrigger value="business">Business</TabsTrigger>
-          <TabsTrigger value="branches">Locations</TabsTrigger>
-          <TabsTrigger value="finance">Finance &amp; Tax</TabsTrigger>
-          <TabsTrigger value="documents">Documents</TabsTrigger>
-          <TabsTrigger value="notifications">Notifications</TabsTrigger>
-          <TabsTrigger value="system">System &amp; Payroll</TabsTrigger>
+          <TabsTrigger value="business">{t.common.business}</TabsTrigger>
+          <TabsTrigger value="branches">{t.settings.locations}</TabsTrigger>
+          <TabsTrigger value="finance">{t.settings.financeTax}</TabsTrigger>
+          <TabsTrigger value="documents">{t.common.documents}</TabsTrigger>
+          <TabsTrigger value="notifications">{t.common.notifications}</TabsTrigger>
+          <TabsTrigger value="system">{t.settings.systemPayroll}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="business">
@@ -170,25 +171,22 @@ export default function Settings() {
                   {logoUrl ? (
                     <img
                       src={logoUrl}
-                      alt="Business logo"
+                      alt={t.settings.businessLogo}
                       className="h-full w-full object-contain"
                     />
                   ) : (
                     <span className="od-mono text-xs font-bold text-[var(--od-ink-muted)]">
-                      LOGO
+                      {t.settings.logo}
                     </span>
                   )}
                 </div>
                 <div className="space-y-1">
-                  <p className="od-card-title text-[var(--od-ink)]">Business Logo</p>
-                  <p className="od-caption">
-                    Appears on printed invoices, quotations and thermal receipts (PNG or JPEG, max 2
-                    MB).
-                  </p>
+                  <p className="od-card-title text-[var(--od-ink)]">{t.settings.businessLogo2}</p>
+                  <p className="od-caption">{t.settings.appearsOnPrintedInvoicesQuotations}</p>
                   {manage && (
                     <label className="mt-1 inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-3 py-1.5 text-xs font-medium text-[var(--od-ink)] transition hover:bg-[var(--od-surface-subtle)]">
                       <Upload size={13} />
-                      <span>{uploadingLogo ? "Uploading…" : "Upload logo"}</span>
+                      <span>{uploadingLogo ? t.common.uploading : t.settings.uploadLogo}</span>
                       <input
                         type="file"
                         accept="image/png,image/jpeg,image/webp"
@@ -205,38 +203,38 @@ export default function Settings() {
               </div>
 
               <div className="grid gap-3.5 sm:grid-cols-2">
-                <Field label="Business name" className="sm:col-span-2">
+                <Field label={t.common.businessName} className="sm:col-span-2">
                   <Input required {...field("name")} />
                 </Field>
-                <Field label="Legal name">
+                <Field label={t.settings.legalName}>
                   <Input {...field("legal_name")} />
                 </Field>
-                <Field label="Registration number (BRELA)">
+                <Field label={t.settings.registrationNumberBrela}>
                   <Input className="od-mono" {...field("reg_number")} />
                 </Field>
-                <Field label="Tax number (TIN / VRN)">
+                <Field label={t.settings.taxNumberTinVrn}>
                   <Input className="od-mono" {...field("tax_number")} />
                 </Field>
-                <Field label="Phone">
+                <Field label={t.common.phone}>
                   <Input {...field("phone")} />
                 </Field>
-                <Field label="Email">
+                <Field label={t.common.email}>
                   <Input type="email" {...field("email")} />
                 </Field>
-                <Field label="Address" className="sm:col-span-2">
+                <Field label={t.common.address} className="sm:col-span-2">
                   <Input {...field("address")} />
                 </Field>
-                <Field label="Currency">
+                <Field label={t.settings.currency}>
                   <Input className="od-mono" {...field("currency")} disabled />
                 </Field>
-                <Field label="Time zone">
+                <Field label={t.settings.timeZone}>
                   <Input className="od-mono" {...field("timezone")} disabled />
                 </Field>
               </div>
               {manage && (
                 <div className="border-t border-[var(--od-border)] pt-4">
                   <Button type="submit" disabled={save.isPending}>
-                    {save.isPending ? "Saving…" : "Save changes"}
+                    {save.isPending ? t.common.saving : t.settings.saveChanges}
                   </Button>
                 </div>
               )}
@@ -248,7 +246,7 @@ export default function Settings() {
           {manage && (
             <FilterBar className="justify-end">
               <Button onClick={() => setBranch({ name: "", kind: "shop", address: "", phone: "" })}>
-                <Plus size={16} /> New location
+                <Plus size={16} /> {t.settings.newLocation}
               </Button>
             </FilterBar>
           )}
@@ -258,29 +256,29 @@ export default function Settings() {
             rowKey={(b) => b.id}
             columns={[
               {
-                header: "Location",
+                header: t.common.location,
                 cell: (b) => (
                   <div className="flex items-center gap-2">
                     <span className="font-medium text-[var(--od-ink)]">{b.name}</span>
-                    {b.is_main && <Badge variant="secondary">Main</Badge>}
+                    {b.is_main && <Badge variant="secondary">{t.settings.main}</Badge>}
                   </div>
                 ),
               },
               {
-                header: "Type",
+                header: t.common.type,
                 cell: (b) => (
                   <Badge variant="outline" className="capitalize">
-                    {b.kind ?? "shop"}
+                    {b.kind ? statusLabel(t, b.kind) : t.settings.shop}
                   </Badge>
                 ),
               },
-              { header: "Address", cell: (b) => b.address ?? "-" },
+              { header: t.common.address, cell: (b) => b.address ?? "-" },
               {
-                header: "Phone",
+                header: t.common.phone,
                 cell: (b) => <span className="od-mono text-xs">{b.phone ?? "-"}</span>,
               },
               {
-                header: "Status",
+                header: t.common.status,
                 cell: (b) => <StatusBadge value={b.is_active ? "active" : "inactive"} />,
               },
             ]}
@@ -290,10 +288,10 @@ export default function Settings() {
         <TabsContent value="finance" className="max-w-4xl space-y-6">
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-2">
-              <h3 className="od-section-title">Tax Rates</h3>
+              <h3 className="od-section-title">{t.settings.taxRates}</h3>
               {can("settings.manage") && (
                 <Button size="sm" onClick={() => setTax({ name: "", rate: "" })}>
-                  <Plus size={15} /> New tax rate
+                  <Plus size={15} /> {t.settings.newTaxRate}
                 </Button>
               )}
             </div>
@@ -303,20 +301,25 @@ export default function Settings() {
               rowKey={(tx) => tx.id}
               columns={[
                 {
-                  header: "Name",
+                  header: t.common.name2,
                   cell: (tx) => <span className="font-medium text-[var(--od-ink)]">{tx.name}</span>,
                 },
                 {
-                  header: "Rate",
+                  header: t.settings.rate,
                   align: "right",
                   cell: (tx) => <span className="od-tabular font-medium">{tx.rate}%</span>,
                 },
                 {
-                  header: "Default",
-                  cell: (tx) => (tx.is_default ? <Badge variant="secondary">Default</Badge> : ""),
+                  header: t.settings.defaultText,
+                  cell: (tx) =>
+                    tx.is_default ? (
+                      <Badge variant="secondary">{t.settings.defaultText}</Badge>
+                    ) : (
+                      ""
+                    ),
                 },
                 {
-                  header: "Status",
+                  header: t.common.status,
                   cell: (tx) => <StatusBadge value={tx.is_active ? "active" : "inactive"} />,
                 },
               ]}
@@ -343,20 +346,20 @@ export default function Settings() {
       <FormDialog
         open={branch !== null}
         onOpenChange={(o) => !o && setBranch(null)}
-        title="New location"
+        title={t.settings.newLocation}
         busy={addBranch.isPending}
         onSubmit={() => addBranch.mutate(branch)}
       >
         {branch && (
           <>
-            <Field label="Name">
+            <Field label={t.common.name2}>
               <Input
                 required
                 value={branch.name}
                 onChange={(e) => setBranch({ ...branch, name: e.target.value })}
               />
             </Field>
-            <Field label="Location type">
+            <Field label={t.settings.locationType}>
               <NativeSelect
                 value={branch.kind}
                 onChange={(e) =>
@@ -366,18 +369,18 @@ export default function Settings() {
                   })
                 }
               >
-                <option value="shop">Shop (retail)</option>
-                <option value="office">Office (services)</option>
-                <option value="warehouse">Warehouse (stock only)</option>
+                <option value="shop">{t.settings.shopRetail}</option>
+                <option value="office">{t.settings.officeServices}</option>
+                <option value="warehouse">{t.settings.warehouseStockOnly}</option>
               </NativeSelect>
             </Field>
-            <Field label="Address">
+            <Field label={t.common.address}>
               <Input
                 value={branch.address}
                 onChange={(e) => setBranch({ ...branch, address: e.target.value })}
               />
             </Field>
-            <Field label="Phone">
+            <Field label={t.common.phone}>
               <Input
                 value={branch.phone}
                 onChange={(e) => setBranch({ ...branch, phone: e.target.value })}
@@ -389,20 +392,20 @@ export default function Settings() {
       <FormDialog
         open={tax !== null}
         onOpenChange={(o) => !o && setTax(null)}
-        title="New tax rate"
+        title={t.settings.newTaxRate}
         busy={addTax.isPending}
         onSubmit={() => addTax.mutate({ ...tax, is_active: true })}
       >
         {tax && (
           <>
-            <Field label="Name">
+            <Field label={t.common.name2}>
               <Input
                 required
                 value={tax.name}
                 onChange={(e) => setTax({ ...tax, name: e.target.value })}
               />
             </Field>
-            <Field label="Rate (%)">
+            <Field label={t.settings.rate2}>
               <Input
                 required
                 inputMode="decimal"

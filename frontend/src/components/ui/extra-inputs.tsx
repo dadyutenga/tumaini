@@ -3,6 +3,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { Input } from "./input";
 import { Button } from "./button";
 import { Label } from "./label";
+import { useI18n } from "@/features/i18n/i18n";
 export function IconButton({
   label,
   children,
@@ -15,6 +16,7 @@ export function IconButton({
   );
 }
 export function PasswordInput(props: ComponentProps<typeof Input>) {
+  const { t } = useI18n();
   const [visible, setVisible] = useState(false);
   return (
     <div className="flex gap-2">
@@ -22,7 +24,7 @@ export function PasswordInput(props: ComponentProps<typeof Input>) {
       <IconButton
         type="button"
         variant="outline"
-        label={visible ? "Hide password" : "Show password"}
+        label={visible ? t.common.hidePassword : t.common.showPassword}
         onClick={() => setVisible(!visible)}
       >
         {visible ? <EyeOff /> : <Eye />}
@@ -44,11 +46,12 @@ export function DateRangePicker({
   onStartChange: (value: string) => void;
   onEndChange: (value: string) => void;
 }) {
+  const { t } = useI18n();
   const id = useId();
   return (
     <div className="flex flex-wrap gap-4">
       <div>
-        <Label htmlFor={`${id}-start`}>From</Label>
+        <Label htmlFor={`${id}-start`}>{t.common.from}</Label>
         <DatePicker
           id={`${id}-start`}
           value={start}
@@ -56,7 +59,7 @@ export function DateRangePicker({
         />
       </div>
       <div>
-        <Label htmlFor={`${id}-end`}>To</Label>
+        <Label htmlFor={`${id}-end`}>{t.common.to}</Label>
         <DatePicker id={`${id}-end`} value={end} onChange={(e) => onEndChange(e.target.value)} />
       </div>
     </div>

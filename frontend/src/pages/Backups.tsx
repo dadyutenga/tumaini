@@ -7,6 +7,7 @@ import { useAuth } from "@/features/auth/auth";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { download } from "@/lib/api";
 import { formatDateTime } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
 
 interface BackupExport {
   id: string;
@@ -24,12 +25,13 @@ interface BackupsPayload {
 }
 
 export default function Backups() {
+  const { t } = useI18n();
   const { me } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
   const query = useGet<BackupsPayload>("/backups");
   const runNow = useWrite("POST", "/backups/export", {
     invalidate: ["/backups"],
-    success: "Backup export started. Refresh in a moment to download.",
+    success: t.admin.backupExportStartedRefreshIn,
   });
 
   const exports = query.data?.exports ?? [];
@@ -38,8 +40,8 @@ export default function Backups() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Backups"
-        description="Automatic daily backups and on-demand business data exports."
+        title={t.common.backups}
+        description={t.admin.automaticDailyBackupsAndOn}
         actions={
           <div className="flex gap-2">
             <Button
@@ -52,10 +54,11 @@ export default function Backups() {
                 setRefreshing(false);
               }}
             >
-              <RefreshCw size={14} className={refreshing ? "animate-spin" : undefined} /> Refresh
+              <RefreshCw size={14} className={refreshing ? "animate-spin" : undefined} />{" "}
+              {t.admin.refresh}
             </Button>
             <Button size="sm" disabled={runNow.isPending} onClick={() => runNow.mutate(undefined)}>
-              <DatabaseBackup size={14} /> Run backup now
+              <DatabaseBackup size={14} /> {t.admin.runBackupNow}
             </Button>
           </div>
         }
@@ -63,14 +66,14 @@ export default function Backups() {
 
       <div className="grid gap-4 sm:grid-cols-2">
         <SectionCard
-          title="Last automatic nightly backup"
-          subtitle="Scheduled host database protection"
+          title={t.admin.lastAutomaticNightlyBackup}
+          subtitle={t.admin.scheduledHostDatabaseProtection}
         >
           <p className="od-tabular text-lg font-semibold text-[var(--od-ink)]">
-            {lastAuto ? formatDateTime(lastAuto) : "Configured via host schedule"}
+            {lastAuto ? formatDateTime(lastAuto) : t.admin.configuredViaHostSchedule}
           </p>
           <p className="od-caption mt-2">
-            Nightly PostgreSQL dumps are run by the deployment script (
+            {t.admin.nightlyPostgresqlDumpsAreRun}
             <code className="od-mono rounded border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-1.5 py-0.5 text-[11px] text-[var(--od-ink)]">
               deploy/backup.sh
             </code>
@@ -79,17 +82,16 @@ export default function Backups() {
         </SectionCard>
         {me?.is_owner && (
           <SectionCard
-            title="Restore a backup (Owner only)"
-            subtitle="Offline recovery procedure"
+            title={t.admin.restoreABackupOwnerOnly}
+            subtitle={t.admin.offlineRecoveryProcedure}
             actions={<ShieldAlert size={16} className="text-[var(--od-warning)]" />}
           >
             <p className="text-sm leading-relaxed text-[var(--od-ink-secondary)]">
-              Download any completed backup archive below for safekeeping. Full database restores
-              are performed offline by the Owner using{" "}
+              {t.admin.downloadAnyCompletedBackupArchive}{" "}
               <code className="od-mono rounded border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-1.5 py-0.5 text-xs text-[var(--od-ink)]">
                 pg_restore
               </code>{" "}
-              to prevent partial data corruption while staff are selling.
+              {t.admin.toPreventPartialDataCorruption}
             </p>
           </SectionCard>
         )}
@@ -99,23 +101,23 @@ export default function Backups() {
         rows={exports}
         loading={query.isLoading}
         rowKey={(b) => b.id}
-        empty="No backups generated yet. Click Run backup now to create one."
+        empty={t.admin.noBackupsGeneratedYetClick}
         columns={[
           {
-            header: "Requested",
+            header: t.common.requested,
             cell: (b) => <span className="od-tabular">{formatDateTime(b.created_at)}</span>,
           },
           {
-            header: "Finished",
+            header: t.admin.finished,
             cell: (b) => (
               <span className="od-tabular">
                 {b.finished_at ? formatDateTime(b.finished_at) : "-"}
               </span>
             ),
           },
-          { header: "Requested by", cell: (b) => b.user_name ?? "-" },
+          { header: t.admin.requestedBy, cell: (b) => b.user_name ?? "-" },
           {
-            header: "Status",
+            header: t.common.status,
             cell: (b) => (
               <div className="flex flex-wrap items-center gap-2">
                 <StatusBadge
@@ -148,7 +150,7 @@ export default function Backups() {
                       ).catch((e) => toast.error(errorMessage(e)))
                     }
                   >
-                    <Download size={14} /> Download ZIP
+                    <Download size={14} /> {t.admin.downloadZip}
                   </Button>
                 </div>
               ) : null,

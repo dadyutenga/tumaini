@@ -8,9 +8,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/shared/kit";
 import { ApiError, api } from "@/lib/api";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 /** Two steps: ask for a code sent by SMS or email, then choose a new password with it. */
 export default function ForgotPassword() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [step, setStep] = useState<"request" | "reset">("request");
   const [identifier, setIdentifier] = useState("");
@@ -25,7 +28,7 @@ export default function ForgotPassword() {
     try {
       await action();
     } catch (err) {
-      setError(err instanceof ApiError ? err : new ApiError("Something went wrong", 0));
+      setError(err instanceof ApiError ? err : new ApiError(t.common.somethingWentWrong, 0));
     } finally {
       setBusy(false);
     }
@@ -35,7 +38,7 @@ export default function ForgotPassword() {
     e.preventDefault();
     void run(async () => {
       await api.post("/auth/forgot-password", { identifier }, { noRefresh: true });
-      toast.success("If the account exists, a code is on its way.");
+      toast.success(t.auth.ifTheAccountExistsA);
       setStep("reset");
     });
   };
@@ -47,7 +50,7 @@ export default function ForgotPassword() {
         { identifier, code, new_password: password },
         { noRefresh: true },
       );
-      toast.success("Password changed. Sign in with the new one.");
+      toast.success(t.auth.passwordChangedSignInWith);
       navigate("/login", { replace: true });
     });
   };
@@ -57,21 +60,19 @@ export default function ForgotPassword() {
       <div>
         <div className="mb-2 flex items-center justify-between gap-2">
           <h1 className="text-[22px] font-semibold tracking-tight text-[var(--od-ink)]">
-            Reset your password
+            {t.auth.resetYourPassword}
           </h1>
           <Badge variant="secondary" className="od-tabular text-[11px]">
-            Step {step === "request" ? "1" : "2"} of 2
+            {fmt(t.auth.stepOf2, { value: step === "request" ? "1" : "2" })}
           </Badge>
         </div>
         <p className="text-sm text-[var(--od-ink-secondary)]">
-          {step === "request"
-            ? "Enter your phone or email. We will send a 6 digit code."
-            : "Enter the code we sent and choose a new password."}
+          {step === "request" ? t.auth.enterYourPhoneOrEmail : t.auth.enterTheCodeWeSent}
         </p>
       </div>
 
       <form onSubmit={step === "request" ? request : reset} className="mt-6 space-y-4" noValidate>
-        <Field label="Phone or email" error={error?.fields.identifier}>
+        <Field label={t.auth.phoneOrEmail} error={error?.fields.identifier}>
           <Input
             required
             autoFocus
@@ -83,7 +84,7 @@ export default function ForgotPassword() {
         </Field>
         {step === "reset" && (
           <>
-            <Field label="6 digit code" error={error?.fields.code}>
+            <Field label={t.auth.n6DigitCode} error={error?.fields.code}>
               <Input
                 required
                 inputMode="numeric"
@@ -94,7 +95,7 @@ export default function ForgotPassword() {
                 autoComplete="one-time-code"
               />
             </Field>
-            <Field label="New password" error={error?.fields.new_password}>
+            <Field label={t.auth.newPassword} error={error?.fields.new_password}>
               <Input
                 required
                 type="password"
@@ -116,7 +117,11 @@ export default function ForgotPassword() {
           </div>
         )}
         <Button type="submit" className="w-full" disabled={busy}>
-          {busy ? "Please wait…" : step === "request" ? "Send code" : "Change password"}
+          {busy
+            ? t.auth.pleaseWait
+            : step === "request"
+              ? t.auth.sendCode
+              : t.common.changePassword}
         </Button>
       </form>
 
@@ -125,7 +130,7 @@ export default function ForgotPassword() {
           className="inline-flex items-center gap-1.5 font-medium text-[var(--od-ink-secondary)] transition hover:text-[var(--od-ink)]"
           to="/login"
         >
-          <ArrowLeft size={14} /> Back to sign in
+          <ArrowLeft size={14} /> {t.auth.backToSignIn}
         </Link>
       </p>
     </AuthLayout>

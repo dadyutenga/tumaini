@@ -7,49 +7,56 @@ import { Field, NativeSelect } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useWrite } from "@/hooks/useApi";
 import type { MoneyAccount } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import type { Translations } from "@/features/i18n/i18n";
 
 type Value = string | number | boolean;
 type Group = Record<string, Value>;
 type Rule = { in_app: boolean; email: boolean; sms: boolean; days_before: number | null };
 type SettingsMap = Record<string, Record<string, unknown>>;
 
-const titles: Record<string, string> = {
-  receipt: "Receipts",
-  invoice: "Invoices & Quotations",
-  payroll: "Payroll Rules",
-  notifications: "Reminder Days & Message Templates",
-  system: "System & Inventory Defaults",
-  tax: "Tax",
-  currency: "Currency",
-  sales: "Sales & Discounts",
-};
+const titlesFor = (t: Translations): Record<string, string> => ({
+  attendance: t.common.attendance,
+  receipt: t.common.receipts,
+  invoice: t.settings.invoicesQuotations,
+  payroll: t.settings.payrollRules,
+  notifications: t.settings.reminderDaysMessageTemplates,
+  system: t.settings.systemInventoryDefaults,
+  tax: t.common.tax,
+  currency: t.settings.currency,
+  sales: t.settings.salesDiscounts,
+});
 
-const label = (key: string) => {
+/** The name of a setting. A setting we have no wording for is shown from its key. */
+const label = (t: Translations, key: string) => {
+  const names = t.settings.fields as Record<string, string>;
+  if (Object.prototype.hasOwnProperty.call(names, key)) return names[key];
   const text = key.replaceAll("_", " ");
   return text.charAt(0).toUpperCase() + text.slice(1);
 };
 const isScalar = (v: unknown): v is Value =>
   typeof v === "string" || typeof v === "number" || typeof v === "boolean";
 
-const RULE_LABELS: Record<string, string> = {
-  low_stock: "Low stock alert",
-  debt_due: "Customer / supplier debt due",
-  task_overdue: "Services: Task overdue",
-  task_assigned: "Services: Task assigned",
-  renewal_due: "Services: Renewal due",
-  salary_due: "Payroll: Salary payday reminder",
-  approval_waiting: "Approval awaiting decision",
-  approval_decided: "Approval approved / rejected",
-  design_brief_assigned: "Design: Job assigned",
-  design_feedback: "Design: Client feedback",
-  design_deadline: "Design: Job deadline approaching",
-  design_approved: "Design: Client approved",
-  print_ready: "Design: Print order ready",
-  account_locked: "Security: Account locked",
-  day_closed: "Finance: Day closed",
-  project_stage_changed: "Services: Project stage changed",
-  payment_received: "Finance: Payment received",
-};
+const ruleLabels = (t: Translations): Record<string, string> => ({
+  low_stock: t.settings.lowStockAlert,
+  debt_due: t.settings.customerSupplierDebtDue,
+  task_overdue: t.settings.servicesTaskOverdue,
+  task_assigned: t.settings.servicesTaskAssigned,
+  renewal_due: t.settings.servicesRenewalDue,
+  salary_due: t.settings.payrollSalaryPaydayReminder,
+  approval_waiting: t.settings.approvalAwaitingDecision,
+  approval_decided: t.settings.approvalApprovedRejected,
+  design_brief_assigned: t.settings.designJobAssigned,
+  design_feedback: t.settings.designClientFeedback,
+  design_deadline: t.settings.designJobDeadlineApproaching,
+  design_approved: t.settings.designClientApproved,
+  print_ready: t.settings.designPrintOrderReady,
+  account_locked: t.settings.securityAccountLocked,
+  day_closed: t.settings.financeDayClosed,
+  project_stage_changed: t.settings.servicesProjectStageChanged,
+  payment_received: t.settings.financePaymentReceived,
+});
 
 function GroupForm({
   name,
@@ -64,6 +71,7 @@ function GroupForm({
   extraDefaults?: Group;
   onChange?: (next: Group) => void;
 }) {
+  const { t } = useI18n();
   const merged = { ...extraDefaults, ...initial };
   const [draft, setDraft] = useState<Group>(merged);
   useEffect(() => {
@@ -72,7 +80,7 @@ function GroupForm({
 
   const save = useWrite<Group, unknown>("PUT", `/settings/${name}`, {
     invalidate: ["/settings", "/me"],
-    success: `${titles[name] ?? name} saved`,
+    success: fmt(t.settings.saved, { value: titlesFor(t)[name] ?? name }),
   });
 
   const entries = Object.entries(merged);
@@ -94,7 +102,9 @@ function GroupForm({
         save.mutate(draft);
       }}
     >
-      <h3 className="od-card-title mb-3.5 text-[var(--od-ink)]">{titles[name] ?? label(name)}</h3>
+      <h3 className="od-card-title mb-3.5 text-[var(--od-ink)]">
+        {titlesFor(t)[name] ?? label(t, name)}
+      </h3>
       <div className="grid gap-3.5 sm:grid-cols-2">
         {entries.map(([key, original]) => {
           const isTemplate = key.includes("template") || key === "terms" || key === "footer";
@@ -111,40 +121,40 @@ function GroupForm({
                     checked={Boolean(draft[key])}
                     onChange={(e) => patch(key, e.target.checked)}
                   />
-                  {label(key)}
+                  {label(t, key)}
                 </span>
               ) : key === "language" ? (
                 <>
                   <span className="text-xs font-medium text-[var(--od-ink-secondary)]">
-                    {label(key)}
+                    {label(t, key)}
                   </span>
                   <NativeSelect
                     disabled={!canEdit}
                     value={String(draft[key] ?? "en")}
                     onChange={(e) => patch(key, e.target.value)}
                   >
-                    <option value="en">English (en)</option>
-                    <option value="sw">Kiswahili (sw)</option>
+                    <option value="en">{t.settings.englishEn}</option>
+                    <option value="sw">{t.settings.kiswahiliSw}</option>
                   </NativeSelect>
                 </>
               ) : key === "paper_width" ? (
                 <>
                   <span className="text-xs font-medium text-[var(--od-ink-secondary)]">
-                    Thermal paper width
+                    {t.settings.thermalPaperWidth}
                   </span>
                   <NativeSelect
                     disabled={!canEdit}
                     value={String(draft[key] ?? 80)}
                     onChange={(e) => patch(key, Number(e.target.value))}
                   >
-                    <option value="58">58 mm (narrow)</option>
-                    <option value="80">80 mm (standard)</option>
+                    <option value="58">{t.settings.n58MmNarrow}</option>
+                    <option value="80">{t.settings.n80MmStandard}</option>
                   </NativeSelect>
                 </>
               ) : isTemplate ? (
                 <>
                   <span className="text-xs font-medium text-[var(--od-ink-secondary)]">
-                    {label(key)}
+                    {label(t, key)}
                   </span>
                   <Textarea
                     rows={2}
@@ -156,7 +166,7 @@ function GroupForm({
               ) : (
                 <>
                   <span className="text-xs font-medium text-[var(--od-ink-secondary)]">
-                    {label(key)}
+                    {label(t, key)}
                   </span>
                   <Input
                     disabled={!canEdit}
@@ -179,7 +189,7 @@ function GroupForm({
       {canEdit && (
         <div className="mt-4 border-t border-[var(--od-border)] pt-4">
           <Button type="submit" disabled={save.isPending}>
-            {save.isPending ? "Saving…" : "Save"}
+            {save.isPending ? t.common.saving : t.common.save}
           </Button>
         </div>
       )}
@@ -189,6 +199,7 @@ function GroupForm({
 
 /** Payment methods enabled/disabled + default money account mapping (SRS Section 13). */
 export function PaymentMethodsPanel() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const canEdit = can("settings.manage");
   const methods =
@@ -231,19 +242,19 @@ export function PaymentMethodsPanel() {
 
   const save = useWrite<Record<string, unknown>, unknown>("PUT", "/payment-methods", {
     invalidate: ["/payment-methods"],
-    success: "Payment methods updated",
+    success: t.settings.paymentMethodsUpdated,
   });
 
   const activeAccounts = (accounts.data ?? []).filter((a) => a.is_active);
   const specs: Array<{ key: string; label: string; allowedTypes: string[] | null }> = [
-    { key: "cash", label: "Cash", allowedTypes: ["cash", "petty_cash"] },
+    { key: "cash", label: t.common.cash, allowedTypes: ["cash", "petty_cash"] },
     {
       key: "mobile_money",
-      label: "Mobile money (M-Pesa / Tigo / Airtel)",
+      label: t.settings.mobileMoneyMPesaTigo,
       allowedTypes: ["mobile_money"],
     },
-    { key: "bank", label: "Bank transfer / card", allowedTypes: ["bank"] },
-    { key: "credit", label: "Customer credit (pay later)", allowedTypes: null },
+    { key: "bank", label: t.settings.bankTransferCard, allowedTypes: ["bank"] },
+    { key: "credit", label: t.settings.customerCreditPayLater, allowedTypes: null },
   ];
 
   function handleSave() {
@@ -263,12 +274,9 @@ export function PaymentMethodsPanel() {
     <div className="od-card space-y-4 p-5">
       <div>
         <h3 className="od-card-title text-[var(--od-ink)]">
-          Payment Methods &amp; Default Accounts
+          {t.settings.paymentMethodsDefaultAccounts}
         </h3>
-        <p className="od-card-subtitle">
-          Choose which payment methods cashiers can accept and which money account receives each
-          one.
-        </p>
+        <p className="od-card-subtitle">{t.settings.chooseWhichPaymentMethodsCashiers}</p>
       </div>
       <div className="divide-y divide-[var(--od-border)] overflow-hidden rounded-xl border border-[var(--od-border)]">
         {specs.map((sp) => {
@@ -304,7 +312,7 @@ export function PaymentMethodsPanel() {
                     }))
                   }
                 >
-                  <option value="">No default account</option>
+                  <option value="">{t.settings.noDefaultAccount}</option>
                   {matching.map((a) => (
                     <option key={a.id} value={a.id}>
                       {a.name}
@@ -318,7 +326,7 @@ export function PaymentMethodsPanel() {
       </div>
       {canEdit && (
         <Button disabled={save.isPending} onClick={handleSave}>
-          {save.isPending ? "Saving…" : "Save payment methods"}
+          {save.isPending ? t.common.saving : t.settings.savePaymentMethods}
         </Button>
       )}
     </div>
@@ -327,6 +335,7 @@ export function PaymentMethodsPanel() {
 
 /** Documents tab: Receipt & Invoice settings + live thermal receipt preview (SRS Section 13). */
 export function DocumentsSettingsPanel({ businessName }: { businessName: string }) {
+  const { t } = useI18n();
   const { can } = useAuth();
   const canEdit = can("settings.manage");
   const settings = useGet<SettingsMap>("/settings");
@@ -363,7 +372,9 @@ export function DocumentsSettingsPanel({ businessName }: { businessName: string 
 
       <div className="od-card h-fit bg-[var(--od-surface-subtle)] p-4">
         <p className="od-kpi-label mb-3">
-          Live Receipt Preview ({String(receiptPreview.paper_width ?? 80)}mm)
+          {fmt(t.settings.liveReceiptPreviewMm, {
+            paper_width: String(receiptPreview.paper_width ?? 80),
+          })}
         </p>
         <div
           className={`mx-auto rounded-lg border border-[var(--od-border-strong)] bg-[var(--od-surface)] p-4 font-mono text-[11px] text-[var(--od-ink)] shadow-[var(--od-shadow)] ${widthClass}`}
@@ -371,24 +382,24 @@ export function DocumentsSettingsPanel({ businessName }: { businessName: string 
           <div className="text-center">
             {Boolean(receiptPreview.show_logo) && (
               <div className="mx-auto mb-1 grid h-8 w-8 place-items-center rounded bg-zinc-200 text-[9px] font-bold">
-                LOGO
+                {t.settings.logo}
               </div>
             )}
-            <p className="font-bold">{businessName || "Your Business"}</p>
+            <p className="font-bold">{businessName || t.settings.yourBusiness}</p>
             {receiptPreview.header && (
               <p className="text-[10px] text-zinc-600">{String(receiptPreview.header)}</p>
             )}
           </div>
           <div className="my-2 border-t border-dashed border-zinc-400" />
-          <p>Receipt: INV-00042</p>
-          {Boolean(receiptPreview.show_cashier) && <p>Cashier: Amina</p>}
+          <p>{t.settings.receiptInv00042}</p>
+          {Boolean(receiptPreview.show_cashier) && <p>{t.settings.cashierAmina}</p>}
           <div className="my-2 border-t border-dashed border-zinc-400" />
           <div className="flex justify-between">
-            <span>2x Sugar 1kg</span>
+            <span>{t.settings.n2xSugar1kg}</span>
             <span>6,000</span>
           </div>
           <div className="flex justify-between">
-            <span>1x Cooking Oil</span>
+            <span>{t.settings.n1xCookingOil}</span>
             <span>8,500</span>
           </div>
           <div className="my-2 border-t border-dashed border-zinc-400" />
@@ -399,7 +410,7 @@ export function DocumentsSettingsPanel({ businessName }: { businessName: string 
             </div>
           )}
           <div className="flex justify-between font-bold">
-            <span>TOTAL</span>
+            <span>{t.common.total2}</span>
             <span>TZS 14,500</span>
           </div>
           {receiptPreview.footer && (
@@ -418,6 +429,7 @@ export function DocumentsSettingsPanel({ businessName }: { businessName: string 
 
 /** Notifications tab: all 25 event channel toggles + SMS/WhatsApp templates + Test Notification sender. */
 export function NotificationsSettingsPanel() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const canEdit = can("settings.manage");
   const settings = useGet<SettingsMap>("/settings");
@@ -443,7 +455,7 @@ export function NotificationsSettingsPanel() {
     "/settings/notifications",
     {
       invalidate: ["/settings"],
-      success: "Notification rules saved",
+      success: t.settings.notificationRulesSaved,
     },
   );
 
@@ -452,7 +464,7 @@ export function NotificationsSettingsPanel() {
     "/notifications/test",
     {
       invalidate: ["/notifications"],
-      success: "Test notification sent!",
+      success: t.settings.testNotificationSent,
     },
   );
 
@@ -468,12 +480,9 @@ export function NotificationsSettingsPanel() {
         <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="od-card-title text-[var(--od-ink)]">
-              Alert Channels by Event ({ruleKeys.length})
+              {fmt(t.settings.alertChannelsByEvent, { count: ruleKeys.length })}
             </h3>
-            <p className="od-card-subtitle">
-              Choose which alerts go to In-App, Email, or SMS across Shop, Finance, HR, Services and
-              Design.
-            </p>
+            <p className="od-card-subtitle">{t.settings.chooseWhichAlertsGoTo}</p>
           </div>
           {canEdit && ruleKeys.length > 0 && (
             <Button
@@ -481,7 +490,7 @@ export function NotificationsSettingsPanel() {
               disabled={saveRules.isPending}
               onClick={() => saveRules.mutate({ rules })}
             >
-              {saveRules.isPending ? "Saving…" : "Save rules"}
+              {saveRules.isPending ? t.common.saving : t.settings.saveRules}
             </Button>
           )}
         </div>
@@ -489,9 +498,9 @@ export function NotificationsSettingsPanel() {
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-[var(--od-surface-subtle)] text-xs text-[var(--od-ink-secondary)] backdrop-blur">
               <tr>
-                <th className="px-3.5 py-2.5 text-left font-medium">Event</th>
-                <th className="px-3 py-2.5 text-center font-medium">In-App</th>
-                <th className="px-3 py-2.5 text-center font-medium">Email</th>
+                <th className="px-3.5 py-2.5 text-left font-medium">{t.settings.event}</th>
+                <th className="px-3 py-2.5 text-center font-medium">{t.settings.inApp}</th>
+                <th className="px-3 py-2.5 text-center font-medium">{t.common.email}</th>
                 <th className="px-3 py-2.5 text-center font-medium">SMS</th>
               </tr>
             </thead>
@@ -501,7 +510,7 @@ export function NotificationsSettingsPanel() {
                 return (
                   <tr key={k} className="hover:bg-[var(--od-surface-subtle)]/60">
                     <td className="px-3.5 py-2.5 font-medium text-[var(--od-ink)]">
-                      {RULE_LABELS[k] ?? label(k)}
+                      {ruleLabels(t)[k] ?? label(t, k)}
                     </td>
                     {(["in_app", "email", "sms"] as const).map((col) => (
                       <td key={col} className="px-3 py-2.5 text-center">
@@ -544,33 +553,35 @@ export function NotificationsSettingsPanel() {
       {canEdit && (
         <div className="od-card space-y-3.5 p-5">
           <div>
-            <h3 className="od-card-title text-[var(--od-ink)]">Send Test Notification</h3>
-            <p className="od-card-subtitle">
-              Verify that your notification bell and message templates work as expected.
-            </p>
+            <h3 className="od-card-title text-[var(--od-ink)]">
+              {t.settings.sendTestNotification}
+            </h3>
+            <p className="od-card-subtitle">{t.settings.verifyThatYourNotificationBell}</p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Channel">
+            <Field label={t.common.channel}>
               <NativeSelect value={testChannel} onChange={(e) => setTestChannel(e.target.value)}>
-                <option value="in_app">In-App notification</option>
+                <option value="in_app">{t.settings.inAppNotification}</option>
                 <option value="sms">SMS</option>
                 <option value="whatsapp">WhatsApp</option>
-                <option value="email">Email</option>
+                <option value="email">{t.common.email}</option>
               </NativeSelect>
             </Field>
             <Field
               label={
-                testChannel === "in_app" ? "Recipient (optional)" : "Recipient phone or email *"
+                testChannel === "in_app"
+                  ? t.settings.recipientOptional
+                  : t.settings.recipientPhoneOrEmail
               }
             >
               <Input
                 value={testRecipient}
                 onChange={(e) => setTestRecipient(e.target.value)}
-                placeholder="+2557... or name@company.com"
+                placeholder={t.settings.n2557OrNameCompanyCom}
               />
             </Field>
           </div>
-          <Field label="Message">
+          <Field label={t.common.message}>
             <Input value={testMessage} onChange={(e) => setTestMessage(e.target.value)} />
           </Field>
           <Button
@@ -584,7 +595,8 @@ export function NotificationsSettingsPanel() {
               })
             }
           >
-            <Send size={14} /> {sendTest.isPending ? "Sending…" : "Send test message"}
+            <Send size={14} />{" "}
+            {sendTest.isPending ? t.settings.sending : t.settings.sendTestMessage}
           </Button>
         </div>
       )}

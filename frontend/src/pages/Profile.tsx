@@ -38,7 +38,7 @@ interface LoginEvent {
 
 export default function Profile() {
   const { user, me, reloadMe } = useAuth();
-  const { locale, setLocale } = useI18n();
+  const { t, locale, setLocale } = useI18n();
   const [name, setName] = useState(user?.name ?? "");
   const [lang, setLang] = useState<Locale>((user?.language as Locale) || locale);
   const [pw, setPw] = useState({ current_password: "", new_password: "" });
@@ -47,14 +47,14 @@ export default function Profile() {
   const logins = useGet<LoginEvent[]>("/me/login-history", { per_page: 10 });
 
   const update = useWrite<{ name: string; language: Locale }, unknown>("PUT", "/me", {
-    success: "Profile updated",
+    success: t.settings.profileUpdated,
     onSuccess: () => {
       setLocale(lang);
       void reloadMe();
     },
   });
   const change = useWrite<typeof pw, unknown>("PUT", "/auth/password", {
-    success: "Password changed",
+    success: t.settings.passwordChanged,
     onSuccess: () => {
       setPw({ current_password: "", new_password: "" });
       void reloadMe();
@@ -62,15 +62,15 @@ export default function Profile() {
   });
   const endSession = useWrite<{ id: string }>("DELETE", (b) => `/me/sessions/${b.id}`, {
     invalidate: ["/me/sessions"],
-    success: "Session signed out",
+    success: t.settings.sessionSignedOut,
   });
 
   return (
     <div className="space-y-8">
       <PageHeader
-        title="My profile"
-        description={`${user?.role_name ?? ""}${me?.is_owner ? " · Owner" : ""}`}
-        badge={me?.is_owner ? <Badge variant="secondary">Owner</Badge> : undefined}
+        title={t.settings.myProfile}
+        description={`${user?.role_name ?? ""}${me?.is_owner ? ` ${t.settings.owner}` : ""}`}
+        badge={me?.is_owner ? <Badge variant="secondary">{t.common.owner}</Badge> : undefined}
       />
 
       <div className="grid max-w-4xl gap-5 md:grid-cols-2">
@@ -82,32 +82,32 @@ export default function Profile() {
           }}
         >
           <div>
-            <h2 className="od-card-title text-[var(--od-ink)]">Profile details</h2>
-            <p className="od-card-subtitle">Update your display name and interface language.</p>
+            <h2 className="od-card-title text-[var(--od-ink)]">{t.settings.profileDetails}</h2>
+            <p className="od-card-subtitle">{t.settings.updateYourDisplayNameAnd}</p>
           </div>
-          <Field label="Name *">
+          <Field label={t.common.name}>
             <Input required value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
-          <Field label="Role">
+          <Field label={t.common.role}>
             <Input disabled value={`${user?.role_name ?? ""}${me?.is_owner ? " (Owner)" : ""}`} />
           </Field>
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Phone">
+            <Field label={t.common.phone}>
               <Input disabled className="od-mono" value={user?.phone ?? "-"} />
             </Field>
-            <Field label="Email">
+            <Field label={t.common.email}>
               <Input disabled value={user?.email ?? "-"} />
             </Field>
           </div>
-          <Field label="Language">
+          <Field label={t.settings.language2}>
             <NativeSelect value={lang} onChange={(e) => setLang(e.target.value as Locale)}>
-              <option value="en">English</option>
-              <option value="sw">Kiswahili (Swahili)</option>
+              <option value="en">{t.settings.english}</option>
+              <option value="sw">{t.settings.kiswahiliSwahili}</option>
             </NativeSelect>
           </Field>
           <div className="border-t border-[var(--od-border)] pt-3">
             <Button type="submit" disabled={update.isPending}>
-              Save changes
+              {t.settings.saveChanges}
             </Button>
           </div>
         </form>
@@ -121,10 +121,10 @@ export default function Profile() {
           }}
         >
           <div>
-            <h2 className="od-card-title text-[var(--od-ink)]">Change password</h2>
-            <p className="od-card-subtitle">Use at least 8 characters for a strong password.</p>
+            <h2 className="od-card-title text-[var(--od-ink)]">{t.common.changePassword}</h2>
+            <p className="od-card-subtitle">{t.settings.useAtLeast8Characters}</p>
           </div>
-          <Field label="Current password *">
+          <Field label={t.common.currentPassword}>
             <Input
               required
               type="password"
@@ -133,7 +133,7 @@ export default function Profile() {
               onChange={(e) => setPw({ ...pw, current_password: e.target.value })}
             />
           </Field>
-          <Field label="New password *">
+          <Field label={t.common.newPassword}>
             <Input
               required
               minLength={8}
@@ -145,7 +145,7 @@ export default function Profile() {
           </Field>
           <div className="border-t border-[var(--od-border)] pt-3">
             <Button type="submit" disabled={change.isPending}>
-              Change password
+              {t.common.changePassword}
             </Button>
           </div>
         </form>
@@ -153,23 +153,23 @@ export default function Profile() {
 
       <section className="max-w-4xl space-y-3">
         <div>
-          <h2 className="od-section-title">Active sessions</h2>
-          <p className="od-caption mt-0.5">Devices currently signed into your account.</p>
+          <h2 className="od-section-title">{t.settings.activeSessions}</h2>
+          <p className="od-caption mt-0.5">{t.settings.devicesCurrentlySignedIntoYour}</p>
         </div>
         <DataGrid
           rows={sessions.data}
           loading={sessions.isLoading}
           rowKey={(s) => s.id}
-          empty="No active sessions"
+          empty={t.settings.noActiveSessions}
           columns={[
             {
-              header: "Device",
+              header: t.common.device,
               cell: (s) => (
                 <span
                   className="line-clamp-1 max-w-xs text-xs text-[var(--od-ink)]"
                   title={s.user_agent ?? ""}
                 >
-                  {s.user_agent || "Browser session"}
+                  {s.user_agent || t.settings.browserSession}
                 </span>
               ),
             },
@@ -182,7 +182,7 @@ export default function Profile() {
               ),
             },
             {
-              header: "Last active",
+              header: t.settings.lastActive,
               cell: (s) => <span className="od-tabular">{formatDateTime(s.last_used_at)}</span>,
             },
             {
@@ -191,7 +191,7 @@ export default function Profile() {
               cell: (s) => (
                 <div className="flex justify-end">
                   {s.current ? (
-                    <Badge variant="secondary">Current</Badge>
+                    <Badge variant="secondary">{t.settings.current}</Badge>
                   ) : (
                     <Button
                       size="sm"
@@ -199,7 +199,7 @@ export default function Profile() {
                       className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                       onClick={() => endSession.mutate({ id: s.id })}
                     >
-                      Sign out
+                      {t.common.signOut}
                     </Button>
                   )}
                 </div>
@@ -211,21 +211,21 @@ export default function Profile() {
 
       <section className="max-w-4xl space-y-3">
         <div>
-          <h2 className="od-section-title">Recent logins</h2>
-          <p className="od-caption mt-0.5">Latest 10 sign-in attempts on your account.</p>
+          <h2 className="od-section-title">{t.settings.recentLogins}</h2>
+          <p className="od-caption mt-0.5">{t.settings.latest10SignInAttempts}</p>
         </div>
         <DataGrid
           rows={logins.data}
           loading={logins.isLoading}
           rowKey={(l) => l.id}
-          empty="No recent logins recorded"
+          empty={t.settings.noRecentLoginsRecorded}
           columns={[
             {
-              header: "Time",
+              header: t.common.time,
               cell: (l) => <span className="od-tabular">{formatDateTime(l.created_at)}</span>,
             },
             {
-              header: "Result",
+              header: t.common.result,
               cell: (l) => <StatusBadge value={l.success ? "active" : "rejected"} />,
             },
             {
@@ -237,7 +237,7 @@ export default function Profile() {
               ),
             },
             {
-              header: "Device",
+              header: t.common.device,
               cell: (l) => (
                 <span className="line-clamp-1 max-w-xs text-xs text-[var(--od-ink-muted)]">
                   {l.user_agent || "-"}

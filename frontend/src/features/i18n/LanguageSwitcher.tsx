@@ -7,9 +7,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useI18n } from "./i18n";
+import { fmt } from "./format";
 
 export function LanguageSwitcher() {
-  const { locale, setLocale } = useI18n();
+  const { locale, setLocale, t } = useI18n();
 
   return (
     <DropdownMenu>
@@ -18,7 +19,9 @@ export function LanguageSwitcher() {
           variant="ghost"
           size="sm"
           className="gap-1.5 px-2 text-xs font-medium"
-          aria-label={`Current language: ${locale === "sw" ? "Kiswahili" : "English"}. Switch language`}
+          aria-label={fmt(t.common.currentLanguageSwitch, {
+            language: locale === "sw" ? "Kiswahili" : "English",
+          })}
         >
           <Globe size={16} />
           <span className="uppercase">{locale}</span>

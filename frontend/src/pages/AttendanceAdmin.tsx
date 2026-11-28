@@ -17,6 +17,10 @@ import { useAuth } from "@/features/auth/auth";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { downloadCsv } from "@/lib/csv";
 import { formatDate, today } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
+import { activeT } from "@/features/i18n/active";
 
 interface Day {
   id: string;
@@ -62,10 +66,12 @@ const time = (v: string | null) =>
   v ? new Date(v).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "-";
 const timeInput = (v: string | null) =>
   v ? new Date(v).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
-const hours = (m: number | null) => (m ? `${Math.floor(m / 60)}h ${m % 60}m` : "-");
+const hours = (m: number | null) =>
+  m ? fmt(activeT().hr.hoursMinutes, { hours: Math.floor(m / 60), minutes: m % 60 }) : "-";
 const statuses = ["present", "late", "absent", "half_day", "on_leave", "holiday", "day_off"];
 
 function History({ overtimeOnly }: { overtimeOnly: boolean }) {
+  const { t } = useI18n();
   const { can, canAny } = useAuth();
   const [from, setFrom] = useState(() =>
     new Date(Date.now() - 14 * 864e5).toLocaleDateString("en-CA"),
@@ -97,7 +103,7 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
   const refresh = ["/attendance"];
   const mark = useWrite<typeof draft, unknown>("POST", "/attendance/days", {
     invalidate: refresh,
-    success: "Attendance recorded",
+    success: t.hr.attendanceRecorded,
     onSuccess: () => {
       setMarking(false);
       setDraft(blank);
@@ -108,7 +114,7 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
     () => `/attendance/days/${correcting?.id}`,
     {
       invalidate: refresh,
-      success: "Attendance corrected",
+      success: t.hr.attendanceCorrected,
       onSuccess: () => {
         setCorrecting(null);
         setCorrForm({ status: "present", first_in: "", last_out: "", reason: "" });
@@ -118,7 +124,7 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
   const decide = useWrite<{ day: Day; action: string }, unknown>(
     "POST",
     (b) => `/attendance/overtime/${b.day.id}/${b.action}`,
-    { invalidate: refresh, success: "Overtime updated", toBody: () => ({}) },
+    { invalidate: refresh, success: t.hr.overtimeUpdated, toBody: () => ({}) },
   );
 
   function openCorrect(d: Day) {
@@ -146,15 +152,15 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
   return (
     <div className="space-y-4">
       <FilterBar className="items-end">
-        <Field label="From">
+        <Field label={t.common.from}>
           <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
         </Field>
-        <Field label="To">
+        <Field label={t.common.to}>
           <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </Field>
         {!overtimeOnly && can("hr.attendance.manage") && (
           <Button className="ml-auto" onClick={() => setMarking(true)}>
-            <Plus size={16} /> Record a day
+            <Plus size={16} /> {t.hr.recordADay}
           </Button>
         )}
       </FilterBar>
@@ -162,30 +168,30 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(d) => d.id}
-        empty="No attendance in this period"
+        empty={t.hr.noAttendanceInThisPeriod}
         columns={[
-          { header: "Date", cell: (d) => formatDate(d.day) },
+          { header: t.common.date, cell: (d) => formatDate(d.day) },
           {
-            header: "Employee",
+            header: t.common.employee,
             cell: (d) => (
               <span className="font-medium text-[var(--od-ink)]">{d.employee_name}</span>
             ),
           },
           {
-            header: "In",
+            header: t.hr.in,
             cell: (d) => <span className="od-mono text-xs">{time(d.first_in)}</span>,
           },
           {
-            header: "Out",
+            header: t.common.out,
             cell: (d) => <span className="od-mono text-xs">{time(d.last_out)}</span>,
           },
           {
-            header: "Worked",
+            header: t.hr.worked,
             align: "right",
             cell: (d) => <span className="od-tabular">{hours(d.worked_minutes)}</span>,
           },
           {
-            header: overtimeOnly ? "Overtime" : "Late",
+            header: overtimeOnly ? t.common.overtime : t.common.late,
             align: "right",
             cell: (d) =>
               overtimeOnly ? (
@@ -194,14 +200,14 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
                 </span>
               ) : d.late_minutes ? (
                 <span className="od-tabular font-medium text-[var(--od-warning)]">
-                  {d.late_minutes} min
+                  {fmt(t.hr.min, { late_minutes: d.late_minutes })}
                 </span>
               ) : (
                 <span className="text-[var(--od-ink-muted)]">-</span>
               ),
           },
           {
-            header: "Status",
+            header: t.common.status,
             cell: (d) => <StatusBadge value={overtimeOnly ? d.overtime_status : d.status} />,
           },
           {
@@ -210,13 +216,13 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
               <div className="flex justify-end gap-1.5">
                 {!overtimeOnly && can("hr.attendance.manage") && (
                   <Button size="sm" variant="ghost" onClick={() => openCorrect(d)}>
-                    <Pencil size={13} /> Correct
+                    <Pencil size={13} /> {t.hr.correct}
                   </Button>
                 )}
                 {overtimeOnly && d.overtime_status === "pending" && can("hr.attendance.manage") && (
                   <>
                     <Button size="sm" onClick={() => decide.mutate({ day: d, action: "approve" })}>
-                      Approve
+                      {t.common.approve}
                     </Button>
                     <Button
                       size="sm"
@@ -224,7 +230,7 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
                       className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                       onClick={() => decide.mutate({ day: d, action: "reject" })}
                     >
-                      Reject
+                      {t.common.reject}
                     </Button>
                   </>
                 )}
@@ -238,17 +244,17 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
       <FormDialog
         open={marking}
         onOpenChange={setMarking}
-        title="Record a day"
+        title={t.hr.recordADay}
         busy={mark.isPending}
         onSubmit={() => mark.mutate(draft)}
       >
-        <Field label="Employee">
+        <Field label={t.common.employee}>
           <NativeSelect
             required
             value={draft.employee_id}
             onChange={(e) => setDraft((d) => ({ ...d, employee_id: e.target.value }))}
           >
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {employees.data?.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.name}
@@ -257,7 +263,7 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
           </NativeSelect>
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Date">
+          <Field label={t.common.date}>
             <Input
               required
               type="date"
@@ -265,20 +271,20 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
               onChange={(e) => setDraft((d) => ({ ...d, day: e.target.value }))}
             />
           </Field>
-          <Field label="Status">
+          <Field label={t.common.status}>
             <NativeSelect
               value={draft.status}
               onChange={(e) => setDraft((d) => ({ ...d, status: e.target.value }))}
             >
               {statuses.map((s) => (
                 <option key={s} value={s}>
-                  {s.replace("_", " ")}
+                  {statusLabel(t, s)}
                 </option>
               ))}
             </NativeSelect>
           </Field>
         </div>
-        <Field label="Note">
+        <Field label={t.common.note}>
           <Input
             value={draft.note}
             onChange={(e) => setDraft((d) => ({ ...d, note: e.target.value }))}
@@ -289,32 +295,35 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
       <FormDialog
         open={correcting !== null}
         onOpenChange={(o) => !o && setCorrecting(null)}
-        title={`Correct attendance — ${correcting?.employee_name ?? ""} (${correcting ? formatDate(correcting.day) : ""})`}
-        submitLabel="Save correction"
+        title={fmt(t.hr.correctAttendance, {
+          employee_name: correcting?.employee_name ?? "",
+          value: correcting ? formatDate(correcting.day) : "",
+        })}
+        submitLabel={t.hr.saveCorrection}
         busy={correct.isPending}
         onSubmit={submitCorrection}
       >
-        <Field label="Status">
+        <Field label={t.common.status}>
           <NativeSelect
             value={corrForm.status}
             onChange={(e) => setCorrForm((c) => ({ ...c, status: e.target.value }))}
           >
             {statuses.map((s) => (
               <option key={s} value={s}>
-                {s.replace("_", " ")}
+                {statusLabel(t, s)}
               </option>
             ))}
           </NativeSelect>
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Clock in time">
+          <Field label={t.hr.clockInTime}>
             <Input
               type="time"
               value={corrForm.first_in}
               onChange={(e) => setCorrForm((c) => ({ ...c, first_in: e.target.value }))}
             />
           </Field>
-          <Field label="Clock out time">
+          <Field label={t.hr.clockOutTime}>
             <Input
               type="time"
               value={corrForm.last_out}
@@ -322,12 +331,12 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
             />
           </Field>
         </div>
-        <Field label="Reason for correction (required)">
+        <Field label={t.hr.reasonForCorrectionRequired}>
           <Input
             required
             value={corrForm.reason}
             onChange={(e) => setCorrForm((c) => ({ ...c, reason: e.target.value }))}
-            placeholder="e.g. Forgot to clock out, verified by manager"
+            placeholder={t.hr.eGForgotToClock}
           />
         </Field>
       </FormDialog>
@@ -336,6 +345,7 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
 }
 
 function MonthlySummary() {
+  const { t } = useI18n();
   const [month, setMonth] = useState(() => today().slice(0, 7));
   const res = useGet<SummaryRes>("/attendance/summary", { month });
   const rows = res.data?.employees ?? [];
@@ -343,16 +353,16 @@ function MonthlySummary() {
   function exportCsv() {
     downloadCsv(`attendance-summary-${month}.csv`, [
       [
-        "Employee No",
-        "Name",
-        "Present",
-        "Late",
-        "Late mins",
-        "Absent",
-        "Half day",
-        "Leave",
-        "Worked hrs",
-        "Overtime hrs",
+        t.hr.employeeNo,
+        t.common.name2,
+        t.hr.present,
+        t.common.late,
+        t.hr.lateMins,
+        t.hr.absent,
+        t.hr.halfDay,
+        t.hr.leave,
+        t.hr.workedHrs,
+        t.hr.overtimeHrs,
       ],
       ...rows.map((r) => [
         r.employee_no,
@@ -372,7 +382,7 @@ function MonthlySummary() {
   return (
     <div className="space-y-4">
       <FilterBar className="items-end justify-between">
-        <Field label="Month">
+        <Field label={t.common.month}>
           <Input
             type="month"
             className="w-44"
@@ -381,17 +391,17 @@ function MonthlySummary() {
           />
         </Field>
         <Button variant="outline" size="sm" disabled={!rows.length} onClick={exportCsv}>
-          <Download size={14} /> Export CSV
+          <Download size={14} /> {t.common.exportCsv}
         </Button>
       </FilterBar>
       <DataGrid
         rows={rows}
         loading={res.isLoading}
         rowKey={(r) => r.employee_id}
-        empty="No attendance records for this month"
+        empty={t.hr.noAttendanceRecordsForThis}
         columns={[
           {
-            header: "Employee",
+            header: t.common.employee,
             cell: (r) => (
               <div>
                 <p className="font-medium text-[var(--od-ink)]">{r.employee_name}</p>
@@ -400,12 +410,12 @@ function MonthlySummary() {
             ),
           },
           {
-            header: "Present",
+            header: t.hr.present,
             align: "right",
             cell: (r) => <span className="od-tabular">{r.days_present}</span>,
           },
           {
-            header: "Late",
+            header: t.common.late,
             align: "right",
             cell: (r) =>
               r.late_count ? (
@@ -417,7 +427,7 @@ function MonthlySummary() {
               ),
           },
           {
-            header: "Absent",
+            header: t.hr.absent,
             align: "right",
             cell: (r) =>
               r.days_absent ? (
@@ -427,24 +437,24 @@ function MonthlySummary() {
               ),
           },
           {
-            header: "Half day",
+            header: t.hr.halfDay,
             align: "right",
             cell: (r) => <span className="od-tabular">{r.half_days}</span>,
           },
           {
-            header: "Leave",
+            header: t.hr.leave,
             align: "right",
             cell: (r) => <span className="od-tabular">{r.leave_days}</span>,
           },
           {
-            header: "Worked hrs",
+            header: t.hr.workedHrs,
             align: "right",
             cell: (r) => (
               <span className="od-tabular font-medium text-[var(--od-ink)]">{r.worked_hours}h</span>
             ),
           },
           {
-            header: "OT hrs",
+            header: t.hr.otHrs,
             align: "right",
             cell: (r) => <span className="od-tabular">{r.overtime_hours}h</span>,
           },
@@ -455,17 +465,18 @@ function MonthlySummary() {
 }
 
 export default function AttendanceAdmin() {
+  const { t } = useI18n();
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Attendance"
-        description="Daily records, monthly summaries, corrections and overtime approval."
+        title={t.common.attendance}
+        description={t.hr.dailyRecordsMonthlySummariesCorrections}
       />
       <Tabs defaultValue="days">
         <TabsList className="mb-4">
-          <TabsTrigger value="days">Daily records</TabsTrigger>
-          <TabsTrigger value="summary">Monthly summary</TabsTrigger>
-          <TabsTrigger value="overtime">Overtime</TabsTrigger>
+          <TabsTrigger value="days">{t.hr.dailyRecords}</TabsTrigger>
+          <TabsTrigger value="summary">{t.hr.monthlySummary}</TabsTrigger>
+          <TabsTrigger value="overtime">{t.common.overtime}</TabsTrigger>
         </TabsList>
         <TabsContent value="days">
           <History overtimeOnly={false} />

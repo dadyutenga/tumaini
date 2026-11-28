@@ -2,11 +2,13 @@ import { useAuth } from "@/features/auth/auth";
 import { useGet } from "@/hooks/useApi";
 import { today } from "@/lib/formatters";
 import type { UserLite } from "@/types/services";
+import { activeT } from "@/features/i18n/active";
+import { statusLabel } from "@/features/i18n/status";
 
-/** Turns `business_card` into `Business card`. */
+/** The label for a value such as `business_card`, starting with a capital letter. */
 export function label(value: string | null | undefined) {
   if (!value) return "-";
-  const text = value.replaceAll("_", " ");
+  const text = statusLabel(activeT(), value);
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 

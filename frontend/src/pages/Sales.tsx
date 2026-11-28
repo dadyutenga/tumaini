@@ -22,6 +22,9 @@ import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { downloadCsv } from "@/lib/csv";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { MoneyAccount, SaleRow } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface ReturnRow {
   id: string;
@@ -37,6 +40,7 @@ interface ReturnRow {
 }
 
 export default function Sales() {
+  const { t } = useI18n();
   const { can, canAny, user } = useAuth();
   const canViewReturns = canAny("shop.sale.view_all", "shop.return.create", "shop.return.approve");
   const canApproveReturn = can("shop.return.approve");
@@ -86,7 +90,7 @@ export default function Sales() {
     {
       toBody: () => ({}),
       invalidate: refreshReturns,
-      success: "Return updated",
+      success: t.sales.returnUpdated,
     },
   );
   const completeReturn = useWrite<Record<string, unknown>, unknown>(
@@ -95,7 +99,7 @@ export default function Sales() {
     {
       idempotent: true,
       invalidate: refreshReturns,
-      success: "Return completed",
+      success: t.sales.returnCompleted,
       onSuccess: () => {
         setCompleting(null);
         setAccount("");
@@ -112,11 +116,20 @@ export default function Sales() {
 
   function exportCsv() {
     downloadCsv("sales-history.csv", [
-      ["Receipt No", "Date", "Customer", "Cashier", "Status", "Total", "Paid", "Balance"],
+      [
+        t.sales.receiptNo,
+        t.common.date,
+        t.common.customer,
+        t.sales.cashier2,
+        t.common.status,
+        t.common.total,
+        t.common.paid,
+        t.common.balance,
+      ],
       ...rows.map((s) => [
         s.number,
         formatDate(s.business_date),
-        s.customer_name ?? "Walk-in",
+        s.customer_name ?? t.sales.walkIn,
         s.cashier_name ?? "",
         s.status,
         s.total,
@@ -129,18 +142,18 @@ export default function Sales() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Sales & returns"
-        description="Sales history, receipts and returns at the active location."
+        title={t.sales.salesReturns}
+        description={t.sales.salesHistoryReceiptsAndReturns}
         actions={
           <>
             {rows.length > 0 && (
               <Button variant="outline" size="sm" onClick={exportCsv}>
-                <Download size={14} /> Export CSV
+                <Download size={14} /> {t.common.exportCsv}
               </Button>
             )}
             {can("shop.sale.create") && (
               <Button size="sm" onClick={() => navigate("/pos")}>
-                <ShoppingCart size={14} /> New sale
+                <ShoppingCart size={14} /> {t.common.newSale}
               </Button>
             )}
           </>
@@ -149,18 +162,18 @@ export default function Sales() {
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          label="Matching sales"
+          label={t.sales.matchingSales}
           value={sales.data?.meta?.total ?? rows.length}
-          trend={`Showing ${rows.length} on page`}
+          trend={fmt(t.sales.showingOnPage, { count: rows.length })}
         />
-        <StatCard label="Page total" value={formatMoney(pageTotal)} />
+        <StatCard label={t.sales.pageTotal} value={formatMoney(pageTotal)} />
         <StatCard
-          label="Collected"
+          label={t.sales.collected}
           value={formatMoney(pagePaid)}
           tone={pagePaid > 0 ? "good" : "neutral"}
         />
         <StatCard
-          label="Outstanding balance"
+          label={t.sales.outstandingBalance}
           value={formatMoney(pageBalance)}
           tone={pageBalance > 0 ? "bad" : "neutral"}
         />
@@ -168,8 +181,8 @@ export default function Sales() {
 
       <Tabs defaultValue="sales">
         <TabsList>
-          <TabsTrigger value="sales">Sales history</TabsTrigger>
-          {canViewReturns && <TabsTrigger value="returns">Returns</TabsTrigger>}
+          <TabsTrigger value="sales">{t.sales.salesHistory}</TabsTrigger>
+          {canViewReturns && <TabsTrigger value="returns">{t.sales.returns}</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="sales" className="space-y-4">
@@ -181,9 +194,9 @@ export default function Sales() {
                   className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
                 />
                 <Input
-                  aria-label="Search sales"
+                  aria-label={t.sales.searchSales}
                   className="pl-9"
-                  placeholder="Receipt #, customer or phone…"
+                  placeholder={t.sales.receiptCustomerOrPhone}
                   value={q}
                   onChange={(e) => {
                     setQ(e.target.value);
@@ -192,24 +205,24 @@ export default function Sales() {
                 />
               </div>
               <SegmentedChips
-                ariaLabel="Sale status"
+                ariaLabel={t.sales.saleStatus}
                 value={status}
                 onChange={(v) => {
                   setStatus(v);
                   setPage(1);
                 }}
                 options={[
-                  { value: "", label: "All" },
-                  { value: "completed", label: "Completed" },
-                  { value: "pending_approval", label: "Pending" },
-                  { value: "voided", label: "Voided" },
+                  { value: "", label: t.common.all },
+                  { value: "completed", label: t.common.completed },
+                  { value: "pending_approval", label: t.common.pending },
+                  { value: "voided", label: t.sales.voided },
                 ]}
               />
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
               <NativeSelect
-                aria-label="Payment method"
+                aria-label={t.sales.paymentMethod}
                 className="w-36"
                 value={method}
                 onChange={(e) => {
@@ -217,14 +230,14 @@ export default function Sales() {
                   setPage(1);
                 }}
               >
-                <option value="">All methods</option>
-                <option value="cash">Cash</option>
-                <option value="mobile_money">Mobile money</option>
-                <option value="bank">Bank</option>
+                <option value="">{t.sales.allMethods}</option>
+                <option value="cash">{t.common.cash}</option>
+                <option value="mobile_money">{t.common.mobileMoney}</option>
+                <option value="bank">{t.common.bank}</option>
               </NativeSelect>
               <Input
                 type="date"
-                aria-label="From date"
+                aria-label={t.common.fromDate}
                 className="w-36"
                 value={from}
                 onChange={(e) => {
@@ -234,7 +247,7 @@ export default function Sales() {
               />
               <Input
                 type="date"
-                aria-label="To date"
+                aria-label={t.common.toDate}
                 className="w-36"
                 value={to}
                 onChange={(e) => {
@@ -249,16 +262,16 @@ export default function Sales() {
             rows={rows}
             loading={sales.isLoading}
             rowKey={(s) => s.id}
-            empty="No sales match these filters"
+            empty={t.sales.noSalesMatchTheseFilters}
             onRowClick={(s) => navigate(`/sales/${s.id}`)}
             columns={[
               {
-                header: "Receipt",
+                header: t.common.receipt2,
                 sortValue: (s) => s.number,
                 cell: (s) => <span className="od-mono font-medium">{s.number}</span>,
               },
               {
-                header: "Date",
+                header: t.common.date,
                 sortValue: (s) => s.business_date,
                 cell: (s) => (
                   <span className="text-[var(--od-ink-secondary)]">
@@ -267,31 +280,31 @@ export default function Sales() {
                 ),
               },
               {
-                header: "Customer",
-                sortValue: (s) => s.customer_name ?? "Walk-in",
-                cell: (s) => s.customer_name ?? "Walk-in",
+                header: t.common.customer,
+                sortValue: (s) => s.customer_name ?? t.sales.walkIn,
+                cell: (s) => s.customer_name ?? t.sales.walkIn,
               },
               {
-                header: "Cashier",
+                header: t.sales.cashier2,
                 cell: (s) => (
                   <span className="text-[var(--od-ink-secondary)]">{s.cashier_name ?? "—"}</span>
                 ),
               },
-              { header: "Status", cell: (s) => <StatusBadge value={s.status} /> },
+              { header: t.common.status, cell: (s) => <StatusBadge value={s.status} /> },
               {
-                header: "Total",
+                header: t.common.total,
                 align: "right",
                 sortValue: (s) => toNumber(s.total),
                 cell: (s) => <span className="font-medium">{formatMoney(s.total)}</span>,
               },
               {
-                header: "Paid",
+                header: t.common.paid,
                 align: "right",
                 sortValue: (s) => toNumber(s.paid_total),
                 cell: (s) => formatMoney(s.paid_total),
               },
               {
-                header: "Balance",
+                header: t.common.balance,
                 align: "right",
                 sortValue: (s) => toNumber(s.balance),
                 cell: (s) => (
@@ -314,28 +327,28 @@ export default function Sales() {
             rows={returns.data?.data}
             loading={returns.isLoading}
             rowKey={(r) => r.id}
-            empty="No returns recorded yet"
+            empty={t.sales.noReturnsRecordedYet}
             onRowClick={(r) => navigate(`/sales/${r.sale_id}`)}
             columns={[
               {
-                header: "Return #",
+                header: t.sales.return,
                 cell: (r) => <span className="od-mono font-medium">{r.number}</span>,
               },
               {
-                header: "Sale #",
+                header: t.sales.sale2,
                 cell: (r) => (
                   <span className="od-mono text-[var(--od-ink-secondary)]">{r.sale_number}</span>
                 ),
               },
-              { header: "Date", cell: (r) => formatDate(r.created_at) },
-              { header: "Reason", cell: (r) => r.reason || "—" },
+              { header: t.common.date, cell: (r) => formatDate(r.created_at) },
+              { header: t.common.reason, cell: (r) => r.reason || "—" },
               {
-                header: "Resolution",
-                cell: (r) => <span className="capitalize">{r.resolution}</span>,
+                header: t.sales.resolution,
+                cell: (r) => <span className="capitalize">{statusLabel(t, r.resolution)}</span>,
               },
-              { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
+              { header: t.common.status, cell: (r) => <StatusBadge value={r.status} /> },
               {
-                header: "Refund",
+                header: t.sales.refund,
                 align: "right",
                 cell: (r) => <span className="font-medium">{formatMoney(r.refund_total)}</span>,
               },
@@ -354,7 +367,7 @@ export default function Sales() {
                             disabled={decideReturn.isPending}
                             onClick={() => decideReturn.mutate({ id: r.id, action: "approve" })}
                           >
-                            Approve
+                            {t.common.approve}
                           </Button>
                           <Button
                             size="sm"
@@ -362,7 +375,7 @@ export default function Sales() {
                             disabled={decideReturn.isPending}
                             onClick={() => decideReturn.mutate({ id: r.id, action: "reject" })}
                           >
-                            Reject
+                            {t.common.reject}
                           </Button>
                         </>
                       )}
@@ -376,7 +389,7 @@ export default function Sales() {
                             setRefundRef("");
                           }}
                         >
-                          Complete
+                          {t.sales.complete}
                         </Button>
                       )}
                       {(r.status === "requested" || r.status === "approved") && canManageReturn && (
@@ -386,7 +399,7 @@ export default function Sales() {
                           disabled={decideReturn.isPending}
                           onClick={() => decideReturn.mutate({ id: r.id, action: "cancel" })}
                         >
-                          Cancel
+                          {t.common.cancel}
                         </Button>
                       )}
                     </div>
@@ -402,8 +415,8 @@ export default function Sales() {
       <FormDialog
         open={completing !== null}
         onOpenChange={(o) => !o && setCompleting(null)}
-        title={`Complete return ${completing?.number ?? ""}`}
-        submitLabel="Complete return"
+        title={fmt(t.sales.completeReturn, { number: completing?.number ?? "" })}
+        submitLabel={t.sales.completeReturn2}
         busy={completeReturn.isPending}
         onSubmit={() => {
           if (!completing) return;
@@ -425,21 +438,21 @@ export default function Sales() {
         toNumber(completing.refund_total) > 0 ? (
           <>
             <p className="rounded-[var(--od-radius-sm,8px)] bg-[var(--od-surface-subtle)] px-3 py-2 text-[13px] text-[var(--od-ink-secondary)]">
-              Refund amount:{" "}
+              {t.sales.refundAmount}{" "}
               <strong className="od-tabular text-[var(--od-ink)]">
                 {formatMoney(completing.refund_total)}
               </strong>
             </p>
-            <Field label="Refund method">
+            <Field label={t.sales.refundMethod}>
               <NativeSelect value={refundMethod} onChange={(e) => setRefundMethod(e.target.value)}>
-                <option value="cash">Cash</option>
-                <option value="mobile_money">Mobile money</option>
-                <option value="bank">Bank transfer</option>
+                <option value="cash">{t.common.cash}</option>
+                <option value="mobile_money">{t.common.mobileMoney}</option>
+                <option value="bank">{t.sales.bankTransfer}</option>
               </NativeSelect>
             </Field>
-            <Field label="Refund from account">
+            <Field label={t.sales.refundFromAccount}>
               <NativeSelect required value={account} onChange={(e) => setAccount(e.target.value)}>
-                <option value="">Choose…</option>
+                <option value="">{t.common.choose}</option>
                 {activeAccounts.map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name}
@@ -447,13 +460,13 @@ export default function Sales() {
                 ))}
               </NativeSelect>
             </Field>
-            <Field label="Reference (optional)">
+            <Field label={t.common.referenceOptional}>
               <Input value={refundRef} onChange={(e) => setRefundRef(e.target.value)} />
             </Field>
           </>
         ) : (
           <p className="text-[13px] text-[var(--od-ink-secondary)]">
-            Confirm completion of this exchange return. Eligible resellable items will be restocked.
+            {t.sales.confirmCompletionOfThisExchange}
           </p>
         )}
       </FormDialog>

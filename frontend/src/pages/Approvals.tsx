@@ -15,6 +15,9 @@ import { useAuth } from "@/features/auth/auth";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDateTime, formatMoney, toNumber } from "@/lib/formatters";
 import type { Approval } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import type { Translations } from "@/features/i18n/i18n";
+import { statusLabel } from "@/features/i18n/status";
 
 const APPROVAL_PERMISSION: Record<string, string> = {
   discount: "shop.discount.approve",
@@ -34,14 +37,15 @@ const APPROVAL_PERMISSION: Record<string, string> = {
 
 const ANY_APPROVAL_PERMS = Object.values(APPROVAL_PERMISSION);
 
-const STATUS_OPTIONS = [
-  { value: "pending", label: "Pending" },
-  { value: "approved", label: "Approved" },
-  { value: "rejected", label: "Rejected" },
-  { value: "", label: "All" },
+const statusOptions = (t: Translations) => [
+  { value: "pending", label: t.common.pending },
+  { value: "approved", label: t.common.approved },
+  { value: "rejected", label: t.common.rejected },
+  { value: "", label: t.common.all },
 ];
 
 export default function Approvals() {
+  const { t } = useI18n();
   const { can, canAny, user } = useAuth();
   const canDecideKind = (kind: string) => {
     const specific = APPROVAL_PERMISSION[kind];
@@ -61,7 +65,7 @@ export default function Approvals() {
       idempotent: true,
       toBody: (b) => ({ note: b.note }),
       invalidate: ["/approvals", "/expenses", "/sales", "/stock", "/money"],
-      success: "Decision recorded",
+      success: t.approvals.decisionRecorded,
       onSuccess: () => {
         setDeciding(null);
         setNote("");
@@ -71,16 +75,16 @@ export default function Approvals() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Approvals"
-        description="Requests that went over someone's authority limit."
+        title={t.common.approvals}
+        description={t.approvals.requestsThatWentOverSomeones}
       />
 
       <FilterBar>
         <SegmentedChips
-          ariaLabel="Filter by status"
+          ariaLabel={t.common.filterByStatus}
           value={status}
           onChange={setStatus}
-          options={STATUS_OPTIONS}
+          options={statusOptions(t)}
         />
       </FilterBar>
 
@@ -88,10 +92,10 @@ export default function Approvals() {
         rows={data}
         loading={isLoading}
         rowKey={(a) => a.id}
-        empty="Nothing waiting for approval"
+        empty={t.approvals.nothingWaitingForApproval}
         columns={[
           {
-            header: "Requested",
+            header: t.common.requested,
             cell: (a) => (
               <span className="od-tabular text-xs text-[var(--od-ink-secondary)]">
                 {formatDateTime(a.created_at)}
@@ -99,19 +103,19 @@ export default function Approvals() {
             ),
           },
           {
-            header: "Kind",
+            header: t.common.kind,
             cell: (a) => (
               <Badge variant="secondary" className="capitalize">
-                {a.kind.replaceAll("_", " ")}
+                {statusLabel(t, a.kind)}
               </Badge>
             ),
           },
           {
-            header: "Summary",
+            header: t.approvals.summary,
             cell: (a) => <span className="font-medium text-[var(--od-ink)]">{a.summary}</span>,
           },
           {
-            header: "Amount",
+            header: t.common.amount,
             align: "right",
             cell: (a) =>
               toNumber(a.amount) ? (
@@ -122,7 +126,7 @@ export default function Approvals() {
                 <span className="text-[var(--od-ink-muted)]">-</span>
               ),
           },
-          { header: "Status", cell: (a) => <StatusBadge value={a.status} /> },
+          { header: t.common.status, cell: (a) => <StatusBadge value={a.status} /> },
           {
             header: "",
             cell: (a) => {
@@ -132,7 +136,7 @@ export default function Approvals() {
               return a.status === "pending" && canDecideKind(a.kind) && !isOwn ? (
                 <div className="flex justify-end gap-1.5">
                   <Button size="sm" onClick={() => setDeciding({ approval: a, action: "approve" })}>
-                    Approve
+                    {t.common.approve}
                   </Button>
                   <Button
                     size="sm"
@@ -140,12 +144,14 @@ export default function Approvals() {
                     className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                     onClick={() => setDeciding({ approval: a, action: "reject" })}
                   >
-                    Reject
+                    {t.common.reject}
                   </Button>
                 </div>
               ) : a.status === "pending" && isOwn ? (
                 <div className="flex justify-end">
-                  <span className="text-xs text-[var(--od-ink-muted)]">Your request</span>
+                  <span className="text-xs text-[var(--od-ink-muted)]">
+                    {t.approvals.yourRequest}
+                  </span>
                 </div>
               ) : null;
             },
@@ -155,15 +161,17 @@ export default function Approvals() {
       <FormDialog
         open={deciding !== null}
         onOpenChange={(o) => !o && setDeciding(null)}
-        title={deciding?.action === "approve" ? "Approve request" : "Reject request"}
+        title={
+          deciding?.action === "approve" ? t.approvals.approveRequest : t.approvals.rejectRequest
+        }
         description={deciding?.approval.summary}
-        submitLabel={deciding?.action === "approve" ? "Approve" : "Reject"}
+        submitLabel={deciding?.action === "approve" ? t.common.approve : t.common.reject}
         busy={decide.isPending}
         onSubmit={() =>
           deciding && decide.mutate({ id: deciding.approval.id, action: deciding.action, note })
         }
       >
-        <Field label="Note (optional)">
+        <Field label={t.common.noteOptional}>
           <Input value={note} onChange={(e) => setNote(e.target.value)} />
         </Field>
       </FormDialog>

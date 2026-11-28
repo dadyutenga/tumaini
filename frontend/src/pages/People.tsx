@@ -23,6 +23,10 @@ import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { api } from "@/lib/api";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
 import type { Branch } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import type { Translations } from "@/features/i18n/i18n";
+import { statusLabel } from "@/features/i18n/status";
 
 interface Employee {
   id: string;
@@ -80,15 +84,16 @@ const time = (v: string | null) =>
   v ? new Date(v).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "-";
 
 function ClockCard() {
+  const { t } = useI18n();
   const me = useGet<{ id: string; name: string }>("/me/employee");
   const refresh = ["/attendance", "/me"];
   const clockIn = useWrite("POST", "/attendance/clock-in", {
     invalidate: refresh,
-    success: "Clocked in",
+    success: t.common.clockedIn,
   });
   const clockOut = useWrite("POST", "/attendance/clock-out", {
     invalidate: refresh,
-    success: "Clocked out",
+    success: t.common.clockedOut,
   });
   if (!me.data) return null;
   return (
@@ -98,14 +103,14 @@ function ClockCard() {
       </div>
       <div className="mr-auto min-w-0">
         <p className="font-semibold text-[var(--od-ink)]">{me.data.name}</p>
-        <p className="od-caption">Record your own attendance for today.</p>
+        <p className="od-caption">{t.hr.recordYourOwnAttendanceFor}</p>
       </div>
       <div className="flex items-center gap-2">
         <Button onClick={() => clockIn.mutate({})} disabled={clockIn.isPending}>
-          <LogIn size={15} /> Clock in
+          <LogIn size={15} /> {t.common.clockIn}
         </Button>
         <Button variant="outline" onClick={() => clockOut.mutate({})} disabled={clockOut.isPending}>
-          <LogOut size={15} /> Clock out
+          <LogOut size={15} /> {t.common.clockOut}
         </Button>
       </div>
     </div>
@@ -113,6 +118,7 @@ function ClockCard() {
 }
 
 function EmployeesTab() {
+  const { t } = useI18n();
   const { can, canAny } = useAuth();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -162,7 +168,7 @@ function EmployeesTab() {
 
   const create = useWrite<Record<string, unknown>, Employee>("POST", "/employees", {
     invalidate: ["/employees", "/users"],
-    success: "Employee added",
+    success: t.hr.employeeAdded,
     onSuccess: () => {
       setOpen(false);
       setDraft(blank);
@@ -174,11 +180,11 @@ function EmployeesTab() {
     () => `/employees/${accessTarget?.id}/user`,
     {
       invalidate: ["/employees", "/users"],
-      success: "System access granted",
+      success: t.hr.systemAccessGranted,
       onSuccess: () => {
         if (accessTarget) {
           const roleName =
-            roles.data?.find((r) => r.id === accessForm.role_id)?.name ?? "System user";
+            roles.data?.find((r) => r.id === accessForm.role_id)?.name ?? t.hr.systemUser;
           setGrantedBanner({
             name: accessTarget.name,
             role: roleName,
@@ -217,9 +223,9 @@ function EmployeesTab() {
         role_id: draft.role_id,
         branch_ids: draft.default_branch_id ? [draft.default_branch_id] : [],
       });
-      const roleName = roles.data?.find((r) => r.id === draft.role_id)?.name ?? "System user";
+      const roleName = roles.data?.find((r) => r.id === draft.role_id)?.name ?? t.hr.systemUser;
       setGrantedBanner({ name: draft.name, role: roleName, password: draft.password });
-      toast.success("Employee added and system access granted");
+      toast.success(t.hr.employeeAddedAndSystemAccess);
       setOpen(false);
       setDraft(blank);
     } catch (e) {
@@ -238,11 +244,12 @@ function EmployeesTab() {
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--od-info-mark)]/30 bg-[var(--od-surface-subtle)] p-4 text-sm">
           <div>
             <p className="font-semibold text-[var(--od-ink)]">
-              System access granted for {grantedBanner.name} ({grantedBanner.role})
+              {fmt(t.hr.systemAccessGrantedFor, {
+                name: grantedBanner.name,
+                role: grantedBanner.role,
+              })}
             </p>
-            <p className="od-caption mt-0.5">
-              Share this temporary password securely. They will change it on their first sign-in.
-            </p>
+            <p className="od-caption mt-0.5">{t.hr.shareThisTemporaryPasswordSecurely}</p>
           </div>
           <div className="flex items-center gap-2">
             <code className="od-mono rounded-lg border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-2.5 py-1 text-xs font-medium text-[var(--od-ink)]">
@@ -250,7 +257,7 @@ function EmployeesTab() {
             </code>
             <CopyButton text={grantedBanner.password} />
             <Button size="sm" variant="ghost" onClick={() => setGrantedBanner(null)}>
-              Dismiss
+              {t.common.dismiss}
             </Button>
           </div>
         </div>
@@ -263,9 +270,9 @@ function EmployeesTab() {
             className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[var(--od-ink-muted)]"
           />
           <Input
-            aria-label="Search employees"
+            aria-label={t.hr.searchEmployees}
             className="w-64 pl-8"
-            placeholder="Search name, number or phone…"
+            placeholder={t.hr.searchNameNumberOrPhone}
             value={q}
             onChange={(e) => {
               setQ(e.target.value);
@@ -275,7 +282,7 @@ function EmployeesTab() {
         </div>
         {can("hr.employee.manage") && (
           <Button onClick={() => setOpen(true)}>
-            <Plus size={16} /> New employee
+            <Plus size={16} /> {t.common.newEmployee}
           </Button>
         )}
       </FilterBar>
@@ -284,11 +291,11 @@ function EmployeesTab() {
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(e) => e.id}
-        empty="No employees yet. Create an employee first, then grant them Manager or Staff access."
+        empty={t.hr.noEmployeesYetCreateAn}
         onRowClick={(e) => navigate(`/employees/${e.id}`)}
         columns={[
           {
-            header: "No.",
+            header: t.hr.no,
             cell: (e) => (
               <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
                 {e.employee_no}
@@ -296,19 +303,19 @@ function EmployeesTab() {
             ),
           },
           {
-            header: "Name",
+            header: t.common.name2,
             cell: (e) => <span className="font-medium text-[var(--od-ink)]">{e.name}</span>,
           },
           {
-            header: "Position",
+            header: t.hr.position,
             cell: (e) => e.position || e.position_name || e.department_name || "-",
           },
-          { header: "Location", cell: (e) => e.branch_name ?? "-" },
-          { header: "Hired", cell: (e) => (e.hire_date ? formatDate(e.hire_date) : "-") },
+          { header: t.common.location, cell: (e) => e.branch_name ?? "-" },
+          { header: t.hr.hired, cell: (e) => (e.hire_date ? formatDate(e.hire_date) : "-") },
           ...(canSeeSalary
             ? [
                 {
-                  header: "Base pay",
+                  header: t.common.basePay,
                   align: "right" as const,
                   cell: (e: Employee) => (
                     <span className="od-tabular font-medium text-[var(--od-ink)]">
@@ -319,12 +326,12 @@ function EmployeesTab() {
               ]
             : []),
           {
-            header: "System access",
+            header: t.hr.systemAccess,
             cell: (e) =>
               e.user_id ? (
                 <Badge variant="secondary" className="gap-1">
                   <ShieldCheck size={12} className="text-[var(--od-good)]" />
-                  {e.role_name || "Active login"}
+                  {e.role_name || t.hr.activeLogin}
                 </Badge>
               ) : canGrantAccess && e.status !== "terminated" ? (
                 <Button
@@ -343,13 +350,13 @@ function EmployeesTab() {
                     });
                   }}
                 >
-                  <KeyRound size={12} /> Grant access
+                  <KeyRound size={12} /> {t.common.grantAccess}
                 </Button>
               ) : (
-                <span className="text-xs text-[var(--od-ink-muted)]">No login</span>
+                <span className="text-xs text-[var(--od-ink-muted)]">{t.hr.noLogin}</span>
               ),
           },
-          { header: "Status", cell: (e) => <StatusBadge value={e.status} /> },
+          { header: t.common.status, cell: (e) => <StatusBadge value={e.status} /> },
         ]}
       />
       <Pager meta={list.data?.meta} onPage={setPage} />
@@ -357,12 +364,12 @@ function EmployeesTab() {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title="New employee"
-        description="Every Manager or Staff member starts here as an employee. You can also grant system login right away."
+        title={t.common.newEmployee}
+        description={t.hr.everyManagerOrStaffMember}
         busy={create.isPending || creatingWithAccess}
         onSubmit={() => void submitNewEmployee()}
       >
-        <Field label="Full name">
+        <Field label={t.hr.fullName}>
           <Input
             required
             value={draft.name}
@@ -370,28 +377,28 @@ function EmployeesTab() {
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Phone">
+          <Field label={t.common.phone}>
             <Input
               required={draft.grant_access && !draft.email.trim()}
               value={draft.phone}
               onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
             />
           </Field>
-          <Field label="Email">
+          <Field label={t.common.email}>
             <Input
               type="email"
               value={draft.email}
               onChange={(e) => setDraft((d) => ({ ...d, email: e.target.value }))}
             />
           </Field>
-          <Field label="Position / job title">
+          <Field label={t.hr.positionJobTitle}>
             <Input
               value={draft.position}
               onChange={(e) => setDraft((d) => ({ ...d, position: e.target.value }))}
-              placeholder="e.g. Shop Manager, Cashier, Designer"
+              placeholder={t.hr.eGShopManagerCashier}
             />
           </Field>
-          <Field label="Hire date">
+          <Field label={t.hr.hireDate}>
             <Input
               type="date"
               value={draft.hire_date}
@@ -399,11 +406,11 @@ function EmployeesTab() {
             />
           </Field>
           {canSetSalary && (
-            <Field label="Monthly basic salary" className="col-span-2">
+            <Field label={t.hr.monthlyBasicSalary} className="col-span-2">
               <Input
                 inputMode="decimal"
                 className="od-tabular"
-                placeholder="Optional"
+                placeholder={t.common.optional}
                 value={draft.base_pay}
                 onChange={(e) => setDraft((d) => ({ ...d, base_pay: e.target.value }))}
               />
@@ -418,17 +425,17 @@ function EmployeesTab() {
                 checked={draft.grant_access}
                 onChange={(e) => setDraft((d) => ({ ...d, grant_access: e.target.checked }))}
               />
-              Grant system login now (Admin, Manager, or Staff)
+              {t.hr.grantSystemLoginNowAdmin}
             </label>
             {draft.grant_access && (
               <div className="grid grid-cols-2 gap-3 pt-1">
-                <Field label="Role *">
+                <Field label={t.common.role2}>
                   <NativeSelect
                     required
                     value={draft.role_id}
                     onChange={(e) => setDraft((d) => ({ ...d, role_id: e.target.value }))}
                   >
-                    <option value="">Choose role…</option>
+                    <option value="">{t.hr.chooseRole}</option>
                     {roles.data?.map((r) => (
                       <option key={r.id} value={r.id}>
                         {r.name}
@@ -436,12 +443,12 @@ function EmployeesTab() {
                     ))}
                   </NativeSelect>
                 </Field>
-                <Field label="Default location">
+                <Field label={t.common.defaultLocation}>
                   <NativeSelect
                     value={draft.default_branch_id}
                     onChange={(e) => setDraft((d) => ({ ...d, default_branch_id: e.target.value }))}
                   >
-                    <option value="">Main / default</option>
+                    <option value="">{t.common.mainDefault}</option>
                     {activeBranches.map((b) => (
                       <option key={b.id} value={b.id}>
                         {b.name}
@@ -449,14 +456,14 @@ function EmployeesTab() {
                     ))}
                   </NativeSelect>
                 </Field>
-                <Field label="Temporary password *" className="col-span-2">
+                <Field label={t.common.temporaryPassword} className="col-span-2">
                   <Input
                     required
                     minLength={8}
                     type="password"
                     value={draft.password}
                     onChange={(e) => setDraft((d) => ({ ...d, password: e.target.value }))}
-                    placeholder="At least 8 characters"
+                    placeholder={t.common.atLeast8Characters}
                   />
                 </Field>
               </div>
@@ -468,9 +475,9 @@ function EmployeesTab() {
       <FormDialog
         open={accessTarget !== null}
         onOpenChange={(o) => !o && setAccessTarget(null)}
-        title={`Grant system access — ${accessTarget?.name ?? ""}`}
-        description="Assign a Manager, Staff, or custom role so this employee can sign in."
-        submitLabel="Grant access"
+        title={fmt(t.hr.grantSystemAccess, { name: accessTarget?.name ?? "" })}
+        description={t.hr.assignAManagerStaffOr}
+        submitLabel={t.common.grantAccess}
         busy={grantLogin.isPending}
         onSubmit={() =>
           grantLogin.mutate({
@@ -484,14 +491,14 @@ function EmployeesTab() {
         }
       >
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Phone">
+          <Field label={t.common.phone}>
             <Input
               required={!accessForm.email.trim()}
               value={accessForm.phone}
               onChange={(e) => setAccessForm((f) => ({ ...f, phone: e.target.value }))}
             />
           </Field>
-          <Field label="Email (optional)">
+          <Field label={t.hr.emailOptional}>
             <Input
               type="email"
               value={accessForm.email}
@@ -500,13 +507,13 @@ function EmployeesTab() {
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Role *">
+          <Field label={t.common.role2}>
             <NativeSelect
               required
               value={accessForm.role_id}
               onChange={(e) => setAccessForm((f) => ({ ...f, role_id: e.target.value }))}
             >
-              <option value="">Choose role…</option>
+              <option value="">{t.hr.chooseRole}</option>
               {roles.data?.map((r) => (
                 <option key={r.id} value={r.id}>
                   {r.name}
@@ -514,12 +521,12 @@ function EmployeesTab() {
               ))}
             </NativeSelect>
           </Field>
-          <Field label="Default location">
+          <Field label={t.common.defaultLocation}>
             <NativeSelect
               value={accessForm.default_branch_id}
               onChange={(e) => setAccessForm((f) => ({ ...f, default_branch_id: e.target.value }))}
             >
-              <option value="">Main / default</option>
+              <option value="">{t.common.mainDefault}</option>
               {activeBranches.map((b) => (
                 <option key={b.id} value={b.id}>
                   {b.name}
@@ -528,14 +535,14 @@ function EmployeesTab() {
             </NativeSelect>
           </Field>
         </div>
-        <Field label="Temporary password *">
+        <Field label={t.common.temporaryPassword}>
           <Input
             required
             minLength={8}
             type="password"
             value={accessForm.password}
             onChange={(e) => setAccessForm((f) => ({ ...f, password: e.target.value }))}
-            placeholder="At least 8 characters"
+            placeholder={t.common.atLeast8Characters}
           />
         </Field>
       </FormDialog>
@@ -547,15 +554,16 @@ interface MeLeaveRes {
   requests?: LeaveRequest[];
 }
 
-const LEAVE_STATUS_OPTIONS = [
-  { value: "", label: "All" },
-  { value: "requested", label: "Requested" },
-  { value: "approved", label: "Approved" },
-  { value: "rejected", label: "Rejected" },
-  { value: "cancelled", label: "Cancelled" },
+const leaveStatusOptions = (t: Translations) => [
+  { value: "", label: t.common.all },
+  { value: "requested", label: t.common.requested },
+  { value: "approved", label: t.common.approved },
+  { value: "rejected", label: t.common.rejected },
+  { value: "cancelled", label: t.common.cancelled },
 ];
 
 function LeaveTab() {
+  const { t } = useI18n();
   const { can, canAny, user } = useAuth();
   const approver = can("hr.leave.approve");
   const canViewAll = canAny("hr.leave.approve", "hr.employee.view");
@@ -592,7 +600,7 @@ function LeaveTab() {
   const refresh = ["/leave-requests", "/me/leave", "/attendance"];
   const request = useWrite<Record<string, unknown>, unknown>("POST", "/leave-requests", {
     invalidate: refresh,
-    success: "Leave requested",
+    success: t.hr.leaveRequested,
     onSuccess: () => {
       setOpen(false);
       setDraft(blank);
@@ -601,47 +609,49 @@ function LeaveTab() {
   const decide = useWrite<{ id: string; action: string }, unknown>(
     "POST",
     (b) => `/leave-requests/${b.id}/${b.action}`,
-    { invalidate: refresh, success: "Leave updated", toBody: () => ({}) },
+    { invalidate: refresh, success: t.hr.leaveUpdated, toBody: () => ({}) },
   );
   return (
     <div className="space-y-4">
       <FilterBar className="justify-between">
         <SegmentedChips
-          ariaLabel="Filter by status"
+          ariaLabel={t.common.filterByStatus}
           value={status}
           onChange={(v) => {
             setStatus(v);
             setPage(1);
           }}
-          options={LEAVE_STATUS_OPTIONS}
+          options={leaveStatusOptions(t)}
         />
         <Button onClick={() => setOpen(true)}>
-          <Plus size={16} /> Request leave
+          <Plus size={16} /> {t.hr.requestLeave}
         </Button>
       </FilterBar>
       <DataGrid
         rows={rows}
         loading={loading}
         rowKey={(l) => l.id}
-        empty="No leave requests"
+        empty={t.hr.noLeaveRequests}
         columns={[
           {
-            header: "Employee",
+            header: t.common.employee,
             cell: (l) => (
-              <span className="font-medium text-[var(--od-ink)]">{l.employee_name ?? "Me"}</span>
+              <span className="font-medium text-[var(--od-ink)]">
+                {l.employee_name ?? t.common.me}
+              </span>
             ),
           },
-          { header: "Type", cell: (l) => l.leave_type },
+          { header: t.common.type, cell: (l) => l.leave_type },
           {
-            header: "Dates",
+            header: t.hr.dates,
             cell: (l) => `${formatDate(l.start_date)} – ${formatDate(l.end_date)}`,
           },
           {
-            header: "Days",
+            header: t.common.days,
             align: "right",
             cell: (l) => <span className="od-tabular">{l.days}</span>,
           },
-          { header: "Status", cell: (l) => <StatusBadge value={l.status} /> },
+          { header: t.common.status, cell: (l) => <StatusBadge value={l.status} /> },
           {
             header: "",
             cell: (l) => {
@@ -655,7 +665,7 @@ function LeaveTab() {
                           size="sm"
                           onClick={() => decide.mutate({ id: l.id, action: "approve" })}
                         >
-                          Approve
+                          {t.common.approve}
                         </Button>
                         <Button
                           size="sm"
@@ -663,7 +673,7 @@ function LeaveTab() {
                           className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                           onClick={() => decide.mutate({ id: l.id, action: "reject" })}
                         >
-                          Reject
+                          {t.common.reject}
                         </Button>
                       </>
                     )}
@@ -673,7 +683,7 @@ function LeaveTab() {
                         variant="outline"
                         onClick={() => decide.mutate({ id: l.id, action: "cancel" })}
                       >
-                        Cancel
+                        {t.common.cancel}
                       </Button>
                     )}
                   </div>
@@ -687,7 +697,7 @@ function LeaveTab() {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title="Request leave"
+        title={t.hr.requestLeave}
         busy={request.isPending}
         onSubmit={() => {
           const payload: Record<string, unknown> = {
@@ -701,12 +711,12 @@ function LeaveTab() {
         }}
       >
         {approver && employees.data && (
-          <Field label="Employee (leave empty for yourself)">
+          <Field label={t.hr.employeeLeaveEmptyForYourself}>
             <NativeSelect
               value={draft.employee_id}
               onChange={(e) => setDraft((d) => ({ ...d, employee_id: e.target.value }))}
             >
-              <option value="">Myself</option>
+              <option value="">{t.hr.myself}</option>
               {employees.data.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.name}
@@ -715,24 +725,24 @@ function LeaveTab() {
             </NativeSelect>
           </Field>
         )}
-        <Field label="Leave type">
+        <Field label={t.hr.leaveType}>
           <NativeSelect
             required
             value={draft.leave_type_id}
             onChange={(e) => setDraft((d) => ({ ...d, leave_type_id: e.target.value }))}
           >
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {types.data
-              ?.filter((t) => t.is_active)
-              .map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
+              ?.filter((item) => item.is_active)
+              .map((item) => (
+                <option key={item.id} value={item.id}>
+                  {item.name}
                 </option>
               ))}
           </NativeSelect>
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="From">
+          <Field label={t.common.from}>
             <Input
               required
               type="date"
@@ -740,7 +750,7 @@ function LeaveTab() {
               onChange={(e) => setDraft((d) => ({ ...d, start_date: e.target.value }))}
             />
           </Field>
-          <Field label="To">
+          <Field label={t.common.to}>
             <Input
               required
               type="date"
@@ -749,7 +759,7 @@ function LeaveTab() {
             />
           </Field>
         </div>
-        <Field label="Reason">
+        <Field label={t.common.reason}>
           <Input
             value={draft.reason}
             onChange={(e) => setDraft((d) => ({ ...d, reason: e.target.value }))}
@@ -761,6 +771,7 @@ function LeaveTab() {
 }
 
 function AttendanceTab() {
+  const { t } = useI18n();
   const board = useGet<Today>("/attendance/today");
   const counts = board.data?.counts ?? {};
   return (
@@ -772,9 +783,7 @@ function AttendanceTab() {
               key={k}
               className="inline-flex items-center gap-2 rounded-full border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-3.5 py-1.5 text-xs"
             >
-              <span className="capitalize text-[var(--od-ink-secondary)]">
-                {k.replace("_", " ")}
-              </span>
+              <span className="capitalize text-[var(--od-ink-secondary)]">{statusLabel(t, k)}</span>
               <span className="od-tabular font-semibold text-[var(--od-ink)]">{v}</span>
             </div>
           ))}
@@ -784,23 +793,23 @@ function AttendanceTab() {
         rows={board.data?.employees}
         loading={board.isLoading}
         rowKey={(r) => r.employee_id}
-        empty="No employees to show"
+        empty={t.hr.noEmployeesToShow}
         columns={[
           {
-            header: "Employee",
+            header: t.common.employee,
             cell: (r) => (
               <span className="font-medium text-[var(--od-ink)]">{r.employee_name}</span>
             ),
           },
           {
-            header: "In",
+            header: t.hr.in,
             cell: (r) => <span className="od-mono text-xs">{time(r.first_in)}</span>,
           },
           {
-            header: "Out",
+            header: t.common.out,
             cell: (r) => <span className="od-mono text-xs">{time(r.last_out)}</span>,
           },
-          { header: "State", cell: (r) => <StatusBadge value={r.state} /> },
+          { header: t.hr.state, cell: (r) => <StatusBadge value={r.state} /> },
         ]}
       />
     </div>
@@ -808,18 +817,19 @@ function AttendanceTab() {
 }
 
 export default function People() {
+  const { t } = useI18n();
   const { canAny } = useAuth();
   const canEmployees = canAny("hr.employee.view", "hr.employee.manage");
   const canAttendance = canAny("hr.attendance.manage", "hr.employee.view");
   return (
     <div className="space-y-6">
-      <PageHeader title="People" description="Employees, leave and daily attendance." />
+      <PageHeader title={t.common.people} description={t.hr.employeesLeaveAndDailyAttendance} />
       <ClockCard />
       <Tabs defaultValue={canEmployees ? "employees" : "leave"}>
         <TabsList className="mb-4">
-          {canEmployees && <TabsTrigger value="employees">Employees</TabsTrigger>}
-          <TabsTrigger value="leave">Leave</TabsTrigger>
-          {canAttendance && <TabsTrigger value="attendance">Today</TabsTrigger>}
+          {canEmployees && <TabsTrigger value="employees">{t.hr.employees}</TabsTrigger>}
+          <TabsTrigger value="leave">{t.hr.leave}</TabsTrigger>
+          {canAttendance && <TabsTrigger value="attendance">{t.common.today}</TabsTrigger>}
         </TabsList>
         {canEmployees && (
           <TabsContent value="employees">

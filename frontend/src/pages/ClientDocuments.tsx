@@ -25,6 +25,8 @@ import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { download, uploadFile } from "@/lib/api";
 import { formatDate } from "@/lib/formatters";
 import type { ClientDocument, ProjectRow } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 const TYPES = ["required", "id", "photo", "certificate", "contract", "other"];
 
@@ -37,6 +39,7 @@ function AddDialog({
   onOpenChange: (o: boolean) => void;
   clientId: string;
 }) {
+  const { t } = useI18n();
   const [d, setD] = useState({ client_id: clientId, project_id: "", name: "", doc_type: "other" });
   const [fileId, setFileId] = useState<string | null>(null);
   const [fileName, setFileName] = useState("");
@@ -49,7 +52,7 @@ function AddDialog({
   );
   const add = useWrite("POST", "/client-documents", {
     invalidate: ["/client-documents", "/clients", "/projects"],
-    success: "Document saved",
+    success: t.services.documentSaved,
     onSuccess: () => {
       onOpenChange(false);
       setFileId(null);
@@ -61,8 +64,8 @@ function AddDialog({
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Add a document"
-      description="Photograph or upload the client's papers. Documents with a file are marked received."
+      title={t.services.addADocument}
+      description={t.services.photographOrUploadTheClients}
       busy={add.isPending || uploading}
       onSubmit={() =>
         add.mutate({
@@ -74,19 +77,19 @@ function AddDialog({
         })
       }
     >
-      <Field label="Client *">
+      <Field label={t.common.client2}>
         <ClientSelect
           required
           value={d.client_id}
           onChange={(v) => setD({ ...d, client_id: v, project_id: "" })}
         />
       </Field>
-      <Field label="Project (optional)">
+      <Field label={t.common.projectOptional}>
         <NativeSelect
           value={d.project_id}
           onChange={(e) => setD({ ...d, project_id: e.target.value })}
         >
-          <option value="">Not tied to a project</option>
+          <option value="">{t.services.notTiedToAProject}</option>
           {projects.data?.map((p) => (
             <option key={p.id} value={p.id}>
               {p.number} · {p.name}
@@ -95,28 +98,28 @@ function AddDialog({
         </NativeSelect>
       </Field>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Document name *">
+        <Field label={t.services.documentName}>
           <Input
             required
-            placeholder="ID copy"
+            placeholder={t.services.idCopy}
             value={d.name}
             onChange={(e) => setD({ ...d, name: e.target.value })}
           />
         </Field>
-        <Field label="Type">
+        <Field label={t.common.type}>
           <NativeSelect
             value={d.doc_type}
             onChange={(e) => setD({ ...d, doc_type: e.target.value })}
           >
-            {TYPES.map((t) => (
-              <option key={t} value={t}>
-                {label(t)}
+            {TYPES.map((item) => (
+              <option key={item} value={item}>
+                {label(item)}
               </option>
             ))}
           </NativeSelect>
         </Field>
       </div>
-      <Field label="File">
+      <Field label={t.common.file}>
         <input
           ref={input}
           type="file"
@@ -145,7 +148,7 @@ function AddDialog({
             disabled={uploading}
             onClick={() => input.current?.click()}
           >
-            <Upload size={14} /> {uploading ? "Uploading…" : "Choose file"}
+            <Upload size={14} /> {uploading ? t.common.uploading : t.common.chooseFile}
           </Button>
           <span className="od-caption">{fileName}</span>
         </div>
@@ -155,6 +158,7 @@ function AddDialog({
 }
 
 export default function ClientDocuments() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const [params] = useSearchParams();
   const clientFilter = params.get("client") ?? "";
@@ -177,43 +181,45 @@ export default function ClientDocuments() {
     can("services.project.manage");
   const mark = useWrite<{ id: string; status: string }>("PUT", (b) => `/client-documents/${b.id}`, {
     invalidate: ["/client-documents", "/projects", "/clients"],
-    success: "Document updated",
+    success: t.services.documentUpdated,
     toBody: (b) => ({ status: b.status }),
   });
 
   const folders = useMemo(() => {
     const byClient = new Map<string, { name: string; projects: Map<string, ClientDocument[]> }>();
     for (const d of docs.data ?? []) {
-      const cname = d.client_name ?? "Client";
+      const cname = d.client_name ?? t.common.client;
       const ckey = d.client_id ?? cname;
       if (!byClient.has(ckey)) byClient.set(ckey, { name: cname, projects: new Map() });
-      const pkey = d.project_number ? `Project ${d.project_number}` : "General documents";
+      const pkey = d.project_number
+        ? fmt(t.services.project, { project_number: d.project_number })
+        : t.services.generalDocuments;
       const grp = byClient.get(ckey)!.projects;
       if (!grp.has(pkey)) grp.set(pkey, []);
       grp.get(pkey)!.push(d);
     }
     return [...byClient.entries()];
-  }, [docs.data]);
+  }, [docs.data, t]);
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Client documents"
-        description="Client paperwork and final design deliverables organized by client and project."
+        title={t.common.clientDocuments}
+        description={t.services.clientPaperworkAndFinalDesign}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <SegmentedChips
-              ariaLabel="View mode"
+              ariaLabel={t.common.viewMode}
               value={view}
               onChange={setView}
               options={[
-                { value: "folders", label: "Folders" },
-                { value: "table", label: "Table" },
+                { value: "folders", label: t.services.folders },
+                { value: "table", label: t.common.table },
               ]}
             />
             {manage && (
               <Button size="sm" onClick={() => setAdding(true)}>
-                <Plus size={14} /> Add document
+                <Plus size={14} /> {t.services.addDocument}
               </Button>
             )}
           </div>
@@ -228,9 +234,9 @@ export default function ClientDocuments() {
               className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
             />
             <Input
-              aria-label="Search documents"
+              aria-label={t.services.searchDocuments}
               className="pl-9"
-              placeholder="Search name or client…"
+              placeholder={t.services.searchNameOrClient}
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
@@ -240,18 +246,18 @@ export default function ClientDocuments() {
           </div>
           {client && (
             <Button size="sm" variant="ghost" onClick={() => setClient("")}>
-              Clear client
+              {t.services.clearClient}
             </Button>
           )}
         </div>
         <SegmentedChips
-          ariaLabel="Document status"
+          ariaLabel={t.services.documentStatus}
           value={status}
           onChange={setStatus}
           options={[
-            { value: "", label: "All" },
-            { value: "received", label: "Received" },
-            { value: "missing", label: "Missing" },
+            { value: "", label: t.common.all },
+            { value: "received", label: t.common.received },
+            { value: "missing", label: t.services.missing },
           ]}
         />
       </FilterBar>
@@ -260,7 +266,7 @@ export default function ClientDocuments() {
         <div className="space-y-4">
           {folders.length === 0 && !docs.isLoading && (
             <SectionCard>
-              <EmptyState title="No documents match" />
+              <EmptyState title={t.services.noDocumentsMatch} />
             </SectionCard>
           )}
           {folders.map(([ckey, group]) => (
@@ -288,7 +294,9 @@ export default function ClientDocuments() {
                             <p className="font-medium text-[var(--od-ink)]">{d.name}</p>
                             <p className="od-caption">
                               {label(d.doc_type)}
-                              {d.received_at ? ` · Received ${formatDate(d.received_at)}` : ""}
+                              {d.received_at
+                                ? ` ${fmt(t.services.received, { received_at: formatDate(d.received_at) })}`
+                                : ""}
                             </p>
                           </div>
                           <div className="flex flex-wrap items-center gap-1.5">
@@ -302,7 +310,7 @@ export default function ClientDocuments() {
                                     setPreview({ id: d.file_id!, name: d.file_name ?? d.name })
                                   }
                                 >
-                                  <Eye size={13} /> Preview
+                                  <Eye size={13} /> {t.common.preview}
                                 </Button>
                                 <Button
                                   size="sm"
@@ -315,7 +323,7 @@ export default function ClientDocuments() {
                                     ).catch((e) => toast.error(errorMessage(e)))
                                   }
                                 >
-                                  <Download size={13} /> Download
+                                  <Download size={13} /> {t.common.download}
                                 </Button>
                               </>
                             )}
@@ -330,7 +338,9 @@ export default function ClientDocuments() {
                                   })
                                 }
                               >
-                                {d.status === "received" ? "Mark missing" : "Mark received"}
+                                {d.status === "received"
+                                  ? t.services.markMissing
+                                  : t.services.markReceived}
                               </Button>
                             )}
                           </div>
@@ -348,21 +358,27 @@ export default function ClientDocuments() {
           rows={docs.data}
           loading={docs.isLoading}
           rowKey={(d) => d.id}
-          empty="No documents match"
+          empty={t.services.noDocumentsMatch}
           columns={[
-            { header: "Document", cell: (d) => <span className="font-medium">{d.name}</span> },
-            { header: "Client", cell: (d) => d.client_name },
             {
-              header: "Project",
+              header: t.common.document,
+              cell: (d) => <span className="font-medium">{d.name}</span>,
+            },
+            { header: t.common.client, cell: (d) => d.client_name },
+            {
+              header: t.common.project,
               cell: (d) => (
                 <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
                   {d.project_number ?? "—"}
                 </span>
               ),
             },
-            { header: "Type", cell: (d) => label(d.doc_type) },
-            { header: "Status", cell: (d) => <StatusBadge value={d.status} /> },
-            { header: "Received", cell: (d) => (d.received_at ? formatDate(d.received_at) : "—") },
+            { header: t.common.type, cell: (d) => label(d.doc_type) },
+            { header: t.common.status, cell: (d) => <StatusBadge value={d.status} /> },
+            {
+              header: t.common.received,
+              cell: (d) => (d.received_at ? formatDate(d.received_at) : "—"),
+            },
             {
               header: "",
               className: "text-right",
@@ -375,7 +391,7 @@ export default function ClientDocuments() {
                         variant="outline"
                         onClick={() => setPreview({ id: d.file_id!, name: d.file_name ?? d.name })}
                       >
-                        <Eye size={13} /> Preview
+                        <Eye size={13} /> {t.common.preview}
                       </Button>
                       <Button
                         size="sm"
@@ -386,7 +402,7 @@ export default function ClientDocuments() {
                           )
                         }
                       >
-                        <Download size={13} /> Download
+                        <Download size={13} /> {t.common.download}
                       </Button>
                     </>
                   )}
@@ -401,7 +417,7 @@ export default function ClientDocuments() {
                         })
                       }
                     >
-                      {d.status === "received" ? "Mark missing" : "Mark received"}
+                      {d.status === "received" ? t.services.markMissing : t.services.markReceived}
                     </Button>
                   )}
                 </div>

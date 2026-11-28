@@ -42,7 +42,7 @@ function Navigation({
   onNavigate?: () => void;
 }) {
   const visible = useVisibleRoutes().filter((route) => route.navigation);
-  const { groupLabel, routeLabel } = useI18n();
+  const { t, groupLabel, routeLabel } = useI18n();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const sections = useMemo(() => {
@@ -61,7 +61,7 @@ function Navigation({
   }, [visible]);
 
   return (
-    <nav aria-label="Main navigation" className="space-y-0.5 pb-6">
+    <nav aria-label={t.common.mainNavigation} className="space-y-0.5 pb-6">
       {sections.map((sec, idx) => {
         const isCollapsed = sec.name ? Boolean(collapsed[sec.name]) : false;
         return (
@@ -132,7 +132,7 @@ export default function DashboardLayout() {
   const currentRoute = routes.find((r) =>
     matchPath({ path: r.path, end: true }, location.pathname),
   );
-  const title = currentRoute ? routeLabel(currentRoute.path, currentRoute.label) : "Page";
+  const title = currentRoute ? routeLabel(currentRoute.path, currentRoute.label) : t.common.page;
 
   return (
     <div className="min-h-screen bg-[var(--od-page)] text-[var(--od-ink)]">
@@ -177,7 +177,7 @@ export default function DashboardLayout() {
                 variant="ghost"
                 size="icon"
                 className="md:hidden"
-                aria-label="Open navigation"
+                aria-label={t.common.openNavigation}
               >
                 <Menu size={18} />
               </Button>
@@ -192,7 +192,9 @@ export default function DashboardLayout() {
                 </span>
                 <span className="truncate">{brand}</span>
               </SheetTitle>
-              <SheetDescription className="sr-only">Choose a page to navigate to.</SheetDescription>
+              <SheetDescription className="sr-only">
+                {t.common.chooseAPageToNavigate}
+              </SheetDescription>
               <Navigation onNavigate={() => setOpen(false)} />
             </SheetContent>
           </Sheet>
@@ -202,7 +204,7 @@ export default function DashboardLayout() {
             variant="ghost"
             size="icon"
             className="hidden md:inline-flex"
-            aria-label="Toggle sidebar"
+            aria-label={t.common.toggleSidebar}
             aria-expanded={!compact}
             onClick={() => setCompact(!compact)}
           >
@@ -252,7 +254,7 @@ export default function DashboardLayout() {
         <footer className="border-t border-[var(--od-border)] px-4 py-4 text-[12px] text-[var(--od-ink-muted)] sm:px-6 lg:px-8">
           <div className="mx-auto flex max-w-[1360px] items-center justify-between">
             <span className="od-wordmark font-medium text-[var(--od-ink-secondary)]">{brand}</span>
-            <span>Business Management System</span>
+            <span>{t.common.businessManagementSystem}</span>
           </div>
         </footer>
       </div>

@@ -21,12 +21,15 @@ import { useGet } from "@/hooks/useApi";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import type { ProjectRow } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 function Board() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const board = useGet<{ stage: string; projects: ProjectRow[] }[]>("/projects/board");
   if (board.isLoading) return <PageLoader />;
-  if (!board.data?.length) return <EmptyState title="No open projects" />;
+  if (!board.data?.length) return <EmptyState title={t.services.noOpenProjects} />;
   return (
     <div className="scrollbar-thin flex gap-4 overflow-x-auto pb-2">
       {board.data.map((col) => (
@@ -65,7 +68,9 @@ function Board() {
                           late ? "font-semibold text-[var(--od-bad)]" : "text-[var(--od-ink-muted)]"
                         }
                       >
-                        {late ? `${-left!}d late` : `Due ${formatDate(p.stage_deadline)}`}
+                        {late
+                          ? fmt(t.common.dLate, { value: -left! })
+                          : fmt(t.services.due, { stage_deadline: formatDate(p.stage_deadline) })}
                       </span>
                     )}
                   </div>
@@ -80,6 +85,7 @@ function Board() {
 }
 
 export default function Projects() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
@@ -97,12 +103,12 @@ export default function Projects() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Projects"
-        description="Track client jobs, stage milestones, billing and profitability."
+        title={t.common.projects}
+        description={t.services.trackClientJobsStageMilestones}
         actions={
           can("services.project.manage") && (
             <Button size="sm" onClick={() => setCreating(true)}>
-              <Plus size={14} /> New project
+              <Plus size={14} /> {t.common.newProject}
             </Button>
           )
         }
@@ -110,8 +116,8 @@ export default function Projects() {
 
       <Tabs defaultValue="table">
         <TabsList>
-          <TabsTrigger value="table">Table</TabsTrigger>
-          <TabsTrigger value="board">Board</TabsTrigger>
+          <TabsTrigger value="table">{t.common.table}</TabsTrigger>
+          <TabsTrigger value="board">{t.common.board}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="table" className="space-y-4">
@@ -123,9 +129,9 @@ export default function Projects() {
                   className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
                 />
                 <Input
-                  aria-label="Search projects"
+                  aria-label={t.services.searchProjects}
                   className="pl-9"
-                  placeholder="Search project or client…"
+                  placeholder={t.services.searchProjectOrClient}
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                 />
@@ -140,19 +146,19 @@ export default function Projects() {
                     : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
                 )}
               >
-                <AlertCircle size={14} /> Late only
+                <AlertCircle size={14} /> {t.common.lateOnly}
               </button>
             </div>
             <SegmentedChips
-              ariaLabel="Project status"
+              ariaLabel={t.services.projectStatus}
               value={status}
               onChange={setStatus}
               options={[
-                { value: "", label: "All" },
-                { value: "in_progress", label: "In progress" },
-                { value: "on_hold", label: "On hold" },
-                { value: "completed", label: "Completed" },
-                { value: "cancelled", label: "Cancelled" },
+                { value: "", label: t.common.all },
+                { value: "in_progress", label: t.services.inProgress },
+                { value: "on_hold", label: t.services.onHold },
+                { value: "completed", label: t.common.completed },
+                { value: "cancelled", label: t.common.cancelled },
               ]}
             />
           </FilterBar>
@@ -161,16 +167,16 @@ export default function Projects() {
             rows={projects.data}
             loading={projects.isLoading}
             rowKey={(p) => p.id}
-            empty="No projects match"
+            empty={t.services.noProjectsMatch}
             onRowClick={(p) => navigate(`/projects/${p.id}`)}
             columns={[
               {
-                header: "Number",
+                header: t.common.number,
                 sortValue: (p) => p.number,
                 cell: (p) => <span className="od-mono font-medium">{p.number}</span>,
               },
               {
-                header: "Project",
+                header: t.common.project,
                 sortValue: (p) => p.name,
                 cell: (p) => (
                   <div>
@@ -180,7 +186,7 @@ export default function Projects() {
                 ),
               },
               {
-                header: "Progress",
+                header: t.common.progress,
                 className: "min-w-36",
                 cell: (p) => (
                   <div>
@@ -189,26 +195,30 @@ export default function Projects() {
                       value={p.stages_total ? (p.stages_done / p.stages_total) * 100 : 0}
                     />
                     <p className="od-caption od-tabular mt-1">
-                      {p.stages_done} of {p.stages_total} · {p.current_stage ?? "done"}
+                      {fmt(t.services.of, {
+                        stages_done: p.stages_done,
+                        stages_total: p.stages_total,
+                        current_stage: p.current_stage ?? t.services.done2,
+                      })}
                     </p>
                   </div>
                 ),
               },
-              { header: "Status", cell: (p) => <StatusBadge value={p.status} /> },
+              { header: t.common.status, cell: (p) => <StatusBadge value={p.status} /> },
               {
-                header: "Price",
+                header: t.common.price,
                 align: "right",
                 sortValue: (p) => toNumber(p.total_price),
                 cell: (p) => formatMoney(p.total_price),
               },
               {
-                header: "Paid",
+                header: t.common.paid,
                 align: "right",
                 sortValue: (p) => toNumber(p.paid),
                 cell: (p) => formatMoney(p.paid),
               },
               {
-                header: "Balance",
+                header: t.common.balance,
                 align: "right",
                 sortValue: (p) => toNumber(p.balance),
                 cell: (p) => (
@@ -220,7 +230,7 @@ export default function Projects() {
                 ),
               },
               {
-                header: "Profit",
+                header: t.common.profit,
                 align: "right",
                 sortValue: (p) => toNumber(p.profit),
                 cell: (p) => (

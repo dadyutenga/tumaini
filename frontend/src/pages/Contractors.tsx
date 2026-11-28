@@ -25,10 +25,13 @@ import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { download } from "@/lib/api";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { Contractor, ContractorStatement } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 const blank = { name: "", trade: "", phone: "", email: "", address: "", notes: "" };
 
 function Statement({ id, onClose }: { id: string; onClose: () => void }) {
+  const { t } = useI18n();
   const { can } = useAuth();
   const statement = useGet<ContractorStatement>(`/contractors/${id}/statement`);
   const [paying, setPaying] = useState(false);
@@ -37,10 +40,12 @@ function Statement({ id, onClose }: { id: string; onClose: () => void }) {
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{s ? `${s.contractor.name} · statement` : "Statement"}</DialogTitle>
+          <DialogTitle>
+            {s ? fmt(t.services.statement, { name: s.contractor.name }) : t.common.statement}
+          </DialogTitle>
           <DialogDescription>
             {s
-              ? `${s.contractor.trade ?? "Contractor"}${s.contractor.phone ? ` · ${s.contractor.phone}` : ""}`
+              ? `${s.contractor.trade ?? t.common.contractor}${s.contractor.phone ? ` · ${s.contractor.phone}` : ""}`
               : ""}
           </DialogDescription>
         </DialogHeader>
@@ -51,21 +56,21 @@ function Statement({ id, onClose }: { id: string; onClose: () => void }) {
             <DataGrid
               rows={s.lines}
               rowKey={(l) => `${l.number}-${l.date}-${l.owed_amount}-${l.paid_amount}`}
-              empty="No work or payments yet"
+              empty={t.services.noWorkOrPaymentsYet}
               columns={[
-                { header: "Date", cell: (l) => formatDate(l.date) },
+                { header: t.common.date, cell: (l) => formatDate(l.date) },
                 {
-                  header: "Reference",
+                  header: t.common.reference,
                   cell: (l) => <span className="od-mono font-medium">{l.number}</span>,
                 },
-                { header: "Description", cell: (l) => l.description },
+                { header: t.common.description, cell: (l) => l.description },
                 {
-                  header: "Work",
+                  header: t.services.work,
                   align: "right",
                   cell: (l) => (toNumber(l.owed_amount) ? formatMoney(l.owed_amount) : "—"),
                 },
                 {
-                  header: "Paid",
+                  header: t.common.paid,
                   align: "right",
                   cell: (l) =>
                     toNumber(l.paid_amount) ? (
@@ -75,7 +80,7 @@ function Statement({ id, onClose }: { id: string; onClose: () => void }) {
                     ),
                 },
                 {
-                  header: "Balance",
+                  header: t.common.balance,
                   align: "right",
                   cell: (l) => <span className="font-medium">{formatMoney(l.balance)}</span>,
                 },
@@ -83,7 +88,7 @@ function Statement({ id, onClose }: { id: string; onClose: () => void }) {
             />
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-[var(--od-radius-md,12px)] bg-[var(--od-surface-subtle)] px-4 py-3">
               <p className="text-[13px] text-[var(--od-ink-secondary)]">
-                We owe{" "}
+                {t.common.weOwe}{" "}
                 <strong className="od-tabular text-[var(--od-ink)]">{formatMoney(s.owed)}</strong>
               </p>
               <div className="flex gap-2">
@@ -98,11 +103,11 @@ function Statement({ id, onClose }: { id: string; onClose: () => void }) {
                     ).catch((e) => toast.error(errorMessage(e)))
                   }
                 >
-                  <Download size={13} /> Statement PDF
+                  <Download size={13} /> {t.common.statementPdf}
                 </Button>
                 {can("services.contractor.manage") && toNumber(s.owed) > 0 && (
                   <Button size="sm" onClick={() => setPaying(true)}>
-                    Pay contractor
+                    {t.services.payContractor}
                   </Button>
                 )}
               </div>
@@ -112,12 +117,12 @@ function Statement({ id, onClose }: { id: string; onClose: () => void }) {
         <PaymentDialog
           open={paying}
           onOpenChange={setPaying}
-          title="Pay contractor"
-          hint="Pays the oldest work first. You cannot pay more than is owed."
+          title={t.services.payContractor}
+          hint={t.services.paysTheOldestWorkFirst}
           path={`/contractors/${id}/payments`}
           defaultAmount={s?.owed}
           invalidate={["/contractors", "/service-costs", "/services", "/money"]}
-          success="Contractor paid"
+          success={t.services.contractorPaid}
         />
       </DialogContent>
     </Dialog>
@@ -125,6 +130,7 @@ function Statement({ id, onClose }: { id: string; onClose: () => void }) {
 }
 
 export default function Contractors() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const manage = can("services.contractor.manage");
   const [q, setQ] = useState("");
@@ -135,7 +141,7 @@ export default function Contractors() {
   const [viewing, setViewing] = useState<string | null>(null);
   const add = useWrite("POST", "/contractors", {
     invalidate: ["/contractors"],
-    success: "Contractor added",
+    success: t.services.contractorAdded,
     onSuccess: () => {
       setOpen(false);
       setDraft(blank);
@@ -143,7 +149,7 @@ export default function Contractors() {
   });
   const save = useWrite("PUT", () => `/contractors/${editing?.id}`, {
     invalidate: ["/contractors"],
-    success: "Contractor updated",
+    success: t.services.contractorUpdated,
     onSuccess: () => {
       setEditing(null);
       setDraft(blank);
@@ -152,7 +158,11 @@ export default function Contractors() {
   const toggle = useWrite<{ id: string; active: boolean }>(
     "POST",
     (b) => `/contractors/${b.id}/${b.active ? "activate" : "deactivate"}`,
-    { invalidate: ["/contractors"], success: "Contractor updated", toBody: () => undefined },
+    {
+      invalidate: ["/contractors"],
+      success: t.services.contractorUpdated,
+      toBody: () => undefined,
+    },
   );
   const rows = list.data ?? [];
   const owed = rows.reduce((s, c) => s + toNumber(c.owed), 0);
@@ -163,21 +173,25 @@ export default function Contractors() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Contractors"
-        description="External printers, tradespeople and contractor payables."
+        title={t.common.contractors}
+        description={t.services.externalPrintersTradespeopleAndContractor}
         actions={
           manage && (
             <Button size="sm" onClick={() => setOpen(true)}>
-              <Plus size={14} /> New contractor
+              <Plus size={14} /> {t.services.newContractor}
             </Button>
           )
         }
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Total contractors" value={rows.length} />
-        <StatCard label="Active" value={activeCount} />
-        <StatCard label="Total we owe" value={formatMoney(owed)} tone={owed > 0 ? "bad" : "good"} />
+        <StatCard label={t.services.totalContractors} value={rows.length} />
+        <StatCard label={t.services.active} value={activeCount} />
+        <StatCard
+          label={t.services.totalWeOwe}
+          value={formatMoney(owed)}
+          tone={owed > 0 ? "bad" : "good"}
+        />
       </div>
 
       <FilterBar>
@@ -187,9 +201,9 @@ export default function Contractors() {
             className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
           />
           <Input
-            aria-label="Search contractors"
+            aria-label={t.services.searchContractors}
             className="pl-9"
-            placeholder="Search name or trade…"
+            placeholder={t.services.searchNameOrTrade}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
@@ -200,20 +214,20 @@ export default function Contractors() {
         rows={rows}
         loading={list.isLoading}
         rowKey={(c) => c.id}
-        empty="No contractors yet. Add the printers and tradespeople you use."
+        empty={t.services.noContractorsYetAddThe}
         onRowClick={(c) => setViewing(c.id)}
         columns={[
           {
-            header: "Name",
+            header: t.common.name2,
             sortValue: (c) => c.name,
             cell: (c) => <span className="font-medium">{c.name}</span>,
           },
           {
-            header: "Trade",
+            header: t.services.trade,
             cell: (c) => <span className="text-[var(--od-ink-secondary)]">{c.trade ?? "—"}</span>,
           },
           {
-            header: "Phone",
+            header: t.common.phone,
             cell: (c) => (
               <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
                 {c.phone ?? "—"}
@@ -221,11 +235,11 @@ export default function Contractors() {
             ),
           },
           {
-            header: "Status",
+            header: t.common.status,
             cell: (c) => <StatusBadge value={c.is_active ? "active" : "inactive"} />,
           },
           {
-            header: "We owe",
+            header: t.common.weOwe,
             align: "right",
             sortValue: (c) => toNumber(c.owed),
             cell: (c) => (
@@ -255,14 +269,14 @@ export default function Contractors() {
                       setEditing(c);
                     }}
                   >
-                    Edit
+                    {t.common.edit}
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
                     onClick={() => toggle.mutate({ id: c.id, active: !c.is_active })}
                   >
-                    {c.is_active ? "Deactivate" : "Activate"}
+                    {c.is_active ? t.common.deactivate : t.common.activate}
                   </Button>
                 </div>
               ) : null,
@@ -279,28 +293,28 @@ export default function Contractors() {
             setDraft(blank);
           }
         }}
-        title={editing ? "Edit contractor" : "New contractor"}
+        title={editing ? t.services.editContractor : t.services.newContractor}
         busy={add.isPending || save.isPending}
         onSubmit={() => (editing ? save.mutate(draft) : add.mutate(draft))}
       >
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Name *">
+          <Field label={t.common.name}>
             <Input required value={draft.name} onChange={set("name")} />
           </Field>
-          <Field label="Trade">
+          <Field label={t.services.trade}>
             <Input
-              placeholder="Printing, painting, carpentry…"
+              placeholder={t.services.printingPaintingCarpentry}
               value={draft.trade}
               onChange={set("trade")}
             />
           </Field>
-          <Field label="Phone">
+          <Field label={t.common.phone}>
             <Input inputMode="tel" value={draft.phone} onChange={set("phone")} />
           </Field>
-          <Field label="Email">
+          <Field label={t.common.email}>
             <Input type="email" value={draft.email} onChange={set("email")} />
           </Field>
-          <Field label="Address" className="sm:col-span-2">
+          <Field label={t.common.address} className="sm:col-span-2">
             <Input value={draft.address} onChange={set("address")} />
           </Field>
         </div>

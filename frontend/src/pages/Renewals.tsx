@@ -20,10 +20,13 @@ import { useGet, useWrite } from "@/hooks/useApi";
 import { ApiError } from "@/lib/api";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { Renewal } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 const blank = { client_id: "", item: "", due_date: "", amount: "", notes: "" };
 
 export default function Renewals() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const manage = can("services.renewal.manage");
   const [status, setStatus] = useState("pending");
@@ -39,7 +42,7 @@ export default function Renewals() {
   const refresh = ["/renewals", "/services"];
   const add = useWrite("POST", "/renewals", {
     invalidate: refresh,
-    success: "Renewal added. Reminders go out at 30 and 7 days.",
+    success: t.services.renewalAddedRemindersGoOut,
     onSuccess: () => {
       setAdding(false);
       setDraft(blank);
@@ -50,7 +53,7 @@ export default function Renewals() {
     (b) => `/renewals/${b.id}/renew`,
     {
       invalidate: refresh,
-      success: "Marked as renewed",
+      success: t.services.markedAsRenewed,
       toBody: (b) => ({ next_due_date: b.next_due_date }),
       onSuccess: () => {
         setRenewing(null);
@@ -60,7 +63,7 @@ export default function Renewals() {
   );
   const cancel = useWrite<{ id: string }>("POST", (b) => `/renewals/${b.id}/cancel`, {
     invalidate: refresh,
-    success: "Renewal cancelled",
+    success: t.services.renewalCancelled,
     toBody: () => undefined,
   });
   const remind = useWrite<{ id: string }, { queued?: boolean; delivered?: boolean }>(
@@ -71,8 +74,8 @@ export default function Renewals() {
       toBody: () => ({ channel: "sms" }),
       onSuccess: (r) =>
         r?.queued || r?.delivered
-          ? toast.success("Renewal reminder queued")
-          : toast.warning("Reminder could not be queued."),
+          ? toast.success(t.services.renewalReminderQueued)
+          : toast.warning(t.services.reminderCouldNotBeQueued),
       onError: (err, vars) => {
         if (err instanceof ApiError && err.status === 503) {
           setWaFallback((m) => ({ ...m, [vars.id]: true }));
@@ -84,12 +87,12 @@ export default function Renewals() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Renewals"
-        description="Licences and annual fees coming due. Clients are reminded 30 and 7 days before."
+        title={t.common.renewals}
+        description={t.services.licencesAndAnnualFeesComing}
         actions={
           manage && (
             <Button size="sm" onClick={() => setAdding(true)}>
-              <Plus size={14} /> New renewal
+              <Plus size={14} /> {t.services.newRenewal}
             </Button>
           )
         }
@@ -97,25 +100,25 @@ export default function Renewals() {
 
       <FilterBar className="justify-between">
         <SegmentedChips
-          ariaLabel="Renewal status"
+          ariaLabel={t.services.renewalStatus}
           value={status}
           onChange={setStatus}
           options={[
-            { value: "pending", label: "Pending" },
-            { value: "renewed", label: "Renewed" },
-            { value: "cancelled", label: "Cancelled" },
-            { value: "", label: "All" },
+            { value: "pending", label: t.common.pending },
+            { value: "renewed", label: t.services.renewed },
+            { value: "cancelled", label: t.common.cancelled },
+            { value: "", label: t.common.all },
           ]}
         />
         <SegmentedChips
-          ariaLabel="Due within"
+          ariaLabel={t.services.dueWithin}
           value={within}
           onChange={setWithin}
           options={[
-            { value: "", label: "Any date" },
-            { value: "7", label: "7 days" },
-            { value: "30", label: "30 days" },
-            { value: "90", label: "90 days" },
+            { value: "", label: t.services.anyDate },
+            { value: "7", label: t.services.n7Days },
+            { value: "30", label: t.services.n30Days },
+            { value: "90", label: t.services.n90Days },
           ]}
         />
       </FilterBar>
@@ -124,23 +127,23 @@ export default function Renewals() {
         rows={renewals.data}
         loading={renewals.isLoading}
         rowKey={(r) => r.id}
-        empty="Nothing to renew"
+        empty={t.services.nothingToRenew}
         columns={[
           {
-            header: "Client",
+            header: t.common.client,
             sortValue: (r) => r.client_name,
             cell: (r) => <span className="font-medium">{r.client_name}</span>,
           },
-          { header: "Item", sortValue: (r) => r.item, cell: (r) => r.item },
+          { header: t.services.item, sortValue: (r) => r.item, cell: (r) => r.item },
           {
-            header: "Due",
+            header: t.common.due2,
             sortValue: (r) => r.due_date,
             cell: (r) => (
               <span className="text-[var(--od-ink-secondary)]">{formatDate(r.due_date)}</span>
             ),
           },
           {
-            header: "Days left",
+            header: t.services.daysLeft,
             align: "right",
             sortValue: (r) => r.days_left,
             cell: (r) =>
@@ -156,17 +159,17 @@ export default function Renewals() {
                         : "text-[var(--od-ink-secondary)]"
                   }
                 >
-                  {r.days_left < 0 ? `${-r.days_left} late` : r.days_left}
+                  {r.days_left < 0 ? fmt(t.services.late, { value: -r.days_left }) : r.days_left}
                 </span>
               ),
           },
           {
-            header: "Fee",
+            header: t.services.fee,
             align: "right",
             sortValue: (r) => toNumber(r.amount),
             cell: (r) => (toNumber(r.amount) > 0 ? formatMoney(r.amount) : "—"),
           },
-          { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
+          { header: t.common.status, cell: (r) => <StatusBadge value={r.status} /> },
           {
             header: "",
             className: "text-right",
@@ -179,7 +182,7 @@ export default function Renewals() {
                     disabled={remind.isPending}
                     onClick={() => remind.mutate({ id: r.id })}
                   >
-                    Remind
+                    {t.common.remind}
                   </Button>
                   {waFallback[r.id] && (
                     <Button size="sm" variant="outline" asChild>
@@ -191,12 +194,12 @@ export default function Renewals() {
                         target="_blank"
                         rel="noreferrer"
                       >
-                        <MessageCircle size={13} /> Open in WhatsApp
+                        <MessageCircle size={13} /> {t.common.openInWhatsapp}
                       </a>
                     </Button>
                   )}
                   <Button size="sm" variant="outline" onClick={() => setRenewing(r)}>
-                    Renewed
+                    {t.services.renewed}
                   </Button>
                   <Button
                     size="sm"
@@ -204,7 +207,7 @@ export default function Renewals() {
                     className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                     onClick={() => setCancelling(r)}
                   >
-                    Cancel
+                    {t.common.cancel}
                   </Button>
                 </div>
               ) : null,
@@ -215,7 +218,7 @@ export default function Renewals() {
       <FormDialog
         open={adding}
         onOpenChange={setAdding}
-        title="New renewal"
+        title={t.services.newRenewal}
         busy={add.isPending}
         onSubmit={() =>
           add.mutate({
@@ -227,23 +230,23 @@ export default function Renewals() {
           })
         }
       >
-        <Field label="Client *">
+        <Field label={t.common.client2}>
           <ClientSelect
             required
             value={draft.client_id}
             onChange={(v) => setDraft({ ...draft, client_id: v })}
           />
         </Field>
-        <Field label="What is renewing? *">
+        <Field label={t.services.whatIsRenewing}>
           <Input
             required
-            placeholder="Business licence, annual return…"
+            placeholder={t.services.businessLicenceAnnualReturn}
             value={draft.item}
             onChange={(e) => setDraft({ ...draft, item: e.target.value })}
           />
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Due date *">
+          <Field label={t.services.dueDate}>
             <Input
               required
               type="date"
@@ -251,7 +254,7 @@ export default function Renewals() {
               onChange={(e) => setDraft({ ...draft, due_date: e.target.value })}
             />
           </Field>
-          <Field label="Fee">
+          <Field label={t.services.fee}>
             <Input
               inputMode="decimal"
               value={draft.amount}
@@ -259,7 +262,7 @@ export default function Renewals() {
             />
           </Field>
         </div>
-        <Field label="Notes">
+        <Field label={t.common.notes}>
           <Input
             value={draft.notes}
             onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
@@ -270,15 +273,15 @@ export default function Renewals() {
       <FormDialog
         open={!!renewing}
         onOpenChange={(o) => !o && setRenewing(null)}
-        title={`Renewed: ${renewing?.item ?? ""}`}
-        description="Set the next due date to schedule the following renewal, for example next year."
-        submitLabel="Mark renewed"
+        title={fmt(t.services.renewed2, { item: renewing?.item ?? "" })}
+        description={t.services.setTheNextDueDate}
+        submitLabel={t.services.markRenewed}
         busy={renew.isPending}
         onSubmit={() =>
           renewing && renew.mutate({ id: renewing.id, next_due_date: next || undefined })
         }
       >
-        <Field label="Next due date (optional)">
+        <Field label={t.services.nextDueDateOptional}>
           <Input type="date" value={next} onChange={(e) => setNext(e.target.value)} />
         </Field>
       </FormDialog>
@@ -286,9 +289,9 @@ export default function Renewals() {
       <ConfirmDialog
         open={!!cancelling}
         onOpenChange={(o) => !o && setCancelling(null)}
-        title="Cancel this renewal?"
-        description="The client will not be reminded. Use this if they no longer need it."
-        confirmLabel="Cancel renewal"
+        title={t.services.cancelThisRenewal}
+        description={t.services.theClientWillNotBe}
+        confirmLabel={t.services.cancelRenewal}
         destructive
         onConfirm={() => cancelling && cancel.mutate({ id: cancelling.id })}
       />

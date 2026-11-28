@@ -21,6 +21,9 @@ import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { isPendingApproval, uploadFile } from "@/lib/api";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
 import type { Branch, MoneyAccount } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import type { Translations } from "@/features/i18n/i18n";
 
 interface Category {
   id: string;
@@ -43,16 +46,17 @@ interface Expense {
   receipt_file_id?: string | null;
 }
 
-const STATUS_OPTIONS = [
-  { value: "", label: "All" },
-  { value: "submitted", label: "Waiting approval" },
-  { value: "approved", label: "Approved" },
-  { value: "paid", label: "Paid" },
-  { value: "rejected", label: "Rejected" },
-  { value: "cancelled", label: "Cancelled" },
+const statusOptions = (t: Translations) => [
+  { value: "", label: t.common.all },
+  { value: "submitted", label: t.finance.waitingApproval },
+  { value: "approved", label: t.common.approved },
+  { value: "paid", label: t.common.paid },
+  { value: "rejected", label: t.common.rejected },
+  { value: "cancelled", label: t.common.cancelled },
 ];
 
 export default function Expenses() {
+  const { t } = useI18n();
   const { can, canAny, user, branchId } = useAuth();
   const isAllLocations = !branchId || branchId === "all";
   const categories = useGet<Category[]>("/expense-categories");
@@ -91,7 +95,7 @@ export default function Expenses() {
     "/expenses",
     {
       idempotent: true,
-      success: "Expense submitted",
+      success: t.finance.expenseSubmitted,
       invalidate: ["/expenses", "/dashboard", "/approvals"],
       onSuccess: (result) => {
         setOpen(false);
@@ -113,7 +117,7 @@ export default function Expenses() {
     () => `/expenses/${paying?.id}/pay`,
     {
       idempotent: true,
-      success: "Expense paid",
+      success: t.finance.expensePaid,
       invalidate: ["/money-accounts", "/transactions", "/expenses", "/dashboard"],
       onSuccess: () => setPaying(null),
     },
@@ -124,7 +128,7 @@ export default function Expenses() {
     (vars) => `/expenses/${vars.id}/approve`,
     {
       toBody: () => ({}),
-      success: "Expense approved",
+      success: t.finance.expenseApproved,
       invalidate: ["/expenses", "/approvals", "/dashboard"],
     },
   );
@@ -133,7 +137,7 @@ export default function Expenses() {
     "POST",
     () => `/expenses/${rejecting?.id}/reject`,
     {
-      success: "Expense rejected",
+      success: t.finance.expenseRejected,
       invalidate: ["/expenses", "/approvals", "/dashboard"],
       onSuccess: () => {
         setRejecting(null);
@@ -147,7 +151,7 @@ export default function Expenses() {
     (vars) => `/expenses/${vars.id}/cancel`,
     {
       toBody: () => ({}),
-      success: "Expense cancelled",
+      success: t.finance.expenseCancelled,
       invalidate: ["/expenses", "/approvals", "/dashboard"],
     },
   );
@@ -159,7 +163,7 @@ export default function Expenses() {
       const id = await uploadFile(file);
       setDraft((d) => ({ ...d, receipt_file_id: id }));
       setReceiptName(file.name);
-      toast.success("Receipt uploaded");
+      toast.success(t.finance.receiptUploaded);
     } catch (e) {
       toast.error(errorMessage(e));
     } finally {
@@ -173,12 +177,12 @@ export default function Expenses() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Expenses"
-        description="Record spending with receipt photos. Submitted expenses are approved before payment."
+        title={t.common.expenses}
+        description={t.finance.recordSpendingWithReceiptPhotos}
         actions={
           canAny("finance.expense.submit", "finance.expense.enter") && (
             <Button onClick={() => setOpen(true)}>
-              <Plus size={16} /> New expense
+              <Plus size={16} /> {t.common.newExpense}
             </Button>
           )
         }
@@ -186,17 +190,17 @@ export default function Expenses() {
 
       <FilterBar>
         <SegmentedChips
-          ariaLabel="Filter by status"
+          ariaLabel={t.common.filterByStatus}
           value={status}
           onChange={(v) => {
             setStatus(v);
             setPage(1);
           }}
-          options={STATUS_OPTIONS}
+          options={statusOptions(t)}
         />
         {isAllLocations && activeLocations.length > 1 && (
           <NativeSelect
-            aria-label="Filter by location"
+            aria-label={t.finance.filterByLocation}
             className="w-48"
             value={locationId}
             onChange={(e) => {
@@ -204,7 +208,7 @@ export default function Expenses() {
               setPage(1);
             }}
           >
-            <option value="">All locations</option>
+            <option value="">{t.common.allLocations}</option>
             {activeLocations.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
@@ -218,43 +222,43 @@ export default function Expenses() {
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(e) => e.id}
-        empty="No expenses found"
+        empty={t.finance.noExpensesFound}
         columns={[
           {
-            header: "Number",
+            header: t.common.number,
             cell: (e) => (
               <span className="od-mono font-medium text-[var(--od-ink)]">{e.number ?? "-"}</span>
             ),
           },
-          { header: "Date", cell: (e) => (e.date ? formatDate(e.date) : "-") },
-          { header: "Location", cell: (e) => e.location_name ?? "-" },
-          { header: "Category", cell: (e) => e.category_name ?? "-" },
+          { header: t.common.date, cell: (e) => (e.date ? formatDate(e.date) : "-") },
+          { header: t.common.location, cell: (e) => e.location_name ?? "-" },
+          { header: t.common.category, cell: (e) => e.category_name ?? "-" },
           {
-            header: "Description",
+            header: t.common.description,
             cell: (e) => (
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-[var(--od-ink)]">{e.description}</span>
                 {e.receipt_file_id && (
                   <button
                     type="button"
-                    title="Preview receipt photo"
+                    title={t.finance.previewReceiptPhoto}
                     className="inline-flex items-center gap-1 rounded-full border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] px-2 py-0.5 text-[11px] font-medium text-[var(--od-ink-secondary)] transition hover:text-[var(--od-ink)]"
                     onClick={() =>
                       setPreview({
                         id: e.receipt_file_id!,
-                        name: `Receipt ${e.number ?? e.id}`,
+                        name: fmt(t.common.receipt, { number: e.number ?? e.id }),
                       })
                     }
                   >
-                    <Eye size={12} /> Receipt
+                    <Eye size={12} /> {t.common.receipt2}
                   </button>
                 )}
               </div>
             ),
           },
-          { header: "By", cell: (e) => e.submitted_by_name ?? "-" },
+          { header: t.common.by, cell: (e) => e.submitted_by_name ?? "-" },
           {
-            header: "Amount",
+            header: t.common.amount,
             align: "right",
             cell: (e) => (
               <span className="od-tabular font-medium text-[var(--od-ink)]">
@@ -262,7 +266,7 @@ export default function Expenses() {
               </span>
             ),
           },
-          { header: "Status", cell: (e) => <StatusBadge value={e.status} /> },
+          { header: t.common.status, cell: (e) => <StatusBadge value={e.status} /> },
           {
             header: "",
             cell: (e) => {
@@ -287,7 +291,7 @@ export default function Expenses() {
                         disabled={approve.isPending}
                         onClick={() => approve.mutate({ id: e.id })}
                       >
-                        <Check size={14} /> Approve
+                        <Check size={14} /> {t.common.approve}
                       </Button>
                       <Button
                         size="sm"
@@ -298,13 +302,13 @@ export default function Expenses() {
                           setRejectNote("");
                         }}
                       >
-                        <X size={14} /> Reject
+                        <X size={14} /> {t.common.reject}
                       </Button>
                     </>
                   )}
                   {can("finance.expense.pay") && e.status === "approved" && (
                     <Button size="sm" variant="outline" onClick={() => setPaying(e)}>
-                      Pay
+                      {t.common.pay}
                     </Button>
                   )}
                   {canCancel && (
@@ -314,7 +318,7 @@ export default function Expenses() {
                       disabled={cancel.isPending}
                       onClick={() => cancel.mutate({ id: e.id })}
                     >
-                      Cancel
+                      {t.common.cancel}
                     </Button>
                   )}
                 </div>
@@ -328,7 +332,7 @@ export default function Expenses() {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title="New expense"
+        title={t.common.newExpense}
         busy={create.isPending || uploading}
         onSubmit={() => {
           const payload: Record<string, unknown> = {
@@ -341,13 +345,13 @@ export default function Expenses() {
           create.mutate(payload);
         }}
       >
-        <Field label="Category">
+        <Field label={t.common.category}>
           <NativeSelect
             required
             value={draft.category_id}
             onChange={(e) => setDraft((d) => ({ ...d, category_id: e.target.value }))}
           >
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {categories.data?.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.name}
@@ -356,7 +360,7 @@ export default function Expenses() {
           </NativeSelect>
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Amount">
+          <Field label={t.common.amount}>
             <Input
               required
               inputMode="decimal"
@@ -365,7 +369,7 @@ export default function Expenses() {
               onChange={(e) => setDraft((d) => ({ ...d, amount: e.target.value }))}
             />
           </Field>
-          <Field label="Date">
+          <Field label={t.common.date}>
             <Input
               required
               type="date"
@@ -374,19 +378,19 @@ export default function Expenses() {
             />
           </Field>
         </div>
-        <Field label="Description">
+        <Field label={t.common.description}>
           <Input
             required
             value={draft.description}
             onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
           />
         </Field>
-        <Field label="Receipt photo or PDF (optional)">
+        <Field label={t.finance.receiptPhotoOrPdfOptional}>
           {draft.receipt_file_id ? (
             <div className="flex items-center justify-between rounded-xl border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] px-3 py-2 text-xs">
               <span className="flex items-center gap-1.5 truncate text-[var(--od-ink)]">
                 <Paperclip size={13} className="shrink-0 text-[var(--od-ink-muted)]" />
-                <span className="truncate">{receiptName || "Receipt attached"}</span>
+                <span className="truncate">{receiptName || t.finance.receiptAttached}</span>
               </span>
               <div className="flex items-center gap-1">
                 <Button
@@ -395,10 +399,13 @@ export default function Expenses() {
                   variant="ghost"
                   className="h-6 px-2 text-xs"
                   onClick={() =>
-                    setPreview({ id: draft.receipt_file_id, name: receiptName || "Receipt" })
+                    setPreview({
+                      id: draft.receipt_file_id,
+                      name: receiptName || t.common.receipt2,
+                    })
                   }
                 >
-                  Preview
+                  {t.common.preview}
                 </Button>
                 <Button
                   type="button"
@@ -417,7 +424,7 @@ export default function Expenses() {
           ) : (
             <label className="flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)]/50 px-3 py-3.5 text-xs text-[var(--od-ink-secondary)] transition hover:border-[var(--od-ink)] hover:text-[var(--od-ink)]">
               <Upload size={14} />
-              <span>{uploading ? "Uploading…" : "Upload receipt photo or PDF"}</span>
+              <span>{uploading ? t.common.uploading : t.finance.uploadReceiptPhotoOrPdf}</span>
               <input
                 type="file"
                 accept="image/*,application/pdf"
@@ -433,8 +440,8 @@ export default function Expenses() {
       <FormDialog
         open={paying !== null}
         onOpenChange={(o) => !o && setPaying(null)}
-        title="Pay expense"
-        submitLabel="Pay"
+        title={t.finance.payExpense}
+        submitLabel={t.common.pay}
         busy={pay.isPending}
         onSubmit={() => pay.mutate({ money_account_id: account })}
       >
@@ -451,9 +458,9 @@ export default function Expenses() {
             )}
           </div>
         )}
-        <Field label="Pay from">
+        <Field label={t.common.payFrom}>
           <NativeSelect required value={account} onChange={(e) => setAccount(e.target.value)}>
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {usable.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
@@ -466,18 +473,18 @@ export default function Expenses() {
       <FormDialog
         open={rejecting !== null}
         onOpenChange={(o) => !o && setRejecting(null)}
-        title={`Reject expense ${rejecting?.number ?? ""}`}
-        submitLabel="Reject expense"
+        title={fmt(t.finance.rejectExpense, { number: rejecting?.number ?? "" })}
+        submitLabel={t.finance.rejectExpense2}
         busy={reject.isPending}
         onSubmit={() => reject.mutate({ note: rejectNote })}
       >
-        <Field label="Reason for rejection">
+        <Field label={t.finance.reasonForRejection}>
           <Textarea
             rows={3}
             required
             value={rejectNote}
             onChange={(e) => setRejectNote(e.target.value)}
-            placeholder="Explain why this expense is rejected…"
+            placeholder={t.finance.explainWhyThisExpenseIs}
           />
         </Field>
       </FormDialog>

@@ -21,6 +21,8 @@ import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { RoleEditor } from "@/features/auth/RoleEditor";
 import { UserPermissionsDialog } from "@/features/auth/UserPermissionsDialog";
 import type { Branch, SessionUser } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 interface Role {
   id: string;
@@ -52,6 +54,7 @@ const blankGrant = {
 };
 
 export default function Team() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const manage = can("security.user.manage");
   const [editingRole, setEditingRole] = useState<string | null | undefined>(undefined);
@@ -80,7 +83,7 @@ export default function Team() {
     () => `/employees/${draft.employee_id}/user`,
     {
       invalidate: ["/users", "/employees"],
-      success: "System access granted to employee",
+      success: t.admin.systemAccessGrantedToEmployee,
       onSuccess: () => {
         setResetResult({ name: draft.name, password: draft.password });
         setGrantOpen(false);
@@ -93,7 +96,7 @@ export default function Team() {
     () => `/users/${editingUser?.id}`,
     {
       invalidate: ["/users", "/employees"],
-      success: "User updated",
+      success: t.admin.userUpdated,
       onSuccess: () => {
         setEditingUser(null);
         setDraft(blankGrant);
@@ -105,14 +108,14 @@ export default function Team() {
     (u) => `/users/${u.id}/${u.is_active ? "deactivate" : "activate"}`,
     {
       invalidate: ["/users"],
-      success: "User updated",
+      success: t.admin.userUpdated,
     },
   );
   const resetPassword = useWrite<{ password: string }, { temporary_password?: string }>(
     "POST",
     () => `/users/${resetTarget?.id}/reset-password`,
     {
-      success: "Password reset. User will be asked to change it on next sign-in.",
+      success: t.admin.passwordResetUserWillBe,
       onSuccess: (res) => {
         if (resetTarget) {
           setResetResult({
@@ -126,12 +129,12 @@ export default function Team() {
     },
   );
   const forceSignOut = useWrite("DELETE", () => `/users/${kickTarget?.id}/sessions`, {
-    success: "User signed out of all devices",
+    success: t.admin.userSignedOutOfAll,
     onSuccess: () => setKickTarget(null),
   });
   const retire = useWrite("DELETE", () => `/roles/${retireRole?.id}`, {
     invalidate: ["/roles"],
-    success: "Role retired",
+    success: t.admin.roleRetired,
     onSuccess: () => setRetireRole(null),
   });
 
@@ -160,14 +163,14 @@ export default function Team() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Team and roles"
-        description="Every Manager or Staff member starts as an Employee first, then receives system access and a role here or from People."
+        title={t.common.teamAndRoles}
+        description={t.admin.everyManagerOrStaffMember}
         actions={
           manage && (
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" asChild>
                 <Link to="/people?new=1">
-                  <UserPlus size={16} /> New employee
+                  <UserPlus size={16} /> {t.common.newEmployee}
                 </Link>
               </Button>
               <Button
@@ -176,7 +179,7 @@ export default function Team() {
                   setGrantOpen(true);
                 }}
               >
-                <Plus size={16} /> Grant access
+                <Plus size={16} /> {t.common.grantAccess}
               </Button>
             </div>
           )
@@ -186,11 +189,9 @@ export default function Team() {
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[var(--od-info-mark)]/30 bg-[var(--od-surface-subtle)] p-4 text-sm">
           <div>
             <p className="font-semibold text-[var(--od-ink)]">
-              Temporary password for {resetResult.name}
+              {fmt(t.admin.temporaryPasswordFor, { name: resetResult.name })}
             </p>
-            <p className="od-caption mt-0.5">
-              Share this securely. They must change it when signing in.
-            </p>
+            <p className="od-caption mt-0.5">{t.admin.shareThisSecurelyTheyMust}</p>
           </div>
           <div className="flex items-center gap-2">
             <code className="od-mono rounded-lg border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-2.5 py-1 text-xs font-medium text-[var(--od-ink)]">
@@ -198,15 +199,15 @@ export default function Team() {
             </code>
             <CopyButton text={resetResult.password} />
             <Button size="sm" variant="ghost" onClick={() => setResetResult(null)}>
-              Dismiss
+              {t.common.dismiss}
             </Button>
           </div>
         </div>
       )}
       <Tabs defaultValue="users">
         <TabsList className="mb-4">
-          <TabsTrigger value="users">Users</TabsTrigger>
-          <TabsTrigger value="roles">Roles</TabsTrigger>
+          <TabsTrigger value="users">{t.admin.users}</TabsTrigger>
+          <TabsTrigger value="roles">{t.admin.roles}</TabsTrigger>
         </TabsList>
         <TabsContent value="users">
           <DataGrid
@@ -215,11 +216,11 @@ export default function Team() {
             rowKey={(u) => u.id}
             columns={[
               {
-                header: "Name",
+                header: t.common.name2,
                 cell: (u) => <span className="font-medium text-[var(--od-ink)]">{u.name}</span>,
               },
               {
-                header: "Contact",
+                header: t.common.contact,
                 cell: (u) => (
                   <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
                     {u.phone ?? u.email ?? "-"}
@@ -227,7 +228,7 @@ export default function Team() {
                 ),
               },
               {
-                header: "Employee profile",
+                header: t.admin.employeeProfile,
                 cell: (u) => {
                   if (u.employee_id) {
                     const emp = empById.get(u.employee_id);
@@ -237,31 +238,33 @@ export default function Team() {
                         className="text-xs font-medium text-[var(--od-info)] hover:underline"
                       >
                         {emp
-                          ? `${emp.employee_no} · ${emp.position || "Employee"}`
-                          : "View profile"}
+                          ? `${emp.employee_no} · ${emp.position || t.common.employee}`
+                          : t.admin.viewProfile}
                       </Link>
                     );
                   }
                   return (
                     <Badge variant="outline" className="text-[11px] text-[var(--od-ink-muted)]">
-                      {u.role_slug === "admin" || u.role_slug === "owner" ? "Owner" : "Not linked"}
+                      {u.role_slug === "admin" || u.role_slug === "owner"
+                        ? t.common.owner
+                        : t.common.notLinked}
                     </Badge>
                   );
                 },
               },
               {
-                header: "Role",
+                header: t.common.role,
                 cell: (u) => (u.role_name ? <Badge variant="secondary">{u.role_name}</Badge> : "-"),
               },
               {
-                header: "Default location",
+                header: t.common.defaultLocation,
                 cell: (u) =>
                   (u.branch_ids ?? [])
                     .map((id) => branchNames.get(id) ?? id.slice(0, 6))
                     .join(", ") || "-",
               },
               {
-                header: "Status",
+                header: t.common.status,
                 cell: (u) => <StatusBadge value={u.is_active ? "active" : "inactive"} />,
               },
               {
@@ -286,7 +289,7 @@ export default function Team() {
                           setEditingUser(u);
                         }}
                       >
-                        <Pencil size={13} /> Edit
+                        <Pencil size={13} /> {t.common.edit}
                       </Button>
                       <Button
                         variant="ghost"
@@ -296,18 +299,18 @@ export default function Team() {
                           setResetTarget(u);
                         }}
                       >
-                        <KeyRound size={13} /> Reset PW
+                        <KeyRound size={13} /> {t.admin.resetPw}
                       </Button>
                       {u.role_slug !== "admin" && u.role_slug !== "owner" && (
                         <Button variant="ghost" size="sm" onClick={() => setPermTarget(u)}>
-                          <Shield size={13} /> Perms
+                          <Shield size={13} /> {t.admin.perms}
                         </Button>
                       )}
                       <Button variant="ghost" size="sm" onClick={() => setKickTarget(u)}>
-                        <LogOut size={13} /> Sign out
+                        <LogOut size={13} /> {t.common.signOut}
                       </Button>
                       <Button variant="ghost" size="sm" onClick={() => toggle.mutate(u)}>
-                        {u.is_active ? "Deactivate" : "Activate"}
+                        {u.is_active ? t.common.deactivate : t.common.activate}
                       </Button>
                     </div>
                   ),
@@ -320,7 +323,7 @@ export default function Team() {
           {manage && (
             <FilterBar className="justify-end">
               <Button onClick={() => setEditingRole(null)}>
-                <Plus size={16} /> New role
+                <Plus size={16} /> {t.admin.newRole}
               </Button>
             </FilterBar>
           )}
@@ -330,19 +333,19 @@ export default function Team() {
             rowKey={(r) => r.id}
             columns={[
               {
-                header: "Role",
+                header: t.common.role,
                 cell: (r) => <span className="font-medium text-[var(--od-ink)]">{r.name}</span>,
               },
               {
-                header: "Rank",
+                header: t.admin.rank,
                 align: "right",
                 cell: (r) => <span className="od-tabular">{r.rank ?? "-"}</span>,
               },
               {
-                header: "Type",
+                header: t.common.type,
                 cell: (r) => (
                   <Badge variant={r.is_system ? "secondary" : "outline"}>
-                    {r.is_system ? "Built in" : "Custom"}
+                    {r.is_system ? t.admin.builtIn : t.common.custom}
                   </Badge>
                 ),
               },
@@ -351,7 +354,7 @@ export default function Team() {
                 cell: (r) => (
                   <div className="flex justify-end gap-1.5">
                     <Button size="sm" variant="outline" onClick={() => setEditingRole(r.id)}>
-                      {manage ? "Edit permissions" : "View"}
+                      {manage ? t.admin.editPermissions : t.common.view}
                     </Button>
                     {manage && !r.is_system && (
                       <Button
@@ -360,7 +363,7 @@ export default function Team() {
                         className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                         onClick={() => setRetireRole(r)}
                       >
-                        <Trash2 size={14} /> Retire
+                        <Trash2 size={14} /> {t.admin.retire}
                       </Button>
                     )}
                   </div>
@@ -386,9 +389,9 @@ export default function Team() {
             setDraft(blankGrant);
           }
         }}
-        title="Grant system access to an employee"
-        description="To get a Manager, Staff, or Admin account, a person must be registered as an employee first."
-        submitLabel={unlinkedEmployees.length > 0 ? "Grant access" : "Close"}
+        title={t.admin.grantSystemAccessToAn}
+        description={t.admin.toGetAManagerStaff}
+        submitLabel={unlinkedEmployees.length > 0 ? t.common.grantAccess : t.common.close}
         busy={grantAccess.isPending}
         onSubmit={() => {
           if (unlinkedEmployees.length === 0) {
@@ -408,27 +411,24 @@ export default function Team() {
         {unlinkedEmployees.length === 0 ? (
           <div className="space-y-3 rounded-xl border border-dashed border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] p-5 text-center">
             <p className="text-sm font-semibold text-[var(--od-ink)]">
-              No employees waiting for a login
+              {t.admin.noEmployeesWaitingForA}
             </p>
-            <p className="od-caption">
-              Every active employee already has system access, or you haven&apos;t added an employee
-              profile yet. Create the employee first, then assign their role.
-            </p>
+            <p className="od-caption">{t.admin.everyActiveEmployeeAlreadyHas}</p>
             <Button asChild size="sm">
               <Link to="/people?new=1">
-                <UserPlus size={14} /> Create Employee First
+                <UserPlus size={14} /> {t.admin.createEmployeeFirst}
               </Link>
             </Button>
           </div>
         ) : (
           <>
-            <Field label="Employee *">
+            <Field label={t.admin.employee}>
               <NativeSelect
                 required
                 value={draft.employee_id}
                 onChange={(e) => onPickEmployee(e.target.value)}
               >
-                <option value="">Choose an employee…</option>
+                <option value="">{t.admin.chooseAnEmployee}</option>
                 {unlinkedEmployees.map((e) => (
                   <option key={e.id} value={e.id}>
                     {e.name} ({e.employee_no}
@@ -438,14 +438,14 @@ export default function Team() {
               </NativeSelect>
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Phone">
+              <Field label={t.common.phone}>
                 <Input
                   required={!draft.email.trim()}
                   value={draft.phone}
                   onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
                 />
               </Field>
-              <Field label="Email">
+              <Field label={t.common.email}>
                 <Input
                   type="email"
                   value={draft.email}
@@ -454,13 +454,13 @@ export default function Team() {
               </Field>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Role *">
+              <Field label={t.common.role2}>
                 <NativeSelect
                   required
                   value={draft.role_id}
                   onChange={(e) => setDraft((d) => ({ ...d, role_id: e.target.value }))}
                 >
-                  <option value="">Choose…</option>
+                  <option value="">{t.common.choose}</option>
                   {roles.data?.map((r) => (
                     <option key={r.id} value={r.id}>
                       {r.name}
@@ -468,12 +468,12 @@ export default function Team() {
                   ))}
                 </NativeSelect>
               </Field>
-              <Field label="Default location">
+              <Field label={t.common.defaultLocation}>
                 <NativeSelect
                   value={draft.default_branch_id}
                   onChange={(e) => setDraft((d) => ({ ...d, default_branch_id: e.target.value }))}
                 >
-                  <option value="">Main / default</option>
+                  <option value="">{t.common.mainDefault}</option>
                   {activeBranches.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
@@ -482,14 +482,14 @@ export default function Team() {
                 </NativeSelect>
               </Field>
             </div>
-            <Field label="Temporary password *">
+            <Field label={t.common.temporaryPassword}>
               <Input
                 required
                 minLength={8}
                 type="password"
                 value={draft.password}
                 onChange={(e) => setDraft((d) => ({ ...d, password: e.target.value }))}
-                placeholder="At least 8 characters"
+                placeholder={t.common.atLeast8Characters}
               />
             </Field>
           </>
@@ -505,7 +505,7 @@ export default function Team() {
             setDraft(blankGrant);
           }
         }}
-        title={`Edit ${editingUser?.name ?? ""}`}
+        title={fmt(t.common.edit2, { name: editingUser?.name ?? "" })}
         busy={update.isPending}
         onSubmit={() => {
           const payload: Record<string, unknown> = {
@@ -521,7 +521,7 @@ export default function Team() {
           update.mutate(payload);
         }}
       >
-        <Field label="Name *">
+        <Field label={t.common.name}>
           <Input
             required
             value={draft.name}
@@ -529,13 +529,13 @@ export default function Team() {
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Phone">
+          <Field label={t.common.phone}>
             <Input
               value={draft.phone}
               onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
             />
           </Field>
-          <Field label="Email">
+          <Field label={t.common.email}>
             <Input
               type="email"
               value={draft.email}
@@ -543,13 +543,13 @@ export default function Team() {
             />
           </Field>
         </div>
-        <Field label="Role *">
+        <Field label={t.common.role2}>
           <NativeSelect
             required
             value={draft.role_id}
             onChange={(e) => setDraft((d) => ({ ...d, role_id: e.target.value }))}
           >
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {roles.data?.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.name}
@@ -557,12 +557,12 @@ export default function Team() {
             ))}
           </NativeSelect>
         </Field>
-        <Field label="Default location">
+        <Field label={t.common.defaultLocation}>
           <NativeSelect
             value={draft.default_branch_id}
             onChange={(e) => setDraft((d) => ({ ...d, default_branch_id: e.target.value }))}
           >
-            <option value="">Main / default</option>
+            <option value="">{t.common.mainDefault}</option>
             {activeBranches.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
@@ -571,12 +571,12 @@ export default function Team() {
           </NativeSelect>
         </Field>
         {!editingUser?.employee_id && unlinkedEmployees.length > 0 && (
-          <Field label="Link to employee profile">
+          <Field label={t.admin.linkToEmployeeProfile}>
             <NativeSelect
               value={draft.employee_id}
               onChange={(e) => setDraft((d) => ({ ...d, employee_id: e.target.value }))}
             >
-              <option value="">Not linked</option>
+              <option value="">{t.common.notLinked}</option>
               {unlinkedEmployees.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.name} ({e.employee_no})
@@ -587,12 +587,11 @@ export default function Team() {
         )}
         {!editingUser?.employee_id && employees.isSuccess && unlinkedEmployees.length === 0 && (
           <p className="od-caption">
-            This account has no employee profile, and no unlinked profile is available. To link it,
-            first add the person under{" "}
+            {t.admin.thisAccountHasNoEmployee}{" "}
             <Link to="/people?new=1" className="font-medium text-[var(--od-info)] hover:underline">
-              People
+              {t.common.people}
             </Link>
-            , then edit this account again.
+            {t.admin.thenEditThisAccountAgain}
           </p>
         )}
       </FormDialog>
@@ -600,13 +599,13 @@ export default function Team() {
       <FormDialog
         open={resetTarget !== null}
         onOpenChange={(o) => !o && setResetTarget(null)}
-        title={`Reset password for ${resetTarget?.name ?? ""}`}
-        description="Set a new temporary password. All active sessions for this user will be ended."
-        submitLabel="Reset password"
+        title={fmt(t.admin.resetPasswordFor, { name: resetTarget?.name ?? "" })}
+        description={t.admin.setANewTemporaryPassword}
+        submitLabel={t.admin.resetPassword}
         busy={resetPassword.isPending}
         onSubmit={() => resetPassword.mutate({ password: resetPw })}
       >
-        <Field label="New temporary password *">
+        <Field label={t.admin.newTemporaryPassword}>
           <Input
             required
             minLength={8}
@@ -619,15 +618,15 @@ export default function Team() {
       <ConfirmDialog
         open={kickTarget !== null}
         onOpenChange={(o) => !o && setKickTarget(null)}
-        title={`Force sign out ${kickTarget?.name ?? ""}?`}
-        description="Every active session on all devices for this user will be ended immediately."
+        title={fmt(t.admin.forceSignOut, { name: kickTarget?.name ?? "" })}
+        description={t.admin.everyActiveSessionOnAll}
         onConfirm={() => forceSignOut.mutate(undefined)}
       />
       <ConfirmDialog
         open={retireRole !== null}
         onOpenChange={(o) => !o && setRetireRole(null)}
-        title={`Retire role "${retireRole?.name ?? ""}"?`}
-        description="Retired roles are marked inactive and can no longer be assigned. Reassign all users first."
+        title={fmt(t.admin.retireRole, { name: retireRole?.name ?? "" })}
+        description={t.admin.retiredRolesAreMarkedInactive}
         onConfirm={() => retire.mutate(undefined)}
       />
       {permTarget && (

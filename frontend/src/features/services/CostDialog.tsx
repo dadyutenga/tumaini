@@ -7,6 +7,7 @@ import { useGet, useWrite } from "@/hooks/useApi";
 import { today } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
 import type { Contractor } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
 
 const blank = {
   kind: "government_fee",
@@ -31,6 +32,7 @@ export function CostDialog({
   target: { project_id?: string; design_job_id?: string };
   invalidate: string[];
 }) {
+  const { t } = useI18n();
   const { can, canAny } = useAuth();
   const contractors = useGet<Contractor[]>(
     "/contractors",
@@ -49,7 +51,7 @@ export function CostDialog({
   const write = useWrite("POST", "/service-costs", {
     idempotent: true,
     invalidate,
-    success: "Cost recorded",
+    success: t.services.costRecorded,
     onSuccess: () => {
       setDraft(blank);
       onOpenChange(false);
@@ -64,8 +66,8 @@ export function CostDialog({
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="Add a cost"
-      description="Government fees, materials, printing and contractor work spent on this job."
+      title={t.services.addACost}
+      description={t.services.governmentFeesMaterialsPrintingAnd}
       busy={write.isPending}
       onSubmit={() =>
         write.mutate({
@@ -80,7 +82,7 @@ export function CostDialog({
       }
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Type">
+        <Field label={t.common.type}>
           <NativeSelect value={draft.kind} onChange={(e) => set("kind", e.target.value)}>
             {COST_KINDS.map((k) => (
               <option key={k} value={k}>
@@ -89,7 +91,7 @@ export function CostDialog({
             ))}
           </NativeSelect>
         </Field>
-        <Field label="Amount">
+        <Field label={t.common.amount}>
           <Input
             required
             inputMode="decimal"
@@ -97,7 +99,7 @@ export function CostDialog({
             onChange={(e) => set("amount", e.target.value)}
           />
         </Field>
-        <Field label="What was it for?" className="sm:col-span-2">
+        <Field label={t.services.whatWasItFor} className="sm:col-span-2">
           <Input
             required
             value={draft.description}
@@ -105,14 +107,14 @@ export function CostDialog({
           />
         </Field>
         {can("services.contractor.manage") && (
-          <Field label="Contractor (optional)">
+          <Field label={t.services.contractorOptional}>
             <NativeSelect
               value={draft.contractor_id}
               onChange={(e) =>
                 setDraft((d) => ({ ...d, contractor_id: e.target.value, account: "" }))
               }
             >
-              <option value="">None</option>
+              <option value="">{t.common.none}</option>
               {contractors.data
                 ?.filter((c) => c.is_active)
                 .map((c) => (
@@ -123,11 +125,9 @@ export function CostDialog({
             </NativeSelect>
           </Field>
         )}
-        <Field label="Paid from">
+        <Field label={t.services.paidFrom}>
           <NativeSelect value={account} onChange={(e) => set("account", e.target.value)}>
-            {draft.contractor_id && (
-              <option value="owed">Not paid yet (we owe the contractor)</option>
-            )}
+            {draft.contractor_id && <option value="owed">{t.services.notPaidYetWeOwe}</option>}
             {live.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}

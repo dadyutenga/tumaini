@@ -29,6 +29,8 @@ import { ClientSelect, PdfButton } from "@/features/services/shared";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { CatalogItem, Quotation } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 interface Draft {
   id?: string;
@@ -48,6 +50,7 @@ const blank: Draft = {
 };
 
 function QuotationForm({ draft, onClose }: { draft: Draft; onClose: () => void }) {
+  const { t } = useI18n();
   const [d, setD] = useState(draft);
   const body = () => ({
     client_id: d.client_id,
@@ -58,39 +61,39 @@ function QuotationForm({ draft, onClose }: { draft: Draft; onClose: () => void }
   });
   const create = useWrite("POST", "/service-quotations", {
     invalidate: ["/service-quotations"],
-    success: "Quotation saved as a draft",
+    success: t.services.quotationSavedAsADraft,
     onSuccess: onClose,
   });
   const edit = useWrite("PUT", `/service-quotations/${d.id}`, {
     invalidate: ["/service-quotations"],
-    success: "Quotation updated",
+    success: t.services.quotationUpdated,
     onSuccess: onClose,
   });
   return (
     <FormDialog
       open
       onOpenChange={(o) => !o && onClose()}
-      title={d.id ? "Edit quotation" : "New quotation"}
+      title={d.id ? t.services.editQuotation : t.services.newQuotation}
       busy={create.isPending || edit.isPending}
       onSubmit={() => (d.id ? edit.mutate(body()) : create.mutate(body()))}
       wide
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Client *" className="sm:col-span-2">
+        <Field label={t.common.client2} className="sm:col-span-2">
           <ClientSelect
             required
             value={d.client_id}
             onChange={(v) => setD({ ...d, client_id: v })}
           />
         </Field>
-        <Field label="Valid until">
+        <Field label={t.services.validUntil}>
           <Input
             type="date"
             value={d.valid_until}
             onChange={(e) => setD({ ...d, valid_until: e.target.value })}
           />
         </Field>
-        <Field label="Discount">
+        <Field label={t.common.discount}>
           <Input
             inputMode="decimal"
             value={d.discount}
@@ -99,7 +102,7 @@ function QuotationForm({ draft, onClose }: { draft: Draft; onClose: () => void }
         </Field>
       </div>
       <LinesEditor lines={d.lines} onChange={(lines) => setD({ ...d, lines })} />
-      <Field label="Terms and notes">
+      <Field label={t.services.termsAndNotes}>
         <Textarea
           rows={2}
           value={d.notes}
@@ -111,6 +114,7 @@ function QuotationForm({ draft, onClose }: { draft: Draft; onClose: () => void }
 }
 
 function AcceptDialog({ quote, onClose }: { quote: Quotation; onClose: () => void }) {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const catalog = useGet<CatalogItem[]>("/service-catalog", { per_page: 100 });
   const [createProject, setCreateProject] = useState(true);
@@ -127,7 +131,7 @@ function AcceptDialog({ quote, onClose }: { quote: Quotation; onClose: () => voi
         "/clients",
         "/services",
       ],
-      success: "Quotation accepted. The invoice is ready as a draft.",
+      success: t.services.quotationAcceptedTheInvoiceIs,
       onSuccess: (r) => {
         onClose();
         if (r.project_id) navigate(`/projects/${r.project_id}`);
@@ -138,9 +142,9 @@ function AcceptDialog({ quote, onClose }: { quote: Quotation; onClose: () => voi
     <FormDialog
       open
       onOpenChange={(o) => !o && onClose()}
-      title={`Accept ${quote.number}`}
-      description="A draft invoice is created. You can also start the project now."
-      submitLabel="Accept"
+      title={fmt(t.services.accept, { number: quote.number })}
+      description={t.services.aDraftInvoiceIsCreated}
+      submitLabel={t.services.accept2}
       busy={accept.isPending}
       onSubmit={() =>
         accept.mutate({
@@ -156,13 +160,13 @@ function AcceptDialog({ quote, onClose }: { quote: Quotation; onClose: () => voi
           checked={createProject}
           onChange={(e) => setCreateProject(e.target.checked)}
         />
-        Start a project for this client
+        {t.services.startAProjectForThis}
       </label>
       {createProject && (
         <>
-          <Field label="Service (gives the stages and documents)">
+          <Field label={t.services.serviceGivesTheStagesAnd}>
             <NativeSelect value={serviceId} onChange={(e) => setServiceId(e.target.value)}>
-              <option value="">Custom project, no stages</option>
+              <option value="">{t.services.customProjectNoStages}</option>
               {catalog.data
                 ?.filter((s) => s.is_active)
                 .map((s) => (
@@ -172,8 +176,12 @@ function AcceptDialog({ quote, onClose }: { quote: Quotation; onClose: () => voi
                 ))}
             </NativeSelect>
           </Field>
-          <Field label="Project name">
-            <Input value={name} placeholder="Optional" onChange={(e) => setName(e.target.value)} />
+          <Field label={t.services.projectName}>
+            <Input
+              value={name}
+              placeholder={t.common.optional}
+              onChange={(e) => setName(e.target.value)}
+            />
           </Field>
         </>
       )}
@@ -190,6 +198,7 @@ function Detail({
   onClose: () => void;
   onEdit: (q: Quotation) => void;
 }) {
+  const { t } = useI18n();
   const { can } = useAuth();
   const navigate = useNavigate();
   const quote = useGet<Quotation>(`/service-quotations/${id}`);
@@ -198,11 +207,11 @@ function Detail({
   const refresh = ["/service-quotations"];
   const send = useWrite("POST", `/service-quotations/${id}/send`, {
     invalidate: refresh,
-    success: "Marked as sent",
+    success: t.services.markedAsSent,
   });
   const reject = useWrite("POST", `/service-quotations/${id}/reject`, {
     invalidate: refresh,
-    success: "Marked as rejected",
+    success: t.services.markedAsRejected,
     onSuccess: () => setRejecting(false),
   });
   const q = quote.data;
@@ -212,8 +221,8 @@ function Detail({
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{q ? `${q.number} · ${q.client_name}` : "Quotation"}</DialogTitle>
-          <DialogDescription className="sr-only">Quotation details</DialogDescription>
+          <DialogTitle>{q ? `${q.number} · ${q.client_name}` : t.services.quotation}</DialogTitle>
+          <DialogDescription className="sr-only">{t.services.quotationDetails}</DialogDescription>
         </DialogHeader>
         {!q ? (
           <PageLoader />
@@ -222,19 +231,21 @@ function Detail({
             <div className="flex flex-wrap items-center gap-3 text-[13px]">
               <StatusBadge value={q.status} />
               {q.valid_until && (
-                <span className="od-caption">Valid until {formatDate(q.valid_until)}</span>
+                <span className="od-caption">
+                  {fmt(t.services.validUntil2, { valid_until: formatDate(q.valid_until) })}
+                </span>
               )}
             </div>
             <LinesTable lines={q.lines ?? []} />
             <div className="ml-auto w-full max-w-xs space-y-1 rounded-[var(--od-radius-md,12px)] bg-[var(--od-surface-subtle)] p-4 text-[13px]">
               {toNumber(q.discount) > 0 && (
                 <p className="flex justify-between text-[var(--od-ink-secondary)]">
-                  <span>Discount</span>
+                  <span>{t.common.discount}</span>
                   <span className="od-tabular">{formatMoney(q.discount)}</span>
                 </p>
               )}
               <p className="flex justify-between text-[15px] font-semibold text-[var(--od-ink)]">
-                <span>Total</span>
+                <span>{t.common.total}</span>
                 <span className="od-tabular">{formatMoney(q.total)}</span>
               </p>
             </div>
@@ -251,21 +262,21 @@ function Detail({
               />
               {canDraft && q.status === "draft" && (
                 <Button size="sm" variant="outline" onClick={() => onEdit(q)}>
-                  Edit
+                  {t.common.edit}
                 </Button>
               )}
               {manage && q.status === "draft" && (
                 <Button size="sm" onClick={() => send.mutate(undefined)} disabled={send.isPending}>
-                  Mark as sent
+                  {t.services.markAsSent}
                 </Button>
               )}
               {manage && (q.status === "draft" || q.status === "sent") && (
                 <>
                   <Button size="sm" variant="outline" onClick={() => setRejecting(true)}>
-                    Rejected
+                    {t.common.rejected}
                   </Button>
                   <Button size="sm" onClick={() => setAccepting(true)}>
-                    Accepted
+                    {t.services.accepted}
                   </Button>
                 </>
               )}
@@ -275,7 +286,7 @@ function Detail({
                   variant="outline"
                   onClick={() => navigate(`/service-invoices?open=${q.invoice_id}`)}
                 >
-                  Open invoice
+                  {t.services.openInvoice}
                 </Button>
               )}
               {q.project_id && (
@@ -284,7 +295,7 @@ function Detail({
                   variant="outline"
                   onClick={() => navigate(`/projects/${q.project_id}`)}
                 >
-                  Open project
+                  {t.services.openProject}
                 </Button>
               )}
             </div>
@@ -294,8 +305,8 @@ function Detail({
         <ConfirmDialog
           open={rejecting}
           onOpenChange={setRejecting}
-          title="Mark this quotation as rejected?"
-          description="The client said no. You can still create a new quotation for them."
+          title={t.services.markThisQuotationAsRejected}
+          description={t.services.theClientSaidNoYou}
           onConfirm={() => reject.mutate(undefined)}
         />
       </DialogContent>
@@ -304,6 +315,7 @@ function Detail({
 }
 
 export default function ServiceQuotations() {
+  const { t } = useI18n();
   const { canAny } = useAuth();
   const canCreate = canAny("services.quotation.manage", "services.quotation.draft");
   const [params, setParams] = useSearchParams();
@@ -337,12 +349,12 @@ export default function ServiceQuotations() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Quotations"
-        description="Price a job for a client. Accept to generate a draft invoice and project."
+        title={t.services.quotations}
+        description={t.services.priceAJobForA}
         actions={
           canCreate && (
             <Button size="sm" onClick={() => setForm(blank)}>
-              <Plus size={14} /> New quotation
+              <Plus size={14} /> {t.services.newQuotation}
             </Button>
           )
         }
@@ -355,23 +367,23 @@ export default function ServiceQuotations() {
             className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
           />
           <Input
-            aria-label="Search"
+            aria-label={t.common.search}
             className="pl-9"
-            placeholder="Search number or client…"
+            placeholder={t.services.searchNumberOrClient}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
         <SegmentedChips
-          ariaLabel="Quotation status"
+          ariaLabel={t.services.quotationStatus}
           value={status}
           onChange={setStatus}
           options={[
-            { value: "", label: "All" },
-            { value: "draft", label: "Draft" },
-            { value: "sent", label: "Sent" },
-            { value: "accepted", label: "Accepted" },
-            { value: "rejected", label: "Rejected" },
+            { value: "", label: t.common.all },
+            { value: "draft", label: t.common.draft },
+            { value: "sent", label: t.services.sent },
+            { value: "accepted", label: t.services.accepted },
+            { value: "rejected", label: t.common.rejected },
           ]}
         />
       </FilterBar>
@@ -380,33 +392,33 @@ export default function ServiceQuotations() {
         rows={list.data}
         loading={list.isLoading}
         rowKey={(r) => r.id}
-        empty="No quotations yet"
+        empty={t.services.noQuotationsYet}
         onRowClick={(r) => setOpenId(r.id)}
         columns={[
           {
-            header: "Number",
+            header: t.common.number,
             sortValue: (r) => r.number,
             cell: (r) => <span className="od-mono font-medium">{r.number}</span>,
           },
-          { header: "Client", sortValue: (r) => r.client_name, cell: (r) => r.client_name },
+          { header: t.common.client, sortValue: (r) => r.client_name, cell: (r) => r.client_name },
           {
-            header: "Date",
+            header: t.common.date,
             sortValue: (r) => r.created_at,
             cell: (r) => (
               <span className="text-[var(--od-ink-secondary)]">{formatDate(r.created_at)}</span>
             ),
           },
           {
-            header: "Valid until",
+            header: t.services.validUntil,
             cell: (r) => (
               <span className="text-[var(--od-ink-secondary)]">
                 {r.valid_until ? formatDate(r.valid_until) : "—"}
               </span>
             ),
           },
-          { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
+          { header: t.common.status, cell: (r) => <StatusBadge value={r.status} /> },
           {
-            header: "Total",
+            header: t.common.total,
             align: "right",
             sortValue: (r) => toNumber(r.total),
             cell: (r) => <span className="font-medium">{formatMoney(r.total)}</span>,

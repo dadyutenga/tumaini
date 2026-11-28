@@ -24,6 +24,9 @@ import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { session } from "@/lib/api";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
 import { useQueryClient } from "@tanstack/react-query";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface EmployeeDetailData {
   id: string;
@@ -127,6 +130,7 @@ interface StatementRes {
 }
 
 export default function EmployeeDetail() {
+  const { t } = useI18n();
   const { id } = useParams();
   const { can, canAny } = useAuth();
   const qc = useQueryClient();
@@ -243,7 +247,7 @@ export default function EmployeeDetail() {
 
   const updateEmp = useWrite<Record<string, unknown>, unknown>("PUT", `/employees/${id}`, {
     invalidate: [`/employees/${id}`, "/employees"],
-    success: "Employee updated",
+    success: t.hr.employeeUpdated,
     onSuccess: () => {
       setEditing(false);
       setUpdateComp(false);
@@ -252,7 +256,7 @@ export default function EmployeeDetail() {
 
   const createLogin = useWrite<typeof loginForm, unknown>("POST", `/employees/${id}/user`, {
     invalidate: [`/employees/${id}`, "/users"],
-    success: "User login created and linked",
+    success: t.hr.userLoginCreatedAndLinked,
     onSuccess: () => {
       setLoginOpen(false);
       setLoginForm((l) => ({ ...l, password: "" }));
@@ -261,13 +265,13 @@ export default function EmployeeDetail() {
 
   const terminate = useWrite<typeof termForm, unknown>("POST", `/employees/${id}/terminate`, {
     invalidate: [`/employees/${id}`, "/employees"],
-    success: "Employee terminated",
+    success: t.hr.employeeTerminated,
     onSuccess: () => setTermOpen(false),
   });
 
   const addAdj = useWrite<unknown, unknown>("POST", "/pay-adjustments", {
     invalidate: ["/pay-adjustments"],
-    success: "Bonus / deduction recorded",
+    success: t.hr.bonusDeductionRecorded,
     onSuccess: () => {
       setAdjOpen(false);
       setAdjForm({ period: today(), kind: "bonus", amount: "", reason: "" });
@@ -276,7 +280,7 @@ export default function EmployeeDetail() {
 
   const saveAllowances = useWrite<unknown, unknown>("PUT", `/employees/${id}/components`, {
     invalidate: [`/employees/${id}/components`],
-    success: "Employee allowances updated",
+    success: t.hr.employeeAllowancesUpdated,
   });
 
   const deleteDoc = useWrite<string, unknown>(
@@ -284,7 +288,7 @@ export default function EmployeeDetail() {
     (docId) => `/employees/${id}/documents/${docId}`,
     {
       invalidate: [`/employees/${id}/documents`],
-      success: "Document deleted",
+      success: t.hr.documentDeleted,
     },
   );
 
@@ -307,10 +311,10 @@ export default function EmployeeDetail() {
       });
       if (!res.ok) {
         const j = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-        throw new Error(j?.error?.message ?? "Upload failed");
+        throw new Error(j?.error?.message ?? t.hr.uploadFailed);
       }
       setDocName("");
-      toast.success("Document uploaded");
+      toast.success(t.hr.documentUploaded);
       void qc.invalidateQueries({ queryKey: [`/employees/${id}/documents`] });
     } catch (e) {
       toast.error(errorMessage(e));
@@ -326,25 +330,25 @@ export default function EmployeeDetail() {
     <div className="space-y-6">
       <PageHeader
         backTo="/people"
-        backLabel="People"
+        backLabel={t.common.people}
         title={`${e.name} (${e.employee_no})`}
-        description={`${e.position || e.position_name || "No position"}${e.branch_name ? ` · ${e.branch_name}` : ""}`}
+        description={`${e.position || e.position_name || t.hr.noPosition}${e.branch_name ? ` · ${e.branch_name}` : ""}`}
         badge={<StatusBadge value={e.status} />}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {canViewStatement && (
               <Button variant="outline" size="sm" onClick={() => window.print()}>
-                <Printer size={14} /> Print statement
+                <Printer size={14} /> {t.common.printStatement}
               </Button>
             )}
             {can("security.user.manage") && !e.user_id && e.status !== "terminated" && (
               <Button variant="outline" size="sm" onClick={() => setLoginOpen(true)}>
-                <KeyRound size={14} /> Create login
+                <KeyRound size={14} /> {t.hr.createLogin}
               </Button>
             )}
             {canManage && (
               <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-                Edit profile
+                {t.hr.editProfile}
               </Button>
             )}
             {canManage && e.status !== "terminated" && (
@@ -354,7 +358,7 @@ export default function EmployeeDetail() {
                 className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                 onClick={() => setTermOpen(true)}
               >
-                <UserX size={14} /> Terminate
+                <UserX size={14} /> {t.hr.terminate}
               </Button>
             )}
           </div>
@@ -363,42 +367,42 @@ export default function EmployeeDetail() {
 
       <Tabs defaultValue="profile">
         <TabsList className="mb-4 flex flex-wrap">
-          <TabsTrigger value="profile">Profile &amp; Statement</TabsTrigger>
+          <TabsTrigger value="profile">{t.hr.profileStatement}</TabsTrigger>
           {(canViewComp || canManageAdj) && (
-            <TabsTrigger value="salary">Allowances &amp; Bonuses</TabsTrigger>
+            <TabsTrigger value="salary">{t.hr.allowancesBonuses}</TabsTrigger>
           )}
-          <TabsTrigger value="leave">Leave &amp; Advances</TabsTrigger>
-          <TabsTrigger value="documents">Documents &amp; Attachments</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
+          <TabsTrigger value="leave">{t.hr.leaveAdvances}</TabsTrigger>
+          <TabsTrigger value="documents">{t.hr.documentsAttachments}</TabsTrigger>
+          <TabsTrigger value="history">{t.common.history}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile" className="space-y-6">
           <div className="grid gap-4 md:grid-cols-2">
-            <SectionCard title="Contact & Employment">
+            <SectionCard title={t.hr.contactEmployment}>
               <MetaGrid
                 items={[
-                  { label: "Phone", value: e.phone || "-" },
-                  { label: "Email", value: e.email || "-" },
-                  { label: "Position", value: e.position || e.position_name || "-" },
-                  { label: "Hire date", value: e.hire_date ? formatDate(e.hire_date) : "-" },
+                  { label: t.common.phone, value: e.phone || "-" },
+                  { label: t.common.email, value: e.email || "-" },
+                  { label: t.hr.position, value: e.position || e.position_name || "-" },
+                  { label: t.hr.hireDate, value: e.hire_date ? formatDate(e.hire_date) : "-" },
                   {
-                    label: "Emergency contact",
+                    label: t.hr.emergencyContact,
                     value:
                       [e.emergency_contact, e.emergency_contact_phone]
                         .filter(Boolean)
                         .join(" · ") || "-",
                   },
-                  { label: "System login", value: e.user_id ? "Linked" : "Not linked" },
+                  { label: t.hr.systemLogin, value: e.user_id ? t.hr.linked : t.common.notLinked },
                 ]}
               />
             </SectionCard>
 
             {canViewComp && (
-              <SectionCard title="Compensation & Payout Details">
+              <SectionCard title={t.hr.compensationPayoutDetails}>
                 <MetaGrid
                   items={[
                     {
-                      label: "Monthly basic salary",
+                      label: t.hr.monthlyBasicSalary,
                       value: (
                         <span className="od-tabular font-semibold text-[var(--od-ink)]">
                           {formatMoney(e.base_pay)}
@@ -406,16 +410,14 @@ export default function EmployeeDetail() {
                       ),
                     },
                     {
-                      label: "Pay method",
+                      label: t.hr.payMethod,
                       value: (
-                        <span className="capitalize">
-                          {(e.pay_method ?? "cash").replaceAll("_", " ")}
-                        </span>
+                        <span className="capitalize">{statusLabel(t, e.pay_method ?? "cash")}</span>
                       ),
                     },
-                    { label: "Payout provider", value: e.pay_provider || "-" },
+                    { label: t.hr.payoutProvider, value: e.pay_provider || "-" },
                     {
-                      label: "Payout account",
+                      label: t.hr.payoutAccount,
                       value: e.pay_account_last4 ? (
                         <span className="od-mono">**** {e.pay_account_last4}</span>
                       ) : (
@@ -425,7 +427,7 @@ export default function EmployeeDetail() {
                     ...(statement.data?.totals?.loan_balance
                       ? [
                           {
-                            label: "Advance balance",
+                            label: t.hr.advanceBalance,
                             value: (
                               <span className="od-tabular font-semibold text-[var(--od-warning)]">
                                 {formatMoney(statement.data.totals.loan_balance)}
@@ -444,33 +446,36 @@ export default function EmployeeDetail() {
             <div className="space-y-5">
               {statement.data.totals && (
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <StatCard label="Gross" value={formatMoney(statement.data.totals.gross)} />
                   <StatCard
-                    label="Deductions"
+                    label={t.common.gross}
+                    value={formatMoney(statement.data.totals.gross)}
+                  />
+                  <StatCard
+                    label={t.common.deductions}
                     value={formatMoney(statement.data.totals.deductions)}
                   />
                   <StatCard
-                    label="Net pay"
+                    label={t.hr.netPay}
                     value={formatMoney(statement.data.totals.net)}
                     tone="good"
                   />
-                  <StatCard label="Paid" value={formatMoney(statement.data.totals.paid)} />
+                  <StatCard label={t.common.paid} value={formatMoney(statement.data.totals.paid)} />
                 </div>
               )}
 
               <div className="space-y-2.5">
-                <h3 className="od-section-title">Payslips</h3>
+                <h3 className="od-section-title">{t.hr.payslips}</h3>
                 <DataGrid
                   rows={statement.data.payslips ?? []}
                   rowKey={(p) => p.id}
-                  empty="No payslips in this period"
+                  empty={t.hr.noPayslipsInThisPeriod}
                   columns={[
                     {
-                      header: "Payslip",
+                      header: t.hr.payslip,
                       cell: (p) => <span className="od-mono">{p.number || "-"}</span>,
                     },
                     {
-                      header: "Period",
+                      header: t.common.period,
                       cell: (p) => (
                         <span className="od-mono">
                           {p.period_year}-{String(p.period_month).padStart(2, "0")}
@@ -478,19 +483,19 @@ export default function EmployeeDetail() {
                       ),
                     },
                     {
-                      header: "Gross",
+                      header: t.common.gross,
                       align: "right",
                       cell: (p) => <span className="od-tabular">{formatMoney(p.gross)}</span>,
                     },
                     {
-                      header: "Deductions",
+                      header: t.common.deductions,
                       align: "right",
                       cell: (p) => (
                         <span className="od-tabular">{formatMoney(p.total_deductions)}</span>
                       ),
                     },
                     {
-                      header: "Net",
+                      header: t.common.net,
                       align: "right",
                       cell: (p) => (
                         <span className="od-tabular font-semibold text-[var(--od-ink)]">
@@ -498,34 +503,34 @@ export default function EmployeeDetail() {
                         </span>
                       ),
                     },
-                    { header: "Status", cell: (p) => <StatusBadge value={p.run_status} /> },
+                    { header: t.common.status, cell: (p) => <StatusBadge value={p.run_status} /> },
                   ]}
                 />
               </div>
 
               {(statement.data.payments?.length ?? 0) > 0 && (
                 <div className="space-y-2.5">
-                  <h3 className="od-section-title">Payments</h3>
+                  <h3 className="od-section-title">{t.common.payments}</h3>
                   <DataGrid
                     rows={statement.data.payments ?? []}
                     rowKey={(p) => p.id}
                     columns={[
                       {
-                        header: "Number",
+                        header: t.common.number,
                         cell: (p) => <span className="od-mono">{p.number}</span>,
                       },
-                      { header: "Date", cell: (p) => formatDate(p.payment_date) },
+                      { header: t.common.date, cell: (p) => formatDate(p.payment_date) },
                       {
-                        header: "Method",
+                        header: t.common.method,
                         cell: (p) => (
                           <span className="capitalize">
-                            {(p.method ?? "payment").replaceAll("_", " ")}
+                            {statusLabel(t, p.method ?? "payment")}
                             {p.reference ? ` · ${p.reference}` : ""}
                           </span>
                         ),
                       },
                       {
-                        header: "Amount",
+                        header: t.common.amount,
                         align: "right",
                         cell: (p) => (
                           <span className="od-tabular font-medium text-[var(--od-ink)]">
@@ -533,7 +538,7 @@ export default function EmployeeDetail() {
                           </span>
                         ),
                       },
-                      { header: "Status", cell: (p) => <StatusBadge value={p.status} /> },
+                      { header: t.common.status, cell: (p) => <StatusBadge value={p.status} /> },
                     ]}
                   />
                 </div>
@@ -546,24 +551,22 @@ export default function EmployeeDetail() {
           <TabsContent value="salary" className="space-y-6">
             {canManageAdj && (
               <SectionCard
-                title="One-off Bonus or Deduction"
-                subtitle="Included automatically in the next payroll calculation for that period."
+                title={t.hr.oneOffBonusOrDeduction}
+                subtitle={t.hr.includedAutomaticallyInTheNext}
                 actions={
                   <Button size="sm" onClick={() => setAdjOpen(true)}>
-                    <Plus size={14} /> Add bonus / deduction
+                    <Plus size={14} /> {t.hr.addBonusDeduction}
                   </Button>
                 }
               >
-                <p className="od-caption">
-                  Record ad-hoc performance bonuses, overtime corrections, or one-time deductions.
-                </p>
+                <p className="od-caption">{t.hr.recordAdHocPerformanceBonuses}</p>
               </SectionCard>
             )}
 
             {canViewComp && (
               <SectionCard
-                title="Recurring Allowances"
-                subtitle="Monthly allowances paid alongside base salary (e.g. Housing, Transport)."
+                title={t.hr.recurringAllowances}
+                subtitle={t.hr.monthlyAllowancesPaidAlongsideBase}
                 actions={
                   canManageComp ? (
                     <div className="flex gap-2">
@@ -577,7 +580,7 @@ export default function EmployeeDetail() {
                           ])
                         }
                       >
-                        <Plus size={14} /> Add allowance
+                        <Plus size={14} /> {t.hr.addAllowance}
                       </Button>
                       <Button
                         size="sm"
@@ -593,7 +596,7 @@ export default function EmployeeDetail() {
                           saveAllowances.mutate({ components: payload });
                         }}
                       >
-                        Save allowances
+                        {t.hr.saveAllowances}
                       </Button>
                     </div>
                   ) : undefined
@@ -601,7 +604,7 @@ export default function EmployeeDetail() {
               >
                 {allowances.length === 0 ? (
                   <p className="text-sm text-[var(--od-ink-muted)]">
-                    No active allowances configured.
+                    {t.hr.noActiveAllowancesConfigured}
                   </p>
                 ) : (
                   <div className="space-y-2.5">
@@ -612,7 +615,7 @@ export default function EmployeeDetail() {
                       >
                         <Input
                           disabled={!canManageComp}
-                          placeholder="Allowance name (e.g. Transport)"
+                          placeholder={t.hr.allowanceNameEGTransport}
                           value={a.name}
                           onChange={(ev) =>
                             setAllowances((prev) =>
@@ -626,7 +629,7 @@ export default function EmployeeDetail() {
                           disabled={!canManageComp}
                           inputMode="decimal"
                           className="od-tabular"
-                          placeholder="Amount"
+                          placeholder={t.common.amount}
                           value={a.amount}
                           onChange={(ev) =>
                             setAllowances((prev) =>
@@ -672,15 +675,15 @@ export default function EmployeeDetail() {
 
         <TabsContent value="leave" className="space-y-6">
           <div className="space-y-2.5">
-            <h3 className="od-section-title">Leave Balance (This Year)</h3>
+            <h3 className="od-section-title">{t.hr.leaveBalanceThisYear}</h3>
             <DataGrid
               rows={leaveBal.data}
               loading={leaveBal.isLoading}
               rowKey={(l) => l.leave_type_id}
-              empty="No leave types configured"
+              empty={t.hr.noLeaveTypesConfigured}
               columns={[
                 {
-                  header: "Leave type",
+                  header: t.hr.leaveType,
                   cell: (l) => (
                     <span className="font-medium text-[var(--od-ink)]">
                       {l.name ?? l.leave_type}
@@ -688,17 +691,17 @@ export default function EmployeeDetail() {
                   ),
                 },
                 {
-                  header: "Entitled",
+                  header: t.hr.entitled,
                   align: "right",
                   cell: (l) => <span className="od-tabular">{l.allowed ?? l.entitled ?? "0"}</span>,
                 },
                 {
-                  header: "Used",
+                  header: t.hr.used,
                   align: "right",
                   cell: (l) => <span className="od-tabular">{l.taken ?? l.used ?? "0"}</span>,
                 },
                 {
-                  header: "Remaining",
+                  header: t.hr.remaining,
                   align: "right",
                   cell: (l) => (
                     <span className="od-tabular font-semibold text-[var(--od-ink)]">
@@ -712,32 +715,34 @@ export default function EmployeeDetail() {
 
           {canViewLoans && (
             <div className="space-y-2.5">
-              <h3 className="od-section-title">Advances &amp; Loans</h3>
+              <h3 className="od-section-title">{t.hr.advancesLoans}</h3>
               <DataGrid
                 rows={loans.data}
                 loading={loans.isLoading}
                 rowKey={(l) => l.id}
-                empty="No loans or advances for this employee"
+                empty={t.hr.noLoansOrAdvancesFor}
                 columns={[
                   {
-                    header: "Type",
+                    header: t.common.type,
                     cell: (l) => (
-                      <span className="font-medium capitalize text-[var(--od-ink)]">{l.kind}</span>
+                      <span className="font-medium capitalize text-[var(--od-ink)]">
+                        {statusLabel(t, l.kind)}
+                      </span>
                     ),
                   },
                   {
-                    header: "Issued",
+                    header: t.common.issued,
                     cell: (l) => (l.start_period ? formatDate(l.start_period) : "-"),
                   },
                   {
-                    header: "Amount",
+                    header: t.common.amount,
                     align: "right",
                     cell: (l) => (
                       <span className="od-tabular">{formatMoney(l.principal ?? l.amount)}</span>
                     ),
                   },
                   {
-                    header: "Balance",
+                    header: t.common.balance,
                     align: "right",
                     cell: (l) => (
                       <span className="od-tabular font-semibold text-[var(--od-ink)]">
@@ -745,7 +750,7 @@ export default function EmployeeDetail() {
                       </span>
                     ),
                   },
-                  { header: "Status", cell: (l) => <StatusBadge value={l.status} /> },
+                  { header: t.common.status, cell: (l) => <StatusBadge value={l.status} /> },
                 ]}
               />
             </div>
@@ -755,8 +760,8 @@ export default function EmployeeDetail() {
         <TabsContent value="documents" className="space-y-6">
           {canManage && (
             <SectionCard
-              title="Official HR Documents"
-              subtitle="Contracts, ID copies, certificates and signed agreements."
+              title={t.hr.officialHrDocuments}
+              subtitle={t.hr.contractsIdCopiesCertificatesAnd}
               actions={
                 <div className="flex flex-wrap items-center gap-2">
                   <NativeSelect
@@ -764,20 +769,20 @@ export default function EmployeeDetail() {
                     value={docKind}
                     onChange={(ev) => setDocKind(ev.target.value)}
                   >
-                    <option value="contract">Contract</option>
-                    <option value="id_copy">ID Copy</option>
-                    <option value="certificate">Certificate</option>
-                    <option value="other">Other</option>
+                    <option value="contract">{t.hr.contract}</option>
+                    <option value="id_copy">{t.hr.idCopy}</option>
+                    <option value="certificate">{t.hr.certificate}</option>
+                    <option value="other">{t.common.other}</option>
                   </NativeSelect>
                   <Input
                     className="h-8 w-40 text-xs"
-                    placeholder="Document title…"
+                    placeholder={t.hr.documentTitle}
                     value={docName}
                     onChange={(ev) => setDocName(ev.target.value)}
                   />
                   <label className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-lg border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-3 text-xs font-medium text-[var(--od-ink)] transition hover:bg-[var(--od-surface-subtle)]">
                     <Upload size={13} />
-                    <span>{uploadingDoc ? "Uploading…" : "Upload"}</span>
+                    <span>{uploadingDoc ? t.common.uploading : t.common.upload}</span>
                     <input
                       type="file"
                       className="hidden"
@@ -795,17 +800,17 @@ export default function EmployeeDetail() {
                 rows={docs.data}
                 loading={docs.isLoading}
                 rowKey={(d) => d.id}
-                empty="No official documents uploaded yet"
+                empty={t.hr.noOfficialDocumentsUploadedYet}
                 columns={[
                   {
-                    header: "Type",
-                    cell: (d) => <span className="capitalize">{d.kind.replace("_", " ")}</span>,
+                    header: t.common.type,
+                    cell: (d) => <span className="capitalize">{statusLabel(t, d.kind)}</span>,
                   },
                   {
-                    header: "Name",
+                    header: t.common.name2,
                     cell: (d) => <span className="font-medium text-[var(--od-ink)]">{d.name}</span>,
                   },
-                  { header: "Uploaded", cell: (d) => formatDate(d.created_at) },
+                  { header: t.hr.uploaded, cell: (d) => formatDate(d.created_at) },
                   {
                     header: "",
                     cell: (d) => (
@@ -815,7 +820,7 @@ export default function EmployeeDetail() {
                           variant="ghost"
                           onClick={() => setPreview({ id: d.file_id, name: d.name })}
                         >
-                          <Eye size={13} /> Preview
+                          <Eye size={13} /> {t.common.preview}
                         </Button>
                         <Button
                           size="sm"
@@ -844,7 +849,7 @@ export default function EmployeeDetail() {
       <FormDialog
         open={editing}
         onOpenChange={setEditing}
-        title="Edit employee profile"
+        title={t.hr.editEmployeeProfile}
         busy={updateEmp.isPending}
         onSubmit={() => {
           const payload: Record<string, unknown> = {
@@ -870,7 +875,7 @@ export default function EmployeeDetail() {
           updateEmp.mutate(payload);
         }}
       >
-        <Field label="Full name">
+        <Field label={t.hr.fullName}>
           <Input
             required
             value={form.name}
@@ -878,32 +883,32 @@ export default function EmployeeDetail() {
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Phone">
+          <Field label={t.common.phone}>
             <Input
               value={form.phone}
               onChange={(ev) => setForm((f) => ({ ...f, phone: ev.target.value }))}
             />
           </Field>
-          <Field label="Email">
+          <Field label={t.common.email}>
             <Input
               type="email"
               value={form.email}
               onChange={(ev) => setForm((f) => ({ ...f, email: ev.target.value }))}
             />
           </Field>
-          <Field label="Position / job title">
+          <Field label={t.hr.positionJobTitle}>
             <Input
               value={form.position}
               onChange={(ev) => setForm((f) => ({ ...f, position: ev.target.value }))}
             />
           </Field>
-          <Field label="Emergency contact name">
+          <Field label={t.hr.emergencyContactName}>
             <Input
               value={form.emergency_contact}
               onChange={(ev) => setForm((f) => ({ ...f, emergency_contact: ev.target.value }))}
             />
           </Field>
-          <Field label="Emergency contact phone" className="col-span-2">
+          <Field label={t.hr.emergencyContactPhone} className="col-span-2">
             <Input
               value={form.emergency_contact_phone}
               onChange={(ev) =>
@@ -920,11 +925,11 @@ export default function EmployeeDetail() {
                 checked={updateComp}
                 onChange={(ev) => setUpdateComp(ev.target.checked)}
               />
-              Record a compensation / payout change
+              {t.hr.recordACompensationPayoutChange}
             </label>
             {updateComp && (
               <div className="grid grid-cols-2 gap-3">
-                <Field label="Monthly basic salary">
+                <Field label={t.hr.monthlyBasicSalary}>
                   <Input
                     required
                     inputMode="decimal"
@@ -933,25 +938,25 @@ export default function EmployeeDetail() {
                     onChange={(ev) => setForm((f) => ({ ...f, base_pay: ev.target.value }))}
                   />
                 </Field>
-                <Field label="Pay method">
+                <Field label={t.hr.payMethod}>
                   <NativeSelect
                     value={form.pay_method}
                     onChange={(ev) => setForm((f) => ({ ...f, pay_method: ev.target.value }))}
                   >
-                    <option value="cash">Cash</option>
-                    <option value="bank">Bank</option>
-                    <option value="mobile_money">Mobile money</option>
+                    <option value="cash">{t.common.cash}</option>
+                    <option value="bank">{t.common.bank}</option>
+                    <option value="mobile_money">{t.common.mobileMoney}</option>
                   </NativeSelect>
                 </Field>
                 {form.pay_method !== "cash" && (
                   <>
-                    <Field label="Provider (bank / network)">
+                    <Field label={t.hr.providerBankNetwork}>
                       <Input
                         value={form.pay_provider}
                         onChange={(ev) => setForm((f) => ({ ...f, pay_provider: ev.target.value }))}
                       />
                     </Field>
-                    <Field label="Account / mobile number *">
+                    <Field label={t.hr.accountMobileNumber}>
                       <Input
                         required
                         value={form.pay_account}
@@ -960,7 +965,7 @@ export default function EmployeeDetail() {
                     </Field>
                   </>
                 )}
-                <Field label="Effective from">
+                <Field label={t.common.effectiveFrom}>
                   <Input
                     required
                     type="date"
@@ -968,9 +973,9 @@ export default function EmployeeDetail() {
                     onChange={(ev) => setForm((f) => ({ ...f, effective_from: ev.target.value }))}
                   />
                 </Field>
-                <Field label="Reason">
+                <Field label={t.common.reason}>
                   <Input
-                    placeholder="e.g. Annual salary review"
+                    placeholder={t.hr.eGAnnualSalaryReview}
                     value={form.compensation_reason}
                     onChange={(ev) =>
                       setForm((f) => ({ ...f, compensation_reason: ev.target.value }))
@@ -986,20 +991,20 @@ export default function EmployeeDetail() {
       <FormDialog
         open={loginOpen}
         onOpenChange={setLoginOpen}
-        title={`Create login for ${e.name}`}
-        submitLabel="Create login"
+        title={fmt(t.hr.createLoginFor, { name: e.name })}
+        submitLabel={t.hr.createLogin}
         busy={createLogin.isPending}
         onSubmit={() => createLogin.mutate(loginForm)}
       >
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Phone">
+          <Field label={t.common.phone}>
             <Input
               required
               value={loginForm.phone}
               onChange={(ev) => setLoginForm((l) => ({ ...l, phone: ev.target.value }))}
             />
           </Field>
-          <Field label="Email (optional)">
+          <Field label={t.hr.emailOptional}>
             <Input
               type="email"
               value={loginForm.email}
@@ -1007,13 +1012,13 @@ export default function EmployeeDetail() {
             />
           </Field>
         </div>
-        <Field label="Role">
+        <Field label={t.common.role}>
           <NativeSelect
             required
             value={loginForm.role_id}
             onChange={(ev) => setLoginForm((l) => ({ ...l, role_id: ev.target.value }))}
           >
-            <option value="">Choose role…</option>
+            <option value="">{t.hr.chooseRole}</option>
             {roles.data?.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.name}
@@ -1021,7 +1026,7 @@ export default function EmployeeDetail() {
             ))}
           </NativeSelect>
         </Field>
-        <Field label="Temporary password">
+        <Field label={t.hr.temporaryPassword}>
           <Input
             required
             type="password"
@@ -1034,25 +1039,25 @@ export default function EmployeeDetail() {
       <FormDialog
         open={termOpen}
         onOpenChange={setTermOpen}
-        title={`Terminate ${e.name}`}
-        submitLabel="Confirm termination"
+        title={fmt(t.hr.terminate2, { name: e.name })}
+        submitLabel={t.hr.confirmTermination}
         busy={terminate.isPending}
         onSubmit={() => terminate.mutate(termForm)}
       >
-        <Field label="Termination date">
+        <Field label={t.hr.terminationDate}>
           <Input
             required
             type="date"
             value={termForm.date}
-            onChange={(ev) => setTermForm((t) => ({ ...t, date: ev.target.value }))}
+            onChange={(ev) => setTermForm((item) => ({ ...item, date: ev.target.value }))}
           />
         </Field>
-        <Field label="Reason">
+        <Field label={t.common.reason}>
           <Input
             required
             value={termForm.reason}
-            onChange={(ev) => setTermForm((t) => ({ ...t, reason: ev.target.value }))}
-            placeholder="Resignation, end of contract, etc."
+            onChange={(ev) => setTermForm((item) => ({ ...item, reason: ev.target.value }))}
+            placeholder={t.hr.resignationEndOfContractEtc}
           />
         </Field>
       </FormDialog>
@@ -1060,21 +1065,21 @@ export default function EmployeeDetail() {
       <FormDialog
         open={adjOpen}
         onOpenChange={setAdjOpen}
-        title="Add bonus or deduction"
+        title={t.hr.addBonusOrDeduction}
         busy={addAdj.isPending}
         onSubmit={() => addAdj.mutate({ ...adjForm, employee_id: id })}
       >
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Field label="Kind">
+          <Field label={t.common.kind}>
             <NativeSelect
               value={adjForm.kind}
               onChange={(ev) => setAdjForm((a) => ({ ...a, kind: ev.target.value }))}
             >
-              <option value="bonus">Bonus</option>
-              <option value="deduction">Deduction</option>
+              <option value="bonus">{t.common.bonus}</option>
+              <option value="deduction">{t.common.deduction}</option>
             </NativeSelect>
           </Field>
-          <Field label="Amount">
+          <Field label={t.common.amount}>
             <Input
               required
               inputMode="decimal"
@@ -1083,7 +1088,7 @@ export default function EmployeeDetail() {
               onChange={(ev) => setAdjForm((a) => ({ ...a, amount: ev.target.value }))}
             />
           </Field>
-          <Field label="Period date">
+          <Field label={t.hr.periodDate}>
             <Input
               required
               type="date"
@@ -1092,7 +1097,7 @@ export default function EmployeeDetail() {
             />
           </Field>
         </div>
-        <Field label="Reason">
+        <Field label={t.common.reason}>
           <Input
             required
             value={adjForm.reason}

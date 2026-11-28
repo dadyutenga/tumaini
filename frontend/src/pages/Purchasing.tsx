@@ -20,6 +20,8 @@ import { PdfButton } from "@/features/services/shared";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { MoneyAccount, Product } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 export interface Supplier {
   id: string;
@@ -50,6 +52,7 @@ interface Receipt {
 }
 
 function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
+  const { t } = useI18n();
   const { can } = useAuth();
   const navigate = useNavigate();
   const [status, setStatus] = useState("");
@@ -61,7 +64,7 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
   const [lines, setLines] = useState([{ product_id: "", qty: "1", unit_cost: "0" }]);
   const create = useWrite<unknown, { id: string }>("POST", "/purchase-orders", {
     invalidate: ["/purchase-orders"],
-    success: "Order saved as a draft",
+    success: t.purchasing.orderSavedAsADraft,
     onSuccess: (o) => {
       setOpen(false);
       navigate(`/purchasing/${o.id}`);
@@ -74,24 +77,24 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
     <>
       <FilterBar className="justify-between">
         <SegmentedChips
-          ariaLabel="Filter by status"
+          ariaLabel={t.common.filterByStatus}
           value={status}
           onChange={(v) => {
             setStatus(v);
             setPage(1);
           }}
           options={[
-            { value: "", label: "All" },
-            { value: "draft", label: "Draft" },
-            { value: "ordered", label: "Ordered" },
-            { value: "partially_received", label: "Partial" },
-            { value: "received", label: "Received" },
-            { value: "cancelled", label: "Cancelled" },
+            { value: "", label: t.common.all },
+            { value: "draft", label: t.common.draft },
+            { value: "ordered", label: t.purchasing.ordered2 },
+            { value: "partially_received", label: t.purchasing.partial },
+            { value: "received", label: t.common.received },
+            { value: "cancelled", label: t.common.cancelled },
           ]}
         />
         {can("shop.purchase.manage") && (
           <Button size="sm" onClick={() => setOpen(true)}>
-            <Plus size={14} /> New order
+            <Plus size={14} /> {t.purchasing.newOrder}
           </Button>
         )}
       </FilterBar>
@@ -100,34 +103,34 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(o) => o.id}
-        empty="No purchase orders yet"
+        empty={t.purchasing.noPurchaseOrdersYet}
         onRowClick={(o) => navigate(`/purchasing/${o.id}`)}
         columns={[
           {
-            header: "Number",
+            header: t.common.number,
             sortValue: (o) => o.number,
             cell: (o) => <span className="od-mono font-medium">{o.number}</span>,
           },
-          { header: "Supplier", sortValue: (o) => o.supplier, cell: (o) => o.supplier },
+          { header: t.common.supplier, sortValue: (o) => o.supplier, cell: (o) => o.supplier },
           {
-            header: "Date",
+            header: t.common.date,
             sortValue: (o) => o.order_date,
             cell: (o) => (
               <span className="text-[var(--od-ink-secondary)]">{formatDate(o.order_date)}</span>
             ),
           },
           {
-            header: "Total",
+            header: t.common.total,
             align: "right",
             sortValue: (o) => toNumber(o.total),
             cell: (o) => <span className="font-medium">{formatMoney(o.total)}</span>,
           },
           {
-            header: "Received",
+            header: t.common.received,
             align: "right",
             cell: (o) => `${toNumber(o.qty_received)} / ${toNumber(o.qty_ordered)}`,
           },
-          { header: "Status", cell: (o) => <StatusBadge value={o.status} /> },
+          { header: t.common.status, cell: (o) => <StatusBadge value={o.status} /> },
         ]}
       />
       <Pager meta={list.data?.meta} onPage={setPage} />
@@ -135,7 +138,7 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title="New purchase order"
+        title={t.purchasing.newPurchaseOrder}
         busy={create.isPending}
         wide
         onSubmit={() =>
@@ -145,9 +148,9 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
           })
         }
       >
-        <Field label="Supplier">
+        <Field label={t.common.supplier}>
           <NativeSelect required value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {suppliers
               .filter((s) => s.is_active)
               .map((s) => (
@@ -160,12 +163,12 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
         <div className="space-y-2">
           {lines.map((l, i) => (
             <div key={i} className="grid grid-cols-[1fr_5rem_7rem_2.25rem] items-end gap-2">
-              <Field label={i === 0 ? "Product" : ""}>
+              <Field label={i === 0 ? t.common.product : ""}>
                 <NativeSelect
                   value={l.product_id}
                   onChange={(e) => setLine(i, { product_id: e.target.value })}
                 >
-                  <option value="">Choose…</option>
+                  <option value="">{t.common.choose}</option>
                   {products.data?.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
@@ -173,14 +176,14 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
                   ))}
                 </NativeSelect>
               </Field>
-              <Field label={i === 0 ? "Qty" : ""}>
+              <Field label={i === 0 ? t.common.qty : ""}>
                 <Input
                   inputMode="decimal"
                   value={l.qty}
                   onChange={(e) => setLine(i, { qty: e.target.value })}
                 />
               </Field>
-              <Field label={i === 0 ? "Unit cost" : ""}>
+              <Field label={i === 0 ? t.common.unitCost : ""}>
                 <Input
                   inputMode="decimal"
                   value={l.unit_cost}
@@ -191,7 +194,7 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label="Remove line"
+                aria-label={t.common.removeLine}
                 disabled={lines.length === 1}
                 onClick={() => setLines((all) => all.filter((_, n) => n !== i))}
               >
@@ -207,7 +210,7 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
               setLines((all) => [...all, { product_id: "", qty: "1", unit_cost: "0" }])
             }
           >
-            <Plus size={13} /> Add line
+            <Plus size={13} /> {t.common.addLine}
           </Button>
         </div>
       </FormDialog>
@@ -216,6 +219,7 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
 }
 
 function SuppliersTab() {
+  const { t } = useI18n();
   const { can, canAny } = useAuth();
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
@@ -237,7 +241,7 @@ function SuppliersTab() {
   const [pay, setPay] = useState({ amount: "", money_account_id: "", reference: "" });
   const create = useWrite("POST", "/suppliers", {
     invalidate: ["/suppliers"],
-    success: "Supplier added",
+    success: t.purchasing.supplierAdded,
     onSuccess: () => {
       setOpen(false);
       setDraft({ name: "", phone: "", contact_person: "", payment_terms_days: "0" });
@@ -246,7 +250,7 @@ function SuppliersTab() {
   const payment = useWrite<unknown, unknown>("POST", () => `/suppliers/${paying?.id}/payments`, {
     idempotent: true,
     invalidate: ["/suppliers", "/money", "/purchase-orders"],
-    success: "Payment recorded",
+    success: t.common.paymentRecorded,
     onSuccess: () => {
       setPaying(null);
       setPay({ amount: "", money_account_id: "", reference: "" });
@@ -264,9 +268,9 @@ function SuppliersTab() {
                 className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
               />
               <Input
-                aria-label="Search suppliers"
+                aria-label={t.purchasing.searchSuppliers}
                 className="pl-9"
-                placeholder="Search suppliers…"
+                placeholder={t.purchasing.searchSuppliers2}
                 value={q}
                 onChange={(e) => {
                   setQ(e.target.value);
@@ -276,14 +280,14 @@ function SuppliersTab() {
             </div>
             <Input
               type="date"
-              aria-label="Statement from date"
+              aria-label={t.common.statementFromDate}
               className="w-36"
               value={stmtFrom}
               onChange={(e) => setStmtFrom(e.target.value)}
             />
             <Input
               type="date"
-              aria-label="Statement to date"
+              aria-label={t.common.statementToDate}
               className="w-36"
               value={stmtTo}
               onChange={(e) => setStmtTo(e.target.value)}
@@ -291,12 +295,12 @@ function SuppliersTab() {
           </div>
           {can("shop.supplier.manage") && (
             <Button size="sm" onClick={() => setOpen(true)}>
-              <Plus size={14} /> New supplier
+              <Plus size={14} /> {t.purchasing.newSupplier}
             </Button>
           )}
         </FilterBar>
         {invalidStmtRange && (
-          <p className="text-xs font-medium text-[var(--od-bad)]">to must not be before from</p>
+          <p className="text-xs font-medium text-[var(--od-bad)]">{t.common.toMustNotBeBefore}</p>
         )}
       </div>
 
@@ -304,15 +308,15 @@ function SuppliersTab() {
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(s) => s.id}
-        empty="No suppliers yet"
+        empty={t.purchasing.noSuppliersYet}
         columns={[
           {
-            header: "Name",
+            header: t.common.name2,
             sortValue: (s) => s.name,
             cell: (s) => <span className="font-medium">{s.name}</span>,
           },
           {
-            header: "Contact",
+            header: t.common.contact,
             cell: (s) => (
               <span className="text-[var(--od-ink-secondary)]">
                 {s.contact_person ?? s.phone ?? "—"}
@@ -320,15 +324,15 @@ function SuppliersTab() {
             ),
           },
           {
-            header: "Terms",
+            header: t.purchasing.terms,
             cell: (s) => (
               <span className="od-tabular text-[var(--od-ink-secondary)]">
-                {s.payment_terms_days} days
+                {fmt(t.purchasing.days, { payment_terms_days: s.payment_terms_days })}
               </span>
             ),
           },
           {
-            header: "We owe",
+            header: t.common.weOwe,
             align: "right",
             sortValue: (s) => toNumber(s.balance),
             cell: (s) => (
@@ -349,7 +353,7 @@ function SuppliersTab() {
                   query={{ from: stmtFrom, to: stmtTo }}
                   filename={`supplier-statement-${s.name}.pdf`}
                 >
-                  Statement
+                  {t.common.statement}
                 </PdfButton>
                 {can("finance.payment.make") && toNumber(s.balance) > 0 && (
                   <Button
@@ -360,7 +364,7 @@ function SuppliersTab() {
                       setPay((p) => ({ ...p, amount: String(toNumber(s.balance)) }));
                     }}
                   >
-                    Pay
+                    {t.common.pay}
                   </Button>
                 )}
               </div>
@@ -373,13 +377,13 @@ function SuppliersTab() {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title="New supplier"
+        title={t.purchasing.newSupplier}
         busy={create.isPending}
         onSubmit={() =>
           create.mutate({ ...draft, payment_terms_days: Number(draft.payment_terms_days) || 0 })
         }
       >
-        <Field label="Name">
+        <Field label={t.common.name2}>
           <Input
             required
             value={draft.name}
@@ -387,20 +391,20 @@ function SuppliersTab() {
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Phone">
+          <Field label={t.common.phone}>
             <Input
               value={draft.phone}
               onChange={(e) => setDraft((d) => ({ ...d, phone: e.target.value }))}
             />
           </Field>
-          <Field label="Contact person">
+          <Field label={t.purchasing.contactPerson}>
             <Input
               value={draft.contact_person}
               onChange={(e) => setDraft((d) => ({ ...d, contact_person: e.target.value }))}
             />
           </Field>
         </div>
-        <Field label="Payment terms (days)">
+        <Field label={t.common.paymentTermsDays}>
           <Input
             inputMode="numeric"
             value={draft.payment_terms_days}
@@ -412,12 +416,12 @@ function SuppliersTab() {
       <FormDialog
         open={paying !== null}
         onOpenChange={(o) => !o && setPaying(null)}
-        title={`Pay ${paying?.name ?? "supplier"}`}
-        submitLabel="Pay"
+        title={fmt(t.purchasing.pay, { name: paying?.name ?? t.purchasing.supplier })}
+        submitLabel={t.common.pay}
         busy={payment.isPending}
         onSubmit={() => payment.mutate(pay)}
       >
-        <Field label="Amount">
+        <Field label={t.common.amount}>
           <Input
             required
             inputMode="decimal"
@@ -425,13 +429,13 @@ function SuppliersTab() {
             onChange={(e) => setPay((p) => ({ ...p, amount: e.target.value }))}
           />
         </Field>
-        <Field label="Pay from">
+        <Field label={t.common.payFrom}>
           <NativeSelect
             required
             value={pay.money_account_id}
             onChange={(e) => setPay((p) => ({ ...p, money_account_id: e.target.value }))}
           >
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {accounts.data
               ?.filter((a) => a.is_active)
               .map((a) => (
@@ -441,7 +445,7 @@ function SuppliersTab() {
               ))}
           </NativeSelect>
         </Field>
-        <Field label="Reference">
+        <Field label={t.common.reference}>
           <Input
             value={pay.reference}
             onChange={(e) => setPay((p) => ({ ...p, reference: e.target.value }))}
@@ -453,6 +457,7 @@ function SuppliersTab() {
 }
 
 function ReceiptsTab() {
+  const { t } = useI18n();
   const [page, setPage] = useState(1);
   const list = useGetPage<Receipt>("/goods-receipts", { page });
   return (
@@ -461,19 +466,19 @@ function ReceiptsTab() {
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(r) => r.id}
-        empty="No goods received yet"
+        empty={t.purchasing.noGoodsReceivedYet}
         columns={[
           {
-            header: "Number",
+            header: t.common.number,
             cell: (r) => <span className="od-mono font-medium">{r.number}</span>,
           },
-          { header: "Supplier", cell: (r) => r.supplier ?? "—" },
+          { header: t.common.supplier, cell: (r) => r.supplier ?? "—" },
           {
-            header: "Received",
+            header: t.common.received,
             cell: (r) => (r.received_date ? formatDate(r.received_date) : "—"),
           },
           {
-            header: "Value",
+            header: t.common.value,
             align: "right",
             cell: (r) => <span className="font-medium">{formatMoney(r.total_value)}</span>,
           },
@@ -485,6 +490,7 @@ function ReceiptsTab() {
 }
 
 export default function Purchasing() {
+  const { t } = useI18n();
   const { can, canAny } = useAuth();
   const canOrders = can("shop.purchase.manage");
   const canSuppliers = canAny(
@@ -497,14 +503,14 @@ export default function Purchasing() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Purchasing"
-        description="Suppliers, purchase orders, goods received and balances owed."
+        title={t.common.purchasing}
+        description={t.purchasing.suppliersPurchaseOrdersGoodsReceived}
       />
       <Tabs defaultValue={canOrders ? "orders" : "suppliers"}>
         <TabsList>
-          {canOrders && <TabsTrigger value="orders">Orders</TabsTrigger>}
-          {canSuppliers && <TabsTrigger value="suppliers">Suppliers</TabsTrigger>}
-          {canOrders && <TabsTrigger value="receipts">Receipts</TabsTrigger>}
+          {canOrders && <TabsTrigger value="orders">{t.purchasing.orders}</TabsTrigger>}
+          {canSuppliers && <TabsTrigger value="suppliers">{t.common.suppliers}</TabsTrigger>}
+          {canOrders && <TabsTrigger value="receipts">{t.common.receipts}</TabsTrigger>}
         </TabsList>
         {canOrders && (
           <TabsContent value="orders">

@@ -5,9 +5,12 @@ import { Tile } from "@/features/services/shared";
 import { useGet } from "@/hooks/useApi";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { ServicesDashboard } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 /** Business B at a glance. Each card appears only when the signed-in role may see that part. */
 export default function ServicesHome() {
+  const { t } = useI18n();
   const dash = useGet<ServicesDashboard>("/services/dashboard");
   if (dash.isLoading) return <PageLoader />;
   const d = dash.data ?? {};
@@ -17,41 +20,43 @@ export default function ServicesHome() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Services"
-        description="Projects, design work, receivables and upcoming renewals."
+        title={t.common.services}
+        description={t.services.projectsDesignWorkReceivablesAnd}
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {d.late_projects !== undefined && (
           <Tile
-            label="Late projects"
+            label={t.services.lateProjects}
             value={d.late_projects}
             tone={d.late_projects > 0 ? "bad" : undefined}
           />
         )}
         {d.overdue_task_count !== undefined && (
           <Tile
-            label="Overdue tasks"
+            label={t.services.overdueTasks}
             value={d.overdue_task_count}
             tone={d.overdue_task_count > 0 ? "bad" : undefined}
           />
         )}
-        {d.debts && <Tile label="Clients owe us" value={formatMoney(d.debts.owed_to_us)} />}
+        {d.debts && (
+          <Tile label={t.services.clientsOweUs} value={formatMoney(d.debts.owed_to_us)} />
+        )}
         {d.debts && (
           <Tile
-            label={`Overdue (${d.debts.overdue_invoices} invoices)`}
+            label={fmt(t.services.overdueInvoices, { overdue_invoices: d.debts.overdue_invoices })}
             value={formatMoney(d.debts.overdue)}
             tone={toNumber(d.debts.overdue) > 0 ? "bad" : undefined}
           />
         )}
         {d.we_owe_contractors !== undefined && (
-          <Tile label="We owe contractors" value={formatMoney(d.we_owe_contractors)} />
+          <Tile label={t.services.weOweContractors} value={formatMoney(d.we_owe_contractors)} />
         )}
-        {d.design && <Tile label="Design in progress" value={d.design.in_progress} />}
-        {d.design && <Tile label="Waiting for client" value={d.design.waiting_client} />}
+        {d.design && <Tile label={t.services.designInProgress} value={d.design.in_progress} />}
+        {d.design && <Tile label={t.common.waitingForClient} value={d.design.waiting_client} />}
         {d.design && (
           <Tile
-            label="Design due today · changes asked"
+            label={t.services.designDueTodayChangesAsked}
             value={`${d.design.due_today} · ${d.design.changes_requested}`}
             tone={d.design.overdue > 0 ? "bad" : undefined}
           />
@@ -61,19 +66,19 @@ export default function ServicesHome() {
       <div className="grid gap-5 lg:grid-cols-2">
         {d.projects_by_stage && (
           <SectionCard
-            title="Projects by stage"
-            subtitle="Open work distribution"
+            title={t.common.projectsByStage}
+            subtitle={t.services.openWorkDistribution}
             actions={
               <Link
                 className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
                 to="/projects"
               >
-                Open board
+                {t.common.openBoard}
               </Link>
             }
           >
             {stages.length === 0 ? (
-              <p className="od-caption py-2">No open projects.</p>
+              <p className="od-caption py-2">{t.services.noOpenProjects2}</p>
             ) : (
               <ul className="space-y-3 pt-1 text-[13px]">
                 {stages.map((s) => (
@@ -102,26 +107,29 @@ export default function ServicesHome() {
 
         {d.overdue_tasks && (
           <SectionCard
-            title="Overdue tasks"
-            subtitle="Tasks past their due date"
+            title={t.services.overdueTasks}
+            subtitle={t.services.tasksPastTheirDueDate}
             actions={
               <Link
                 className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
                 to="/service-tasks"
               >
-                Open tasks
+                {t.services.openTasks}
               </Link>
             }
           >
             {d.overdue_tasks.length === 0 ? (
-              <p className="od-caption py-2">Nothing is late.</p>
+              <p className="od-caption py-2">{t.services.nothingIsLate}</p>
             ) : (
               <ul className="divide-y divide-[var(--od-border)] text-[13px]">
-                {d.overdue_tasks.map((t) => (
-                  <li key={t.id} className="flex items-center justify-between gap-3 py-2.5">
-                    <span className="truncate font-medium text-[var(--od-ink)]">{t.title}</span>
+                {d.overdue_tasks.map((item) => (
+                  <li key={item.id} className="flex items-center justify-between gap-3 py-2.5">
+                    <span className="truncate font-medium text-[var(--od-ink)]">{item.title}</span>
                     <span className="shrink-0 text-xs font-medium text-[var(--od-bad)]">
-                      {t.assignee_name ? `${t.assignee_name} · ` : ""}due {formatDate(t.due_date)}
+                      {fmt(t.services.due2, {
+                        value: item.assignee_name ? `${item.assignee_name} · ` : "",
+                        due_date: formatDate(item.due_date),
+                      })}
                     </span>
                   </li>
                 ))}
@@ -132,19 +140,19 @@ export default function ServicesHome() {
 
         {d.renewals_due && (
           <SectionCard
-            title="Renewals due in 30 days"
-            subtitle="Upcoming recurring service renewals"
+            title={t.services.renewalsDueIn30Days}
+            subtitle={t.services.upcomingRecurringServiceRenewals}
             actions={
               <Link
                 className="text-xs font-medium text-[var(--od-ink-secondary)] underline underline-offset-4 hover:text-[var(--od-ink)]"
                 to="/renewals"
               >
-                Open renewals
+                {t.services.openRenewals}
               </Link>
             }
           >
             {d.renewals_due.length === 0 ? (
-              <p className="od-caption py-2">Nothing is due soon.</p>
+              <p className="od-caption py-2">{t.services.nothingIsDueSoon}</p>
             ) : (
               <ul className="divide-y divide-[var(--od-border)] text-[13px]">
                 {d.renewals_due.map((r) => (
@@ -158,7 +166,9 @@ export default function ServicesHome() {
                         r.days_left <= 7 ? "text-[var(--od-bad)]" : "text-[var(--od-ink-muted)]"
                       }`}
                     >
-                      {r.days_left < 0 ? `${-r.days_left} days late` : `${r.days_left} days`}
+                      {r.days_left < 0
+                        ? fmt(t.services.daysLate, { value: -r.days_left })
+                        : fmt(t.services.days, { days_left: r.days_left })}
                     </span>
                   </li>
                 ))}

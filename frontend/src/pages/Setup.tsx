@@ -6,8 +6,10 @@ import { Input } from "@/components/ui/input";
 import { Field } from "@/components/shared/kit";
 import { api, ApiError } from "@/lib/api";
 import { useAuth, type SessionResult } from "@/features/auth/auth";
+import { useI18n } from "@/features/i18n/i18n";
 
 export default function SetupPage() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const { completeSetup } = useAuth();
   const [status, setStatus] = useState<"loading" | "needed" | "done">("loading");
@@ -38,7 +40,7 @@ export default function SetupPage() {
   async function submit(e: FormEvent) {
     e.preventDefault();
     if (form.password !== form.confirm_password) {
-      setError("Passwords do not match.");
+      setError(t.auth.passwordsDoNotMatch);
       return;
     }
     setBusy(true);
@@ -53,7 +55,7 @@ export default function SetupPage() {
       await completeSetup(result);
       navigate("/settings", { replace: true });
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Setup could not be completed.");
+      setError(err instanceof ApiError ? err.message : t.auth.setupCouldNotBeCompleted);
     } finally {
       setBusy(false);
     }
@@ -62,13 +64,13 @@ export default function SetupPage() {
   return (
     <AuthLayout>
       <div>
-        <h1 className="text-[22px] font-semibold">Set up your business</h1>
+        <h1 className="text-[22px] font-semibold">{t.auth.setUpYourBusiness}</h1>
         <p className="mt-1 text-sm text-[var(--od-ink-secondary)]">
-          Create the business profile and the first administrator account.
+          {t.auth.createTheBusinessProfile}
         </p>
       </div>
       <form onSubmit={submit} className="mt-6 space-y-4" noValidate>
-        <Field label="Business name">
+        <Field label={t.common.businessName}>
           <Input
             required
             autoComplete="organization"
@@ -76,7 +78,7 @@ export default function SetupPage() {
             onChange={set("business_name")}
           />
         </Field>
-        <Field label="Your name">
+        <Field label={t.auth.yourName}>
           <Input
             required
             autoComplete="name"
@@ -84,10 +86,10 @@ export default function SetupPage() {
             onChange={set("owner_name")}
           />
         </Field>
-        <Field label="Phone">
+        <Field label={t.common.phone}>
           <Input required autoComplete="tel" value={form.phone} onChange={set("phone")} />
         </Field>
-        <Field label="Email">
+        <Field label={t.common.email}>
           <Input
             required
             type="email"
@@ -96,7 +98,7 @@ export default function SetupPage() {
             onChange={set("email")}
           />
         </Field>
-        <Field label="Password">
+        <Field label={t.auth.password}>
           <Input
             required
             type="password"
@@ -106,7 +108,7 @@ export default function SetupPage() {
             onChange={set("password")}
           />
         </Field>
-        <Field label="Confirm password">
+        <Field label={t.auth.confirmPassword}>
           <Input
             required
             type="password"
@@ -122,7 +124,7 @@ export default function SetupPage() {
           </p>
         )}
         <Button type="submit" className="w-full" disabled={busy}>
-          {busy ? "Setting up…" : "Create business"}
+          {busy ? t.auth.settingUp : t.auth.createBusiness}
         </Button>
       </form>
     </AuthLayout>
