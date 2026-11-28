@@ -32,7 +32,6 @@ export default {
   convertToClient: "Mfanye awe mteja",
   createQuotation: "Tengeneza nukuu ya bei",
   sendClientStatement: "Tuma taarifa ya mteja",
-  statementForCurrentBalance: "Taarifa ya {name}: salio la sasa {balance}.",
   clientBriefNeeds: "Maelezo na mahitaji ya mteja",
   owesUs: "Tunamdai",
   depositsHeld: "Amana tulizoshikilia",
@@ -167,10 +166,6 @@ export default {
   voidCost: "Futa gharama",
   queuedThroughTheBusinessOutbox:
     "Inawekwa kwenye foleni ya kutumwa na kuhifadhiwa kwenye historia ya mteja.",
-  yourTinIsReady: "TIN yako iko tayari.",
-  yourBusinessNameHasBeen: "Jina la biashara yako limeidhinishwa.",
-  weNeedOneMoreDocument: "Tunahitaji waraka mmoja zaidi kutoka kwako. Tafadhali ulete ofisini.",
-  yourProjectIsCompleteYou: "Mradi wako umekamilika. Unaweza kuchukua nyaraka zako.",
   channelNotConfiguredSendManually: "Njia hii haijawekwa. Tuma mwenyewe kupitia WhatsApp:",
   editProject: "Hariri mradi",
   inProgress: "Inaendelea",

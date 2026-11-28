@@ -249,7 +249,7 @@ function QuickJobDialog({
         client_id: d.client_id,
         service_id: d.service_id || undefined,
         job_type: "other",
-        title: d.title || selected?.name || t.common.designJob,
+        title: d.title || selected?.name || "Design job",
         brief: d.details,
         deadline: d.deadline || undefined,
       });
@@ -257,7 +257,7 @@ function QuickJobDialog({
       createProject.mutate({
         client_id: d.client_id,
         service_id: d.service_id || undefined,
-        name: d.title || selected?.name || t.dashboard.serviceJob,
+        name: d.title || selected?.name || "Service job",
         notes: d.details,
         start_date: today(),
       });

@@ -174,6 +174,11 @@ function isIgnoredPosition(node) {
   return false;
 }
 
+/** `translate="no"` is the HTML way to say a block stays as written, such as a printed receipt. */
+const isNotForTranslation = (node) =>
+  ts.isJsxElement(node) &&
+  node.openingElement.attributes.properties.some((a) => a.getText() === 'translate="no"');
+
 /**
  * Every visible string in one file. A unit is
  * `{ kind, node, nodes, text, parts, context }`, where `parts` are the placeholders of a
@@ -317,7 +322,7 @@ export function findVisible(sourceFile, checker) {
   };
 
   const visit = (node) => {
-    if (ts.isImportDeclaration(node)) return;
+    if (ts.isImportDeclaration(node) || isNotForTranslation(node)) return;
     if (ts.isJsxAttribute(node)) {
       const name = node.name.getText();
       const element = node.parent.parent.tagName.getText();
@@ -356,7 +361,7 @@ export function findVisible(sourceFile, checker) {
 
   // Anything else that reads like prose: lookup tables, option lists, default values.
   const sweep = (node) => {
-    if (ts.isImportDeclaration(node)) return;
+    if (ts.isImportDeclaration(node) || isNotForTranslation(node)) return;
     if (isLiteral(node)) {
       if (!claimed.has(node) && looksLikeProse(node.text) && !isIgnoredPosition(node))
         units.push({ kind: "literal", node, text: node.text, parts: [], context: "other" });

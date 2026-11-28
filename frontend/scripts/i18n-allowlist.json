@@ -1,12 +1,127 @@
 [
-  { "file": "src/components/shared/Toolbar.tsx", "text": "Ctrl K", "why": "keyboard shortcut" },
-  { "file": "src/components/shared/kit.tsx", "text": "good", "why": "colour tone name, not shown" },
-  { "file": "src/features/auth/SettingsGroups.tsx", "text": "Thank you for shopping with us! Receipt {{number}}, Total {{total}}.", "why": "default SMS template, sent to customers (out of scope)" },
-  { "file": "src/features/auth/SettingsGroups.tsx", "text": "Friendly reminder: balance {{balance}} is due. Thank you.", "why": "default SMS template (out of scope)" },
-  { "file": "src/features/auth/SettingsGroups.tsx", "text": "Reminder: your {{service}} renews on {{date}}.", "why": "default SMS template (out of scope)" },
-  { "file": "src/features/auth/SettingsGroups.tsx", "text": "Hello {{client}}, update on {{project}}: {{message}}", "why": "default WhatsApp template (out of scope)" },
-  { "file": "src/features/auth/UserPermissionsDialog.tsx", "text": "Set by an administrator", "why": "reason saved to the server, not shown here" },
-  { "file": "src/pages/Dashboard.tsx", "text": "Rejected from dashboard", "why": "note saved to the server" },
-  { "file": "src/pages/Backups.tsx", "text": "deploy/backup.sh", "why": "file name" },
-  { "file": "src/pages/Backups.tsx", "text": "pg_restore", "why": "command name" }
+  {
+    "file": "src/components/shared/Toolbar.tsx",
+    "text": "Ctrl K",
+    "why": "keyboard shortcut"
+  },
+  {
+    "file": "src/components/shared/kit.tsx",
+    "text": "good",
+    "why": "colour tone name, not shown"
+  },
+  {
+    "file": "src/features/auth/SettingsGroups.tsx",
+    "text": "Thank you for shopping with us! Receipt {{number}}, Total {{total}}.",
+    "why": "default SMS template, sent to customers (out of scope)"
+  },
+  {
+    "file": "src/features/auth/SettingsGroups.tsx",
+    "text": "Friendly reminder: balance {{balance}} is due. Thank you.",
+    "why": "default SMS template (out of scope)"
+  },
+  {
+    "file": "src/features/auth/SettingsGroups.tsx",
+    "text": "Reminder: your {{service}} renews on {{date}}.",
+    "why": "default SMS template (out of scope)"
+  },
+  {
+    "file": "src/features/auth/SettingsGroups.tsx",
+    "text": "Hello {{client}}, update on {{project}}: {{message}}",
+    "why": "default WhatsApp template (out of scope)"
+  },
+  {
+    "file": "src/features/auth/UserPermissionsDialog.tsx",
+    "text": "Set by an administrator",
+    "why": "reason saved to the server, not shown here"
+  },
+  {
+    "file": "src/pages/Dashboard.tsx",
+    "text": "Rejected from dashboard",
+    "why": "note saved to the server"
+  },
+  {
+    "file": "src/pages/Backups.tsx",
+    "text": "deploy/backup.sh",
+    "why": "file name"
+  },
+  {
+    "file": "src/pages/Backups.tsx",
+    "text": "pg_restore",
+    "why": "command name"
+  },
+  {
+    "file": "src/pages/Debts.tsx",
+    "text": "Hello {name}, friendly reminder of your outstanding balance of {total}. Thank you!",
+    "why": "message sent to the customer (message templates are out of scope)"
+  },
+  {
+    "file": "src/pages/ProjectDetail.tsx",
+    "text": "Your TIN is ready.",
+    "why": "message sent to the customer (message templates are out of scope)"
+  },
+  {
+    "file": "src/pages/ProjectDetail.tsx",
+    "text": "Your business name has been approved.",
+    "why": "message sent to the customer (message templates are out of scope)"
+  },
+  {
+    "file": "src/pages/ProjectDetail.tsx",
+    "text": "We need one more document from you. Please bring it to the office.",
+    "why": "message sent to the customer (message templates are out of scope)"
+  },
+  {
+    "file": "src/pages/ProjectDetail.tsx",
+    "text": "Your project is complete. You can collect your documents.",
+    "why": "message sent to the customer (message templates are out of scope)"
+  },
+  {
+    "file": "src/pages/Dashboard.tsx",
+    "text": "Design job",
+    "why": "saved to the server as data"
+  },
+  {
+    "file": "src/pages/Dashboard.tsx",
+    "text": "Service job",
+    "why": "saved to the server as data"
+  },
+  {
+    "file": "src/pages/StockOps.tsx",
+    "text": "Stock take",
+    "why": "saved to the server as data"
+  },
+  {
+    "file": "src/features/auth/SettingsGroups.tsx",
+    "text": "Hello! This is a test notification from Tumaini BMS.",
+    "why": "default text of the test message"
+  },
+  {
+    "file": "src/pages/ClientDetail.tsx",
+    "text": "Statement for {name}: current balance {balance}.",
+    "why": "message sent to the customer (message templates are out of scope)"
+  },
+  {
+    "file": "src/pages/CustomerDetail.tsx",
+    "text": "Statement for {name}: closing balance {closing_balance}.",
+    "why": "message sent to the customer (message templates are out of scope)"
+  },
+  {
+    "file": "src/pages/Pos.tsx",
+    "text": "Receipt {number}\nTotal: {total}\nPaid: {paid_total}{value}\nThank you for your business!",
+    "why": "message sent to the customer (message templates are out of scope)"
+  },
+  {
+    "file": "src/pages/Pos.tsx",
+    "text": "Balance: {balance}",
+    "why": "message sent to the customer (message templates are out of scope)"
+  },
+  {
+    "file": "src/pages/SaleDetail.tsx",
+    "text": "Receipt {number}: Total {total}, Paid {paid_total}{value}.",
+    "why": "message sent to the customer (message templates are out of scope)"
+  },
+  {
+    "file": "src/pages/SaleDetail.tsx",
+    "text": ", Balance {balance}",
+    "why": "message sent to the customer (message templates are out of scope)"
+  }
 ]

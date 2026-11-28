@@ -1,12 +1,6 @@
 import type { Translations } from "../en";
 
 export default {
-  welcomeBack: "Karibu tena",
-  createAccount: "Fungua akaunti mpya",
-  forgotPassword: "Umesahau nenosiri",
-  resetPassword: "Weka nenosiri upya",
-  emailLabel: "Barua pepe au simu",
-  passwordLabel: "Nenosiri",
   couldNotVerifyYourIdentity: "Imeshindikana kuthibitisha utambulisho wako.",
   confirmYourIdentity: "Thibitisha utambulisho wako",
   thisSensitiveAccountChangeRequires:

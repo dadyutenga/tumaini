@@ -45,10 +45,6 @@ export default {
   heldCarts2: "Held carts",
   discard: "Discard",
   noHeldCarts: "No held carts.",
-  receiptTotalPaidThankYou:
-    "Receipt {number}\nTotal: {total}\nPaid: {paid_total}{value}\nThank you for your business!",
-  balance: "Balance: {balance}",
   saleCompleted: "Sale {number} completed",
-  onCredit: "On credit",
   openSale: "Open sale",
 };

@@ -446,7 +446,9 @@ export function NotificationsSettingsPanel() {
 
   const [testChannel, setTestChannel] = useState("in_app");
   const [testRecipient, setTestRecipient] = useState("");
-  const [testMessage, setTestMessage] = useState(t.settings.helloThisIsATest);
+  const [testMessage, setTestMessage] = useState(
+    "Hello! This is a test notification from Tumaini BMS.",
+  );
 
   const saveRules = useWrite<{ rules: Record<string, Rule> }, unknown>(
     "PUT",

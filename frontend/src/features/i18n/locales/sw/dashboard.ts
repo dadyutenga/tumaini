@@ -8,7 +8,6 @@ export default {
   tryAgain: "Jaribu tena",
   jobRegistered: "Kazi imesajiliwa",
   designJobRegistered: "Kazi ya ubunifu imesajiliwa",
-  serviceJob: "Kazi ya huduma",
   registerAServiceOrDesign:
     "Sajili kazi ya huduma au ya ubunifu haraka. Bei inatoka kwenye Orodha ya Huduma.",
   serviceJobType: "Aina ya huduma / kazi",

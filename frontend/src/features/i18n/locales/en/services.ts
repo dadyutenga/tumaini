@@ -30,7 +30,6 @@ export default {
   convertToClient: "Convert to client",
   createQuotation: "Create quotation",
   sendClientStatement: "Send client statement",
-  statementForCurrentBalance: "Statement for {name}: current balance {balance}.",
   clientBriefNeeds: "Client brief & needs",
   owesUs: "Owes us",
   depositsHeld: "Deposits held",
@@ -164,10 +163,6 @@ export default {
   voidCost: "Void cost",
   queuedThroughTheBusinessOutbox:
     "Queued through the business outbox and saved in the client's history.",
-  yourTinIsReady: "Your TIN is ready.",
-  yourBusinessNameHasBeen: "Your business name has been approved.",
-  weNeedOneMoreDocument: "We need one more document from you. Please bring it to the office.",
-  yourProjectIsCompleteYou: "Your project is complete. You can collect your documents.",
   channelNotConfiguredSendManually: "Channel not configured. Send manually via WhatsApp:",
   editProject: "Edit project",
   inProgress: "In progress",

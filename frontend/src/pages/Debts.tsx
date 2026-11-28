@@ -298,10 +298,7 @@ export default function Debts() {
                   const wa = showWa
                     ? whatsappUrl(
                         r.phone,
-                        fmt(t.finance.helloFriendlyReminderOfYour, {
-                          name: r.name,
-                          total: formatMoney(r.total),
-                        }),
+                        `Hello ${r.name}, friendly reminder of your outstanding balance of ${formatMoney(r.total)}. Thank you!`,
                       )
                     : null;
                   return (

@@ -183,10 +183,7 @@ export default function CustomerDetail() {
                     extraBody={{ from: from || undefined, to: to || undefined }}
                     successMessage={t.common.statementQueued}
                     phone={c.phone}
-                    whatsappText={fmt(t.customers.statementForClosingBalance, {
-                      name: c.name,
-                      closing_balance: formatMoney(statement.data?.closing_balance ?? c.balance),
-                    })}
+                    whatsappText={`Statement for ${c.name}: closing balance ${formatMoney(statement.data?.closing_balance ?? c.balance)}.`}
                   />
                 </>
               )}

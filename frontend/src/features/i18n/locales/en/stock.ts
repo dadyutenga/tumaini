@@ -38,7 +38,6 @@ export default {
   countSheetCreatedOpenIt: "Count sheet created. Open it to enter the counted quantities.",
   adjustmentUpdated: "Adjustment updated",
   countsSaved: "Counts saved",
-  stockTake: "Stock take",
   startAStockTake: "Start a stock take",
   noAdjustmentsYet: "No adjustments yet",
   stockTake2: "Stock take · {reason}",

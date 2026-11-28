@@ -1121,15 +1121,9 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
   const { t } = useI18n();
   const [isCopy, setIsCopy] = useState(false);
   const [printing, setPrinting] = useState(false);
-  const summaryText = fmt(t.pos.receiptTotalPaidThankYou, {
-    number: sale.number ?? "",
-    total: formatMoney(sale.total),
-    paid_total: formatMoney(sale.paid_total),
-    value:
-      toNumber(sale.balance) > 0
-        ? `\n${fmt(t.pos.balance, { balance: formatMoney(sale.balance) })}`
-        : "",
-  });
+  const summaryText = `Receipt ${sale.number ?? ""}\nTotal: ${formatMoney(sale.total)}\nPaid: ${formatMoney(sale.paid_total)}${
+    toNumber(sale.balance) > 0 ? `\nBalance: ${formatMoney(sale.balance)}` : ""
+  }\nThank you for your business!`;
 
   async function printReceipt() {
     if (!sale.id) {
@@ -1162,18 +1156,18 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
     >
       <div
         id="receipt"
+        /* The printed receipt is a document, so it is not translated. */
+        translate="no"
         className="print-document space-y-2.5 rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4 text-[13px]"
       >
         {isCopy && (
           <p className="rounded border border-dashed border-[var(--od-border-strong)] py-1 text-center text-xs font-bold tracking-widest uppercase">
-            {t.common.copy2}
+            *** COPY ***
           </p>
         )}
         <div className="flex justify-between text-xs text-[var(--od-ink-muted)]">
-          <span className="od-mono font-medium">
-            {fmt(t.common.receipt, { number: sale.number ?? "" })}
-          </span>
-          <span>{sale.customer_name || t.common.walkIn}</span>
+          <span className="od-mono font-medium">Receipt {sale.number ?? ""}</span>
+          <span>{sale.customer_name || "Walk-in"}</span>
         </div>
         <ul className="divide-y divide-[var(--od-border)]">
           {sale.items.map((i) => (
@@ -1191,22 +1185,22 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
         </ul>
         <div className="space-y-1 border-t border-[var(--od-border-strong)] pt-2">
           <div className="flex justify-between font-semibold">
-            <span>{t.common.total}</span>
+            <span>Total</span>
             <span className="od-tabular">{formatMoney(sale.total)}</span>
           </div>
           <div className="flex justify-between text-[var(--od-ink-secondary)]">
-            <span>{t.common.paid}</span>
+            <span>Paid</span>
             <span className="od-tabular">{formatMoney(sale.paid_total)}</span>
           </div>
           {toNumber(sale.change_due) > 0 && (
             <div className="flex justify-between text-[var(--od-good)]">
-              <span>{t.common.change}</span>
+              <span>Change</span>
               <span className="od-tabular">{formatMoney(sale.change_due)}</span>
             </div>
           )}
           {toNumber(sale.balance) > 0 && (
             <div className="flex justify-between font-medium text-[var(--od-bad)]">
-              <span>{t.pos.onCredit}</span>
+              <span>On credit</span>
               <span className="od-tabular">{formatMoney(sale.balance)}</span>
             </div>
           )}

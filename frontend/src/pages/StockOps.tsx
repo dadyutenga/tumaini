@@ -319,7 +319,7 @@ function CountsTab() {
             size="sm"
             variant="outline"
             disabled={sheet.isPending}
-            onClick={() => sheet.mutate({ reason: t.stock.stockTake })}
+            onClick={() => sheet.mutate({ reason: "Stock take" })}
           >
             {t.stock.startAStockTake}
           </Button>

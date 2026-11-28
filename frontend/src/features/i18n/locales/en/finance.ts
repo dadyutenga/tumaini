@@ -67,8 +67,6 @@ export default {
   n3160Days: "31–60 days",
   n60Days: "> 60 days",
   totalOwed: "Total owed",
-  helloFriendlyReminderOfYour:
-    "Hello {name}, friendly reminder of your outstanding balance of {total}. Thank you!",
   noOutstandingBalancesWeOwe: "No outstanding balances we owe",
   payView: "Pay / view",
   categoryAdded: "Category added",

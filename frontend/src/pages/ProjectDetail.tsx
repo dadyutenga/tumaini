@@ -933,10 +933,10 @@ export default function ProjectDetail() {
         </Field>
         <div className="flex flex-wrap gap-1.5">
           {[
-            t.services.yourTinIsReady,
-            t.services.yourBusinessNameHasBeen,
-            t.services.weNeedOneMoreDocument,
-            t.services.yourProjectIsCompleteYou,
+            "Your TIN is ready.",
+            "Your business name has been approved.",
+            "We need one more document from you. Please bring it to the office.",
+            "Your project is complete. You can collect your documents.",
           ].map((item) => (
             <Button
               key={item}

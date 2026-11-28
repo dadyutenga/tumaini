@@ -69,8 +69,6 @@ export default {
   n3160Days: "Siku 31–60",
   n60Days: "> Siku 60",
   totalOwed: "Jumla ya deni",
-  helloFriendlyReminderOfYour:
-    "Habari {name}, tunakukumbusha salio la deni lako la {total}. Asante!",
   noOutstandingBalancesWeOwe: "Hakuna madeni tunayodaiwa",
   payView: "Lipa / tazama",
   categoryAdded: "Kundi limeongezwa",

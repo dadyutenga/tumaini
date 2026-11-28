@@ -9,7 +9,6 @@ export default {
   availableCredit: "Mkopo uliobaki",
   chronologicalSalesAndPaymentLedger: "Daftari la mauzo na malipo kwa mpangilio wa tarehe",
   sendCustomerStatement: "Tuma taarifa ya mteja",
-  statementForClosingBalance: "Taarifa ya {name}: salio la mwisho {closing_balance}.",
   fixTheDateRangeTo: "Rekebisha tarehe ili uone taarifa",
   noActivityYet: "Bado hakuna miamala",
   debit: "Deni",

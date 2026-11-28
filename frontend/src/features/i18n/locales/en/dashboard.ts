@@ -6,7 +6,6 @@ export default {
   tryAgain: "Try again",
   jobRegistered: "Job registered",
   designJobRegistered: "Design job registered",
-  serviceJob: "Service job",
   registerAServiceOrDesign:
     "Register a service or design job quickly. Price comes from the Service Catalog.",
   serviceJobType: "Service / job type",

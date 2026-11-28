@@ -229,15 +229,9 @@ export default function SaleDetail() {
               successMessage={t.common.receiptQueued}
               phone={sale.customer_phone}
               size="sm"
-              whatsappText={fmt(t.sales.receiptTotalPaid, {
-                number: sale.number ?? "",
-                total: formatMoney(sale.total),
-                paid_total: formatMoney(sale.paid_total),
-                value:
-                  toNumber(sale.balance) > 0
-                    ? fmt(t.sales.balance, { balance: formatMoney(sale.balance) })
-                    : "",
-              })}
+              whatsappText={`Receipt ${sale.number}: Total ${formatMoney(sale.total)}, Paid ${formatMoney(sale.paid_total)}${
+                toNumber(sale.balance) > 0 ? `, Balance ${formatMoney(sale.balance)}` : ""
+              }.`}
             />
             <Button
               variant="outline"
@@ -276,33 +270,26 @@ export default function SaleDetail() {
       </div>
 
       {/* Thermal receipt print layout (visible only during window.print()) */}
-      <div className="print-document mx-auto hidden max-w-xs space-y-2 p-4 font-mono text-xs text-black print:block">
+      {/* The printed receipt is a document, so it is not translated. */}
+      <div
+        translate="no"
+        className="print-document mx-auto hidden max-w-xs space-y-2 p-4 font-mono text-xs text-black print:block"
+      >
         <div className="text-center">
-          <p className="text-sm font-bold">
-            {receiptPreview.data?.business?.name || t.common.receipt2}
-          </p>
+          <p className="text-sm font-bold">{receiptPreview.data?.business?.name || "Receipt"}</p>
           {receiptPreview.data?.business?.address && <p>{receiptPreview.data.business.address}</p>}
           {receiptPreview.data?.business?.phone && <p>{receiptPreview.data.business.phone}</p>}
         </div>
         {showCopyBanner && (
           <p className="border-y border-dashed border-black py-1 text-center font-bold tracking-widest">
-            {t.common.copy2}
+            *** COPY ***
           </p>
         )}
         <div className="space-y-0.5 border-b border-dashed border-black pb-2">
-          <p>{fmt(t.sales.receipt, { number: sale.number ?? "" })}</p>
-          {sale.business_date && (
-            <p>{fmt(t.sales.date, { business_date: formatDate(sale.business_date) })}</p>
-          )}
-          {receiptPreview.data?.cashier_name && (
-            <p>{fmt(t.sales.cashier, { cashier_name: receiptPreview.data.cashier_name })}</p>
-          )}
-          <p>
-            {fmt(t.sales.customer, {
-              customer_name:
-                receiptPreview.data?.customer_name || sale.customer_name || t.common.walkIn,
-            })}
-          </p>
+          <p>Receipt: {sale.number}</p>
+          {sale.business_date && <p>Date: {formatDate(sale.business_date)}</p>}
+          {receiptPreview.data?.cashier_name && <p>Cashier: {receiptPreview.data.cashier_name}</p>}
+          <p>Customer: {receiptPreview.data?.customer_name || sale.customer_name || "Walk-in"}</p>
         </div>
         <ul className="space-y-1 border-b border-dashed border-black pb-2">
           {sale.items.map((i) => (
@@ -316,16 +303,16 @@ export default function SaleDetail() {
         </ul>
         <div className="space-y-0.5">
           <div className="flex justify-between font-bold">
-            <span>{t.common.total2}</span>
+            <span>TOTAL</span>
             <span>{formatMoney(sale.total)}</span>
           </div>
           <div className="flex justify-between">
-            <span>{t.common.paid}</span>
+            <span>Paid</span>
             <span>{formatMoney(sale.paid_total)}</span>
           </div>
           {toNumber(sale.balance) > 0 && (
             <div className="flex justify-between">
-              <span>{t.common.balance}</span>
+              <span>Balance</span>
               <span>{formatMoney(sale.balance)}</span>
             </div>
           )}
@@ -333,7 +320,7 @@ export default function SaleDetail() {
         <p className="pt-2 text-center">
           {receiptPreview.data?.receipt_footer ||
             sale.receipt_footer ||
-            t.sales.thankYouForYourBusiness}
+            "Thank you for your business"}
         </p>
       </div>
 

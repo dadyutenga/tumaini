@@ -127,10 +127,7 @@ export default function ClientDetail() {
                   path={`/clients/${id}/statement/send`}
                   successMessage={t.common.statementQueued}
                   phone={c.phone}
-                  whatsappText={fmt(t.services.statementForCurrentBalance, {
-                    name: c.name,
-                    balance: formatMoney(c.balance),
-                  })}
+                  whatsappText={`Statement for ${c.name}: current balance ${formatMoney(c.balance)}.`}
                 />
               </>
             )}

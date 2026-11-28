@@ -40,7 +40,6 @@ export default {
   countSheetCreatedOpenIt: "Karatasi ya hesabu imetengenezwa. Ifungue uweke idadi ulizohesabu.",
   adjustmentUpdated: "Marekebisho yamebadilishwa",
   countsSaved: "Hesabu zimehifadhiwa",
-  stockTake: "Kuhesabu stoo",
   startAStockTake: "Anza kuhesabu stoo",
   noAdjustmentsYet: "Bado hakuna marekebisho",
   stockTake2: "Kuhesabu stoo · {reason}",

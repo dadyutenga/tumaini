@@ -50,10 +50,6 @@ export default {
   heldCarts2: "Vikapu vilivyohifadhiwa",
   discard: "Tupa",
   noHeldCarts: "Hakuna vikapu vilivyohifadhiwa.",
-  receiptTotalPaidThankYou:
-    "Risiti {number}\nJumla: {total}\nImelipwa: {paid_total}{value}\nAsante kwa kufanya biashara nasi!",
-  balance: "Salio: {balance}",
   saleCompleted: "Mauzo {number} yamekamilika",
-  onCredit: "Mkopo",
   openSale: "Fungua mauzo",
 } satisfies Translations["pos"];

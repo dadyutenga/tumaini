@@ -7,7 +7,6 @@ export default {
   availableCredit: "Available credit",
   chronologicalSalesAndPaymentLedger: "Chronological sales and payment ledger",
   sendCustomerStatement: "Send customer statement",
-  statementForClosingBalance: "Statement for {name}: closing balance {closing_balance}.",
   fixTheDateRangeTo: "Fix the date range to view the statement",
   noActivityYet: "No activity yet",
   debit: "Debit",
