@@ -228,6 +228,36 @@ func (s *Service) Setup(ctx context.Context, in SetupInput) (SessionResult, erro
 		`, adminRole); err != nil {
 			return err
 		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.roles(code,name,is_system,rank)
+			VALUES ('manager','Manager',true,60),('staff','Staff',true,20)
+		`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.role_permissions(role_id,permission_code)
+			SELECT r.id,p.code FROM app.roles r CROSS JOIN app.permissions p
+			WHERE r.code='manager' AND p.code IN (
+				'dashboard.operations.view','shop.sale.create','shop.sale.view_all','shop.stock.view',
+				'shop.stock.manage','shop.customer.view_all','shop.customer.manage','shop.purchase.manage',
+				'finance.payment.receive','finance.payment.view_all','finance.expense.enter',
+				'finance.expense.submit','finance.expense.approve','finance.day.close','hr.employee.view',
+				'hr.attendance.manage','hr.leave.approve','reports.operations.view','reports.export'
+			)
+		`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.role_permissions(role_id,permission_code)
+			SELECT r.id,p.code FROM app.roles r CROSS JOIN app.permissions p
+			WHERE r.code='staff' AND p.code IN (
+				'shop.sale.create','shop.product.view','shop.customer.manage',
+				'services.client.manage','services.project.manage','finance.payment.receive',
+				'finance.expense.submit'
+			)
+		`); err != nil {
+			return err
+		}
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO app.memberships(user_id,status,default_location_id,joined_at)
 			VALUES ($1,'active',$2,now()) RETURNING id

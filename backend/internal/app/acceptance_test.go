@@ -45,8 +45,9 @@ func TestAcceptance(t *testing.T) {
 	t.Cleanup(application.Close)
 	c := &client{app: application.Fiber}
 
-	reg := c.call(t, http.MethodPost, "/api/v1/auth/register", map[string]any{
-		"business_name": "BMS Shop", "owner_name": "Amina", "phone": uniquePhone(), "password": "correct-horse",
+	reg := c.call(t, http.MethodPost, "/api/v1/setup", map[string]any{
+		"business_name": "BMS Shop", "owner_name": "Amina", "phone": uniquePhone(),
+		"email": "owner@demo.test", "password": "correct-horse",
 	}, "")
 	require.Equal(t, 201, reg.code, reg.raw)
 	token := str(reg.data["access_token"])
@@ -369,18 +370,6 @@ func TestAcceptance(t *testing.T) {
 	require.Equal(t, 200, audit.code, audit.raw)
 	require.NotEmpty(t, asList(audit.body["data"]))
 
-	other := &client{app: application.Fiber}
-	reg2 := other.call(t, http.MethodPost, "/api/v1/auth/register", map[string]any{
-		"business_name": "Other Shop", "owner_name": "Other", "phone": uniquePhone(), "password": "correct-horse",
-	}, "")
-	require.Equal(t, 201, reg2.code, reg2.raw)
-	other.token = str(reg2.data["access_token"])
-	other.branch = str(reg2.data["branch_id"])
-	empty := other.call(t, http.MethodGet, "/api/v1/products", nil, "")
-	require.Equal(t, 200, empty.code, empty.raw)
-	require.Empty(t, asList(empty.body["data"]))
-	missing := other.call(t, http.MethodGet, "/api/v1/sales/"+saleID, nil, "")
-	require.Equal(t, 404, missing.code, missing.raw)
 }
 
 func login(t *testing.T, app *fiber.App, phone, password string) string {

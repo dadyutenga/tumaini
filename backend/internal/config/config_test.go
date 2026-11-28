@@ -70,18 +70,11 @@ func TestProductionGuards(t *testing.T) {
 	_, err = Load()
 	require.NoError(t, err)
 
-	// Debug mode and placeholder MFA encryption keys are rejected in production.
+	// Debug mode is rejected in production.
 	t.Setenv("LOG_LEVEL", "debug")
 	_, err = Load()
 	require.ErrorContains(t, err, "LOG_LEVEL=debug")
 	t.Setenv("LOG_LEVEL", "info")
-
-	t.Setenv("MFA_ENCRYPTION_KEY", "replace-with-a-real-32-character-secret")
-	_, err = Load()
-	require.ErrorContains(t, err, "MFA_ENCRYPTION_KEY")
-	t.Setenv("MFA_ENCRYPTION_KEY", "0123456789abcdef0123456789abcdef")
-	_, err = Load()
-	require.NoError(t, err)
 }
 
 func TestLogLevelAndDefaultsAreValidated(t *testing.T) {

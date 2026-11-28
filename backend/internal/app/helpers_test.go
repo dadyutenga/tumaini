@@ -75,12 +75,13 @@ func newEnvWithClock(t *testing.T, clk clock.Clock) *env {
 	t.Cleanup(a.Close)
 	c := &client{app: a.Fiber}
 	phone := uniquePhone()
-	reg := c.call(t, http.MethodPost, "/api/v1/auth/register", map[string]any{
-		"business_name": "Flow Shop " + phone, "owner_name": "Owner", "phone": phone, "password": "correct-horse",
+	reg := c.call(t, http.MethodPost, "/api/v1/setup", map[string]any{
+		"business_name": "Flow Shop " + phone, "owner_name": "Owner", "phone": phone,
+		"email": "owner+" + phone + "@demo.test", "password": "correct-horse",
 	}, "")
 	require.Equal(t, 201, reg.code, reg.raw)
 	c.token, c.branch = str(reg.data["access_token"]), str(reg.data["branch_id"])
-	return &env{app: a, owner: c, tenantID: uuid.MustParse(str(reg.data["tenant_id"])), branch: c.branch, phone: phone}
+	return &env{app: a, owner: c, tenantID: uuid.Nil, branch: c.branch, phone: phone}
 }
 
 // roleID returns the id of a role by slug: owner, manager or staff.

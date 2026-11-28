@@ -161,17 +161,17 @@ func TestAuthTokenTamperingIsRejected(t *testing.T) {
 	require.Equal(t, 401, code, "the Bearer scheme is required")
 }
 
-func TestAuthRegistrationValidation(t *testing.T) {
+func TestSetupValidation(t *testing.T) {
 	e := newEnv(t, defaultNow)
 	app := e.app.Fiber
 	// The same phone cannot register twice.
-	code, dup, _ := raw(t, app, http.MethodPost, "/api/v1/auth/register", map[string]any{"business_name": "Again", "owner_name": "O", "phone": e.phone, "password": "correct-horse"}, nil)
+	code, dup, _ := raw(t, app, http.MethodPost, "/api/v1/setup", map[string]any{"business_name": "Again", "owner_name": "O", "phone": e.phone, "email": "owner@demo.test", "password": "correct-horse"}, nil)
 	require.Equal(t, 409, code)
-	require.Equal(t, "duplicate", errCode(dup))
-	code, weak, _ := raw(t, app, http.MethodPost, "/api/v1/auth/register", map[string]any{"business_name": "Weak", "owner_name": "O", "phone": uniquePhone(), "password": "password"}, nil)
+	require.Equal(t, "setup_already_done", errCode(dup))
+	code, weak, _ := raw(t, app, http.MethodPost, "/api/v1/setup", map[string]any{"business_name": "Weak", "owner_name": "O", "phone": uniquePhone(), "email": "weak@demo.test", "password": "password"}, nil)
 	require.Equal(t, 400, code)
 	require.Equal(t, "weak_password", errCode(weak))
-	code, _, _ = raw(t, app, http.MethodPost, "/api/v1/auth/register", map[string]any{"business_name": "", "owner_name": "", "password": "correct-horse"}, nil)
+	code, _, _ = raw(t, app, http.MethodPost, "/api/v1/setup", map[string]any{"business_name": "", "owner_name": "", "phone": "", "email": "", "password": "correct-horse"}, nil)
 	require.GreaterOrEqual(t, code, 400)
 	require.Less(t, code, 500)
 	code, _, _ = raw(t, app, http.MethodPost, "/api/v1/auth/login", nil, nil)
