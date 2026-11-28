@@ -96,9 +96,9 @@ func setContext(ctx context.Context, tx pgx.Tx, a Actor) error {
 	if net.ParseIP(ip) == nil {
 		ip = ""
 	}
-	_, err := tx.Exec(ctx, `SELECT set_config('app.tenant_id', $1, true), set_config('app.user_id', $2, true),
-		set_config('app.membership_id', $3, true), set_config('app.request_id', $4, true), set_config('app.client_ip', $5, true)`,
-		nilIfZero(a.TenantID), nilIfZero(a.UserID), nilIfZero(a.MembershipID), a.RequestID, ip)
+	_, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true),
+		set_config('app.membership_id', $2, true), set_config('app.request_id', $3, true), set_config('app.client_ip', $4, true)`,
+		nilIfZero(a.UserID), nilIfZero(a.MembershipID), a.RequestID, ip)
 	return err
 }
 

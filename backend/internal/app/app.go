@@ -72,13 +72,11 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	outb := outbound.New(database, clk, sender.OutboundFromConfig(cfg))
 	ap := approval.New(n)
 	pepper := sha256.Sum256([]byte("auth-events:" + cfg.JWTSecret))
-	mfaKeySecret, mfaKeyID := cfg.DataKey()
-	mfaKey := auth.DeriveKey(mfaKeySecret, "mfa-totp-key:v1")
 	ident := &identity.Service{
 		DB: database, Auth: auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now},
 		Hash:  auth.Params{Memory: cfg.ArgonMemory, Time: cfg.ArgonTime, Threads: cfg.ArgonThreads},
 		Clock: clk, Audit: aud, Notify: n, TTL: cfg.RefreshTokenTTL, IdleTimeout: cfg.SessionIdleTimeout,
-		ReauthTTL: cfg.ReauthTTL, Pepper: pepper[:], MFAKey: mfaKey, MFAKeyID: mfaKeyID,
+		ReauthTTL: cfg.ReauthTTL, Pepper: pepper[:],
 		DefaultTimezone: cfg.DefaultTimezone, DefaultCurrency: cfg.DefaultCurrency,
 	}
 	jobPool := database.Jobs
@@ -135,7 +133,11 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	api := fiberApp.Group("/api/v1")
 	limit := middleware.NewLimiter(30, time.Minute).Share(shared, "public").Handler()
 	authGroup := api.Group("/auth")
-	identity.RegisterPublic(authGroup, &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL}, limit)
+	identityHandler := &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL}
+	identity.RegisterPublic(authGroup, identityHandler, limit)
+	setupGroup := api.Group("/setup")
+	setupGroup.Get("/status", limit, identityHandler.SetupStatus)
+	setupGroup.Post("", limit, identityHandler.Setup)
 	recovery := &identity.Recovery{Svc: ident}
 	recovery.Email, recovery.SMS = sender.FromConfig(cfg)
 	authGroup.Post("/forgot-password", limit, recovery.ForgotHandler)

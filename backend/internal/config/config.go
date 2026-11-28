@@ -21,22 +21,21 @@ type Config struct {
 	// SessionIdleTimeout ends a session that has not been used for this long.
 	SessionIdleTimeout time.Duration
 	// ReauthTTL is how long a recent primary credential check remains valid for sensitive account changes.
-	ReauthTTL        time.Duration
-	JWTSecret        string
-	MFAEncryptionKey string
-	AccessTokenTTL   time.Duration
-	RefreshTokenTTL  time.Duration
-	CORSOrigins      []string
-	CookieDomain     string
-	CookieSecure     bool
-	StorageDriver    string
-	StoragePath      string
-	DefaultTimezone  string
-	DefaultCurrency  string
-	LogLevel         string
-	ArgonMemory      uint32
-	ArgonTime        uint32
-	ArgonThreads     uint8
+	ReauthTTL       time.Duration
+	JWTSecret       string
+	AccessTokenTTL  time.Duration
+	RefreshTokenTTL time.Duration
+	CORSOrigins     []string
+	CookieDomain    string
+	CookieSecure    bool
+	StorageDriver   string
+	StoragePath     string
+	DefaultTimezone string
+	DefaultCurrency string
+	LogLevel        string
+	ArgonMemory     uint32
+	ArgonTime       uint32
+	ArgonThreads    uint8
 	// TrustedProxies are the reverse proxies (IPs or CIDRs) whose X-Forwarded-For is believed.
 	// Empty means the socket address is used, so rate limits and audit IPs cannot be spoofed.
 	TrustedProxies     []string
@@ -69,7 +68,6 @@ func Load() (Config, error) {
 		SessionIdleTimeout: duration("SESSION_IDLE_TIMEOUT", 30*time.Minute),
 		ReauthTTL:          duration("REAUTH_TTL", 10*time.Minute),
 		JWTSecret:          os.Getenv("JWT_SECRET"),
-		MFAEncryptionKey:   os.Getenv("MFA_ENCRYPTION_KEY"),
 		AccessTokenTTL:     duration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL:    duration("REFRESH_TOKEN_TTL", 30*24*time.Hour),
 		CORSOrigins:        splitCSV(getenv("CORS_ORIGINS", "http://localhost:5173")),
@@ -107,9 +105,6 @@ func Load() (Config, error) {
 	}
 	if len(c.JWTSecret) < 32 {
 		return c, fmt.Errorf("JWT_SECRET must be at least 32 characters")
-	}
-	if c.MFAEncryptionKey != "" && len(c.MFAEncryptionKey) < 32 {
-		return c, fmt.Errorf("MFA_ENCRYPTION_KEY must be at least 32 characters when set")
 	}
 	if c.MigrateDatabaseURL == "" {
 		c.MigrateDatabaseURL = c.DatabaseURL
@@ -163,9 +158,6 @@ func Load() (Config, error) {
 			if strings.Contains(lowerSecret, badSecret) {
 				return c, fmt.Errorf("JWT_SECRET still has an example or development value")
 			}
-			if c.MFAEncryptionKey != "" && strings.Contains(strings.ToLower(c.MFAEncryptionKey), badSecret) {
-				return c, fmt.Errorf("MFA_ENCRYPTION_KEY still has an example or development value")
-			}
 		}
 		for _, url := range []string{c.DatabaseURL, c.JobsDatabaseURL, c.MigrateDatabaseURL} {
 			for _, devPass := range []string{"bms_api_dev", "bms_owner_dev", "bms_jobs_dev", "bms_app_dev", "postgres_dev"} {
@@ -187,13 +179,7 @@ func Load() (Config, error) {
 	return c, nil
 }
 
-// DataKey is the secret that data encrypted at rest (TOTP secrets, national ID numbers) is derived
-// from, and the key id recorded beside it. Without MFA_ENCRYPTION_KEY it falls back to JWT_SECRET,
-// in which case rotating JWT_SECRET makes that data unreadable.
 func (c Config) DataKey() (secret, keyID string) {
-	if c.MFAEncryptionKey != "" {
-		return c.MFAEncryptionKey, "env-v1"
-	}
 	return c.JWTSecret, "derived-v1"
 }
 

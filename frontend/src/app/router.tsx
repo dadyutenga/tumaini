@@ -4,6 +4,7 @@ import DashboardLayout from "@/components/layout/DashboardLayout";
 import { ProtectedRoute } from "@/features/auth/auth";
 import { routes } from "./routes";
 import AuthPage from "@/pages/Auth";
+import SetupPage from "@/pages/Setup";
 import ForgotPassword from "@/pages/ForgotPassword";
 import ClientApproval from "@/pages/ClientApproval";
 import Status from "@/pages/Status";
@@ -31,10 +32,11 @@ export const router = createBrowserRouter([
       ),
     })),
   },
-  ...["login", "register"].map((path) => ({
+  ...["login"].map((path) => ({
     path,
     element: <AuthPage mode={path} />,
   })),
+  { path: "setup", element: <SetupPage /> },
   { path: "forgot-password", element: <ForgotPassword /> },
   // Private link the client opens from an SMS to approve a design. No sign-in.
   { path: "approve/:token", element: <ClientApproval /> },

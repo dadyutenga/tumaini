@@ -143,20 +143,6 @@ type Claims struct {
 	Purpose      string    `json:"pur,omitempty"`
 }
 
-// MFAChallengeClaims is a short-lived signed token issued between password verification
-// and MFA verification. Its explicit Purpose prevents it from ever being accepted as an access token.
-type MFAChallengeClaims struct {
-	jwt.RegisteredClaims
-	TenantID   *uuid.UUID `json:"tid,omitempty"`
-	Identifier string     `json:"idf,omitempty"`
-	Purpose    string     `json:"pur"`
-}
-
-const (
-	mfaChallengePurpose = "mfa_challenge"
-	MFAChallengeTTL     = 5 * time.Minute
-)
-
 type Tokens struct {
 	Secret []byte
 	Access time.Duration
@@ -197,38 +183,6 @@ func (t Tokens) Verify(raw string) (Claims, error) {
 	return claims, nil
 }
 
-func (t Tokens) SignMFAChallenge(userID uuid.UUID, tenantID *uuid.UUID, identifier string, now time.Time) (string, error) {
-	claims := MFAChallengeClaims{
-		RegisteredClaims: jwt.RegisteredClaims{
-			Subject:   userID.String(),
-			IssuedAt:  jwt.NewNumericDate(now),
-			ExpiresAt: jwt.NewNumericDate(now.Add(MFAChallengeTTL)),
-		},
-		TenantID:   tenantID,
-		Identifier: identifier,
-		Purpose:    mfaChallengePurpose,
-	}
-	tok := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return tok.SignedString(t.Secret)
-}
-
-func (t Tokens) VerifyMFAChallenge(raw string) (MFAChallengeClaims, error) {
-	var claims MFAChallengeClaims
-	_, err := jwt.ParseWithClaims(raw, &claims, func(token *jwt.Token) (any, error) {
-		if token.Method != jwt.SigningMethodHS256 {
-			return nil, errors.New("unexpected signing method")
-		}
-		return t.Secret, nil
-	}, t.parserOptions()...)
-	if err != nil {
-		return MFAChallengeClaims{}, err
-	}
-	if claims.Purpose != mfaChallengePurpose {
-		return MFAChallengeClaims{}, errors.New("unexpected token purpose")
-	}
-	return claims, nil
-}
-
 func (t Tokens) parserOptions() []jwt.ParserOption {
 	opts := []jwt.ParserOption{jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}), jwt.WithExpirationRequired()}
 	if t.Now != nil {
@@ -264,7 +218,6 @@ type Principal struct {
 	BranchID          *uuid.UUID
 	SessionID         uuid.UUID
 	ReauthenticatedAt time.Time
-	MFAVerified       bool
 	IP                string
 	UserAgent         string
 	RequestID         string

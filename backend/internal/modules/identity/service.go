@@ -3,9 +3,7 @@ package identity
 import (
 	"context"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"regexp"
 	"strings"
@@ -49,8 +47,6 @@ type Service struct {
 	// Pepper keys the HMAC that stands in for the typed identifier in auth events, so history
 	// never holds a phone number or email in plain text.
 	Pepper          []byte
-	MFAKey          []byte
-	MFAKeyID        string
 	DefaultTimezone string
 	DefaultCurrency string
 
@@ -59,18 +55,13 @@ type Service struct {
 }
 
 type SessionResult struct {
-	AccessToken string    `json:"access_token,omitempty"`
-	ExpiresIn   int       `json:"expires_in"`
-	Refresh     string    `json:"-"`
-	UserID      uuid.UUID `json:"user_id,omitempty"`
-	TenantID    uuid.UUID `json:"tenant_id,omitempty"`
-	// BusinessID repeats TenantID under the name the web client already uses.
-	BusinessID         uuid.UUID `json:"business_id,omitempty"`
+	AccessToken        string    `json:"access_token,omitempty"`
+	ExpiresIn          int       `json:"expires_in"`
+	Refresh            string    `json:"-"`
+	UserID             uuid.UUID `json:"user_id,omitempty"`
 	MembershipID       uuid.UUID `json:"membership_id,omitempty"`
 	BranchID           uuid.UUID `json:"branch_id,omitempty"`
 	MustChangePassword bool      `json:"must_change_password,omitempty"`
-	MFARequired        bool      `json:"mfa_required,omitempty"`
-	MFAToken           string    `json:"mfa_token,omitempty"`
 }
 
 func (s *Service) reauthWindow() time.Duration {
@@ -104,11 +95,31 @@ func (s *Service) idle() time.Duration {
 	return s.IdleTimeout
 }
 
+type ReauthResult struct {
+	ReauthenticatedAt time.Time `json:"reauthenticated_at"`
+	ExpiresIn         int       `json:"expires_in"`
+}
+
+func (s *Service) Reauthenticate(ctx context.Context, p *auth.Principal, password string) (ReauthResult, error) {
+	now := s.Clock.Now()
+	var hash string
+	err := s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT password_hash FROM iam.user_credentials WHERE user_id=$1`, p.UserID).Scan(&hash)
+	})
+	if err != nil || !auth.VerifyPassword(hash, password) {
+		return ReauthResult{}, httpx.Unauthorized("invalid_password", "Password is incorrect")
+	}
+	if _, err := s.DB.Pool.Exec(ctx, `UPDATE iam.sessions SET reauthenticated_at=$2 WHERE id=$1`, p.SessionID, now); err != nil {
+		return ReauthResult{}, err
+	}
+	return ReauthResult{ReauthenticatedAt: now, ExpiresIn: int(s.reauthWindow().Seconds())}, nil
+}
+
 // ---------------------------------------------------------------------------------------------
-// Register
+// First-run setup
 // ---------------------------------------------------------------------------------------------
 
-type RegisterInput struct {
+type SetupInput struct {
 	BusinessName string
 	OwnerName    string
 	Phone        string
@@ -123,25 +134,15 @@ var (
 	nonCode = regexp.MustCompile(`[^a-z0-9_]+`)
 )
 
-func slugFor(name string) string {
-	base := strings.Trim(nonSlug.ReplaceAllString(strings.ToLower(name), "-"), "-")
-	if len(base) < 3 {
-		base = "business"
-	}
-	if len(base) > 50 {
-		base = strings.Trim(base[:50], "-")
-	}
-	b := make([]byte, 3)
-	_, _ = rand.Read(b)
-	return base + "-" + hex.EncodeToString(b)
+func (s *Service) SetupStatus(ctx context.Context) (bool, error) {
+	var exists bool
+	err := s.DB.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.business_profile)`).Scan(&exists)
+	return !exists, err
 }
 
-// Register creates the owner's identity and the tenant in one transaction, then signs the owner in.
-// The tenant, its business units, location, roles, permissions, numbering and notification rules
-// come from app.provision_tenant; defaults.go adds the starting reference data.
-func (s *Service) Register(ctx context.Context, in RegisterInput) (SessionResult, error) {
-	name, bname := strings.TrimSpace(in.OwnerName), strings.TrimSpace(in.BusinessName)
-	if name == "" || bname == "" || strings.TrimSpace(in.Phone) == "" {
+func (s *Service) Setup(ctx context.Context, in SetupInput) (SessionResult, error) {
+	name, businessName := strings.TrimSpace(in.OwnerName), strings.TrimSpace(in.BusinessName)
+	if name == "" || businessName == "" || strings.TrimSpace(in.Phone) == "" {
 		return SessionResult{}, httpx.Validation(errors.New("required"))
 	}
 	phone, err := NormalizePhone(in.Phone)
@@ -156,12 +157,33 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (SessionResult
 	if err != nil {
 		return SessionResult{}, err
 	}
-	var userID, tenantID, membershipID uuid.UUID
-	var locationID *uuid.UUID
+	var userID, membershipID, locationID uuid.UUID
 	err = s.DB.InJobsTx(ctx, db.Actor{RequestID: "", ClientIP: in.IP}, func(ctx context.Context, tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(872341)`); err != nil {
+			return err
+		}
+		var exists bool
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.business_profile)`).Scan(&exists); err != nil {
+			return err
+		}
+		if exists {
+			return httpx.Conflict("setup_already_done", "Setup has already been completed")
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.business_profile(name,timezone,default_currency,status,phone,email)
+			VALUES ($1,$2,$3,'active',$4,NULLIF($5,'')::app.email)
+		`, businessName, s.DefaultTimezone, s.DefaultCurrency, phone, email); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.business_settings(business_name,phone,email,currency)
+			VALUES ($1,$2,NULLIF($3,'')::app.email,$4::app.currency)
+		`, businessName, phone, email, s.DefaultCurrency); err != nil {
+			return err
+		}
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO iam.users (full_name, email, phone, preferred_locale)
-			VALUES ($1, NULLIF($2,'')::app.email, $3::app.phone_e164, 'en') RETURNING id
+			INSERT INTO iam.users(full_name,email,phone,preferred_locale)
+			VALUES ($1,NULLIF($2,'')::app.email,$3::app.phone_e164,'en') RETURNING id
 		`, name, email, phone).Scan(&userID); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "That phone or email is already registered")
@@ -169,49 +191,64 @@ func (s *Service) Register(ctx context.Context, in RegisterInput) (SessionResult
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO iam.user_credentials (user_id, password_hash, must_change_password) VALUES ($1, $2, false)
+			INSERT INTO iam.user_credentials(user_id,password_hash,must_change_password)
+			VALUES ($1,$2,false)
 		`, userID, hash); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO iam.password_history (user_id, password_hash) VALUES ($1, $2)`, userID, hash); err != nil {
+		if _, err := tx.Exec(ctx, `INSERT INTO iam.password_history(user_id,password_hash) VALUES ($1,$2)`, userID, hash); err != nil {
 			return err
 		}
-		if err := tx.QueryRow(ctx, `SELECT app.provision_tenant($1, $2, $3)`, slugFor(bname), bname, userID).Scan(&tenantID); err != nil {
-			return err
-		}
-		// provision_tenant left app.tenant_id set for this transaction, so the reads below see the new tenant.
+		var buA uuid.UUID
 		if err := tx.QueryRow(ctx, `
-			SELECT id, default_location_id FROM app.memberships WHERE user_id = $1 AND tenant_id = $2
-		`, userID, tenantID).Scan(&membershipID, &locationID); err != nil {
+			INSERT INTO app.business_units(code,name,kind) VALUES ('A','Shop','retail_shop') RETURNING id
+		`).Scan(&buA); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.tenant_settings SET phone = $2::app.phone_e164, email = NULLIF($3,'')::app.email WHERE tenant_id = $1`,
-			tenantID, phone, email); err != nil {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.business_units(code,name,kind) VALUES ('B','Services','professional_services')
+		`); err != nil {
 			return err
 		}
-		if s.DefaultTimezone != "" {
-			if _, err := tx.Exec(ctx, `UPDATE app.tenants SET timezone = $2 WHERE id = $1`, tenantID, s.DefaultTimezone); err != nil {
-				return err
-			}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO app.locations(business_unit_id,name,kind,is_default)
+			VALUES ($1,'Main shop','shop',true) RETURNING id
+		`, buA).Scan(&locationID); err != nil {
+			return err
 		}
-		if s.DefaultCurrency != "" {
-			if _, err := tx.Exec(ctx, `UPDATE app.tenants SET default_currency = $2::app.currency WHERE id = $1`, tenantID, s.DefaultCurrency); err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, `UPDATE app.tenant_settings SET currency = $2::app.currency WHERE tenant_id = $1`, tenantID, s.DefaultCurrency); err != nil {
-				return err
-			}
+		var adminRole uuid.UUID
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO app.roles(code,name,is_system,rank) VALUES ('admin','Admin',true,100) RETURNING id
+		`).Scan(&adminRole); err != nil {
+			return err
 		}
-		return seedDefaults(ctx, tx, tenantID, locationID)
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.role_permissions(role_id,permission_code)
+			SELECT $1,code FROM app.permissions
+		`, adminRole); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO app.memberships(user_id,status,default_location_id,joined_at)
+			VALUES ($1,'active',$2,now()) RETURNING id
+		`, userID, locationID).Scan(&membershipID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO app.membership_roles(membership_id,role_id) VALUES ($1,$2)
+		`, membershipID, adminRole); err != nil {
+			return err
+		}
+		return seedDefaults(ctx, tx, &locationID)
 	})
 	if err != nil {
 		return SessionResult{}, err
 	}
-	out, err := s.startSession(ctx, userID, tenantID, membershipID, in.IP, in.UserAgent, nil)
+	out, err := s.startSession(ctx, userID, uuid.Nil, membershipID, in.IP, in.UserAgent, nil)
 	if err != nil {
 		return SessionResult{}, err
 	}
-	s.event(ctx, "login_success", &userID, &tenantID, in.Phone, &out.sessionID, in.IP, in.UserAgent, "")
+	s.event(ctx, "login_success", &userID, nil, in.Phone, &out.sessionID, in.IP, in.UserAgent, "")
 	return out.SessionResult, nil
 }
 
@@ -234,8 +271,8 @@ func (s *Service) startSession(ctx context.Context, userID, tenantID, membership
 	}
 	var idleMinutes int
 	var location *uuid.UUID
-	err = s.DB.InActorTx(ctx, db.Actor{TenantID: tenantID, UserID: userID, MembershipID: membershipID}, func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT session_idle_minutes FROM app.tenant_settings WHERE tenant_id = $1`, tenantID).Scan(&idleMinutes); err != nil {
+	err = s.DB.InActorTx(ctx, db.Actor{UserID: userID, MembershipID: membershipID}, func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT session_idle_minutes FROM app.business_settings`).Scan(&idleMinutes); err != nil {
 			return err
 		}
 		return tx.QueryRow(ctx, `SELECT default_location_id FROM app.memberships WHERE id = $1`, membershipID).Scan(&location)
@@ -249,11 +286,11 @@ func (s *Service) startSession(ctx context.Context, userID, tenantID, membership
 	var sid uuid.UUID
 	err = s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			INSERT INTO iam.sessions (user_id, tenant_id, membership_id, token_hash, created_at, last_seen_at,
-			                          reauthenticated_at, mfa_verified_at, idle_timeout, absolute_expires_at, ip, user_agent)
-			VALUES ($1,$2,$3,$4,$5,$5,$5,$6, make_interval(mins => $7), $8, NULLIF($9,'')::inet, LEFT($10, 512))
+			INSERT INTO iam.sessions (user_id, membership_id, token_hash, created_at, last_seen_at,
+			                          reauthenticated_at, idle_timeout, absolute_expires_at, ip, user_agent)
+			VALUES ($1,$2,$3,$4,$4,$4, make_interval(mins => $5), $6, NULLIF($7,'')::inet, LEFT($8, 512))
 			RETURNING id
-		`, userID, tenantID, membershipID, hash, now, mfaVerifiedAt, idleMinutes, now.Add(s.TTL), ip, ua).Scan(&sid)
+		`, userID, membershipID, hash, now, idleMinutes, now.Add(s.TTL), ip, ua).Scan(&sid)
 	})
 	if err != nil {
 		return started{}, err
@@ -263,7 +300,7 @@ func (s *Service) startSession(ctx context.Context, userID, tenantID, membership
 		return started{}, err
 	}
 	r := SessionResult{AccessToken: access, ExpiresIn: int(s.Auth.Access.Seconds()), Refresh: raw,
-		UserID: userID, TenantID: tenantID, BusinessID: tenantID, MembershipID: membershipID}
+		UserID: userID, MembershipID: membershipID}
 	if location != nil {
 		r.BranchID = *location
 	}
@@ -274,9 +311,9 @@ func (s *Service) startSession(ctx context.Context, userID, tenantID, membership
 func (s *Service) event(ctx context.Context, kind string, userID, tenantID *uuid.UUID, identifier string, sessionID *uuid.UUID, ip, ua, reason string) {
 	_ = s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
-			INSERT INTO iam.auth_events (id, occurred_at, event_type, user_id, tenant_id, identifier_hmac, session_id, ip, user_agent, failure_reason)
-			VALUES ($1, $2, $3::iam.auth_event_type, $4, $5, $6, $7, NULLIF($8,'')::inet, LEFT($9, 512), NULLIF($10,''))
-		`, ids.New(), s.Clock.Now(), kind, userID, tenantID, s.identifierHMAC(identifier), sessionID, ip, ua, reason)
+			INSERT INTO iam.auth_events (id, occurred_at, event_type, user_id, identifier_hmac, session_id, ip, user_agent, failure_reason)
+			VALUES ($1, $2, $3::iam.auth_event_type, $4, $5, $6, NULLIF($7,'')::inet, LEFT($8, 512), NULLIF($9,''))
+		`, ids.New(), s.Clock.Now(), kind, userID, s.identifierHMAC(identifier), sessionID, ip, ua, reason)
 		return err
 	})
 }
@@ -312,8 +349,6 @@ func (s *Service) findUser(ctx context.Context, identifier string) (found, error
 
 type LoginInput struct {
 	Identifier, Password, IP, UserAgent string
-	// TenantID picks the business when the person belongs to several; empty picks the one they joined first.
-	TenantID *uuid.UUID
 }
 
 func (s *Service) Login(ctx context.Context, in LoginInput) (SessionResult, error) {
@@ -341,24 +376,12 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (SessionResult, erro
 		s.failed(ctx, u.ID, id, in.IP, in.UserAgent, now)
 		return SessionResult{}, errInvalid
 	}
-	tenantID, membershipID, err := s.pickMembership(ctx, u.ID, in.TenantID)
+	_, membershipID, err := s.pickMembership(ctx, u.ID, nil)
 	if err != nil {
 		s.event(ctx, "login_failure", &u.ID, nil, id, nil, in.IP, in.UserAgent, "membership_inactive")
 		return SessionResult{}, errInvalid
 	}
-	// If the account has an active confirmed MFA factor, require the second factor before issuing a session.
-	if s.hasConfirmedMFA(ctx, u.ID) {
-		challenge, err := s.Auth.SignMFAChallenge(u.ID, in.TenantID, id, now)
-		if err != nil {
-			return SessionResult{}, err
-		}
-		return SessionResult{
-			MFARequired: true,
-			MFAToken:    challenge,
-			ExpiresIn:   int(auth.MFAChallengeTTL.Seconds()),
-		}, nil
-	}
-	return s.completeLogin(ctx, u.ID, tenantID, membershipID, u.MustChange, id, in.IP, in.UserAgent, nil, now)
+	return s.completeLogin(ctx, u.ID, uuid.Nil, membershipID, u.MustChange, id, in.IP, in.UserAgent, nil, now)
 }
 
 func (s *Service) completeLogin(ctx context.Context, userID, tenantID, membershipID uuid.UUID, mustChange bool, id, ip, ua string, mfaVerifiedAt *time.Time, now time.Time) (SessionResult, error) {
@@ -419,30 +442,13 @@ func (s *Service) failed(ctx context.Context, userID uuid.UUID, identifier, ip, 
 	if err == nil && attempts == lockoutThreshold {
 		s.event(ctx, "account_locked", &userID, nil, identifier, nil, ip, ua, "")
 		if s.Notify != nil {
-			var tenants []uuid.UUID
-			_ = s.DB.InUserTx(ctx, userID, func(ctx context.Context, tx pgx.Tx) error {
-				rows, err := tx.Query(ctx, `SELECT tenant_id FROM app.memberships WHERE user_id = $1 AND status = 'active'`, userID)
-				if err != nil {
-					return err
-				}
-				defer rows.Close()
-				for rows.Next() {
-					var tid uuid.UUID
-					if err := rows.Scan(&tid); err == nil {
-						tenants = append(tenants, tid)
-					}
-				}
-				return rows.Err()
-			})
-			for _, tid := range tenants {
-				_ = s.DB.InTx(ctx, tid, func(ctx context.Context, tx pgx.Tx) error {
-					return s.Notify.ToPermission(ctx, tx, tid, nil, "security.user.manage", notify.Message{
-						Type: "account_locked", Title: "Account locked",
-						Body: "Account " + identifier + " was locked for 15 minutes after repeated failed sign-in attempts.",
-						Link: "/users",
-					})
+			_ = s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+				return s.Notify.ToPermission(ctx, tx, uuid.Nil, nil, "security.user.manage", notify.Message{
+					Type: "account_locked", Title: "Account locked",
+					Body: "Account " + identifier + " was locked for 15 minutes after repeated failed sign-in attempts.",
+					Link: "/users",
 				})
-			}
+			})
 		}
 	}
 }
@@ -450,22 +456,20 @@ func (s *Service) failed(ctx context.Context, userID uuid.UUID, identifier, ip, 
 // pickMembership chooses the tenant to sign in to: the requested one, else the earliest joined active seat.
 // A seat linked to a suspended or terminated employee cannot sign in.
 func (s *Service) pickMembership(ctx context.Context, userID uuid.UUID, want *uuid.UUID) (uuid.UUID, uuid.UUID, error) {
-	var tenantID, membershipID uuid.UUID
+	var membershipID uuid.UUID
 	err := s.DB.InUserTx(ctx, userID, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			SELECT m.tenant_id, m.id FROM app.memberships m
-			  JOIN app.tenants t ON t.id = m.tenant_id AND t.status = 'active'
-			  LEFT JOIN app.employees e ON e.tenant_id = m.tenant_id AND e.membership_id = m.id
+			SELECT m.id FROM app.memberships m
+			  LEFT JOIN app.employees e ON e.membership_id = m.id
 			 WHERE m.user_id = $1 AND m.status = 'active' AND (e.id IS NULL OR e.status = 'active')
-			   AND ($2::uuid IS NULL OR m.tenant_id = $2)
-			 ORDER BY m.joined_at NULLS LAST, m.created_at LIMIT 1`, userID, want).Scan(&tenantID, &membershipID)
+			 ORDER BY m.joined_at NULLS LAST LIMIT 1`, userID).Scan(&membershipID)
 	})
-	return tenantID, membershipID, err
+	return uuid.Nil, membershipID, err
 }
 
 type sessionRow struct {
 	ID, UserID                   uuid.UUID
-	TenantID, MembershipID       *uuid.UUID
+	MembershipID                 *uuid.UUID
 	Revoked                      bool
 	Absolute, LastSeen           time.Time
 	Idle                         time.Duration
@@ -482,25 +486,22 @@ func (s *Service) Refresh(ctx context.Context, raw, ip, ua string) (SessionResul
 	var sr sessionRow
 	var idleSecs float64
 	var reusedSessionID, reusedUserID uuid.UUID
-	var reusedTenantID *uuid.UUID
 	var tokenReused bool
 	err = s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		qerr := tx.QueryRow(ctx, `
-			SELECT s.id, s.user_id, s.tenant_id, s.membership_id, s.revoked_at IS NOT NULL, s.absolute_expires_at,
+			SELECT s.id, s.user_id, s.membership_id, s.revoked_at IS NOT NULL, s.absolute_expires_at,
 			       s.last_seen_at, extract(epoch FROM s.idle_timeout), u.status = 'active'
 			FROM iam.sessions s JOIN iam.users u ON u.id = s.user_id WHERE s.token_hash = $1 FOR UPDATE OF s`, hash).
-			Scan(&sr.ID, &sr.UserID, &sr.TenantID, &sr.MembershipID, &sr.Revoked, &sr.Absolute, &sr.LastSeen, &idleSecs, &sr.UserActive)
+			Scan(&sr.ID, &sr.UserID, &sr.MembershipID, &sr.Revoked, &sr.Absolute, &sr.LastSeen, &idleSecs, &sr.UserActive)
 		if errors.Is(qerr, pgx.ErrNoRows) {
 			// Check if this is a previously rotated refresh token (reuse/theft detection).
 			var sid, uid uuid.UUID
-			var tid *uuid.UUID
 			if rerr := tx.QueryRow(ctx, `
-				SELECT rt.session_id, rt.user_id, s.tenant_id
+				SELECT rt.session_id, rt.user_id
 				  FROM iam.session_refresh_tokens rt
 				  JOIN iam.sessions s ON s.id = rt.session_id
-				 WHERE rt.token_hash = $1`, hash).Scan(&sid, &uid, &tid); rerr == nil {
+				 WHERE rt.token_hash = $1`, hash).Scan(&sid, &uid); rerr == nil {
 				tokenReused = true
-				reusedSessionID, reusedUserID, reusedTenantID = sid, uid, tid
 				if _, uerr := tx.Exec(ctx, `UPDATE iam.sessions SET revoked_at = $2, revoked_reason = 'token_reuse' WHERE id = $1 AND revoked_at IS NULL`, sid, now); uerr != nil {
 					return uerr
 				}
@@ -511,10 +512,10 @@ func (s *Service) Refresh(ctx context.Context, raw, ip, ua string) (SessionResul
 		return qerr
 	})
 	if tokenReused {
-		s.event(ctx, "forced_signout", &reusedUserID, reusedTenantID, "", &reusedSessionID, ip, ua, "")
+		s.event(ctx, "forced_signout", &reusedUserID, nil, "", &reusedSessionID, ip, ua, "")
 		return SessionResult{}, ended
 	}
-	if err != nil || sr.Revoked || !sr.UserActive || sr.TenantID == nil || sr.MembershipID == nil {
+	if err != nil || sr.Revoked || !sr.UserActive || sr.MembershipID == nil {
 		return SessionResult{}, ended
 	}
 	sr.Idle = time.Duration(idleSecs * float64(time.Second))
@@ -524,17 +525,16 @@ func (s *Service) Refresh(ctx context.Context, raw, ip, ua string) (SessionResul
 		return SessionResult{}, ended
 	case now.Sub(sr.LastSeen) > sr.Idle:
 		s.revoke(ctx, sr.ID, "idle_timeout")
-		s.event(ctx, "session_timeout", &sr.UserID, sr.TenantID, "", &sr.ID, ip, ua, "")
+		s.event(ctx, "session_timeout", &sr.UserID, nil, "", &sr.ID, ip, ua, "")
 		return SessionResult{}, httpx.Unauthorized("session_ended", "You were signed out after a period of inactivity. Sign in again.")
 	}
 	var active bool
 	var location *uuid.UUID
-	err = s.DB.InActorTx(ctx, db.Actor{TenantID: *sr.TenantID, UserID: sr.UserID, MembershipID: *sr.MembershipID}, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InActorTx(ctx, db.Actor{UserID: sr.UserID, MembershipID: *sr.MembershipID}, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			SELECT m.status = 'active' AND t.status = 'active' AND (e.id IS NULL OR e.status = 'active'), m.default_location_id
+			SELECT m.status = 'active' AND (e.id IS NULL OR e.status = 'active'), m.default_location_id
 			  FROM app.memberships m
-			  JOIN app.tenants t ON t.id = m.tenant_id
-			  LEFT JOIN app.employees e ON e.tenant_id = m.tenant_id AND e.membership_id = m.id
+			  LEFT JOIN app.employees e ON e.membership_id = m.id
 			 WHERE m.id = $1`, *sr.MembershipID).Scan(&active, &location)
 	})
 	if err != nil || !active {
@@ -573,15 +573,15 @@ func (s *Service) Refresh(ctx context.Context, raw, ip, ua string) (SessionResul
 		return SessionResult{}, err
 	}
 	if !rotated {
-		s.event(ctx, "forced_signout", &sr.UserID, sr.TenantID, "", &sr.ID, ip, ua, "")
+		s.event(ctx, "forced_signout", &sr.UserID, nil, "", &sr.ID, ip, ua, "")
 		return SessionResult{}, ended
 	}
-	access, err := s.Auth.Sign(sr.UserID, *sr.TenantID, *sr.MembershipID, sr.ID, now)
+	access, err := s.Auth.Sign(sr.UserID, uuid.Nil, *sr.MembershipID, sr.ID, now)
 	if err != nil {
 		return SessionResult{}, err
 	}
 	out := SessionResult{AccessToken: access, ExpiresIn: int(s.Auth.Access.Seconds()), Refresh: rawNew,
-		UserID: sr.UserID, TenantID: *sr.TenantID, BusinessID: *sr.TenantID, MembershipID: *sr.MembershipID}
+		UserID: sr.UserID, MembershipID: *sr.MembershipID}
 	if location != nil {
 		out.BranchID = *location
 	}
@@ -605,7 +605,7 @@ func (s *Service) Logout(ctx context.Context, p *auth.Principal, refreshCookie s
 			})
 		}
 	}
-	s.event(ctx, "logout", &p.UserID, &p.TenantID, "", &p.SessionID, p.IP, p.UserAgent, "")
+	s.event(ctx, "logout", &p.UserID, nil, "", &p.SessionID, p.IP, p.UserAgent, "")
 	return nil
 }
 
@@ -687,7 +687,7 @@ func (s *Service) ChangePassword(ctx context.Context, p *auth.Principal, current
 	if failure != nil {
 		return failure
 	}
-	s.event(ctx, "password_changed", &p.UserID, &p.TenantID, "", &p.SessionID, p.IP, p.UserAgent, "")
+	s.event(ctx, "password_changed", &p.UserID, nil, "", &p.SessionID, p.IP, p.UserAgent, "")
 	return nil
 }
 
@@ -705,7 +705,7 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 		return nil, httpx.Unauthorized("invalid_token", "Sign in again")
 	}
 	now := s.Clock.Now()
-	p := &auth.Principal{UserID: userID, TenantID: claims.TenantID,
+	p := &auth.Principal{UserID: userID,
 		MembershipID: claims.MembershipID, SessionID: claims.SessionID, Perms: map[string]auth.Grant{}, Limits: map[string]decimal.Decimal{}}
 
 	var idle, expired bool
@@ -714,16 +714,15 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 		var revoked, userOK bool
 		var absolute time.Time
 		var idleSecs float64
-		var tid, mid *uuid.UUID
+		var mid *uuid.UUID
 		if err := tx.QueryRow(ctx, `
 			SELECT s.revoked_at IS NOT NULL, s.absolute_expires_at, s.last_seen_at, extract(epoch FROM s.idle_timeout),
-			       s.reauthenticated_at, s.mfa_verified_at IS NOT NULL,
-			       s.tenant_id, s.membership_id, u.status = 'active', u.full_name, u.preferred_locale
+			       s.reauthenticated_at, s.membership_id, u.status = 'active', u.full_name, u.preferred_locale
 			FROM iam.sessions s JOIN iam.users u ON u.id = s.user_id WHERE s.id = $1 AND s.user_id = $2`, claims.SessionID, userID).
-			Scan(&revoked, &absolute, &lastSeen, &idleSecs, &p.ReauthenticatedAt, &p.MFAVerified, &tid, &mid, &userOK, &p.Name, &p.Language); err != nil {
+			Scan(&revoked, &absolute, &lastSeen, &idleSecs, &p.ReauthenticatedAt, &mid, &userOK, &p.Name, &p.Language); err != nil {
 			return ended
 		}
-		if revoked || !userOK || tid == nil || mid == nil || *tid != claims.TenantID || *mid != claims.MembershipID {
+		if revoked || !userOK || mid == nil || *mid != claims.MembershipID {
 			return ended
 		}
 		if !absolute.After(now) {
@@ -757,13 +756,12 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 		var roleCode string
 		var employee, defaultLoc *uuid.UUID
 		if err := tx.QueryRow(ctx, `
-			SELECT m.status = 'active' AND t.status = 'active' AND (e.id IS NULL OR e.status = 'active'),
+			SELECT m.status = 'active' AND (e.id IS NULL OR e.status = 'active'),
 			       coalesce(r.code::text, ''), r.id, coalesce(r.rank, 0), e.id, m.default_location_id
 			FROM app.memberships m
-			JOIN app.tenants t ON t.id = m.tenant_id
-			LEFT JOIN app.membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.membership_id = m.id
-			LEFT JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id
-			LEFT JOIN app.employees e ON e.tenant_id = m.tenant_id AND e.membership_id = m.id
+			LEFT JOIN app.membership_roles mr ON mr.membership_id = m.id
+			LEFT JOIN app.roles r ON r.id = mr.role_id
+			LEFT JOIN app.employees e ON e.membership_id = m.id
 			WHERE m.id = $1`, claims.MembershipID).Scan(&active, &roleCode, &p.RoleID, &p.RoleRank, &employee, &defaultLoc); err != nil || !active {
 			inactiveSeat = true
 			return ended
@@ -779,8 +777,8 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 			  (SELECT o.effect = 'allow' FROM app.membership_permission_overrides o
 			    WHERE o.membership_id = $1 AND o.permission_code = p.code AND (o.expires_at IS NULL OR o.expires_at > $2)),
 			  EXISTS (SELECT 1 FROM app.membership_roles mr
-			            JOIN app.role_permissions rp ON rp.tenant_id = mr.tenant_id AND rp.role_id = mr.role_id
-			            JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id AND r.status = 'active'
+			            JOIN app.role_permissions rp ON rp.role_id = mr.role_id
+			            JOIN app.roles r ON r.id = mr.role_id AND r.status = 'active'
 			           WHERE mr.membership_id = $1 AND rp.permission_code = p.code))`, claims.MembershipID, now)
 		if err != nil {
 			return err

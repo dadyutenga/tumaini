@@ -33,6 +33,18 @@ func (h *Handler) cookie(c fiber.Ctx, value string, maxAge int) {
 }
 
 func (h *Handler) Register(c fiber.Ctx) error {
+	return httpx.NotFound("not_found", "Public registration is disabled")
+}
+
+func (h *Handler) SetupStatus(c fiber.Ctx) error {
+	needs, err := h.Svc.SetupStatus(c.Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(fiber.Map{"data": fiber.Map{"needs_setup": needs}})
+}
+
+func (h *Handler) Setup(c fiber.Ctx) error {
 	var body struct {
 		BusinessName string `json:"business_name"`
 		OwnerName    string `json:"owner_name"`
@@ -43,9 +55,14 @@ func (h *Handler) Register(c fiber.Ctx) error {
 	if err := c.Bind().Body(&body); err != nil {
 		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
 	}
-	out, err := h.Svc.Register(c.Context(), RegisterInput{
-		BusinessName: body.BusinessName, OwnerName: body.OwnerName, Phone: body.Phone, Email: body.Email, Password: body.Password,
-		IP: c.IP(), UserAgent: c.Get("User-Agent"),
+	out, err := h.Svc.Setup(c.Context(), SetupInput{
+		BusinessName: body.BusinessName,
+		OwnerName:    body.OwnerName,
+		Phone:        body.Phone,
+		Email:        body.Email,
+		Password:     body.Password,
+		IP:           c.IP(),
+		UserAgent:    c.Get("User-Agent"),
 	})
 	if err != nil {
 		return err
@@ -56,40 +73,20 @@ func (h *Handler) Register(c fiber.Ctx) error {
 
 func (h *Handler) Login(c fiber.Ctx) error {
 	var body struct {
-		Identifier string     `json:"identifier"`
-		Password   string     `json:"password"`
-		TenantID   *uuid.UUID `json:"tenant_id"`
+		Identifier string `json:"identifier"`
+		Password   string `json:"password"`
 	}
 	if err := c.Bind().Body(&body); err != nil {
 		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
 	}
 	out, err := h.Svc.Login(c.Context(), LoginInput{Identifier: body.Identifier, Password: body.Password,
-		IP: c.IP(), UserAgent: c.Get("User-Agent"), TenantID: body.TenantID})
+		IP: c.IP(), UserAgent: c.Get("User-Agent")})
 	if err != nil {
 		return err
 	}
 	if out.Refresh != "" {
 		h.cookie(c, out.Refresh, int(h.RefreshTTL.Seconds()))
 	}
-	return c.JSON(httpx.Data(out))
-}
-
-func (h *Handler) VerifyMFALogin(c fiber.Ctx) error {
-	var body struct {
-		MFAToken string `json:"mfa_token"`
-		Code     string `json:"code"`
-	}
-	if err := c.Bind().Body(&body); err != nil {
-		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
-	}
-	if body.MFAToken == "" || body.Code == "" {
-		return httpx.BadRequest("invalid_body", "mfa_token and code are required")
-	}
-	out, err := h.Svc.VerifyMFALogin(c.Context(), body.MFAToken, body.Code, c.IP(), c.Get("User-Agent"))
-	if err != nil {
-		return err
-	}
-	h.cookie(c, out.Refresh, int(h.RefreshTTL.Seconds()))
 	return c.JSON(httpx.Data(out))
 }
 
@@ -115,7 +112,6 @@ func (h *Handler) Logout(c fiber.Ctx) error {
 func (h *Handler) Reauthenticate(c fiber.Ctx) error {
 	var body struct {
 		Password string `json:"password"`
-		MFACode  string `json:"mfa_code"`
 	}
 	if err := c.Bind().Body(&body); err != nil {
 		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
@@ -123,85 +119,11 @@ func (h *Handler) Reauthenticate(c fiber.Ctx) error {
 	if body.Password == "" {
 		return httpx.BadRequest("invalid_body", "Password is required")
 	}
-	out, err := h.Svc.Reauthenticate(c.Context(), middleware.Principal(c), body.Password, body.MFACode)
+	out, err := h.Svc.Reauthenticate(c.Context(), middleware.Principal(c), body.Password)
 	if err != nil {
 		return err
 	}
 	return c.JSON(httpx.Data(out))
-}
-
-func (h *Handler) MFAStatus(c fiber.Ctx) error {
-	out, err := h.Svc.MFAStatus(c.Context(), middleware.Principal(c))
-	if err != nil {
-		return err
-	}
-	return c.JSON(httpx.Data(out))
-}
-
-func (h *Handler) StartMFASetup(c fiber.Ctx) error {
-	var body struct {
-		CurrentPassword string `json:"current_password"`
-	}
-	if err := c.Bind().Body(&body); err != nil {
-		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
-	}
-	if body.CurrentPassword == "" {
-		return httpx.BadRequest("invalid_body", "Current password is required")
-	}
-	out, err := h.Svc.StartMFASetup(c.Context(), middleware.Principal(c), body.CurrentPassword)
-	if err != nil {
-		return err
-	}
-	return c.JSON(httpx.Data(out))
-}
-
-func (h *Handler) ConfirmMFASetup(c fiber.Ctx) error {
-	var body struct {
-		Code string `json:"code"`
-	}
-	if err := c.Bind().Body(&body); err != nil {
-		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
-	}
-	out, err := h.Svc.ConfirmMFASetup(c.Context(), middleware.Principal(c), body.Code)
-	if err != nil {
-		return err
-	}
-	return c.JSON(httpx.Data(out))
-}
-
-func (h *Handler) DisableMFA(c fiber.Ctx) error {
-	var body struct {
-		CurrentPassword string `json:"current_password"`
-		Code            string `json:"code"`
-	}
-	if err := c.Bind().Body(&body); err != nil {
-		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
-	}
-	if body.CurrentPassword == "" || body.Code == "" {
-		return httpx.BadRequest("invalid_body", "current_password and code are required")
-	}
-	if err := h.Svc.DisableMFA(c.Context(), middleware.Principal(c), body.CurrentPassword, body.Code); err != nil {
-		return err
-	}
-	return c.JSON(httpx.Data(fiber.Map{"ok": true}))
-}
-
-func (h *Handler) RegenerateRecoveryCodes(c fiber.Ctx) error {
-	var body struct {
-		CurrentPassword string `json:"current_password"`
-		Code            string `json:"code"`
-	}
-	if err := c.Bind().Body(&body); err != nil {
-		return httpx.BadRequest("invalid_body", "Request body is not valid JSON")
-	}
-	if body.CurrentPassword == "" || body.Code == "" {
-		return httpx.BadRequest("invalid_body", "current_password and code are required")
-	}
-	codes, err := h.Svc.RegenerateRecoveryCodes(c.Context(), middleware.Principal(c), body.CurrentPassword, body.Code)
-	if err != nil {
-		return err
-	}
-	return c.JSON(httpx.Data(fiber.Map{"recovery_codes": codes}))
 }
 
 func (h *Handler) Password(c fiber.Ctx) error {
@@ -482,9 +404,7 @@ func (h *Handler) DeleteRole(c fiber.Ctx) error {
 }
 
 func RegisterPublic(r fiber.Router, h *Handler, limit fiber.Handler) {
-	r.Post("/register", limit, h.Register)
 	r.Post("/login", limit, h.Login)
-	r.Post("/mfa/verify", limit, h.VerifyMFALogin)
 	r.Post("/refresh", limit, h.Refresh)
 }
 
@@ -504,11 +424,6 @@ func Register(r fiber.Router, h *Handler) {
 	r.Get("/me/sessions", h.Sessions)
 	r.Delete("/me/sessions/:id", h.EndSession)
 	r.Get("/me/login-history", h.MyLoginHistory)
-	r.Get("/me/mfa", h.MFAStatus)
-	r.Post("/me/mfa/setup", userLimit, h.StartMFASetup)
-	r.Post("/me/mfa/confirm", userLimit, h.ConfirmMFASetup)
-	r.Post("/me/mfa/disable", userLimit, h.DisableMFA)
-	r.Post("/me/mfa/recovery-codes", userLimit, h.RegenerateRecoveryCodes)
 	r.Get("/users", middleware.Require("security.user.manage"), h.ListUsers)
 	r.Post("/users", middleware.Require("security.user.manage"), h.CreateUser)
 	r.Get("/users/:id", middleware.Require("security.user.manage"), h.GetUser)

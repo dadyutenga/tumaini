@@ -776,8 +776,7 @@ func (s *Service) Me(ctx context.Context, p *auth.Principal) (map[string]any, er
 	}
 	return map[string]any{
 		"user": u, "permissions": perms, "limits": limits, "branches": u.Branches,
-		"is_owner": p.IsOwner, "tenant_id": p.TenantID, "business_id": p.TenantID, "membership_id": p.MembershipID,
-		"mfa_enabled": s.hasConfirmedMFA(ctx, p.UserID), "mfa_recommended": isMFARecommended(p),
+		"is_owner": p.IsOwner, "membership_id": p.MembershipID,
 	}, nil
 }
 
