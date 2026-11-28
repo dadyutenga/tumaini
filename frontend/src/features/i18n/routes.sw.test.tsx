@@ -32,9 +32,21 @@ const englishIn = (text: string) =>
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
-/** An owner is signed in; every other request fails, which shows each page's own wording. */
+/** Endpoints that answer with one object, so an empty list would not be a realistic reply. */
+const ONE_OBJECT =
+  /\/(x1|dashboard|debts|day-closing|settings|employee|business|me|reports)(\/|\?|$)|statement|summary/;
+
+/**
+ * `signedOut` is for the pages used without an account. Otherwise an owner is signed in, and
+ * requests either all fail (`errors`) or return empty lists (`empty`), which shows each page's
+ * own wording: error states in the first case, table headings and empty states in the second.
+ */
+let mode: "errors" | "empty" | "signedOut" = "errors";
 const fakeFetch = async (url: string) => {
-  if (url.endsWith("/auth/refresh")) return json({ data: { access_token: "t" } });
+  if (url.endsWith("/auth/refresh"))
+    return mode === "signedOut"
+      ? json({ error: { code: "session_ended", message: "…" } }, 401)
+      : json({ data: { access_token: "t" } });
   if (url.endsWith("/api/v1/me"))
     return json({
       data: {
@@ -44,10 +56,13 @@ const fakeFetch = async (url: string) => {
         is_owner: true,
       },
     });
+  if (mode === "empty" && !ONE_OBJECT.test(url.replace("/api/v1", "")))
+    return json({ data: [], meta: { page: 1, per_page: 25, total: 0 } });
   return json({ error: { code: "not_found", message: "…" } }, 404);
 };
 
 beforeEach(() => {
+  mode = "errors";
   localStorage.clear();
   localStorage.setItem("bms-locale", "sw");
   vi.stubGlobal("fetch", vi.fn(fakeFetch));
@@ -121,9 +136,20 @@ describe("every screen in Swahili", () => {
     ["/404", <Status code="404" />],
     ["/500", <Status code="500" />],
   ] as const)("%s", async (path, element) => {
+    mode = "signedOut";
     await show(path, element);
     expect(englishIn(readable(document.body))).toEqual([]);
   });
+
+  it.each(routes.map((r) => [r.path, r.component] as const))(
+    "%s with empty lists",
+    async (path, Component) => {
+      mode = "empty";
+      await show(path, <Component />);
+      expect(englishIn(readable(document.body))).toEqual([]);
+    },
+    20_000,
+  );
 
   it("the shell around the pages", async () => {
     await show("/", <DashboardLayout />);
