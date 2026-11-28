@@ -1,6 +1,7 @@
 import type { Translations } from "../en";
 
 export default {
+  hoursMinutes: "saa {hours} dk {minutes}",
   noAttendanceRecordedYet: "Bado hakuna mahudhurio yaliyorekodiwa",
   in: "Kuingia",
   worked: "Saa za kazi",

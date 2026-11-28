@@ -14,6 +14,7 @@ import { formatDate, formatMoney } from "@/lib/formatters";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
 import { statusLabel } from "@/features/i18n/status";
+import { activeT } from "@/features/i18n/active";
 
 const time = (v: string | null) =>
   v ? new Date(v).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "-";
@@ -59,7 +60,8 @@ interface MyPayment {
   status: string;
 }
 
-const hours = (m: number | null) => (m ? `${Math.floor(m / 60)}h ${m % 60}m` : "-");
+const hours = (m: number | null) =>
+  m ? fmt(activeT().hr.hoursMinutes, { hours: Math.floor(m / 60), minutes: m % 60 }) : "-";
 
 function formatPeriod(s: Slip) {
   if (s.period_year && s.period_month) {

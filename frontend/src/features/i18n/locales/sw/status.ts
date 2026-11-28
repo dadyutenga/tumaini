@@ -1,6 +1,7 @@
 import type { Translations } from "../en";
 
 export default {
+  day_off: "siku ya mapumziko",
   return: "marejesho",
   price_change: "kubadilisha bei",
   discount: "punguzo",

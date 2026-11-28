@@ -14,6 +14,8 @@ import { useGetPage } from "@/hooks/useApi";
 import { downloadCsv } from "@/lib/csv";
 import { formatDateTime } from "@/lib/formatters";
 import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface LoginEvent {
   id: string;
@@ -40,7 +42,9 @@ export default function LoginHistory() {
       ...rows.map((r) => [
         formatDateTime(r.created_at),
         r.identifier,
-        r.success ? t.admin.success : `Failed (${r.reason ?? "error"})`,
+        r.success
+          ? t.admin.success
+          : fmt(t.admin.failedReason, { reason: statusLabel(t, r.reason ?? "error") }),
         r.ip ?? "",
         r.user_agent ?? "",
       ]),

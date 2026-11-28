@@ -1,5 +1,6 @@
 /** Labels for the values the API returns, keyed by the value. Shown capitalised by CSS. */
 export default {
+  day_off: "day off",
   return: "return",
   price_change: "price change",
   discount: "discount",

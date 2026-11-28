@@ -1,6 +1,7 @@
 import type { Translations } from "../en";
 
 export default {
+  failedReason: "Imeshindikana ({reason})",
   permissions: {
     "dashboard.business.view": "Muhtasari kamili wa biashara (faida, salio)",
     "dashboard.operations.view": "Muhtasari wa shughuli",

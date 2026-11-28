@@ -128,7 +128,8 @@ function looksLikeProse(text) {
   if (/^[\w.-]+\/[\w./+-]+$|^\/|^#|^--|var\(|^\d+px/.test(value)) return false;
   return (
     /\p{L}{2,}[,.!?:]?(?: | [/&·–—+-] )\p{L}{2,}/u.test(value) ||
-    /^\p{Lu}\p{Ll}+(?:-\p{Ll}+)*[….!?]?$/u.test(value)
+    // One word, perhaps with punctuation or a value after it: "Walk-in", "Failed ({})".
+    /^\p{Lu}\p{Ll}+(?:-\p{Ll}+)*[\s….!?:()#·—]*$/u.test(value)
   );
 }
 

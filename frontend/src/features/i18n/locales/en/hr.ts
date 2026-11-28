@@ -1,4 +1,5 @@
 export default {
+  hoursMinutes: "{hours}h {minutes}m",
   noAttendanceRecordedYet: "No attendance recorded yet",
   in: "In",
   worked: "Worked",

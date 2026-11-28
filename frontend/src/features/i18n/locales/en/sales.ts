@@ -1,4 +1,6 @@
 export default {
+  customerLine: "Customer: {name}",
+  cashierLine: "Cashier: {name}",
   walkIn: "Walk-in",
   returnRequestedForApproval: "Return requested for approval",
   returnUpdated: "Return updated",

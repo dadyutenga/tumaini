@@ -1,4 +1,5 @@
 export default {
+  failedReason: "Failed ({reason})",
   permissions: {
     "dashboard.business.view": "Full business dashboard (profit, balances)",
     "dashboard.operations.view": "Operations dashboard",

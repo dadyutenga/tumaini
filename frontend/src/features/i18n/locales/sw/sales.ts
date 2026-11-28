@@ -1,6 +1,8 @@
 import type { Translations } from "../en";
 
 export default {
+  customerLine: "Mteja: {name}",
+  cashierLine: "Muuzaji: {name}",
   walkIn: "Mteja wa kawaida",
   returnRequestedForApproval: "Ombi la kurudisha limetumwa kwa idhini",
   returnUpdated: "Marejesho yamebadilishwa",

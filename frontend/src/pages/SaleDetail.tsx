@@ -181,8 +181,12 @@ export default function SaleDetail() {
         badge={<StatusBadge value={sale.status} />}
         description={[
           sale.business_date ? formatDate(sale.business_date) : null,
-          sale.customer_name ? `Customer: ${sale.customer_name}` : t.sales.walkInCustomer,
-          receiptPreview.data?.cashier_name ? `Cashier: ${receiptPreview.data.cashier_name}` : null,
+          sale.customer_name
+            ? fmt(t.sales.customerLine, { name: sale.customer_name })
+            : t.sales.walkInCustomer,
+          receiptPreview.data?.cashier_name
+            ? fmt(t.sales.cashierLine, { name: receiptPreview.data.cashier_name })
+            : null,
         ]
           .filter(Boolean)
           .join(" · ")}

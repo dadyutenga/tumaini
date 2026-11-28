@@ -20,6 +20,7 @@ import { formatDate, today } from "@/lib/formatters";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
 import { statusLabel } from "@/features/i18n/status";
+import { activeT } from "@/features/i18n/active";
 
 interface Day {
   id: string;
@@ -65,7 +66,8 @@ const time = (v: string | null) =>
   v ? new Date(v).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "-";
 const timeInput = (v: string | null) =>
   v ? new Date(v).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "";
-const hours = (m: number | null) => (m ? `${Math.floor(m / 60)}h ${m % 60}m` : "-");
+const hours = (m: number | null) =>
+  m ? fmt(activeT().hr.hoursMinutes, { hours: Math.floor(m / 60), minutes: m % 60 }) : "-";
 const statuses = ["present", "late", "absent", "half_day", "on_leave", "holiday", "day_off"];
 
 function History({ overtimeOnly }: { overtimeOnly: boolean }) {
