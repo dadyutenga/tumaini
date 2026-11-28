@@ -19,6 +19,7 @@ import { useAuth } from "@/features/auth/auth";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { formatMoney, today } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
 
 /** A list with a "new" dialog, shared by the small setup tables. */
 export function SimpleList<Row extends { id: string }, Draft extends object>({
@@ -44,11 +45,12 @@ export function SimpleList<Row extends { id: string }, Draft extends object>({
   invalidate?: string[];
   canCreate?: boolean;
 }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Draft>(blank);
   const create = useWrite<Draft, unknown>("POST", path, {
     invalidate,
-    success: "Saved",
+    success: t.hr.saved,
     toBody,
     onSuccess: () => {
       setOpen(false);
@@ -87,46 +89,47 @@ interface LeaveType {
 }
 
 function LeaveTypes() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const list = useGet<LeaveType[]>("/leave-types");
   return (
     <SimpleList
       path="/leave-types"
-      title="New leave type"
+      title={t.hr.newLeaveType}
       rows={list.data}
       loading={list.isLoading}
       canCreate={can("hr.employee.manage")}
       blank={{ name: "", days_per_year: "21", is_paid: true }}
       columns={[
         {
-          header: "Name",
+          header: t.common.name2,
           cell: (l) => <span className="font-medium text-[var(--od-ink)]">{l.name}</span>,
         },
         {
-          header: "Days a year",
+          header: t.hr.daysAYear,
           align: "right",
           cell: (l) => <span className="od-tabular">{String(Number(l.days_per_year))}</span>,
         },
         {
-          header: "Paid",
+          header: t.common.paid,
           cell: (l) =>
             l.is_paid ? (
-              <Badge variant="secondary">Paid</Badge>
+              <Badge variant="secondary">{t.common.paid}</Badge>
             ) : (
-              <span className="text-[var(--od-ink-muted)]">Unpaid</span>
+              <span className="text-[var(--od-ink-muted)]">{t.hr.unpaid}</span>
             ),
         },
         {
-          header: "Status",
+          header: t.common.status,
           cell: (l) => <StatusBadge value={l.is_active ? "active" : "inactive"} />,
         },
       ]}
       form={(d, set) => (
         <>
-          <Field label="Name">
+          <Field label={t.common.name2}>
             <Input required value={d.name} onChange={(e) => set({ name: e.target.value })} />
           </Field>
-          <Field label="Days a year">
+          <Field label={t.hr.daysAYear}>
             <Input
               inputMode="decimal"
               className="od-tabular"
@@ -140,7 +143,7 @@ function LeaveTypes() {
               checked={d.is_paid}
               onChange={(e) => set({ is_paid: e.target.checked })}
             />
-            Paid leave
+            {t.hr.paidLeave}
           </label>
         </>
       )}
@@ -165,6 +168,7 @@ interface EmployeeOption {
 }
 
 function Loans() {
+  const { t } = useI18n();
   const { can, canAny } = useAuth();
   const [page, setPage] = useState(1);
   const list = useGetPage<Loan>("/loans", { page });
@@ -194,7 +198,7 @@ function Loans() {
   const create = useWrite("POST", "/loans", {
     ...done,
     idempotent: true,
-    success: "Advance / loan recorded",
+    success: t.hr.advanceLoanRecorded,
     onSuccess: () => {
       setOpen(false);
       setDraft(blank);
@@ -210,7 +214,7 @@ function Loans() {
     {
       ...done,
       idempotent: true,
-      success: "Done",
+      success: t.common.done,
       onSuccess: () => {
         setActing(null);
         setAmount("");
@@ -224,7 +228,7 @@ function Loans() {
       {can("hr.compensation.manage") && (
         <FilterBar className="justify-end">
           <Button onClick={() => setOpen(true)}>
-            <Plus size={16} /> New advance / loan
+            <Plus size={16} /> {t.hr.newAdvanceLoan}
           </Button>
         </FilterBar>
       )}
@@ -232,16 +236,16 @@ function Loans() {
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(l) => l.id}
-        empty="No loans or advances"
+        empty={t.hr.noLoansOrAdvances}
         columns={[
           {
-            header: "Employee",
+            header: t.common.employee,
             cell: (l) => (
               <span className="font-medium text-[var(--od-ink)]">{l.employee_name}</span>
             ),
           },
           {
-            header: "Type",
+            header: t.common.type,
             cell: (l) => (
               <Badge variant="secondary" className="capitalize">
                 {l.kind}
@@ -249,17 +253,17 @@ function Loans() {
             ),
           },
           {
-            header: "Principal",
+            header: t.hr.principal,
             align: "right",
             cell: (l) => <span className="od-tabular">{formatMoney(l.principal)}</span>,
           },
           {
-            header: "Monthly",
+            header: t.common.monthly,
             align: "right",
             cell: (l) => <span className="od-tabular">{formatMoney(l.monthly_deduction)}</span>,
           },
           {
-            header: "Balance",
+            header: t.common.balance,
             align: "right",
             cell: (l) => (
               <span
@@ -271,7 +275,7 @@ function Loans() {
               </span>
             ),
           },
-          { header: "Status", cell: (l) => <StatusBadge value={l.status} /> },
+          { header: t.common.status, cell: (l) => <StatusBadge value={l.status} /> },
           {
             header: "",
             cell: (l) => (
@@ -279,7 +283,7 @@ function Loans() {
                 {((l.status === "active" && !l.payment_id) || l.status === "approved") &&
                   canDisburse && (
                     <Button size="sm" onClick={() => setActing({ loan: l, mode: "disburse" })}>
-                      Disburse
+                      {t.hr.disburse}
                     </Button>
                   )}
                 {(l.status === "active" || l.status === "disbursed") && canRepay && (
@@ -288,7 +292,7 @@ function Loans() {
                     variant="outline"
                     onClick={() => setActing({ loan: l, mode: "repay" })}
                   >
-                    Repay
+                    {t.hr.repay}
                   </Button>
                 )}
               </div>
@@ -300,18 +304,18 @@ function Loans() {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title="New loan or advance"
+        title={t.hr.newLoanOrAdvance}
         busy={create.isPending}
         onSubmit={() => create.mutate(draft)}
       >
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Employee">
+          <Field label={t.common.employee}>
             <NativeSelect
               required
               value={draft.employee_id}
               onChange={(e) => setDraft((d) => ({ ...d, employee_id: e.target.value }))}
             >
-              <option value="">Choose…</option>
+              <option value="">{t.common.choose}</option>
               {employees.data?.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.name}
@@ -319,18 +323,18 @@ function Loans() {
               ))}
             </NativeSelect>
           </Field>
-          <Field label="Type">
+          <Field label={t.common.type}>
             <NativeSelect
               value={draft.kind}
               onChange={(e) => setDraft((d) => ({ ...d, kind: e.target.value }))}
             >
-              <option value="loan">Loan (monthly instalments)</option>
-              <option value="advance">Salary advance (full next run)</option>
+              <option value="loan">{t.hr.loanMonthlyInstalments}</option>
+              <option value="advance">{t.hr.salaryAdvanceFullNextRun}</option>
             </NativeSelect>
           </Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Amount">
+          <Field label={t.common.amount}>
             <Input
               required
               inputMode="decimal"
@@ -340,18 +344,18 @@ function Loans() {
             />
           </Field>
           {draft.kind === "loan" && (
-            <Field label="Deducted each month">
+            <Field label={t.hr.deductedEachMonth}>
               <Input
                 inputMode="decimal"
                 className="od-tabular"
-                placeholder="Defaults to full amount"
+                placeholder={t.hr.defaultsToFullAmount}
                 value={draft.monthly_deduction}
                 onChange={(e) => setDraft((d) => ({ ...d, monthly_deduction: e.target.value }))}
               />
             </Field>
           )}
         </div>
-        <Field label="Reason">
+        <Field label={t.common.reason}>
           <Input
             value={draft.reason}
             onChange={(e) => setDraft((d) => ({ ...d, reason: e.target.value }))}
@@ -361,7 +365,7 @@ function Loans() {
       <FormDialog
         open={acting !== null}
         onOpenChange={(o) => !o && setActing(null)}
-        title={`${acting?.mode === "repay" ? "Repayment for" : "Disburse"} ${acting?.loan.employee_name ?? ""}`}
+        title={`${acting?.mode === "repay" ? t.hr.repaymentFor : t.hr.disburse} ${acting?.loan.employee_name ?? ""}`}
         busy={act.isPending}
         onSubmit={() =>
           act.mutate(
@@ -373,14 +377,14 @@ function Loans() {
       >
         {acting && (
           <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-3.5 py-2.5 text-sm text-[var(--od-ink-secondary)]">
-            {acting.mode === "repay" ? "Current balance: " : "Principal to disburse: "}
+            {acting.mode === "repay" ? `${t.hr.currentBalance} ` : `${t.hr.principalToDisburse} `}
             <strong className="od-tabular font-semibold text-[var(--od-ink)]">
               {formatMoney(acting.mode === "repay" ? acting.loan.balance : acting.loan.principal)}
             </strong>
           </div>
         )}
         {acting?.mode === "repay" && (
-          <Field label="Amount">
+          <Field label={t.common.amount}>
             <Input
               required
               inputMode="decimal"
@@ -390,9 +394,9 @@ function Loans() {
             />
           </Field>
         )}
-        <Field label={acting?.mode === "repay" ? "Received into" : "Pay from"}>
+        <Field label={acting?.mode === "repay" ? t.hr.receivedInto : t.common.payFrom}>
           <NativeSelect required value={account} onChange={(e) => setAccount(e.target.value)}>
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {accounts.data
               ?.filter((a) => a.is_active)
               .map((a) => (
@@ -408,16 +412,17 @@ function Loans() {
 }
 
 export default function HrSetup() {
+  const { t } = useI18n();
   const { can, canAny } = useAuth();
   const canLeaveTypes = can("hr.employee.manage");
   const canLoans = canAny("hr.compensation.view", "hr.compensation.manage", "hr.payroll.view");
   return (
     <div className="space-y-6">
-      <PageHeader title="HR setup" description="Leave types and staff advances / loans." />
+      <PageHeader title={t.common.hrSetup} description={t.hr.leaveTypesAndStaffAdvances} />
       <Tabs defaultValue={canLeaveTypes ? "leave" : "loans"}>
         <TabsList className="mb-4 flex-wrap">
-          {canLeaveTypes && <TabsTrigger value="leave">Leave types</TabsTrigger>}
-          {canLoans && <TabsTrigger value="loans">Advances &amp; loans</TabsTrigger>}
+          {canLeaveTypes && <TabsTrigger value="leave">{t.hr.leaveTypes}</TabsTrigger>}
+          {canLoans && <TabsTrigger value="loans">{t.hr.advancesLoans2}</TabsTrigger>}
         </TabsList>
         {canLeaveTypes && (
           <TabsContent value="leave">

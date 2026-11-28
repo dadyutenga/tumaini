@@ -18,6 +18,8 @@ import { useAuth } from "@/features/auth/auth";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { SimpleList } from "@/pages/HrSetup";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
+import type { Translations } from "@/features/i18n/i18n";
 
 interface Rule {
   id: string;
@@ -46,21 +48,22 @@ interface Option {
   name: string;
 }
 
-const basisLabel: Record<string, string> = {
-  sale_percent: "% of sales",
-  project_fixed: "Fixed per completed project",
-  percent_of_sales: "% of sales",
-  fixed_per_project: "Fixed per completed project",
-};
+const basisLabelFor = (t: Translations): Record<string, string> => ({
+  sale_percent: t.payroll.ofSales,
+  project_fixed: t.payroll.fixedPerCompletedProject,
+  percent_of_sales: t.payroll.ofSales,
+  fixed_per_project: t.payroll.fixedPerCompletedProject,
+});
 
 function Commissions() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const list = useGet<Rule[]>("/commission-rules");
   const employees = useGet<Option[]>("/employees", { per_page: 100 });
   return (
     <SimpleList
       path="/commission-rules"
-      title="New commission rule"
+      title={t.payroll.newCommissionRule}
       rows={list.data}
       loading={list.isLoading}
       canCreate={can("hr.compensation.manage")}
@@ -81,29 +84,31 @@ function Commissions() {
       })}
       columns={[
         {
-          header: "Rule",
+          header: t.payroll.rule,
           cell: (r) => (
-            <span className="font-medium text-[var(--od-ink)]">{r.name || "Commission"}</span>
+            <span className="font-medium text-[var(--od-ink)]">
+              {r.name || t.payroll.commission}
+            </span>
           ),
         },
         {
-          header: "Applies to",
+          header: t.payroll.appliesTo,
           cell: (r) =>
             r.employee_name ??
             (r.employee_id
-              ? (employees.data?.find((e) => e.id === r.employee_id)?.name ?? "Employee")
-              : "All eligible staff"),
+              ? (employees.data?.find((e) => e.id === r.employee_id)?.name ?? t.common.employee)
+              : t.payroll.allEligibleStaff),
         },
         {
-          header: "Basis",
+          header: t.payroll.basis,
           cell: (r) => (
             <Badge variant="secondary">
-              {basisLabel[r.basis ?? r.calc ?? ""] ?? r.basis ?? "-"}
+              {basisLabelFor(t)[r.basis ?? r.calc ?? ""] ?? r.basis ?? "-"}
             </Badge>
           ),
         },
         {
-          header: "Rate / Amount",
+          header: t.payroll.rateAmount,
           align: "right",
           cell: (r) => (
             <span className="od-tabular font-semibold text-[var(--od-ink)]">
@@ -118,30 +123,30 @@ function Commissions() {
           ),
         },
         {
-          header: "Effective from",
+          header: t.common.effectiveFrom,
           cell: (r) => (r.effective_from ? formatDate(r.effective_from) : "-"),
         },
         {
-          header: "Status",
+          header: t.common.status,
           cell: (r) => <StatusBadge value={r.is_active ? "active" : "inactive"} />,
         },
       ]}
       form={(d, set) => (
         <>
-          <Field label="Rule name">
+          <Field label={t.payroll.ruleName}>
             <Input
               required
-              placeholder="e.g. Shop sales commission"
+              placeholder={t.payroll.eGShopSalesCommission}
               value={d.name}
               onChange={(e) => set({ name: e.target.value })}
             />
           </Field>
-          <Field label="Employee (leave blank for all staff)">
+          <Field label={t.payroll.employeeLeaveBlankForAll}>
             <NativeSelect
               value={d.employee_id}
               onChange={(e) => set({ employee_id: e.target.value })}
             >
-              <option value="">All eligible staff</option>
+              <option value="">{t.payroll.allEligibleStaff}</option>
               {employees.data?.map((o) => (
                 <option key={o.id} value={o.id}>
                   {o.name}
@@ -150,13 +155,13 @@ function Commissions() {
             </NativeSelect>
           </Field>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Field label="Basis">
+            <Field label={t.payroll.basis}>
               <NativeSelect value={d.basis} onChange={(e) => set({ basis: e.target.value })}>
-                <option value="sale_percent">% of sales</option>
-                <option value="project_fixed">Fixed per completed project</option>
+                <option value="sale_percent">{t.payroll.ofSales}</option>
+                <option value="project_fixed">{t.payroll.fixedPerCompletedProject}</option>
               </NativeSelect>
             </Field>
-            <Field label={d.basis === "sale_percent" ? "Percent (%)" : "Amount"}>
+            <Field label={d.basis === "sale_percent" ? t.payroll.percent : t.common.amount}>
               <Input
                 required
                 inputMode="decimal"
@@ -165,7 +170,7 @@ function Commissions() {
                 onChange={(e) => set({ value: e.target.value })}
               />
             </Field>
-            <Field label="Effective from">
+            <Field label={t.common.effectiveFrom}>
               <Input
                 type="date"
                 value={d.effective_from}
@@ -180,6 +185,7 @@ function Commissions() {
 }
 
 function Adjustments() {
+  const { t } = useI18n();
   const { canAny } = useAuth();
   const canManage = canAny("hr.compensation.manage", "hr.payroll.manage");
   const [page, setPage] = useState(1);
@@ -190,7 +196,7 @@ function Adjustments() {
   const [draft, setDraft] = useState(blank);
   const create = useWrite<typeof draft, unknown>("POST", "/pay-adjustments", {
     invalidate: ["/pay-adjustments"],
-    success: "Adjustment saved. It will be included in the next payroll calculation.",
+    success: t.payroll.adjustmentSavedItWillBe,
     onSuccess: () => {
       setOpen(false);
       setDraft(blank);
@@ -198,14 +204,14 @@ function Adjustments() {
   });
   const remove = useWrite<Adjustment, unknown>("DELETE", (a) => `/pay-adjustments/${a.id}`, {
     invalidate: ["/pay-adjustments"],
-    success: "Adjustment removed",
+    success: t.payroll.adjustmentRemoved,
   });
   return (
     <div className="space-y-4">
       {canManage && (
         <FilterBar className="justify-end">
           <Button onClick={() => setOpen(true)}>
-            <Plus size={16} /> New adjustment
+            <Plus size={16} /> {t.common.newAdjustment}
           </Button>
         </FilterBar>
       )}
@@ -213,19 +219,19 @@ function Adjustments() {
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(a) => a.id}
-        empty="No bonuses or one-off deductions"
+        empty={t.payroll.noBonusesOrOneOff}
         columns={[
           {
-            header: "Employee",
+            header: t.common.employee,
             cell: (a) => (
               <span className="font-medium text-[var(--od-ink)]">{a.employee_name}</span>
             ),
           },
-          { header: "Period", cell: (a) => formatDate(a.period) },
-          { header: "Kind", cell: (a) => <StatusBadge value={a.kind} /> },
-          { header: "Reason", cell: (a) => a.reason },
+          { header: t.common.period, cell: (a) => formatDate(a.period) },
+          { header: t.common.kind, cell: (a) => <StatusBadge value={a.kind} /> },
+          { header: t.common.reason, cell: (a) => a.reason },
           {
-            header: "Amount",
+            header: t.common.amount,
             align: "right",
             cell: (a) => (
               <span
@@ -249,7 +255,7 @@ function Adjustments() {
                     className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                     onClick={() => remove.mutate(a)}
                   >
-                    Remove
+                    {t.payroll.remove}
                   </Button>
                 </div>
               ),
@@ -260,17 +266,17 @@ function Adjustments() {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title="New pay adjustment"
+        title={t.payroll.newPayAdjustment}
         busy={create.isPending}
         onSubmit={() => create.mutate(draft)}
       >
-        <Field label="Employee">
+        <Field label={t.common.employee}>
           <NativeSelect
             required
             value={draft.employee_id}
             onChange={(e) => setDraft((d) => ({ ...d, employee_id: e.target.value }))}
           >
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {employees.data?.map((e) => (
               <option key={e.id} value={e.id}>
                 {e.name}
@@ -279,16 +285,16 @@ function Adjustments() {
           </NativeSelect>
         </Field>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          <Field label="Kind">
+          <Field label={t.common.kind}>
             <NativeSelect
               value={draft.kind}
               onChange={(e) => setDraft((d) => ({ ...d, kind: e.target.value }))}
             >
-              <option value="bonus">Bonus</option>
-              <option value="deduction">Deduction</option>
+              <option value="bonus">{t.common.bonus}</option>
+              <option value="deduction">{t.common.deduction}</option>
             </NativeSelect>
           </Field>
-          <Field label="Amount">
+          <Field label={t.common.amount}>
             <Input
               required
               inputMode="decimal"
@@ -297,7 +303,7 @@ function Adjustments() {
               onChange={(e) => setDraft((d) => ({ ...d, amount: e.target.value }))}
             />
           </Field>
-          <Field label="Pay period date">
+          <Field label={t.payroll.payPeriodDate}>
             <Input
               required
               type="date"
@@ -306,7 +312,7 @@ function Adjustments() {
             />
           </Field>
         </div>
-        <Field label="Reason">
+        <Field label={t.common.reason}>
           <Input
             required
             value={draft.reason}
@@ -319,6 +325,7 @@ function Adjustments() {
 }
 
 export default function PayrollSetup() {
+  const { t } = useI18n();
   const { canAny } = useAuth();
   const canCommissions = canAny(
     "hr.compensation.view",
@@ -333,14 +340,15 @@ export default function PayrollSetup() {
   );
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Payroll setup"
-        description="Commission rules and one-off pay adjustments. Manage employee allowances on each employee profile."
-      />
+      <PageHeader title={t.common.payrollSetup} description={t.payroll.commissionRulesAndOneOff} />
       <Tabs defaultValue={canCommissions ? "commissions" : "adjustments"}>
         <TabsList className="mb-4">
-          {canCommissions && <TabsTrigger value="commissions">Commission rules</TabsTrigger>}
-          {canAdjustments && <TabsTrigger value="adjustments">Pay adjustments</TabsTrigger>}
+          {canCommissions && (
+            <TabsTrigger value="commissions">{t.payroll.commissionRules}</TabsTrigger>
+          )}
+          {canAdjustments && (
+            <TabsTrigger value="adjustments">{t.payroll.payAdjustments}</TabsTrigger>
+          )}
         </TabsList>
         {canCommissions && (
           <TabsContent value="commissions">
