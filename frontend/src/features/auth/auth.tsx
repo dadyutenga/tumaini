@@ -30,7 +30,7 @@ interface Credentials {
   identifier: string;
   password: string;
 }
-interface SessionResult {
+export interface SessionResult {
   access_token?: string;
   branch_id?: string;
   must_change_password?: boolean;
@@ -47,6 +47,7 @@ interface Auth {
   canAny: (...permissions: string[]) => boolean;
   limit: (code: string) => string | null;
   login: (input: Credentials) => Promise<void>;
+  completeSetup: (result: SessionResult) => Promise<void>;
   logout: () => Promise<void>;
   reloadMe: () => Promise<void>;
 }
@@ -72,7 +73,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [warnSeconds, setWarnSeconds] = useState<number | null>(null);
   const [reauthOpen, setReauthOpen] = useState(false);
   const [reauthPassword, setReauthPassword] = useState("");
-  const [reauthCode, setReauthCode] = useState("");
   const [reauthBusy, setReauthBusy] = useState(false);
   const [reauthError, setReauthError] = useState<string | null>(null);
   const reauthResolverRef = useRef<((ok: boolean) => void) | null>(null);
@@ -110,7 +110,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         new Promise<boolean>((resolve) => {
           reauthResolverRef.current = resolve;
           setReauthPassword("");
-          setReauthCode("");
           setReauthError(null);
           setReauthOpen(true);
         }),
@@ -124,7 +123,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const closeReauth = useCallback((ok: boolean) => {
     setReauthOpen(false);
     setReauthPassword("");
-    setReauthCode("");
     setReauthError(null);
     const resolve = reauthResolverRef.current;
     reauthResolverRef.current = null;
@@ -137,11 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setReauthBusy(true);
       setReauthError(null);
       try {
-        await api.post(
-          "/auth/reauthenticate",
-          { password: reauthPassword },
-          { noRefresh: true },
-        );
+        await api.post("/auth/reauthenticate", { password: reauthPassword }, { noRefresh: true });
         closeReauth(true);
       } catch (err) {
         setReauthError(err instanceof ApiError ? err.message : "Could not verify your identity.");
@@ -149,7 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setReauthBusy(false);
       }
     },
-    [reauthPassword, reauthCode, closeReauth],
+    [reauthPassword, closeReauth],
   );
 
   useEffect(() => {
@@ -269,10 +263,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       canAny: (...permissions: string[]) => permissions.some(can),
       limit,
       login,
+      completeSetup: enter,
       logout,
       reloadMe,
     };
-  }, [status, me, branchId, setBranchId, login, logout, reloadMe]);
+  }, [status, me, branchId, setBranchId, login, enter, logout, reloadMe]);
 
   return (
     <Context.Provider value={value}>

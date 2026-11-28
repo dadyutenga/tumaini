@@ -1456,7 +1456,6 @@ paths:
                 data:
                   access_token: eyJ...
                   branch_id: 0192f0a2-...
-                  business_id: 0192f0a0-...
                   expires_in: 900
                   user_id: 0192f0a1-...
               schema:
@@ -1507,48 +1506,6 @@ paths:
       tags:
         - Auth
       x-permission: any
-  /auth/mfa/verify:
-    post:
-      operationId: post_auth_mfa_verify
-      requestBody:
-        content:
-          application/json:
-            schema:
-              properties:
-                code:
-                  type: string
-                mfa_token:
-                  type: string
-              required:
-                - mfa_token
-                - code
-              type: object
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                properties:
-                  data:
-                    type: object
-                type: object
-          description: OK
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "429":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Too many attempts
-      security: []
-      summary: Complete a two-factor sign-in challenge using a TOTP or single-use recovery code
-      tags:
-        - Auth
-      x-permission: public
   /auth/password:
     put:
       operationId: put_auth_password
@@ -1604,8 +1561,6 @@ paths:
           application/json:
             schema:
               properties:
-                mfa_code:
-                  type: string
                 password:
                   type: string
               required:
@@ -1632,7 +1587,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
           description: Too many attempts
-      summary: Re-verify current password (and MFA code if enabled) to refresh the recent-authentication window for sensitive changes
+      summary: Re-verify the current password to refresh the recent-authentication window for sensitive changes
       tags:
         - Auth
       x-permission: any
@@ -1662,64 +1617,6 @@ paths:
       tags:
         - Auth
       x-permission: refresh cookie
-  /auth/register:
-    post:
-      operationId: post_auth_register
-      requestBody:
-        content:
-          application/json:
-            schema:
-              properties:
-                business_name:
-                  type: string
-                email:
-                  type: string
-                owner_name:
-                  type: string
-                password:
-                  type: string
-                phone:
-                  type: string
-              required:
-                - business_name
-                - owner_name
-                - password
-              type: object
-        required: true
-      responses:
-        "201":
-          content:
-            application/json:
-              example:
-                data:
-                  access_token: eyJ...
-                  branch_id: 0192f0a2-...
-                  business_id: 0192f0a0-...
-                  expires_in: 900
-                  user_id: 0192f0a1-...
-              schema:
-                properties:
-                  data:
-                    type: object
-                type: object
-          description: Created
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "409":
-          $ref: '#/components/responses/Conflict'
-        "422":
-          $ref: '#/components/responses/Unprocessable'
-        "429":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/Error'
-          description: Too many attempts
-      security: []
-      summary: 'Register a business: creates the business, main branch, default roles, chart of accounts and the Owner'
-      tags:
-        - Auth
-      x-permission: public
   /auth/reset-password:
     post:
       operationId: post_auth_reset_password
@@ -9779,171 +9676,6 @@ paths:
       summary: Recent sign-in events for the signed-in user
       tags:
         - Auth
-  /me/mfa:
-    get:
-      operationId: get_me_mfa
-      parameters:
-        - $ref: '#/components/parameters/BranchId'
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                properties:
-                  data:
-                    type: object
-                type: object
-          description: OK
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-      summary: View two-factor authentication status and remaining recovery codes
-      tags:
-        - Auth
-      x-permission: any
-  /me/mfa/confirm:
-    post:
-      operationId: post_me_mfa_confirm
-      parameters:
-        - $ref: '#/components/parameters/BranchId'
-      requestBody:
-        content:
-          application/json:
-            schema:
-              properties:
-                code:
-                  type: string
-              required:
-                - code
-              type: object
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                properties:
-                  data:
-                    type: object
-                type: object
-          description: OK
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-      summary: Confirm TOTP setup with a 6-digit code and issue single-use recovery codes
-      tags:
-        - Auth
-      x-permission: any
-  /me/mfa/disable:
-    post:
-      operationId: post_me_mfa_disable
-      parameters:
-        - $ref: '#/components/parameters/BranchId'
-      requestBody:
-        content:
-          application/json:
-            schema:
-              properties:
-                code:
-                  type: string
-                current_password:
-                  type: string
-              required:
-                - current_password
-                - code
-              type: object
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                properties:
-                  data:
-                    type: object
-                type: object
-          description: OK
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-      summary: Disable two-factor authentication (requires current password and valid TOTP or recovery code)
-      tags:
-        - Auth
-      x-permission: any
-  /me/mfa/recovery-codes:
-    post:
-      operationId: post_me_mfa_recovery_codes
-      parameters:
-        - $ref: '#/components/parameters/BranchId'
-      requestBody:
-        content:
-          application/json:
-            schema:
-              properties:
-                code:
-                  type: string
-                current_password:
-                  type: string
-              required:
-                - current_password
-                - code
-              type: object
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                properties:
-                  data:
-                    type: object
-                type: object
-          description: OK
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-      summary: Regenerate single-use MFA recovery codes (requires current password and valid TOTP code)
-      tags:
-        - Auth
-      x-permission: any
-  /me/mfa/setup:
-    post:
-      operationId: post_me_mfa_setup
-      parameters:
-        - $ref: '#/components/parameters/BranchId'
-      requestBody:
-        content:
-          application/json:
-            schema:
-              properties:
-                current_password:
-                  type: string
-              required:
-                - current_password
-              type: object
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                properties:
-                  data:
-                    type: object
-                type: object
-          description: OK
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "409":
-          $ref: '#/components/responses/Conflict'
-      summary: Start TOTP two-factor setup (requires current password)
-      tags:
-        - Auth
-      x-permission: any
   /me/payments:
     get:
       operationId: get_me_payments
@@ -25237,6 +24969,51 @@ paths:
       tags:
         - Business and settings
       x-permission: settings.manage
+  /setup:
+    post:
+      operationId: post_setup
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                business_name:
+                  type: string
+                email:
+                  type: string
+                owner_name:
+                  type: string
+                password:
+                  type: string
+                phone:
+                  type: string
+              required:
+                - business_name
+                - owner_name
+                - phone
+                - email
+                - password
+              type: object
+        required: true
+      responses:
+        "201":
+          description: Created
+        "409":
+          description: Setup already complete
+      security: []
+      summary: Create the business profile and first Owner account
+      tags:
+        - Auth
+  /setup/status:
+    get:
+      operationId: get_setup_status
+      responses:
+        "200":
+          description: OK
+      security: []
+      summary: Check whether first-run setup is required
+      tags:
+        - Auth
   /statutory-payments:
     post:
       operationId: post_statutory_payments

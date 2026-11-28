@@ -70,9 +70,7 @@ export default function AuthPage({ mode }: { mode: string }) {
   return (
     <AuthLayout>
       <div>
-        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--od-ink)]">
-          Sign in
-        </h1>
+        <h1 className="text-[22px] font-semibold tracking-tight text-[var(--od-ink)]">Sign in</h1>
         <p className="mt-1 text-sm text-[var(--od-ink-secondary)]">
           Use your phone number or email and your password.
         </p>
@@ -112,20 +110,20 @@ export default function AuthPage({ mode }: { mode: string }) {
         </Field>
 
         <div className="flex items-center justify-between gap-2 text-sm">
-            <label className="flex cursor-pointer items-center gap-2 text-[var(--od-ink-secondary)]">
-              <input
-                type="checkbox"
-                checked={remember}
-                onChange={(e) => setRemember(e.target.checked)}
-              />
-              Remember me
-            </label>
-            <Link
-              className="font-medium text-[var(--od-link)] underline-offset-4 hover:underline"
-              to="/forgot-password"
-            >
-              Forgot password?
-            </Link>
+          <label className="flex cursor-pointer items-center gap-2 text-[var(--od-ink-secondary)]">
+            <input
+              type="checkbox"
+              checked={remember}
+              onChange={(e) => setRemember(e.target.checked)}
+            />
+            Remember me
+          </label>
+          <Link
+            className="font-medium text-[var(--od-link)] underline-offset-4 hover:underline"
+            to="/forgot-password"
+          >
+            Forgot password?
+          </Link>
         </div>
 
         {error && (
@@ -142,7 +140,6 @@ export default function AuthPage({ mode }: { mode: string }) {
           {busy ? "Please wait…" : "Sign in"}
         </Button>
       </form>
-
     </AuthLayout>
   );
 }

@@ -5,9 +5,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Field } from "@/components/shared/kit";
 import { api, ApiError } from "@/lib/api";
+import { useAuth, type SessionResult } from "@/features/auth/auth";
 
 export default function SetupPage() {
   const navigate = useNavigate();
+  const { completeSetup } = useAuth();
   const [status, setStatus] = useState<"loading" | "needed" | "done">("loading");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +44,13 @@ export default function SetupPage() {
     setBusy(true);
     setError(null);
     try {
-      await api.post("/setup", form, { noRefresh: true });
+      const { business_name, owner_name, phone, email, password } = form;
+      const result = await api.post<SessionResult>(
+        "/setup",
+        { business_name, owner_name, phone, email, password },
+        { noRefresh: true },
+      );
+      await completeSetup(result);
       navigate("/settings", { replace: true });
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Setup could not be completed.");
@@ -61,24 +69,58 @@ export default function SetupPage() {
       </div>
       <form onSubmit={submit} className="mt-6 space-y-4" noValidate>
         <Field label="Business name">
-          <Input required autoComplete="organization" value={form.business_name} onChange={set("business_name")} />
+          <Input
+            required
+            autoComplete="organization"
+            value={form.business_name}
+            onChange={set("business_name")}
+          />
         </Field>
         <Field label="Your name">
-          <Input required autoComplete="name" value={form.owner_name} onChange={set("owner_name")} />
+          <Input
+            required
+            autoComplete="name"
+            value={form.owner_name}
+            onChange={set("owner_name")}
+          />
         </Field>
         <Field label="Phone">
           <Input required autoComplete="tel" value={form.phone} onChange={set("phone")} />
         </Field>
         <Field label="Email">
-          <Input required type="email" autoComplete="email" value={form.email} onChange={set("email")} />
+          <Input
+            required
+            type="email"
+            autoComplete="email"
+            value={form.email}
+            onChange={set("email")}
+          />
         </Field>
         <Field label="Password">
-          <Input required type="password" minLength={8} autoComplete="new-password" value={form.password} onChange={set("password")} />
+          <Input
+            required
+            type="password"
+            minLength={8}
+            autoComplete="new-password"
+            value={form.password}
+            onChange={set("password")}
+          />
         </Field>
         <Field label="Confirm password">
-          <Input required type="password" minLength={8} autoComplete="new-password" value={form.confirm_password} onChange={set("confirm_password")} />
+          <Input
+            required
+            type="password"
+            minLength={8}
+            autoComplete="new-password"
+            value={form.confirm_password}
+            onChange={set("confirm_password")}
+          />
         </Field>
-        {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
         <Button type="submit" className="w-full" disabled={busy}>
           {busy ? "Setting up…" : "Create business"}
         </Button>

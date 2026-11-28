@@ -89,7 +89,7 @@ export default function Backups() {
               <code className="od-mono rounded border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-1.5 py-0.5 text-xs text-[var(--od-ink)]">
                 pg_restore
               </code>{" "}
-              to prevent partial tenant corruption while staff are selling.
+              to prevent partial data corruption while staff are selling.
             </p>
           </SectionCard>
         )}

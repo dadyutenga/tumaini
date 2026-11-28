@@ -6,7 +6,7 @@ describe("formatters", () => {
     expect(formatNumber(1250000, "en-US")).toBe("1,250,000");
   });
 
-  it("formats currency accurately and defaults to active tenant currency", async () => {
+  it("formats currency accurately and defaults to the active business currency", async () => {
     const { formatMoney, setActiveCurrency, getActiveCurrency } = await import("./formatters");
     expect(formatCurrency(49.99, "USD", "en-US")).toBe("$49.99");
     expect(getActiveCurrency()).toBe("TZS");

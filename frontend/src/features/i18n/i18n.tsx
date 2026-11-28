@@ -16,7 +16,6 @@ export interface Translations {
   actions: {
     signIn: string;
     signOut: string;
-    register: string;
     save: string;
     cancel: string;
     edit: string;
@@ -44,7 +43,6 @@ export interface Translations {
   };
   auth: {
     welcomeBack: string;
-    createAccount: string;
     forgotPassword: string;
     resetPassword: string;
     emailLabel: string;
@@ -126,7 +124,6 @@ const dictionaries: Record<Locale, Translations> = {
     actions: {
       signIn: "Sign in",
       signOut: "Sign out",
-      register: "Register",
       save: "Save",
       cancel: "Cancel",
       edit: "Edit",
@@ -154,7 +151,6 @@ const dictionaries: Record<Locale, Translations> = {
     },
     auth: {
       welcomeBack: "Welcome back",
-      createAccount: "Create an account",
       forgotPassword: "Forgot password",
       resetPassword: "Reset password",
       emailLabel: "Email or phone",
@@ -234,7 +230,6 @@ const dictionaries: Record<Locale, Translations> = {
     actions: {
       signIn: "Ingia",
       signOut: "Toka",
-      register: "Jisajili",
       save: "Hifadhi",
       cancel: "Ghairi",
       edit: "Hariri",
@@ -262,7 +257,6 @@ const dictionaries: Record<Locale, Translations> = {
     },
     auth: {
       welcomeBack: "Karibu tena",
-      createAccount: "Fungua akaunti mpya",
       forgotPassword: "Umesahau nenosiri",
       resetPassword: "Weka nenosiri upya",
       emailLabel: "Barua pepe au simu",

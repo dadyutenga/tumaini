@@ -31,8 +31,6 @@ export interface Me {
   limits?: Record<string, Decimal>;
   branches: string[];
   is_owner: boolean;
-  tenant_id?: string;
-  business_id?: string;
   membership_id?: string;
 }
 
