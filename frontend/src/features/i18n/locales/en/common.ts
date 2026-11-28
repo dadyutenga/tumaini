@@ -389,4 +389,12 @@ export default {
   pay: "Pay",
   payFrom: "Pay from",
   clear: "Clear",
+  unitCost: "Unit cost",
+  contact: "Contact",
+  value: "Value",
+  receipts: "Receipts",
+  other: "Other",
+  lowStock: "Low stock",
+  newAdjustment: "New adjustment",
+  movements: "Movements",
 };

@@ -13,6 +13,8 @@ import { errorMessage, useGet } from "@/hooks/useApi";
 import { download } from "@/lib/api";
 import { formatDateTime, formatMoney, formatQty, toNumber } from "@/lib/formatters";
 import type { Product } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 interface ProductDetailPayload {
   product: Product;
@@ -38,6 +40,7 @@ interface PriceChange {
 }
 
 export default function ProductDetail() {
+  const { t } = useI18n();
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const { can } = useAuth();
@@ -54,9 +57,11 @@ export default function ProductDetail() {
   if (!pr) {
     return (
       <div className="od-card items-center py-10 text-center">
-        <p className="text-[14px] font-semibold text-[var(--od-bad)]">Product not found.</p>
+        <p className="text-[14px] font-semibold text-[var(--od-bad)]">
+          {t.products.productNotFound}
+        </p>
         <Button asChild variant="outline" size="sm" className="mt-3">
-          <Link to="/products">Back to products</Link>
+          <Link to="/products">{t.products.backToProducts}</Link>
         </Button>
       </div>
     );
@@ -71,19 +76,19 @@ export default function ProductDetail() {
     <div className="space-y-6">
       <PageHeader
         backTo="/products"
-        backLabel="Products"
+        backLabel={t.common.products}
         title={pr.name}
         badge={
           <div className="flex items-center gap-2">
             <StatusBadge value={pr.is_active ? "active" : "inactive"} />
             {pr.track_serial && (
               <span className="rounded-full bg-[var(--od-neutral-soft)] px-2.5 py-0.5 text-[11px] font-medium text-[var(--od-ink-secondary)]">
-                Serial / IMEI tracked
+                {t.products.serialImeiTracked}
               </span>
             )}
           </div>
         }
-        description={`SKU ${pr.sku}${pr.barcode ? ` · Barcode ${pr.barcode}` : ""}${pr.warranty_months ? ` · ${pr.warranty_months} months warranty` : ""}`}
+        description={`SKU ${pr.sku}${pr.barcode ? ` ${fmt(t.products.barcode2, { barcode: pr.barcode })}` : ""}${pr.warranty_months ? ` ${fmt(t.products.monthsWarranty, { warranty_months: pr.warranty_months })}` : ""}`}
         actions={
           <div className="flex flex-wrap gap-2">
             <Button
@@ -97,11 +102,11 @@ export default function ProductDetail() {
                 ).catch((e) => toast.error(errorMessage(e)))
               }
             >
-              <Barcode size={14} /> Barcode label
+              <Barcode size={14} /> {t.products.barcodeLabel}
             </Button>
             {can("shop.sale.create") && pr.is_active && (
               <Button size="sm" onClick={() => navigate(`/pos?add=${pr.id}`)}>
-                <ShoppingCart size={14} /> Sell
+                <ShoppingCart size={14} /> {t.products.sell}
               </Button>
             )}
           </div>
@@ -120,59 +125,66 @@ export default function ProductDetail() {
           </div>
         )}
         <div className="grid flex-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Selling price" value={formatMoney(pr.sell_price)} />
+          <StatCard label={t.products.sellingPrice2} value={formatMoney(pr.sell_price)} />
           <StatCard
-            label="Stock across locations"
+            label={t.products.stockAcrossLocations}
             value={`${formatQty(totalQty)} ${pr.unit}`}
             trend={
               totalQty <= 0
-                ? "Out of stock"
+                ? t.common.outOfStock
                 : totalQty <= toNumber(pr.reorder_level)
-                  ? `Below reorder (${formatQty(pr.reorder_level)})`
-                  : `Reorder level ${formatQty(pr.reorder_level)}`
+                  ? fmt(t.products.belowReorder, { reorder_level: formatQty(pr.reorder_level) })
+                  : fmt(t.products.reorderLevel, { reorder_level: formatQty(pr.reorder_level) })
             }
             tone={totalQty <= toNumber(pr.reorder_level) ? "bad" : "neutral"}
           />
           {can("shop.product.view_cost") && unitProfit !== null && (
             <StatCard
-              label="Profit per unit"
+              label={t.products.profitPerUnit}
               value={formatMoney(unitProfit)}
-              trend={`Avg cost ${formatMoney(avgCost)}`}
+              trend={fmt(t.products.avgCost, { avgCost: formatMoney(avgCost) })}
               tone={unitProfit >= 0 ? "good" : "bad"}
             />
           )}
           <StatCard
-            label="SKU / unit"
+            label={t.products.skuUnit}
             value={<span className="od-mono text-[20px]">{pr.sku}</span>}
-            trend={pr.warranty_months ? `${pr.warranty_months}m warranty` : `Unit: ${pr.unit}`}
+            trend={
+              pr.warranty_months
+                ? fmt(t.products.mWarranty, { warranty_months: pr.warranty_months })
+                : fmt(t.products.unit2, { unit: pr.unit })
+            }
           />
         </div>
       </div>
 
       <Tabs defaultValue="stock">
         <TabsList>
-          <TabsTrigger value="stock">Stock by location</TabsTrigger>
-          <TabsTrigger value="movements">Stock history</TabsTrigger>
-          <TabsTrigger value="prices">Price history</TabsTrigger>
-          <TabsTrigger value="history">Audit history</TabsTrigger>
+          <TabsTrigger value="stock">{t.products.stockByLocation}</TabsTrigger>
+          <TabsTrigger value="movements">{t.products.stockHistory}</TabsTrigger>
+          <TabsTrigger value="prices">{t.products.priceHistory}</TabsTrigger>
+          <TabsTrigger value="history">{t.products.auditHistory}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="stock">
           <DataGrid
             rows={branchLevels}
             rowKey={(b) => b.branch_id}
-            empty="No location stock records"
+            empty={t.products.noLocationStockRecords}
             columns={[
-              { header: "Location", cell: (b) => <span className="font-medium">{b.branch}</span> },
               {
-                header: "On hand",
+                header: t.common.location,
+                cell: (b) => <span className="font-medium">{b.branch}</span>,
+              },
+              {
+                header: t.common.onHand,
                 align: "right",
                 cell: (b) => <span className="font-medium">{formatQty(b.qty_on_hand)}</span>,
               },
               ...(can("shop.product.view_cost")
                 ? [
                     {
-                      header: "Avg cost",
+                      header: t.common.avgCost,
                       align: "right" as const,
                       cell: (b: { avg_cost?: string }) =>
                         b.avg_cost ? formatMoney(b.avg_cost) : "—",
@@ -188,17 +200,17 @@ export default function ProductDetail() {
             rows={stockCard.data ?? []}
             loading={stockCard.isLoading}
             rowKey={(m) => m.id}
-            empty="No stock movements recorded yet"
+            empty={t.products.noStockMovementsRecordedYet}
             columns={[
-              { header: "When", cell: (m) => formatDateTime(m.created_at) },
+              { header: t.common.when, cell: (m) => formatDateTime(m.created_at) },
               {
-                header: "Type",
+                header: t.common.type,
                 cell: (m) => (
                   <span className="font-medium capitalize">{m.type.replaceAll("_", " ")}</span>
                 ),
               },
               {
-                header: "Change",
+                header: t.common.change,
                 align: "right",
                 cell: (m) => {
                   const n = toNumber(m.qty);
@@ -218,12 +230,12 @@ export default function ProductDetail() {
                 },
               },
               {
-                header: "Balance",
+                header: t.common.balance,
                 align: "right",
                 cell: (m) => formatQty(m.qty_after ?? m.balance),
               },
               {
-                header: "Source",
+                header: t.common.source,
                 cell: (m) =>
                   m.source_type ? (
                     <span className="capitalize text-[var(--od-ink-secondary)]">
@@ -242,16 +254,20 @@ export default function ProductDetail() {
             rows={priceHistory.data}
             loading={priceHistory.isLoading}
             rowKey={(p) => p.id}
-            empty="No price changes recorded"
+            empty={t.products.noPriceChangesRecorded}
             columns={[
-              { header: "When", cell: (p) => formatDateTime(p.changed_at) },
-              { header: "Old price", align: "right", cell: (p) => formatMoney(p.old_price) },
+              { header: t.common.when, cell: (p) => formatDateTime(p.changed_at) },
               {
-                header: "New price",
+                header: t.products.oldPrice,
+                align: "right",
+                cell: (p) => formatMoney(p.old_price),
+              },
+              {
+                header: t.products.newPrice,
                 align: "right",
                 cell: (p) => <span className="font-medium">{formatMoney(p.new_price)}</span>,
               },
-              { header: "Reason", cell: (p) => p.reason || "—" },
+              { header: t.common.reason, cell: (p) => p.reason || "—" },
             ]}
           />
         </TabsContent>

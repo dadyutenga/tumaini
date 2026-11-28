@@ -1,3 +1,36 @@
 import type { Translations } from "../en";
 
-export default {} satisfies Translations["purchasing"];
+export default {
+  orderSubmitted: "Oda imetumwa",
+  orderCancelled: "Oda imeghairiwa",
+  goodsReceivedIntoStock: "Bidhaa zimepokelewa stoo",
+  ordered: "{supplier} · Iliagizwa {order_date}",
+  submit: "Tuma",
+  receiveGoods: "Pokea bidhaa",
+  orderTotal: "Jumla ya oda",
+  lineItems: "Vipengele",
+  outstanding: "Zinazosubiriwa",
+  ordered2: "Zilizoagizwa",
+  orderNote: "Maelezo ya oda",
+  receiveIntoStock: "Pokea kwenye stoo",
+  outstanding2: "{product_name} (zinazosubiriwa {qty_outstanding})",
+  orderSavedAsADraft: "Oda imehifadhiwa kama rasimu",
+  partial: "Kiasi",
+  newOrder: "Oda mpya",
+  noPurchaseOrdersYet: "Bado hakuna oda za manunuzi",
+  newPurchaseOrder: "Oda mpya ya manunuzi",
+  supplierAdded: "Msambazaji ameongezwa",
+  searchSuppliers: "Tafuta wasambazaji",
+  searchSuppliers2: "Tafuta wasambazaji…",
+  newSupplier: "Msambazaji mpya",
+  noSuppliersYet: "Bado hakuna wasambazaji",
+  terms: "Masharti",
+  days: "Siku {payment_terms_days}",
+  contactPerson: "Mtu wa kuwasiliana",
+  pay: "Mlipe {name}",
+  supplier: "msambazaji",
+  noGoodsReceivedYet: "Bado hakuna bidhaa zilizopokelewa",
+  suppliersPurchaseOrdersGoodsReceived:
+    "Wasambazaji, oda za manunuzi, bidhaa zilizopokelewa na madeni.",
+  orders: "Oda",
+} satisfies Translations["purchasing"];

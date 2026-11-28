@@ -15,6 +15,8 @@ import { AttachmentsSection } from "@/components/shared/AttachmentsSection";
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, formatQty, toNumber } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 interface Line {
   id: string;
@@ -44,6 +46,7 @@ interface Order {
 }
 
 export default function PurchaseOrderDetail() {
+  const { t } = useI18n();
   const { id } = useParams();
   const { can } = useAuth();
   const order = useGet<Order>(`/purchase-orders/${id}`);
@@ -52,16 +55,16 @@ export default function PurchaseOrderDetail() {
   const refresh = ["/purchase-orders", "/stock", "/products", "/goods-receipts"];
   const submit = useWrite("POST", `/purchase-orders/${id}/submit`, {
     invalidate: refresh,
-    success: "Order submitted",
+    success: t.purchasing.orderSubmitted,
   });
   const cancel = useWrite("POST", `/purchase-orders/${id}/cancel`, {
     invalidate: refresh,
-    success: "Order cancelled",
+    success: t.purchasing.orderCancelled,
   });
   const receive = useWrite("POST", "/goods-receipts", {
     idempotent: true,
     invalidate: refresh,
-    success: "Goods received into stock",
+    success: t.purchasing.goodsReceivedIntoStock,
     onSuccess: () => setReceiving(false),
   });
 
@@ -78,10 +81,13 @@ export default function PurchaseOrderDetail() {
     <div className="space-y-6">
       <PageHeader
         backTo="/purchasing"
-        backLabel="Purchasing"
+        backLabel={t.common.purchasing}
         title={o.number}
         badge={<StatusBadge value={o.status} />}
-        description={`${o.supplier} · Ordered ${formatDate(o.order_date)}`}
+        description={fmt(t.purchasing.ordered, {
+          supplier: o.supplier,
+          order_date: formatDate(o.order_date),
+        })}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {o.status === "draft" && manage && (
@@ -92,10 +98,10 @@ export default function PurchaseOrderDetail() {
                   onClick={() => cancel.mutate({})}
                   disabled={cancel.isPending}
                 >
-                  Cancel
+                  {t.common.cancel}
                 </Button>
                 <Button size="sm" onClick={() => submit.mutate({})} disabled={submit.isPending}>
-                  Submit
+                  {t.purchasing.submit}
                 </Button>
               </>
             )}
@@ -109,7 +115,7 @@ export default function PurchaseOrderDetail() {
                   setReceiving(true);
                 }}
               >
-                Receive goods
+                {t.purchasing.receiveGoods}
               </Button>
             )}
           </div>
@@ -117,15 +123,15 @@ export default function PurchaseOrderDetail() {
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Order total" value={formatMoney(o.total)} />
-        <StatCard label="Line items" value={o.items.length} />
+        <StatCard label={t.purchasing.orderTotal} value={formatMoney(o.total)} />
+        <StatCard label={t.purchasing.lineItems} value={o.items.length} />
         <StatCard
-          label="Received"
+          label={t.common.received}
           value={`${formatQty(receivedQty)} / ${formatQty(orderedQty)}`}
           tone={outstandingQty === 0 && orderedQty > 0 ? "good" : "neutral"}
         />
         <StatCard
-          label="Outstanding"
+          label={t.purchasing.outstanding}
           value={formatQty(outstandingQty)}
           tone={outstandingQty > 0 ? "bad" : "good"}
         />
@@ -136,13 +142,13 @@ export default function PurchaseOrderDetail() {
         rowKey={(l) => l.id}
         columns={[
           {
-            header: "Product",
+            header: t.common.product,
             cell: (l) => <span className="font-medium">{l.product_name}</span>,
           },
-          { header: "Ordered", align: "right", cell: (l) => formatQty(l.qty_ordered) },
-          { header: "Received", align: "right", cell: (l) => formatQty(l.qty_received) },
+          { header: t.purchasing.ordered2, align: "right", cell: (l) => formatQty(l.qty_ordered) },
+          { header: t.common.received, align: "right", cell: (l) => formatQty(l.qty_received) },
           {
-            header: "Outstanding",
+            header: t.purchasing.outstanding,
             align: "right",
             cell: (l) => (
               <span
@@ -154,15 +160,15 @@ export default function PurchaseOrderDetail() {
               </span>
             ),
           },
-          { header: "Unit cost", align: "right", cell: (l) => formatMoney(l.unit_cost) },
+          { header: t.common.unitCost, align: "right", cell: (l) => formatMoney(l.unit_cost) },
           {
-            header: "Total",
+            header: t.common.total,
             align: "right",
             cell: (l) => <span className="font-medium">{formatMoney(l.line_total)}</span>,
           },
         ]}
         totals={[
-          "Total",
+          t.common.total,
           formatQty(orderedQty),
           formatQty(receivedQty),
           formatQty(outstandingQty),
@@ -172,20 +178,20 @@ export default function PurchaseOrderDetail() {
       />
 
       {o.note && (
-        <SectionCard title="Order note">
+        <SectionCard title={t.purchasing.orderNote}>
           <p className="text-[13px] leading-relaxed text-[var(--od-ink-secondary)]">{o.note}</p>
         </SectionCard>
       )}
 
-      <SectionCard title="Attachments">
+      <SectionCard title={t.common.attachments2}>
         <AttachmentsSection entityType="purchase_order" entityId={o.id} />
       </SectionCard>
 
       <FormDialog
         open={receiving}
         onOpenChange={setReceiving}
-        title="Receive goods"
-        submitLabel="Receive into stock"
+        title={t.purchasing.receiveGoods}
+        submitLabel={t.purchasing.receiveIntoStock}
         busy={receive.isPending}
         wide
         onSubmit={() =>
@@ -204,7 +210,10 @@ export default function PurchaseOrderDetail() {
         {o.items.map((l) => (
           <Field
             key={l.id}
-            label={`${l.product_name} (outstanding ${formatQty(l.qty_outstanding)})`}
+            label={fmt(t.purchasing.outstanding2, {
+              product_name: l.product_name,
+              qty_outstanding: formatQty(l.qty_outstanding),
+            })}
           >
             <Input
               inputMode="decimal"

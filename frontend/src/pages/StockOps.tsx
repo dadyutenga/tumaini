@@ -18,6 +18,8 @@ import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { api } from "@/lib/api";
 import { formatDateTime, formatMoney, formatQty, toNumber } from "@/lib/formatters";
 import type { Product } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 interface Branch {
   id: string;
@@ -57,6 +59,7 @@ interface Movement {
 }
 
 function TransfersTab() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const [page, setPage] = useState(1);
   const list = useGetPage<Transfer>("/stock-transfers", { page });
@@ -69,7 +72,7 @@ function TransfersTab() {
   const refresh = ["/stock-transfers", "/stock", "/products"];
   const create = useWrite("POST", "/stock-transfers", {
     invalidate: refresh,
-    success: "Transfer drafted",
+    success: t.stock.transferDrafted,
     onSuccess: () => {
       setOpen(false);
       setLines([{ product_id: "", qty: "1" }]);
@@ -78,7 +81,7 @@ function TransfersTab() {
   const act = useWrite<{ id: string; action: string }, unknown>(
     "POST",
     (b) => `/stock-transfers/${b.id}/${b.action}`,
-    { idempotent: true, invalidate: refresh, success: "Transfer updated", toBody: () => ({}) },
+    { idempotent: true, invalidate: refresh, success: t.stock.transferUpdated, toBody: () => ({}) },
   );
   const receive = useWrite<unknown, unknown>(
     "POST",
@@ -86,15 +89,15 @@ function TransfersTab() {
     {
       idempotent: true,
       invalidate: refresh,
-      success: "Transfer received",
+      success: t.stock.transferReceived,
       onSuccess: () => setReceiving(null),
     },
   );
   const setLine = (i: number, patch: Partial<(typeof lines)[number]>) =>
     setLines((all) => all.map((l, n) => (n === i ? { ...l, ...patch } : l)));
 
-  async function startReceive(t: Transfer) {
-    const detail = await api.get<TransferDetail>(`/stock-transfers/${t.id}`);
+  async function startReceive(item: Transfer) {
+    const detail = await api.get<TransferDetail>(`/stock-transfers/${item.id}`);
     setReceiving(detail);
   }
 
@@ -105,52 +108,54 @@ function TransfersTab() {
       {manage && (
         <FilterBar className="justify-end">
           <Button size="sm" onClick={() => setOpen(true)}>
-            <Plus size={14} /> New transfer
+            <Plus size={14} /> {t.stock.newTransfer}
           </Button>
         </FilterBar>
       )}
       <DataGrid
         rows={list.data?.data}
         loading={list.isLoading}
-        rowKey={(t) => t.id}
-        empty="No transfers yet"
+        rowKey={(item) => item.id}
+        empty={t.stock.noTransfersYet}
         columns={[
           {
-            header: "Number",
-            sortValue: (t) => t.number,
-            cell: (t) => <span className="od-mono font-medium">{t.number}</span>,
+            header: t.common.number,
+            sortValue: (item) => item.number,
+            cell: (item) => <span className="od-mono font-medium">{item.number}</span>,
           },
-          { header: "From", cell: (t) => t.from_branch },
-          { header: "To", cell: (t) => t.to_branch },
+          { header: t.common.from, cell: (item) => item.from_branch },
+          { header: t.common.to, cell: (item) => item.to_branch },
           {
-            header: "Created",
-            cell: (t) => (
-              <span className="text-[var(--od-ink-secondary)]">{formatDateTime(t.created_at)}</span>
+            header: t.common.created,
+            cell: (item) => (
+              <span className="text-[var(--od-ink-secondary)]">
+                {formatDateTime(item.created_at)}
+              </span>
             ),
           },
-          { header: "Status", cell: (t) => <StatusBadge value={t.status} /> },
+          { header: t.common.status, cell: (item) => <StatusBadge value={item.status} /> },
           {
             header: "",
             className: "text-right",
-            cell: (t) => (
+            cell: (item) => (
               <div className="flex justify-end gap-1.5">
-                {t.status === "draft" && manage && (
-                  <Button size="sm" onClick={() => act.mutate({ id: t.id, action: "dispatch" })}>
-                    Dispatch
+                {item.status === "draft" && manage && (
+                  <Button size="sm" onClick={() => act.mutate({ id: item.id, action: "dispatch" })}>
+                    {t.stock.dispatch}
                   </Button>
                 )}
-                {t.status === "draft" && manage && (
+                {item.status === "draft" && manage && (
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => act.mutate({ id: t.id, action: "cancel" })}
+                    onClick={() => act.mutate({ id: item.id, action: "cancel" })}
                   >
-                    Cancel
+                    {t.common.cancel}
                   </Button>
                 )}
-                {t.status === "dispatched" && manage && (
-                  <Button size="sm" onClick={() => void startReceive(t)}>
-                    Receive
+                {item.status === "dispatched" && manage && (
+                  <Button size="sm" onClick={() => void startReceive(item)}>
+                    {t.stock.receive}
                   </Button>
                 )}
               </div>
@@ -163,16 +168,16 @@ function TransfersTab() {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title="New stock transfer"
+        title={t.stock.newStockTransfer}
         busy={create.isPending}
         wide
         onSubmit={() =>
           create.mutate({ to_branch_id: to, items: lines.filter((l) => l.product_id) })
         }
       >
-        <Field label="Send to location">
+        <Field label={t.stock.sendToLocation}>
           <NativeSelect required value={to} onChange={(e) => setTo(e.target.value)}>
-            <option value="">Choose…</option>
+            <option value="">{t.common.choose}</option>
             {branches.data
               ?.filter((b) => b.is_active)
               .map((b) => (
@@ -185,12 +190,12 @@ function TransfersTab() {
         <div className="space-y-2">
           {lines.map((l, i) => (
             <div key={i} className="grid grid-cols-[1fr_6rem_2.25rem] items-end gap-2">
-              <Field label={i === 0 ? "Product" : ""}>
+              <Field label={i === 0 ? t.common.product : ""}>
                 <NativeSelect
                   value={l.product_id}
                   onChange={(e) => setLine(i, { product_id: e.target.value })}
                 >
-                  <option value="">Choose…</option>
+                  <option value="">{t.common.choose}</option>
                   {products.data?.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
@@ -198,7 +203,7 @@ function TransfersTab() {
                   ))}
                 </NativeSelect>
               </Field>
-              <Field label={i === 0 ? "Qty" : ""}>
+              <Field label={i === 0 ? t.common.qty : ""}>
                 <Input
                   inputMode="decimal"
                   value={l.qty}
@@ -209,7 +214,7 @@ function TransfersTab() {
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label="Remove line"
+                aria-label={t.common.removeLine}
                 disabled={lines.length === 1}
                 onClick={() => setLines((all) => all.filter((_, n) => n !== i))}
               >
@@ -223,7 +228,7 @@ function TransfersTab() {
             size="sm"
             onClick={() => setLines((all) => [...all, { product_id: "", qty: "1" }])}
           >
-            <Plus size={13} /> Add line
+            <Plus size={13} /> {t.common.addLine}
           </Button>
         </div>
       </FormDialog>
@@ -231,14 +236,13 @@ function TransfersTab() {
       <FormDialog
         open={receiving !== null}
         onOpenChange={(o) => !o && setReceiving(null)}
-        title={`Receive ${receiving?.number ?? ""}`}
-        submitLabel="Receive in full"
+        title={fmt(t.stock.receive2, { number: receiving?.number ?? "" })}
+        submitLabel={t.stock.receiveInFull}
         busy={receive.isPending}
         onSubmit={() => receive.mutate({})}
       >
         <p className="text-[13px] text-[var(--od-ink-secondary)]">
-          Transfers are received in full. If the physical count differs, receive the transfer and
-          record a stock adjustment afterwards.
+          {t.stock.transfersAreReceivedInFull}
         </p>
         <ul className="divide-y divide-[var(--od-border)] rounded-[var(--od-radius-md,12px)] border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] text-[13px]">
           {receiving?.items.map((i) => (
@@ -256,6 +260,7 @@ function TransfersTab() {
 }
 
 function CountsTab() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const [page, setPage] = useState(1);
   const list = useGetPage<Adjustment>("/stock-adjustments", { page });
@@ -268,7 +273,7 @@ function CountsTab() {
   const refresh = ["/stock-adjustments", "/stock", "/products", "/approvals"];
   const create = useWrite("POST", "/stock-adjustments", {
     invalidate: refresh,
-    success: "Adjustment drafted",
+    success: t.stock.adjustmentDrafted,
     onSuccess: () => {
       setOpen(false);
       setReason("");
@@ -277,16 +282,21 @@ function CountsTab() {
   });
   const sheet = useWrite("POST", "/stock-adjustments/count-sheet", {
     invalidate: refresh,
-    success: "Count sheet created. Open it to enter the counted quantities.",
+    success: t.stock.countSheetCreatedOpenIt,
   });
   const act = useWrite<{ id: string; action: string }, unknown>(
     "POST",
     (b) => `/stock-adjustments/${b.id}/${b.action}`,
-    { idempotent: true, invalidate: refresh, success: "Adjustment updated", toBody: () => ({}) },
+    {
+      idempotent: true,
+      invalidate: refresh,
+      success: t.stock.adjustmentUpdated,
+      toBody: () => ({}),
+    },
   );
   const save = useWrite<unknown, unknown>("PUT", () => `/stock-adjustments/${editing?.id}`, {
     invalidate: refresh,
-    success: "Counts saved",
+    success: t.stock.countsSaved,
     onSuccess: () => setEditing(null),
   });
   const setLine = (i: number, patch: Partial<(typeof lines)[number]>) =>
@@ -308,12 +318,12 @@ function CountsTab() {
             size="sm"
             variant="outline"
             disabled={sheet.isPending}
-            onClick={() => sheet.mutate({ reason: "Stock take" })}
+            onClick={() => sheet.mutate({ reason: t.stock.stockTake })}
           >
-            Start a stock take
+            {t.stock.startAStockTake}
           </Button>
           <Button size="sm" onClick={() => setOpen(true)}>
-            <Plus size={14} /> New adjustment
+            <Plus size={14} /> {t.common.newAdjustment}
           </Button>
         </FilterBar>
       )}
@@ -321,25 +331,26 @@ function CountsTab() {
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(a) => a.id}
-        empty="No adjustments yet"
+        empty={t.stock.noAdjustmentsYet}
         columns={[
           {
-            header: "Number",
+            header: t.common.number,
             sortValue: (a) => a.number,
             cell: (a) => <span className="od-mono font-medium">{a.number}</span>,
           },
           {
-            header: "Reason",
-            cell: (a) => (a.is_stock_take ? `Stock take · ${a.reason}` : a.reason),
+            header: t.common.reason,
+            cell: (a) =>
+              a.is_stock_take ? fmt(t.stock.stockTake2, { reason: a.reason }) : a.reason,
           },
           {
-            header: "Created",
+            header: t.common.created,
             cell: (a) => (
               <span className="text-[var(--od-ink-secondary)]">{formatDateTime(a.created_at)}</span>
             ),
           },
           {
-            header: "Value",
+            header: t.common.value,
             align: "right",
             sortValue: (a) => toNumber(a.total_value),
             cell: (a) => (
@@ -356,7 +367,7 @@ function CountsTab() {
               </span>
             ),
           },
-          { header: "Status", cell: (a) => <StatusBadge value={a.status} /> },
+          { header: t.common.status, cell: (a) => <StatusBadge value={a.status} /> },
           {
             header: "",
             className: "text-right",
@@ -365,17 +376,17 @@ function CountsTab() {
               manage && (
                 <div className="flex justify-end gap-1.5">
                   <Button size="sm" variant="outline" onClick={() => void edit(a)}>
-                    Counts
+                    {t.stock.counts}
                   </Button>
                   <Button size="sm" onClick={() => act.mutate({ id: a.id, action: "post" })}>
-                    Post
+                    {t.stock.post}
                   </Button>
                   <Button
                     size="sm"
                     variant="ghost"
                     onClick={() => act.mutate({ id: a.id, action: "cancel" })}
                   >
-                    Cancel
+                    {t.common.cancel}
                   </Button>
                 </div>
               ),
@@ -387,23 +398,23 @@ function CountsTab() {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title="New stock adjustment"
+        title={t.stock.newStockAdjustment}
         busy={create.isPending}
         wide
         onSubmit={() => create.mutate({ reason, items: lines.filter((l) => l.product_id) })}
       >
-        <Field label="Reason">
+        <Field label={t.common.reason}>
           <Input required value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
         <div className="space-y-2">
           {lines.map((l, i) => (
             <div key={i} className="grid grid-cols-[1fr_7rem_2.25rem] items-end gap-2">
-              <Field label={i === 0 ? "Product" : ""}>
+              <Field label={i === 0 ? t.common.product : ""}>
                 <NativeSelect
                   value={l.product_id}
                   onChange={(e) => setLine(i, { product_id: e.target.value })}
                 >
-                  <option value="">Choose…</option>
+                  <option value="">{t.common.choose}</option>
                   {products.data?.map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.name}
@@ -411,7 +422,7 @@ function CountsTab() {
                   ))}
                 </NativeSelect>
               </Field>
-              <Field label={i === 0 ? "Counted qty" : ""}>
+              <Field label={i === 0 ? t.stock.countedQty : ""}>
                 <Input
                   inputMode="decimal"
                   value={l.qty_counted}
@@ -422,7 +433,7 @@ function CountsTab() {
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label="Remove line"
+                aria-label={t.common.removeLine}
                 disabled={lines.length === 1}
                 onClick={() => setLines((all) => all.filter((_, n) => n !== i))}
               >
@@ -436,7 +447,7 @@ function CountsTab() {
             size="sm"
             onClick={() => setLines((all) => [...all, { product_id: "", qty_counted: "0" }])}
           >
-            <Plus size={13} /> Add line
+            <Plus size={13} /> {t.common.addLine}
           </Button>
         </div>
       </FormDialog>
@@ -444,8 +455,8 @@ function CountsTab() {
       <FormDialog
         open={editing !== null}
         onOpenChange={(o) => !o && setEditing(null)}
-        title={`Counts for ${editing?.number ?? ""}`}
-        submitLabel="Save counts"
+        title={fmt(t.stock.countsFor, { number: editing?.number ?? "" })}
+        submitLabel={t.stock.saveCounts}
         busy={save.isPending}
         wide
         onSubmit={() =>
@@ -459,7 +470,13 @@ function CountsTab() {
         }
       >
         {editing?.items.map((i) => (
-          <Field key={i.product_id} label={`${i.product_name} (system ${formatQty(i.qty_system)})`}>
+          <Field
+            key={i.product_id}
+            label={fmt(t.stock.system, {
+              product_name: i.product_name,
+              qty_system: formatQty(i.qty_system),
+            })}
+          >
             <Input
               inputMode="decimal"
               value={counts[i.product_id] ?? ""}
@@ -473,6 +490,7 @@ function CountsTab() {
 }
 
 function MovementsTab() {
+  const { t } = useI18n();
   const [page, setPage] = useState(1);
   const list = useGetPage<Movement>("/stock/movements", { page });
   return (
@@ -481,21 +499,24 @@ function MovementsTab() {
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(m) => m.id}
-        empty="No stock movements yet"
+        empty={t.stock.noStockMovementsYet}
         columns={[
           {
-            header: "When",
+            header: t.common.when,
             cell: (m) => (
               <span className="text-[var(--od-ink-secondary)]">{formatDateTime(m.created_at)}</span>
             ),
           },
-          { header: "Product", cell: (m) => <span className="font-medium">{m.product_name}</span> },
           {
-            header: "Type",
+            header: t.common.product,
+            cell: (m) => <span className="font-medium">{m.product_name}</span>,
+          },
+          {
+            header: t.common.type,
             cell: (m) => <span className="capitalize">{(m.type ?? "—").replaceAll("_", " ")}</span>,
           },
           {
-            header: "Qty",
+            header: t.common.qty,
             align: "right",
             cell: (m) => {
               const n = toNumber(m.qty);
@@ -515,7 +536,7 @@ function MovementsTab() {
             },
           },
           {
-            header: "After",
+            header: t.stock.after,
             align: "right",
             cell: (m) => (m.qty_after ? formatQty(m.qty_after) : "—"),
           },
@@ -527,19 +548,20 @@ function MovementsTab() {
 }
 
 export default function StockOps() {
+  const { t } = useI18n();
   const { canAny } = useAuth();
   const canView = canAny("shop.stock.view", "shop.stock.manage");
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Transfers and counts"
-        description="Move stock between locations, count shelf inventory and reconcile differences."
+        title={t.common.transfersAndCounts}
+        description={t.stock.moveStockBetweenLocationsCount}
       />
       <Tabs defaultValue="transfers">
         <TabsList>
-          {canView && <TabsTrigger value="transfers">Transfers</TabsTrigger>}
-          <TabsTrigger value="counts">Counts and adjustments</TabsTrigger>
-          <TabsTrigger value="movements">Movements</TabsTrigger>
+          {canView && <TabsTrigger value="transfers">{t.stock.transfers}</TabsTrigger>}
+          <TabsTrigger value="counts">{t.stock.countsAndAdjustments}</TabsTrigger>
+          <TabsTrigger value="movements">{t.common.movements}</TabsTrigger>
         </TabsList>
         {canView && (
           <TabsContent value="transfers">

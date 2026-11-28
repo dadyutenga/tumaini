@@ -393,4 +393,12 @@ export default {
   pay: "Lipa",
   payFrom: "Lipa kutoka",
   clear: "Futa",
+  unitCost: "Gharama kwa moja",
+  contact: "Mawasiliano",
+  value: "Thamani",
+  receipts: "Mapokezi",
+  other: "Nyingine",
+  lowStock: "Stoo inayoisha",
+  newAdjustment: "Marekebisho mapya",
+  movements: "Miamala",
 } satisfies Translations["common"];
