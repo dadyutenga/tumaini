@@ -13,6 +13,8 @@ import {
 import { useAuth } from "@/features/auth/auth";
 import { useGetPage, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 interface Payment {
   id: string;
@@ -27,6 +29,7 @@ interface Payment {
 }
 
 export function PaymentsTab() {
+  const { t } = useI18n();
   const { can, canAny } = useAuth();
   const [direction, setDirection] = useState("");
   const [page, setPage] = useState(1);
@@ -39,7 +42,7 @@ export function PaymentsTab() {
     {
       idempotent: true,
       invalidate: ["/payments", "/money", "/transactions", "/customers", "/sales"],
-      success: "Payment void submitted",
+      success: t.finance.paymentVoidSubmitted,
       onSuccess: () => {
         setVoiding(null);
         setReason("");
@@ -51,16 +54,16 @@ export function PaymentsTab() {
     <>
       <FilterBar>
         <SegmentedChips
-          ariaLabel="Direction"
+          ariaLabel={t.finance.direction}
           value={direction}
           onChange={(v) => {
             setDirection(v);
             setPage(1);
           }}
           options={[
-            { value: "", label: "All payments" },
-            { value: "in", label: "Money in" },
-            { value: "out", label: "Money out" },
+            { value: "", label: t.finance.allPayments },
+            { value: "in", label: t.finance.moneyIn2 },
+            { value: "out", label: t.finance.moneyOut2 },
           ]}
         />
       </FilterBar>
@@ -68,26 +71,26 @@ export function PaymentsTab() {
         rows={list.data?.data}
         loading={list.isLoading}
         rowKey={(p) => p.id}
-        empty="No payments yet"
+        empty={t.common.noPaymentsYet}
         columns={[
           {
-            header: "Number",
+            header: t.common.number,
             cell: (p) => <span className="od-mono font-medium">{p.number}</span>,
           },
           {
-            header: "Date",
+            header: t.common.date,
             cell: (p) => (
               <span className="text-[var(--od-ink-secondary)]">{formatDate(p.payment_date)}</span>
             ),
           },
           {
-            header: "Kind",
+            header: t.common.kind,
             cell: (p) => <span className="capitalize">{p.kind.replaceAll("_", " ")}</span>,
           },
-          { header: "Party", cell: (p) => p.party_name ?? "—" },
-          { header: "Account", cell: (p) => p.account_name },
+          { header: t.finance.party, cell: (p) => p.party_name ?? "—" },
+          { header: t.common.account, cell: (p) => p.account_name },
           {
-            header: "Amount",
+            header: t.common.amount,
             align: "right",
             cell: (p) => (
               <span
@@ -102,7 +105,7 @@ export function PaymentsTab() {
               </span>
             ),
           },
-          { header: "Status", cell: (p) => <StatusBadge value={p.status} /> },
+          { header: t.common.status, cell: (p) => <StatusBadge value={p.status} /> },
           {
             header: "",
             className: "text-right",
@@ -115,7 +118,7 @@ export function PaymentsTab() {
                   className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                   onClick={() => setVoiding(p)}
                 >
-                  {can("finance.payment.void") ? "Void" : "Request void"}
+                  {can("finance.payment.void") ? t.common.void : t.common.requestVoid}
                 </Button>
               ),
           },
@@ -125,12 +128,12 @@ export function PaymentsTab() {
       <FormDialog
         open={voiding !== null}
         onOpenChange={(o) => !o && setVoiding(null)}
-        title={`Void ${voiding?.number ?? "payment"}`}
-        submitLabel={can("finance.payment.void") ? "Void payment" : "Request void"}
+        title={fmt(t.finance.void, { number: voiding?.number ?? t.finance.payment })}
+        submitLabel={can("finance.payment.void") ? t.common.voidPayment : t.common.requestVoid}
         busy={voidPayment.isPending}
         onSubmit={() => voidPayment.mutate({ reason })}
       >
-        <Field label="Reason">
+        <Field label={t.common.reason}>
           <Input required value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
       </FormDialog>

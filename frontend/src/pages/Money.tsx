@@ -32,6 +32,9 @@ import { download } from "@/lib/api";
 import { downloadCsv } from "@/lib/csv";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import type { Translations } from "@/features/i18n/i18n";
 
 interface Txn {
   id: string;
@@ -42,11 +45,11 @@ interface Txn {
   description: string;
   type: string;
 }
-const TYPES = [
-  ["cash", "Cash"],
-  ["bank", "Bank"],
-  ["mobile_money", "Mobile money"],
-  ["petty_cash", "Petty cash"],
+const types = (t: Translations) => [
+  ["cash", t.common.cash],
+  ["bank", t.common.bank],
+  ["mobile_money", t.common.mobileMoney],
+  ["petty_cash", t.finance.pettyCash],
 ];
 
 function AccountIcon({ type }: { type: string }) {
@@ -58,6 +61,7 @@ function AccountIcon({ type }: { type: string }) {
 }
 
 export default function Money() {
+  const { t } = useI18n();
   const { can, canAny } = useAuth();
   const canTxns = can("finance.transaction.view");
   const canPayments = canAny("finance.payment.view_all", "finance.payment.receive");
@@ -111,7 +115,7 @@ export default function Money() {
 
   const create = useWrite<unknown>("POST", "/money-accounts", {
     invalidate: ["/money-accounts"],
-    success: "Account created",
+    success: t.finance.accountCreated,
     onSuccess: () => {
       setCreating(false);
       setAcct({ name: "", type: "cash", provider: "", account_number: "", opening_balance: "0" });
@@ -120,7 +124,7 @@ export default function Money() {
   const transfer = useWrite<unknown>("POST", "/money-transfers", {
     idempotent: true,
     invalidate: ["/money-accounts", "/transactions"],
-    success: "Transfer recorded",
+    success: t.finance.transferRecorded,
     onSuccess: () => {
       setTransferring(false);
       setTr({
@@ -146,24 +150,38 @@ export default function Money() {
   function exportTransactionsCsv() {
     const rows = txns.data?.data ?? [];
     downloadCsv("transactions.csv", [
-      ["Date", "Account", "Type", "Description", "Money In", "Money Out"],
-      ...rows.map((t) => [t.date, t.account, t.type, t.description, t.in, t.out]),
+      [
+        t.common.date,
+        t.common.account,
+        t.common.type,
+        t.common.description,
+        t.finance.moneyIn,
+        t.finance.moneyOut,
+      ],
+      ...rows.map((item) => [
+        item.date,
+        item.account,
+        item.type,
+        item.description,
+        item.in,
+        item.out,
+      ]),
     ]);
   }
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Money"
-        description="Cash, bank and mobile money accounts and every movement between them."
+        title={t.common.money}
+        description={t.finance.cashBankAndMobileMoney}
         actions={
           canManage && (
             <>
               <Button size="sm" variant="outline" onClick={() => setTransferring(true)}>
-                <ArrowRightLeft size={14} /> Transfer
+                <ArrowRightLeft size={14} /> {t.finance.transfer}
               </Button>
               <Button size="sm" onClick={() => setCreating(true)}>
-                <Plus size={14} /> New account
+                <Plus size={14} /> {t.finance.newAccount}
               </Button>
             </>
           )
@@ -172,23 +190,23 @@ export default function Money() {
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList>
-          {showBalance && <TabsTrigger value="accounts">Accounts</TabsTrigger>}
-          {canTxns && <TabsTrigger value="transactions">Transactions</TabsTrigger>}
-          {canPayments && <TabsTrigger value="payments">Payments</TabsTrigger>}
+          {showBalance && <TabsTrigger value="accounts">{t.common.accounts}</TabsTrigger>}
+          {canTxns && <TabsTrigger value="transactions">{t.finance.transactions}</TabsTrigger>}
+          {canPayments && <TabsTrigger value="payments">{t.common.payments}</TabsTrigger>}
         </TabsList>
 
         <TabsContent value="accounts" className="space-y-5">
           {showBalance && accounts.data && accounts.data.length > 0 && (
             <div className="grid gap-4 sm:grid-cols-3">
               <StatCard
-                label="Total balance across all accounts"
+                label={t.finance.totalBalanceAcrossAllAccounts}
                 value={formatMoney(totalBalance)}
                 className="sm:col-span-2"
               />
               <StatCard
-                label="Active accounts"
+                label={t.finance.activeAccounts}
                 value={active.length}
-                trend={`${accounts.data.length} total`}
+                trend={fmt(t.finance.total, { count: accounts.data.length })}
               />
             </div>
           )}
@@ -197,7 +215,7 @@ export default function Money() {
             <PageLoader />
           ) : !accounts.data?.length ? (
             <div className="od-card">
-              <EmptyState title="No accounts yet" />
+              <EmptyState title={t.finance.noAccountsYet} />
             </div>
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -232,7 +250,9 @@ export default function Money() {
                       <p className="od-kpi-value mt-4 text-[22px]">{formatMoney(a.balance)}</p>
                     )}
                     {a.account_number && (
-                      <p className="od-mono od-caption mt-1">Acc: {a.account_number}</p>
+                      <p className="od-mono od-caption mt-1">
+                        {fmt(t.finance.acc, { account_number: a.account_number })}
+                      </p>
                     )}
                   </button>
 
@@ -244,7 +264,7 @@ export default function Money() {
                         className="h-7 px-2 text-xs"
                         onClick={() => openAccountTransactions(a.id)}
                       >
-                        Transactions
+                        {t.finance.transactions}
                       </Button>
                     )}
                     {showBalance && (
@@ -260,7 +280,7 @@ export default function Money() {
                           ).catch((e) => toast.error(errorMessage(e)))
                         }
                       >
-                        <FileText size={13} /> Statement PDF
+                        <FileText size={13} /> {t.common.statementPdf}
                       </Button>
                     )}
                   </div>
@@ -274,7 +294,7 @@ export default function Money() {
           <FilterBar className="justify-between">
             <div className="flex flex-1 flex-wrap items-center gap-2">
               <NativeSelect
-                aria-label="Account"
+                aria-label={t.common.account}
                 className="w-44"
                 value={txAccount}
                 onChange={(e) => {
@@ -282,7 +302,7 @@ export default function Money() {
                   setTxPage(1);
                 }}
               >
-                <option value="">All accounts</option>
+                <option value="">{t.finance.allAccounts}</option>
                 {(accounts.data ?? []).map((a) => (
                   <option key={a.id} value={a.id}>
                     {a.name}
@@ -291,7 +311,7 @@ export default function Money() {
               </NativeSelect>
               <Input
                 type="date"
-                aria-label="From date"
+                aria-label={t.common.fromDate}
                 className="w-36"
                 value={txFrom}
                 onChange={(e) => {
@@ -301,7 +321,7 @@ export default function Money() {
               />
               <Input
                 type="date"
-                aria-label="To date"
+                aria-label={t.common.toDate}
                 className="w-36"
                 value={txTo}
                 onChange={(e) => {
@@ -315,9 +335,9 @@ export default function Money() {
                   className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
                 />
                 <Input
-                  aria-label="Search transactions"
+                  aria-label={t.finance.searchTransactions}
                   className="pl-9"
-                  placeholder="Description or reference…"
+                  placeholder={t.finance.descriptionOrReference}
                   value={txSearch}
                   onChange={(e) => {
                     setTxSearch(e.target.value);
@@ -337,7 +357,7 @@ export default function Money() {
                     setTxPage(1);
                   }}
                 >
-                  Clear
+                  {t.common.clear}
                 </Button>
               )}
             </div>
@@ -347,43 +367,46 @@ export default function Money() {
               disabled={!txns.data?.data?.length}
               onClick={exportTransactionsCsv}
             >
-              <Download size={14} /> Export CSV
+              <Download size={14} /> {t.common.exportCsv}
             </Button>
           </FilterBar>
 
           <DataGrid
             rows={txns.data?.data}
             loading={txns.isLoading}
-            rowKey={(t) => t.id}
-            empty="No movements match your filters"
+            rowKey={(item) => item.id}
+            empty={t.finance.noMovementsMatchYourFilters}
             columns={[
               {
-                header: "Date",
-                cell: (t) => (
-                  <span className="text-[var(--od-ink-secondary)]">{formatDate(t.date)}</span>
+                header: t.common.date,
+                cell: (item) => (
+                  <span className="text-[var(--od-ink-secondary)]">{formatDate(item.date)}</span>
                 ),
               },
-              { header: "Account", cell: (t) => <span className="font-medium">{t.account}</span> },
-              { header: "Description", cell: (t) => t.description },
               {
-                header: "Money in",
+                header: t.common.account,
+                cell: (item) => <span className="font-medium">{item.account}</span>,
+              },
+              { header: t.common.description, cell: (item) => item.description },
+              {
+                header: t.finance.moneyIn2,
                 align: "right",
-                cell: (t) =>
-                  Number(t.in) ? (
+                cell: (item) =>
+                  Number(item.in) ? (
                     <span className="font-semibold text-[var(--od-good)]">
-                      +{formatMoney(t.in)}
+                      +{formatMoney(item.in)}
                     </span>
                   ) : (
                     ""
                   ),
               },
               {
-                header: "Money out",
+                header: t.finance.moneyOut2,
                 align: "right",
-                cell: (t) =>
-                  Number(t.out) ? (
+                cell: (item) =>
+                  Number(item.out) ? (
                     <span className="font-semibold text-[var(--od-bad)]">
-                      −{formatMoney(t.out)}
+                      −{formatMoney(item.out)}
                     </span>
                   ) : (
                     ""
@@ -404,23 +427,23 @@ export default function Money() {
       <FormDialog
         open={creating}
         onOpenChange={setCreating}
-        title="New money account"
+        title={t.finance.newMoneyAccount}
         busy={create.isPending}
         onSubmit={() => create.mutate(acct)}
       >
-        <Field label="Name">
+        <Field label={t.common.name2}>
           <Input
             required
             value={acct.name}
             onChange={(e) => setAcct((a) => ({ ...a, name: e.target.value }))}
           />
         </Field>
-        <Field label="Type">
+        <Field label={t.common.type}>
           <NativeSelect
             value={acct.type}
             onChange={(e) => setAcct((a) => ({ ...a, type: e.target.value }))}
           >
-            {TYPES.map(([v, l]) => (
+            {types(t).map(([v, l]) => (
               <option key={v} value={v}>
                 {l}
               </option>
@@ -429,13 +452,13 @@ export default function Money() {
         </Field>
         {(acct.type === "bank" || acct.type === "mobile_money") && (
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Provider">
+            <Field label={t.finance.provider}>
               <Input
                 value={acct.provider}
                 onChange={(e) => setAcct((a) => ({ ...a, provider: e.target.value }))}
               />
             </Field>
-            <Field label="Account number">
+            <Field label={t.finance.accountNumber}>
               <Input
                 value={acct.account_number}
                 onChange={(e) => setAcct((a) => ({ ...a, account_number: e.target.value }))}
@@ -443,7 +466,7 @@ export default function Money() {
             </Field>
           </div>
         )}
-        <Field label="Opening balance">
+        <Field label={t.finance.openingBalance}>
           <Input
             inputMode="decimal"
             value={acct.opening_balance}
@@ -455,18 +478,18 @@ export default function Money() {
       <FormDialog
         open={transferring}
         onOpenChange={setTransferring}
-        title="Transfer money"
+        title={t.finance.transferMoney}
         busy={transfer.isPending}
         onSubmit={() => transfer.mutate({ ...tr, date: today() })}
       >
         {(["from_account_id", "to_account_id"] as const).map((k) => (
-          <Field key={k} label={k === "from_account_id" ? "From" : "To"}>
+          <Field key={k} label={k === "from_account_id" ? t.common.from : t.common.to}>
             <NativeSelect
               required
               value={tr[k]}
-              onChange={(e) => setTr((t) => ({ ...t, [k]: e.target.value }))}
+              onChange={(e) => setTr((item) => ({ ...item, [k]: e.target.value }))}
             >
-              <option value="">Choose…</option>
+              <option value="">{t.common.choose}</option>
               {active.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name}
@@ -475,23 +498,21 @@ export default function Money() {
             </NativeSelect>
           </Field>
         ))}
-        <Field label="Amount">
+        <Field label={t.common.amount}>
           <Input
             required
             inputMode="decimal"
             value={tr.amount}
-            onChange={(e) => setTr((t) => ({ ...t, amount: e.target.value }))}
+            onChange={(e) => setTr((item) => ({ ...item, amount: e.target.value }))}
           />
         </Field>
-        <Field label="Reference">
+        <Field label={t.common.reference}>
           <Input
             value={tr.reference}
-            onChange={(e) => setTr((t) => ({ ...t, reference: e.target.value }))}
+            onChange={(e) => setTr((item) => ({ ...item, reference: e.target.value }))}
           />
         </Field>
-        <p className="od-caption">
-          Any bank or mobile-money transfer charge should be recorded separately as an expense.
-        </p>
+        <p className="od-caption">{t.finance.anyBankOrMobileMoney}</p>
       </FormDialog>
     </div>
   );

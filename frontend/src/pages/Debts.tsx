@@ -12,6 +12,9 @@ import { useGet, useWrite } from "@/hooks/useApi";
 import { ApiError } from "@/lib/api";
 import { downloadCsv } from "@/lib/csv";
 import { formatMoney } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import type { Translations } from "@/features/i18n/i18n";
 
 interface DebtRow {
   id: string;
@@ -30,12 +33,12 @@ interface UnifiedDebtsRes {
   we_owe: DebtRow[];
 }
 
-const SOURCE_LABEL: Record<DebtRow["source"], string> = {
-  shop_customer: "Shop customer",
-  service_client: "Service client",
-  supplier: "Supplier",
-  contractor: "Contractor",
-};
+const sourceLabel = (t: Translations): Record<DebtRow["source"], string> => ({
+  shop_customer: t.common.shopCustomer,
+  service_client: t.common.serviceClient,
+  supplier: t.common.supplier,
+  contractor: t.common.contractor,
+});
 
 function filterDebtRows(rows: DebtRow[], sourceFilter: string, search: string): DebtRow[] {
   const q = search.trim().toLowerCase();
@@ -49,6 +52,7 @@ function filterDebtRows(rows: DebtRow[], sourceFilter: string, search: string): 
 }
 
 export default function Debts() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const res = useGet<UnifiedDebtsRes>("/debts");
   const [tab, setTab] = useState("owed");
@@ -63,7 +67,7 @@ export default function Debts() {
         ? `/clients/${b.id}/debt-reminder`
         : `/customers/${b.id}/debt-reminder`,
     {
-      success: "Debt reminder queued",
+      success: t.finance.debtReminderQueued,
       toBody: () => ({ channel: "sms" }),
       onError: (err, vars) => {
         if (err instanceof ApiError && err.status === 503) {
@@ -98,10 +102,18 @@ export default function Debts() {
 
   function exportCsv(name: string, rows: DebtRow[]) {
     downloadCsv(name, [
-      ["Name", "Type", "Phone", "0-30 days", "31-60 days", ">60 days", "Total"],
+      [
+        t.common.name2,
+        t.common.type,
+        t.common.phone,
+        "0-30 days",
+        "31-60 days",
+        ">60 days",
+        t.common.total,
+      ],
       ...rows.map((r) => [
         r.name,
-        SOURCE_LABEL[r.source],
+        sourceLabel(t)[r.source],
         r.phone,
         r.d0_30,
         r.d31_60,
@@ -114,8 +126,8 @@ export default function Debts() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Debts & Aging"
-        description="Unified receivables across Shop & Services, and payables to Suppliers & Contractors."
+        title={t.finance.debtsAging}
+        description={t.finance.unifiedReceivablesAcrossShopServices}
         actions={
           <Button
             variant="outline"
@@ -126,34 +138,34 @@ export default function Debts() {
                 : exportCsv("we-owe.csv", filteredWeOwe)
             }
           >
-            <Download size={14} /> Export CSV
+            <Download size={14} /> {t.common.exportCsv}
           </Button>
         }
       />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
-          label="Owed to us"
+          label={t.common.owedToUs}
           value={formatMoney(totalOwedToUs)}
-          trend={`${owedToUs.length} accounts`}
+          trend={fmt(t.finance.accounts, { count: owedToUs.length })}
           tone="good"
         />
         <StatCard
-          label="We owe"
+          label={t.common.weOwe}
           value={formatMoney(totalWeOwe)}
-          trend={`${weOwe.length} accounts`}
+          trend={fmt(t.finance.accounts, { count: weOwe.length })}
           tone={totalWeOwe > 0 ? "bad" : "neutral"}
         />
         <StatCard
-          label="Receivables > 60 days"
+          label={t.finance.receivables60Days}
           value={formatMoney(overdueOwed)}
-          trend={overdueOwed > 0 ? "Needs follow-up" : "No aged balances"}
+          trend={overdueOwed > 0 ? t.finance.needsFollowUp : t.finance.noAgedBalances}
           tone={overdueOwed > 0 ? "bad" : "good"}
         />
         <StatCard
-          label="Net position"
+          label={t.finance.netPosition}
           value={formatMoney(netPosition)}
-          trend="Receivables minus payables"
+          trend={t.finance.receivablesMinusPayables}
           tone={netPosition >= 0 ? "good" : "bad"}
         />
       </div>
@@ -167,8 +179,12 @@ export default function Debts() {
       >
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <TabsList>
-            <TabsTrigger value="owed">Owed to us ({owedToUs.length})</TabsTrigger>
-            <TabsTrigger value="we_owe">We owe ({weOwe.length})</TabsTrigger>
+            <TabsTrigger value="owed">
+              {fmt(t.finance.owedToUs, { count: owedToUs.length })}
+            </TabsTrigger>
+            <TabsTrigger value="we_owe">
+              {fmt(t.finance.weOwe, { count: weOwe.length })}
+            </TabsTrigger>
           </TabsList>
 
           <FilterBar className="mb-0">
@@ -179,26 +195,26 @@ export default function Debts() {
               />
               <Input
                 className="w-56 pl-8"
-                placeholder="Search name or phone…"
+                placeholder={t.common.searchNameOrPhone}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
             <SegmentedChips
-              ariaLabel="Filter by source"
+              ariaLabel={t.finance.filterBySource}
               value={sourceFilter}
               onChange={setSourceFilter}
               options={
                 tab === "owed"
                   ? [
-                      { value: "", label: "All types" },
-                      { value: "shop_customer", label: "Shop customers" },
-                      { value: "service_client", label: "Service clients" },
+                      { value: "", label: t.finance.allTypes },
+                      { value: "shop_customer", label: t.common.shopCustomers },
+                      { value: "service_client", label: t.common.serviceClients },
                     ]
                   : [
-                      { value: "", label: "All types" },
-                      { value: "supplier", label: "Suppliers" },
-                      { value: "contractor", label: "Contractors" },
+                      { value: "", label: t.finance.allTypes },
+                      { value: "supplier", label: t.common.suppliers },
+                      { value: "contractor", label: t.common.contractors },
                     ]
               }
             />
@@ -210,11 +226,11 @@ export default function Debts() {
             rows={filteredOwed}
             loading={res.isLoading}
             rowKey={(r) => `${r.source}-${r.id}`}
-            empty="No outstanding balances owed to you"
+            empty={t.finance.noOutstandingBalancesOwedTo}
             onRowClick={(r) => navigate(r.link)}
             columns={[
               {
-                header: "Name",
+                header: t.common.name2,
                 cell: (r) => (
                   <div>
                     <p className="font-medium text-[var(--od-ink)]">{r.name}</p>
@@ -225,11 +241,11 @@ export default function Debts() {
                 ),
               },
               {
-                header: "Source",
-                cell: (r) => <Badge variant="secondary">{SOURCE_LABEL[r.source]}</Badge>,
+                header: t.common.source,
+                cell: (r) => <Badge variant="secondary">{sourceLabel(t)[r.source]}</Badge>,
               },
               {
-                header: "0–30 days",
+                header: t.common.n030Days,
                 align: "right",
                 cell: (r) =>
                   Number(r.d0_30) ? (
@@ -239,7 +255,7 @@ export default function Debts() {
                   ),
               },
               {
-                header: "31–60 days",
+                header: t.finance.n3160Days,
                 align: "right",
                 cell: (r) =>
                   Number(r.d31_60) ? (
@@ -251,7 +267,7 @@ export default function Debts() {
                   ),
               },
               {
-                header: "> 60 days",
+                header: t.finance.n60Days,
                 align: "right",
                 cell: (r) =>
                   Number(r.over_60) ? (
@@ -263,7 +279,7 @@ export default function Debts() {
                   ),
               },
               {
-                header: "Total owed",
+                header: t.finance.totalOwed,
                 align: "right",
                 cell: (r) => (
                   <span className="od-tabular font-semibold text-[var(--od-ink)]">
@@ -282,7 +298,10 @@ export default function Debts() {
                   const wa = showWa
                     ? whatsappUrl(
                         r.phone,
-                        `Hello ${r.name}, friendly reminder of your outstanding balance of ${formatMoney(r.total)}. Thank you!`,
+                        fmt(t.finance.helloFriendlyReminderOfYour, {
+                          name: r.name,
+                          total: formatMoney(r.total),
+                        }),
                       )
                     : null;
                   return (
@@ -299,18 +318,18 @@ export default function Debts() {
                             })
                           }
                         >
-                          <Send size={13} /> Remind
+                          <Send size={13} /> {t.common.remind}
                         </Button>
                       )}
                       {wa && (
                         <Button size="sm" variant="outline" asChild>
                           <a href={wa} target="_blank" rel="noreferrer">
-                            <MessageCircle size={13} /> Open in WhatsApp
+                            <MessageCircle size={13} /> {t.common.openInWhatsapp}
                           </a>
                         </Button>
                       )}
                       <Button size="sm" variant="ghost" onClick={() => navigate(r.link)}>
-                        Open
+                        {t.common.open}
                       </Button>
                     </div>
                   );
@@ -325,11 +344,11 @@ export default function Debts() {
             rows={filteredWeOwe}
             loading={res.isLoading}
             rowKey={(r) => `${r.source}-${r.id}`}
-            empty="No outstanding balances we owe"
+            empty={t.finance.noOutstandingBalancesWeOwe}
             onRowClick={(r) => navigate(r.link)}
             columns={[
               {
-                header: "Name",
+                header: t.common.name2,
                 cell: (r) => (
                   <div>
                     <p className="font-medium text-[var(--od-ink)]">{r.name}</p>
@@ -340,11 +359,11 @@ export default function Debts() {
                 ),
               },
               {
-                header: "Source",
-                cell: (r) => <Badge variant="secondary">{SOURCE_LABEL[r.source]}</Badge>,
+                header: t.common.source,
+                cell: (r) => <Badge variant="secondary">{sourceLabel(t)[r.source]}</Badge>,
               },
               {
-                header: "0–30 days",
+                header: t.common.n030Days,
                 align: "right",
                 cell: (r) =>
                   Number(r.d0_30) ? (
@@ -354,7 +373,7 @@ export default function Debts() {
                   ),
               },
               {
-                header: "31–60 days",
+                header: t.finance.n3160Days,
                 align: "right",
                 cell: (r) =>
                   Number(r.d31_60) ? (
@@ -366,7 +385,7 @@ export default function Debts() {
                   ),
               },
               {
-                header: "> 60 days",
+                header: t.finance.n60Days,
                 align: "right",
                 cell: (r) =>
                   Number(r.over_60) ? (
@@ -378,7 +397,7 @@ export default function Debts() {
                   ),
               },
               {
-                header: "Total owed",
+                header: t.finance.totalOwed,
                 align: "right",
                 cell: (r) => (
                   <span className="od-tabular font-semibold text-[var(--od-ink)]">
@@ -391,7 +410,7 @@ export default function Debts() {
                 cell: (r) => (
                   <div className="flex justify-end" onClick={(e) => e.stopPropagation()}>
                     <Button size="sm" variant="outline" onClick={() => navigate(r.link)}>
-                      Pay / view
+                      {t.finance.payView}
                     </Button>
                   </div>
                 ),

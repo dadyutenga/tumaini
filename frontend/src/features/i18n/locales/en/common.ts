@@ -380,4 +380,13 @@ export default {
   urgent: "Urgent",
   list: "List",
   waitingForClient: "Waiting for client",
+  filterByStatus: "Filter by status",
+  requested: "Requested",
+  kind: "Kind",
+  location: "Location",
+  supplier: "Supplier",
+  open: "Open",
+  pay: "Pay",
+  payFrom: "Pay from",
+  clear: "Clear",
 };

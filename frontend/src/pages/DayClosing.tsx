@@ -16,6 +16,8 @@ import { ConfirmDialog, PageLoader, StatCard } from "@/components/shared/Display
 import { useAuth } from "@/features/auth/auth";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { formatDate, formatDateTime, formatMoney, today } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 interface ClosingRecord {
   id: string;
@@ -56,6 +58,7 @@ interface ClosingRow {
 }
 
 export default function DayClosing() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const [date, setDate] = useState(today());
   const [page, setPage] = useState(1);
@@ -87,7 +90,7 @@ export default function DayClosing() {
     "POST",
     "/day-closings",
     {
-      success: "Day closed",
+      success: t.finance.dayClosed,
       invalidate: ["/day-closings/summary", "/day-closings"],
       onSuccess: () => setConfirmingClose(false),
     },
@@ -97,7 +100,7 @@ export default function DayClosing() {
     "POST",
     () => `/day-closings/${reopening?.id}/reopen`,
     {
-      success: "Day reopened",
+      success: t.finance.dayReopened,
       invalidate: ["/day-closings/summary", "/day-closings"],
       onSuccess: () => {
         setReopening(null);
@@ -119,15 +122,15 @@ export default function DayClosing() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="End-of-Day Closing"
-        description="Review daily sales, payments and expenses, count cash in drawer, and close the day."
+        title={t.finance.endOfDayClosing}
+        description={t.finance.reviewDailySalesPaymentsAnd}
         actions={
           <div className="flex items-center gap-2">
             <label
               htmlFor="closing-date"
               className="flex items-center gap-1.5 text-xs font-medium text-[var(--od-ink-secondary)]"
             >
-              <Calendar size={14} /> Business date
+              <Calendar size={14} /> {t.finance.businessDate}
             </label>
             <Input
               id="closing-date"
@@ -146,11 +149,13 @@ export default function DayClosing() {
         <div className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <div className="od-card p-5">
-              <p className="od-kpi-label">Sales ({formatDate(data.date)})</p>
+              <p className="od-kpi-label">
+                {fmt(t.finance.sales, { date: formatDate(data.date) })}
+              </p>
               <p className="od-kpi-value mt-1.5">{formatMoney(totalSales)}</p>
               <div className="mt-3 space-y-1 border-t border-[var(--od-border)] pt-2.5 text-xs">
                 {methods.length === 0 ? (
-                  <p className="text-[var(--od-ink-muted)]">No sales recorded</p>
+                  <p className="text-[var(--od-ink-muted)]">{t.finance.noSalesRecorded}</p>
                 ) : (
                   methods.map(([m, v]) => (
                     <div key={m} className="flex items-center justify-between gap-2">
@@ -167,36 +172,34 @@ export default function DayClosing() {
             </div>
 
             <StatCard
-              label="Total payments received"
+              label={t.finance.totalPaymentsReceived}
               value={formatMoney(data.payments_received)}
-              trend="Sales + debt payments + service receipts"
+              trend={t.finance.salesDebtPaymentsServiceReceipts}
               tone="good"
             />
 
             <StatCard
-              label="Expenses recorded"
+              label={t.finance.expensesRecorded}
               value={formatMoney(data.expenses_total)}
-              trend="Approved & paid expenses"
+              trend={t.finance.approvedPaidExpenses}
               tone={Number(data.expenses_total) > 0 ? "bad" : "neutral"}
             />
 
             <StatCard
-              label="Expected cash in drawer"
+              label={t.finance.expectedCashInDrawer}
               value={formatMoney(data.expected_cash)}
-              trend="Opening float + cash in − cash out"
+              trend={t.finance.openingFloatCashInCash}
             />
           </div>
 
           <SectionCard
             title={
               isClosed
-                ? `Day closed — ${formatDate(data.date)}`
-                : `Cash count & closing — ${formatDate(data.date)}`
+                ? fmt(t.finance.dayClosed2, { date: formatDate(data.date) })
+                : fmt(t.finance.cashCountClosing, { date: formatDate(data.date) })
             }
             subtitle={
-              isClosed
-                ? "Daily cash drawer has been reconciled and locked."
-                : "Enter physical cash counted in the drawer to check variance before closing."
+              isClosed ? t.finance.dailyCashDrawerHasBeen : t.finance.enterPhysicalCashCountedIn
             }
             actions={
               <div className="flex items-center gap-2">
@@ -213,19 +216,19 @@ export default function DayClosing() {
               <div className="space-y-5">
                 <div className="grid gap-3 sm:grid-cols-3">
                   <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4">
-                    <p className="od-kpi-label">Expected cash</p>
+                    <p className="od-kpi-label">{t.finance.expectedCash}</p>
                     <p className="od-tabular mt-1 text-lg font-semibold text-[var(--od-ink)]">
                       {formatMoney(closing.expected_cash)}
                     </p>
                   </div>
                   <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4">
-                    <p className="od-kpi-label">Counted cash</p>
+                    <p className="od-kpi-label">{t.finance.countedCash}</p>
                     <p className="od-tabular mt-1 text-lg font-semibold text-[var(--od-ink)]">
                       {formatMoney(closing.counted_cash)}
                     </p>
                   </div>
                   <div className="rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4">
-                    <p className="od-kpi-label">Difference (variance)</p>
+                    <p className="od-kpi-label">{t.finance.differenceVariance}</p>
                     <p
                       className={`od-tabular mt-1 text-lg font-semibold ${
                         Number(closing.difference) === 0
@@ -242,13 +245,15 @@ export default function DayClosing() {
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--od-border)] pt-4 text-sm text-[var(--od-ink-secondary)]">
                   <div>
-                    Closed by{" "}
+                    {t.finance.closedBy}{" "}
                     <strong className="font-medium text-[var(--od-ink)]">
                       {closing.closed_by_name ?? "—"}
                     </strong>{" "}
-                    on {formatDateTime(closing.closed_at)}
+                    {fmt(t.finance.on, { closed_at: formatDateTime(closing.closed_at) })}
                     {closing.note && (
-                      <p className="mt-1 text-[var(--od-ink)]">Note: {closing.note}</p>
+                      <p className="mt-1 text-[var(--od-ink)]">
+                        {fmt(t.finance.note, { note: closing.note })}
+                      </p>
                     )}
                   </div>
                   {can("finance.day.reopen") && (
@@ -256,7 +261,7 @@ export default function DayClosing() {
                       variant="outline"
                       onClick={() => setReopening({ id: closing.id, date: data.date })}
                     >
-                      <LockOpen size={15} /> Reopen day
+                      <LockOpen size={15} /> {t.finance.reopenDay}
                     </Button>
                   )}
                 </div>
@@ -267,24 +272,25 @@ export default function DayClosing() {
                   <div className="flex items-start gap-2.5 rounded-xl border border-[var(--od-warning-mark)]/30 bg-[var(--od-warning-soft)] px-4 py-3 text-sm text-[var(--od-warning)]">
                     <AlertTriangle size={16} className="mt-0.5 shrink-0" />
                     <div>
-                      Previously reopened by <strong>{closing.reopened_by_name ?? "Admin"}</strong>:{" "}
+                      {t.finance.previouslyReopenedBy}{" "}
+                      <strong>{closing.reopened_by_name ?? t.finance.admin}</strong>:{" "}
                       {closing.reopen_reason}
                     </div>
                   </div>
                 )}
 
                 <div className="grid gap-4 md:grid-cols-3">
-                  <Field label="Counted cash in drawer">
+                  <Field label={t.finance.countedCashInDrawer}>
                     <Input
                       inputMode="decimal"
                       className="od-tabular"
                       value={countedCash}
                       onChange={(e) => setCountedCash(e.target.value)}
-                      placeholder="Enter physical cash counted"
+                      placeholder={t.finance.enterPhysicalCashCounted}
                     />
                   </Field>
                   <div className="flex flex-col justify-center rounded-xl border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-4 py-2.5">
-                    <span className="od-kpi-label">Live variance</span>
+                    <span className="od-kpi-label">{t.finance.liveVariance}</span>
                     <div className="mt-1 flex flex-wrap items-center gap-2">
                       <span
                         className={`od-tabular text-lg font-semibold ${
@@ -307,22 +313,26 @@ export default function DayClosing() {
                               : "od-delta-neutral"
                         }`}
                       >
-                        {variance === 0 ? "Exact match" : variance < 0 ? "Short" : "Over"}
+                        {variance === 0
+                          ? t.finance.exactMatch
+                          : variance < 0
+                            ? t.finance.short
+                            : t.finance.over}
                       </span>
                     </div>
                   </div>
                   <Field
                     label={
                       variance !== 0
-                        ? "Closing note (required for variance)"
-                        : "Closing note (optional)"
+                        ? t.finance.closingNoteRequiredForVariance
+                        : t.finance.closingNoteOptional
                     }
                   >
                     <Input
                       required={variance !== 0}
                       value={note}
                       onChange={(e) => setNote(e.target.value)}
-                      placeholder="Explain any variance or notes…"
+                      placeholder={t.finance.explainAnyVarianceOrNotes}
                     />
                   </Field>
                 </div>
@@ -333,11 +343,11 @@ export default function DayClosing() {
                       disabled={variance !== 0 && !note.trim()}
                       onClick={() => setConfirmingClose(true)}
                     >
-                      <CheckCircle2 size={16} /> Close Day
+                      <CheckCircle2 size={16} /> {t.finance.closeDay}
                     </Button>
                   </div>
                 ) : (
-                  <p className="od-caption">You have view-only access to day closing.</p>
+                  <p className="od-caption">{t.finance.youHaveViewOnlyAccess}</p>
                 )}
               </div>
             )}
@@ -347,25 +357,25 @@ export default function DayClosing() {
 
       <div className="space-y-3">
         <div>
-          <h2 className="od-section-title">Past Day Closings</h2>
-          <p className="od-caption mt-0.5">Select any past date to inspect its closing summary.</p>
+          <h2 className="od-section-title">{t.finance.pastDayClosings}</h2>
+          <p className="od-caption mt-0.5">{t.finance.selectAnyPastDateTo}</p>
         </div>
         <DataGrid
           rows={history.data?.data}
           loading={history.isLoading}
           rowKey={(r) => r.id}
-          empty="No closed days recorded yet"
+          empty={t.finance.noClosedDaysRecordedYet}
           onRowClick={(r) => setDate(r.date)}
           columns={[
             {
-              header: "Date",
+              header: t.common.date,
               cell: (r) => (
                 <span className="font-medium text-[var(--od-ink)]">{formatDate(r.date)}</span>
               ),
             },
-            { header: "Location", cell: (r) => r.branch_name },
+            { header: t.common.location, cell: (r) => r.branch_name },
             {
-              header: "Payments in",
+              header: t.finance.paymentsIn,
               align: "right",
               cell: (r) =>
                 r.payments_received != null ? (
@@ -375,7 +385,7 @@ export default function DayClosing() {
                 ),
             },
             {
-              header: "Expenses",
+              header: t.common.expenses,
               align: "right",
               cell: (r) =>
                 r.expenses_total != null ? (
@@ -385,17 +395,17 @@ export default function DayClosing() {
                 ),
             },
             {
-              header: "Expected cash",
+              header: t.finance.expectedCash,
               align: "right",
               cell: (r) => <span className="od-tabular">{formatMoney(r.expected_cash)}</span>,
             },
             {
-              header: "Counted cash",
+              header: t.finance.countedCash,
               align: "right",
               cell: (r) => <span className="od-tabular">{formatMoney(r.counted_cash)}</span>,
             },
             {
-              header: "Variance",
+              header: t.finance.variance,
               align: "right",
               cell: (r) => (
                 <span
@@ -412,8 +422,8 @@ export default function DayClosing() {
                 </span>
               ),
             },
-            { header: "Closed by", cell: (r) => r.closed_by_name ?? "-" },
-            { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
+            { header: t.finance.closedBy, cell: (r) => r.closed_by_name ?? "-" },
+            { header: t.common.status, cell: (r) => <StatusBadge value={r.status} /> },
           ]}
         />
         <Pager meta={history.data?.meta} onPage={setPage} />
@@ -422,8 +432,13 @@ export default function DayClosing() {
       <ConfirmDialog
         open={confirmingClose}
         onOpenChange={setConfirmingClose}
-        title={`Close ${formatDate(date)}?`}
-        description={`Expected cash: ${formatMoney(expected)} · Counted cash: ${formatMoney(counted)} · Variance: ${variance > 0 ? "+" : ""}${formatMoney(variance)}. Only the Owner can reopen a closed day.`}
+        title={fmt(t.finance.close, { date: formatDate(date) })}
+        description={fmt(t.finance.expectedCashCountedCashVariance, {
+          expected: formatMoney(expected),
+          counted: formatMoney(counted),
+          value: variance > 0 ? "+" : "",
+          variance: formatMoney(variance),
+        })}
         onConfirm={() =>
           closeDay.mutate({
             date,
@@ -436,18 +451,18 @@ export default function DayClosing() {
       <FormDialog
         open={reopening !== null}
         onOpenChange={(o) => !o && setReopening(null)}
-        title={`Reopen ${reopening ? formatDate(reopening.date) : ""}`}
-        submitLabel="Reopen day"
+        title={fmt(t.finance.reopen, { value: reopening ? formatDate(reopening.date) : "" })}
+        submitLabel={t.finance.reopenDay}
         busy={reopenDay.isPending}
         onSubmit={() => reopenDay.mutate({ reason: reopenReason })}
       >
-        <Field label="Reason for reopening (required)">
+        <Field label={t.finance.reasonForReopeningRequired}>
           <Textarea
             required
             rows={3}
             value={reopenReason}
             onChange={(e) => setReopenReason(e.target.value)}
-            placeholder="Explain why this closed day needs to be reopened…"
+            placeholder={t.finance.explainWhyThisClosedDay}
           />
         </Field>
       </FormDialog>

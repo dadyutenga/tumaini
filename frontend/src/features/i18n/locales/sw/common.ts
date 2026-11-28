@@ -384,4 +384,13 @@ export default {
   urgent: "Haraka",
   list: "Orodha",
   waitingForClient: "Inamsubiri mteja",
+  filterByStatus: "Chuja kwa hali",
+  requested: "Iliombwa",
+  kind: "Aina",
+  location: "Eneo",
+  supplier: "Msambazaji",
+  open: "Fungua",
+  pay: "Lipa",
+  payFrom: "Lipa kutoka",
+  clear: "Futa",
 } satisfies Translations["common"];
