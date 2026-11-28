@@ -37,7 +37,12 @@ export const SCOPES: ScopeInfo[] = [
   {
     id: "invoices",
     kinds: ["service_invoice", "quotation"],
-    permissions: ["services.invoice.manage", "services.invoice.draft"],
+    permissions: [
+      "services.invoice.manage",
+      "services.invoice.draft",
+      "services.quotation.manage",
+      "services.quotation.draft",
+    ],
   },
   {
     id: "projects",

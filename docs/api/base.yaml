@@ -85,6 +85,30 @@ components:
         type: string
         enum: [json, csv, xlsx, pdf]
   schemas:
+    SearchHit:
+      type: object
+      properties:
+        kind:
+          type: string
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        subtitle:
+          type: string
+        link:
+          type: string
+        meta:
+          type: object
+          description: Facts for the row (price, stock, balance, total, status, due_date, phone and so on). Never a cost.
+        business_unit:
+          type: string
+          nullable: true
+          enum: [A, B]
+        highlight:
+          type: string
+          description: The field the text matched.
     Error:
       type: object
       required: [error]

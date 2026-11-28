@@ -3,7 +3,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { request } from "@/lib/api";
 import { isDocumentNumber, normalizePhone } from "./query";
 import { PER_GROUP, toSearchResult } from "./results";
-import type { RecordKind } from "./types";
+import type { RecordKind, SearchResult } from "./types";
 
 export const SEARCH_DELAY = 200;
 
@@ -17,12 +17,12 @@ export interface SearchRequest {
 
 export async function fetchSearch({ text, kind, everywhere }: SearchRequest, signal?: AbortSignal) {
   const q = normalizePhone(text);
-  const reply = await request<{ data: unknown }>("/search", {
+  const reply = await request<{ data: SearchResult }>("/search", {
     query: { q, scope: kind, limit: PER_GROUP },
     branch: everywhere ? "all" : undefined,
     signal,
   });
-  return toSearchResult(reply.data, q);
+  return toSearchResult(reply.data);
 }
 
 /** Two characters are enough to ask the server; a document number is always enough. */

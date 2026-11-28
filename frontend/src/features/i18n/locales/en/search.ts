@@ -5,6 +5,7 @@ export default {
   description: "Find a record, a page or an action.",
   scopeLabel: "Search in",
   close: "Close search",
+  walkIn: "Walk-in",
   scopes: {
     all: "All",
     products: "Products",

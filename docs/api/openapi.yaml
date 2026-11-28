@@ -178,6 +178,32 @@ components:
         totals:
           type: object
       type: object
+    SearchHit:
+      properties:
+        business_unit:
+          enum:
+            - A
+            - B
+          nullable: true
+          type: string
+        highlight:
+          description: The field the text matched.
+          type: string
+        id:
+          format: uuid
+          type: string
+        kind:
+          type: string
+        link:
+          type: string
+        meta:
+          description: Facts for the row (price, stock, balance, total, status, due_date, phone and so on). Never a cost.
+          type: object
+        subtitle:
+          type: string
+        title:
+          type: string
+      type: object
   securitySchemes:
     bearerAuth:
       bearerFormat: JWT
@@ -23146,12 +23172,40 @@ paths:
       x-permission: schedules.manage
   /search:
     get:
+      description: 'Only the kinds the caller may view are searched, each limited to the records they may see. Matching is exact (document number, barcode, SKU or phone) before prefix, similar name and contains. Kinds that do not answer within 800 ms are returned with `partial: true`. A single character finds only an exact number or code. Limited to 240 requests a minute per user.'
       operationId: get_search
       parameters:
         - $ref: '#/components/parameters/BranchId'
         - in: query
           name: q
           required: true
+          schema:
+            maxLength: 100
+            type: string
+        - description: Search one kind only.
+          in: query
+          name: scope
+          schema:
+            enum:
+              - product
+              - customer
+              - client
+              - sale
+              - service_invoice
+              - quotation
+              - project
+              - design_job
+            type: string
+        - description: Records returned per kind.
+          in: query
+          name: limit
+          schema:
+            default: 5
+            maximum: 25
+            type: integer
+        - description: A location id or `all`; overrides the X-Branch-Id header.
+          in: query
+          name: location
           schema:
             type: string
       responses:
@@ -23161,14 +23215,38 @@ paths:
               schema:
                 properties:
                   data:
-                    items:
-                      type: object
-                    type: array
+                    properties:
+                      best:
+                        allOf:
+                          - $ref: '#/components/schemas/SearchHit'
+                        nullable: true
+                      groups:
+                        items:
+                          properties:
+                            hits:
+                              items:
+                                $ref: '#/components/schemas/SearchHit'
+                              type: array
+                            kind:
+                              type: string
+                            partial:
+                              type: boolean
+                            total:
+                              type: integer
+                          type: object
+                        type: array
+                    type: object
                 type: object
           description: OK
+        "400":
+          description: Unknown scope or text too long
         "401":
           $ref: '#/components/responses/Unauthorized'
-      summary: Global search across products, customers, clients, projects, design jobs, sales and invoices
+        "403":
+          description: No access to the requested location
+        "429":
+          description: Too many requests
+      summary: Global search across products, customers, clients, sales, invoices, quotations, projects and design jobs
       tags:
         - Search
   /service-catalog:

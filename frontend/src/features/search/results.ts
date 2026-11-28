@@ -1,5 +1,5 @@
 import { isDocumentNumber } from "./query";
-import { RECORD_KINDS, type RecordKind, type SearchHit, type SearchResult } from "./types";
+import type { RecordKind, SearchHit, SearchResult } from "./types";
 
 export const PER_GROUP = 5;
 
@@ -12,9 +12,6 @@ export const DOCUMENT_KINDS: RecordKind[] = [
   "design_job",
 ];
 
-const isKind = (value: string): value is RecordKind =>
-  (RECORD_KINDS as readonly string[]).includes(value);
-
 /** True when the hit is the very document or barcode that was typed. */
 export function isExactMatch(hit: SearchHit, text: string) {
   const wanted = text.trim().toLowerCase();
@@ -26,27 +23,9 @@ export function isExactMatch(hit: SearchHit, text: string) {
   return [hit.meta?.barcode, hit.meta?.sku, hit.subtitle].some((v) => v?.toLowerCase() === wanted);
 }
 
-/**
- * Reads either reply of `GET /search`: the grouped one, or the flat list the server sends
- * today. TODO(search-v2): drop the flat list once the grouped response is deployed.
- */
-export function toSearchResult(data: unknown, text: string): SearchResult {
-  if (!Array.isArray(data)) {
-    const result = data as Partial<SearchResult> | null | undefined;
-    return { best: result?.best ?? null, groups: result?.groups ?? [] };
-  }
-  const hits = (data as SearchHit[])
-    .filter((hit) => isKind(hit.kind))
-    .map((hit) =>
-      // The flat reply links a product to the list; the record itself is more useful.
-      hit.kind === "product" ? { ...hit, link: `/products/${hit.id}` } : hit,
-    );
-  const best = hits.find((hit) => isExactMatch(hit, text)) ?? null;
-  const groups = RECORD_KINDS.map((kind) => {
-    const rows = hits.filter((hit) => hit.kind === kind);
-    return { kind, total: rows.length, hits: rows };
-  }).filter((group) => group.total > 0);
-  return { best, groups };
+/** The reply of `GET /search`, with an empty result when there is nothing in it. */
+export function toSearchResult(reply: Partial<SearchResult> | null | undefined): SearchResult {
+  return { best: reply?.best ?? null, groups: reply?.groups ?? [] };
 }
 
 /** The list page that shows every match of one kind. */

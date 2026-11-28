@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { isDocumentNumber, looksLikeBarcode, normalizePhone, parseQuery } from "./query";
 import { addRecent, readRecent, removeRecent } from "./recent";
 import { isExactMatch, listLink, toSearchResult } from "./results";
-import type { SearchHit } from "./types";
+import type { SearchHit, SearchResult } from "./types";
 
 describe("normalizePhone", () => {
   it.each(["0712345678", "712345678", "+255712345678", "255712345678", "0712 345-678"])(
@@ -47,26 +47,10 @@ const hit = (over: Partial<SearchHit>): SearchHit => ({
 });
 
 describe("search replies", () => {
-  it("groups today's flat reply and picks the exact document as best", () => {
-    const flat = [
-      hit({ id: "p", kind: "product", title: "Sugar", subtitle: "600123", link: "/products?q=x" }),
-      hit({ id: "s2", title: "R-00010", link: "/sales/s2" }),
-      hit({ id: "s1", title: "R-0001", link: "/sales/s1" }),
-    ];
-    const result = toSearchResult(flat, "r-0001");
-    expect(result.best?.id).toBe("s1");
-    expect(result.groups.map((g) => [g.kind, g.total])).toEqual([
-      ["product", 1],
-      ["sale", 2],
-    ]);
-    // A product row opens the product itself.
-    expect(result.groups[0].hits[0].link).toBe("/products/p");
-  });
-
   it("keeps the grouped reply and survives an empty one", () => {
     const grouped = { best: null, groups: [{ kind: "sale", total: 9, hits: [hit({})] }] };
-    expect(toSearchResult(grouped, "x")).toEqual(grouped);
-    expect(toSearchResult(null, "x")).toEqual({ best: null, groups: [] });
+    expect(toSearchResult(grouped as SearchResult)).toEqual(grouped);
+    expect(toSearchResult(null)).toEqual({ best: null, groups: [] });
   });
 
   it("matches a product only on its own code", () => {

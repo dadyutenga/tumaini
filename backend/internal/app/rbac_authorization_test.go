@@ -363,7 +363,7 @@ func TestRBACBranchIsolationAndIDORProtection(t *testing.T) {
 	// Global search must NOT leak Cashier A's sale to Cashier B.
 	searchB := cashierB.call(t, http.MethodGet, "/api/v1/search?q="+url.QueryEscape(receiptNoA), nil, "")
 	require.Equal(t, 200, searchB.code, searchB.raw)
-	for _, hit := range asList(searchB.body["data"]) {
+	for _, hit := range searchHits(searchB, "") {
 		require.NotEqual(t, saleAID, str(hit["id"]), "global search leaked another cashier's sale")
 	}
 

@@ -622,7 +622,12 @@ paths:
 
   /search:
     get:
-      summary: Global search across products, customers, clients, projects, design jobs, sales and invoices
+      summary: Global search across products, customers, clients, sales, invoices, quotations, projects and design jobs
+      description: >-
+        Only the kinds the caller may view are searched, each limited to the records they may see.
+        Matching is exact (document number, barcode, SKU or phone) before prefix, similar name and
+        contains. Kinds that do not answer within 800 ms are returned with `partial: true`. A single
+        character finds only an exact number or code. Limited to 240 requests a minute per user.
       operationId: get_search
       tags:
       - Search
@@ -631,6 +636,25 @@ paths:
       - name: q
         in: query
         required: true
+        schema:
+          type: string
+          maxLength: 100
+      - name: scope
+        in: query
+        description: Search one kind only.
+        schema:
+          type: string
+          enum: [product, customer, client, sale, service_invoice, quotation, project, design_job]
+      - name: limit
+        in: query
+        description: Records returned per kind.
+        schema:
+          type: integer
+          default: 5
+          maximum: 25
+      - name: location
+        in: query
+        description: A location id or `all`; overrides the X-Branch-Id header.
         schema:
           type: string
       responses:
@@ -642,11 +666,35 @@ paths:
                 type: object
                 properties:
                   data:
-                    type: array
-                    items:
-                      type: object
+                    type: object
+                    properties:
+                      best:
+                        nullable: true
+                        allOf:
+                        - $ref: '#/components/schemas/SearchHit'
+                      groups:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            kind:
+                              type: string
+                            total:
+                              type: integer
+                            partial:
+                              type: boolean
+                            hits:
+                              type: array
+                              items:
+                                $ref: '#/components/schemas/SearchHit'
+        '400':
+          description: Unknown scope or text too long
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: No access to the requested location
+        '429':
+          description: Too many requests
   /notifications/test:
     post:
       tags: [Notifications]

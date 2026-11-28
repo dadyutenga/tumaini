@@ -7,6 +7,7 @@ export default {
   description: "Pata rekodi, ukurasa au kitendo.",
   scopeLabel: "Tafuta kwenye",
   close: "Funga utafutaji",
+  walkIn: "Mteja wa Kawaida",
   scopes: {
     all: "Zote",
     products: "Bidhaa",

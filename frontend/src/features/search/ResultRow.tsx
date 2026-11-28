@@ -99,10 +99,11 @@ function Facts({ hit }: { hit: SearchHit }) {
       </>
     );
   const billed = hit.kind === "service_invoice" || hit.kind === "quotation";
+  // A quotation has no balance yet, only its total.
+  const amount = m.balance ?? m.total;
   return (
     <>
-      {optional(m.client)}
-      {billed && m.balance != null && money(m.balance)}
+      {billed && amount != null && money(amount)}
       {m.status && <StatusBadge value={m.status} />}
       {!billed && m.due_date && (
         <span className={cn(m.late && "font-semibold text-[var(--od-bad)]")}>
@@ -114,9 +115,12 @@ function Facts({ hit }: { hit: SearchHit }) {
 }
 
 export function RecordRow({ hit, query }: { hit: SearchHit; query: string }) {
+  const { t } = useI18n();
   const Icon = KIND_ICONS[hit.kind];
+  // A sale without a customer was made to someone who walked in.
+  const subtitle = hit.subtitle || (hit.kind === "sale" ? t.search.walkIn : "");
   return (
-    <Row icon={<Icon size={15} />} title={hit.title} subtitle={hit.subtitle} query={query}>
+    <Row icon={<Icon size={15} />} title={hit.title} subtitle={subtitle} query={query}>
       {hit.meta && <Facts hit={hit} />}
     </Row>
   );

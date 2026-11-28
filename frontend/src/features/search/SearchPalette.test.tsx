@@ -32,7 +32,7 @@ const SUGAR = {
   id: "p1",
   title: "Sugar 1kg",
   subtitle: "6001234567890",
-  link: "/products?q=x",
+  link: "/products/p1",
 };
 
 let searches: { url: URL; branch: string | null }[] = [];
@@ -55,8 +55,12 @@ async function fakeFetch(input: string, init?: RequestInit) {
     searches.push({ url, branch: new Headers(init?.headers).get("X-Branch-Id") });
     if (failing) return json({ error: { code: "internal_error", message: "x" } }, 500);
     const q = (url.searchParams.get("q") ?? "").toLowerCase();
+    const found = [SALE, SUGAR].filter((h) => `${h.title} ${h.subtitle}`.toLowerCase().includes(q));
     return json({
-      data: [SALE, SUGAR].filter((h) => `${h.title} ${h.subtitle}`.toLowerCase().includes(q)),
+      data: {
+        best: found.find((h) => [h.title, h.subtitle].some((v) => v.toLowerCase() === q)) ?? null,
+        groups: found.map((h) => ({ kind: h.kind, total: 1, hits: [h] })),
+      },
     });
   }
   return json({ data: [] });
