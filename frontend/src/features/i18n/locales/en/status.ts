@@ -1,5 +1,10 @@
 /** Labels for the values the API returns, keyed by the value. Shown capitalised by CSS. */
 export default {
+  government_fee: "government fee",
+  materials: "materials",
+  stock_images: "stock images",
+  fonts: "fonts",
+  designer_time: "designer time",
   active: "active",
   suspended: "suspended",
   closed: "closed",

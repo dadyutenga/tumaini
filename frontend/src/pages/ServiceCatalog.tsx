@@ -19,6 +19,8 @@ import { useGet, useWrite } from "@/hooks/useApi";
 import { api } from "@/lib/api";
 import { formatMoney, toNumber } from "@/lib/formatters";
 import type { CatalogDetail, CatalogItem } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 const CATEGORIES = [
   "business",
@@ -81,6 +83,7 @@ function toBody(d: Draft) {
 }
 
 export default function ServiceCatalog() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const manage = can("services.catalog.manage");
   const [category, setCategory] = useState("");
@@ -97,20 +100,24 @@ export default function ServiceCatalog() {
 
   const create = useWrite<Draft>("POST", "/service-catalog", {
     invalidate: ["/service-catalog"],
-    success: "Service added",
+    success: t.services.serviceAdded,
     toBody: toBody,
     onSuccess: () => setDraft(null),
   });
   const edit = useWrite<Draft>("PUT", (d) => `/service-catalog/${d.id}`, {
     invalidate: ["/service-catalog"],
-    success: "Service saved",
+    success: t.services.serviceSaved,
     toBody: toBody,
     onSuccess: () => setDraft(null),
   });
   const toggle = useWrite<{ id: string; active: boolean }>(
     "POST",
     (b) => `/service-catalog/${b.id}/${b.active ? "activate" : "deactivate"}`,
-    { invalidate: ["/service-catalog"], success: "Service updated", toBody: () => undefined },
+    {
+      invalidate: ["/service-catalog"],
+      success: t.services.serviceUpdated,
+      toBody: () => undefined,
+    },
   );
 
   async function open(item: CatalogItem) {
@@ -149,12 +156,12 @@ export default function ServiceCatalog() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Service catalog"
-        description="Standard services, fixed pricing, government fees and stage templates."
+        title={t.common.serviceCatalog}
+        description={t.services.standardServicesFixedPricingGovernment}
         actions={
           manage && (
             <Button size="sm" onClick={() => setDraft(blank)}>
-              <Plus size={14} /> New service
+              <Plus size={14} /> {t.services.newService}
             </Button>
           )
         }
@@ -167,19 +174,19 @@ export default function ServiceCatalog() {
             className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
           />
           <Input
-            aria-label="Search services"
+            aria-label={t.services.searchServices}
             className="pl-9"
-            placeholder="Search services…"
+            placeholder={t.services.searchServices2}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
         <SegmentedChips
-          ariaLabel="Category"
+          ariaLabel={t.common.category}
           value={category}
           onChange={setCategory}
           options={[
-            { value: "", label: "All" },
+            { value: "", label: t.common.all },
             ...CATEGORIES.map((c) => ({ value: c, label: label(c) })),
           ]}
         />
@@ -189,48 +196,50 @@ export default function ServiceCatalog() {
         rows={list.data}
         loading={list.isLoading || loading}
         rowKey={(s) => s.id}
-        empty="No services yet. Add what you sell so projects can start from it."
+        empty={t.services.noServicesYetAddWhat}
         onRowClick={manage ? (s) => void open(s) : undefined}
         columns={[
           {
-            header: "Service",
+            header: t.services.service,
             sortValue: (s) => s.name,
             cell: (s) => (
               <div>
                 <p className="font-medium">{s.name}</p>
                 {s.is_package && (
-                  <p className="od-caption">Package of {s.service_count} services</p>
+                  <p className="od-caption">
+                    {fmt(t.services.packageOfServices, { service_count: s.service_count })}
+                  </p>
                 )}
               </div>
             ),
           },
           {
-            header: "Category",
+            header: t.common.category,
             sortValue: (s) => s.category,
             cell: (s) => (
               <span className="text-[var(--od-ink-secondary)]">{label(s.category)}</span>
             ),
           },
           {
-            header: "Stages",
+            header: t.services.stages2,
             align: "right",
             sortValue: (s) => s.stage_count,
             cell: (s) => s.stage_count,
           },
           {
-            header: "Price",
+            header: t.common.price,
             align: "right",
             sortValue: (s) => toNumber(s.standard_price),
             cell: (s) => <span className="font-medium">{formatMoney(s.standard_price)}</span>,
           },
           {
-            header: "Govt fees",
+            header: t.services.govtFees,
             align: "right",
             sortValue: (s) => toNumber(s.government_fees),
             cell: (s) => formatMoney(s.government_fees),
           },
           {
-            header: "Status",
+            header: t.common.status,
             cell: (s) => <StatusBadge value={s.is_active ? "active" : "inactive"} />,
           },
           {
@@ -246,7 +255,7 @@ export default function ServiceCatalog() {
                     toggle.mutate({ id: s.id, active: !s.is_active });
                   }}
                 >
-                  {s.is_active ? "Hide" : "Show"}
+                  {s.is_active ? t.services.hide : t.services.show}
                 </Button>
               ) : null,
           },
@@ -257,17 +266,17 @@ export default function ServiceCatalog() {
         <FormDialog
           open
           onOpenChange={(o) => !o && setDraft(null)}
-          title={draft.id ? "Edit service" : "New service"}
-          description="Projects already started keep their own copy of the stages."
+          title={draft.id ? t.services.editService : t.services.newService}
+          description={t.services.projectsAlreadyStartedKeepTheir}
           busy={create.isPending || edit.isPending}
           onSubmit={() => (draft.id ? edit.mutate(draft) : create.mutate(draft))}
           wide
         >
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Name *" className="sm:col-span-2">
+            <Field label={t.common.name} className="sm:col-span-2">
               <Input required value={draft.name} onChange={(e) => set("name", e.target.value)} />
             </Field>
-            <Field label="Category">
+            <Field label={t.common.category}>
               <NativeSelect
                 value={draft.category}
                 onChange={(e) => set("category", e.target.value)}
@@ -279,7 +288,7 @@ export default function ServiceCatalog() {
                 ))}
               </NativeSelect>
             </Field>
-            <Field label="Standard price">
+            <Field label={t.services.standardPrice}>
               <Input
                 required
                 inputMode="decimal"
@@ -287,21 +296,21 @@ export default function ServiceCatalog() {
                 onChange={(e) => set("standard_price", e.target.value)}
               />
             </Field>
-            <Field label="Government fees">
+            <Field label={t.services.governmentFees}>
               <Input
                 inputMode="decimal"
                 value={draft.government_fees}
                 onChange={(e) => set("government_fees", e.target.value)}
               />
             </Field>
-            <Field label="Revisions included (design)">
+            <Field label={t.services.revisionsIncludedDesign}>
               <Input
                 inputMode="numeric"
                 value={draft.included_revisions}
                 onChange={(e) => set("included_revisions", e.target.value)}
               />
             </Field>
-            <Field label="Description" className="sm:col-span-2">
+            <Field label={t.common.description} className="sm:col-span-2">
               <Textarea
                 rows={2}
                 value={draft.description}
@@ -315,13 +324,15 @@ export default function ServiceCatalog() {
               checked={draft.is_package}
               onChange={(e) => set("is_package", e.target.checked)}
             />
-            This is a package that bundles other services
+            {t.services.thisIsAPackageThat}
           </label>
 
           {draft.is_package ? (
-            <Field label="Services in the package">
+            <Field label={t.services.servicesInThePackage}>
               <div className="max-h-48 space-y-1.5 overflow-y-auto rounded-[var(--od-radius-sm,8px)] border border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)] p-3">
-                {singles.length === 0 && <p className="od-caption">Add single services first.</p>}
+                {singles.length === 0 && (
+                  <p className="od-caption">{t.services.addSingleServicesFirst}</p>
+                )}
                 {singles.map((s) => (
                   <label key={s.id} className="flex items-center gap-2 text-[13px]">
                     <input
@@ -343,7 +354,7 @@ export default function ServiceCatalog() {
             </Field>
           ) : (
             <>
-              <Field label="Stages, in order">
+              <Field label={t.services.stagesInOrder}>
                 <div className="space-y-2">
                   {draft.stages.map((s, i) => (
                     <div key={i} className="grid grid-cols-[2rem_1fr_6rem_auto] items-center gap-2">
@@ -351,7 +362,7 @@ export default function ServiceCatalog() {
                         {i + 1}.
                       </span>
                       <Input
-                        aria-label={`Stage ${i + 1} name`}
+                        aria-label={fmt(t.services.stageName2, { i: i + 1 })}
                         required
                         value={s.name}
                         onChange={(e) =>
@@ -364,9 +375,9 @@ export default function ServiceCatalog() {
                         }
                       />
                       <Input
-                        aria-label={`Stage ${i + 1} days`}
+                        aria-label={fmt(t.services.stageDays, { i: i + 1 })}
                         inputMode="numeric"
-                        placeholder="Days"
+                        placeholder={t.common.days}
                         value={s.est_days}
                         onChange={(e) =>
                           set(
@@ -381,7 +392,7 @@ export default function ServiceCatalog() {
                         type="button"
                         variant="ghost"
                         size="icon"
-                        aria-label="Remove stage"
+                        aria-label={t.services.removeStage}
                         onClick={() =>
                           set(
                             "stages",
@@ -399,16 +410,16 @@ export default function ServiceCatalog() {
                     size="sm"
                     onClick={() => set("stages", [...draft.stages, { name: "", est_days: "1" }])}
                   >
-                    <Plus size={14} /> Add stage
+                    <Plus size={14} /> {t.services.addStage}
                   </Button>
                 </div>
               </Field>
-              <Field label="Documents the client must bring">
+              <Field label={t.services.documentsTheClientMustBring}>
                 <div className="space-y-2">
                   {draft.documents.map((d, i) => (
                     <div key={i} className="grid grid-cols-[1fr_8rem_auto] items-center gap-2">
                       <Input
-                        aria-label={`Document ${i + 1} name`}
+                        aria-label={fmt(t.services.documentName2, { i: i + 1 })}
                         required
                         value={d.name}
                         onChange={(e) =>
@@ -421,7 +432,7 @@ export default function ServiceCatalog() {
                         }
                       />
                       <NativeSelect
-                        aria-label={`Document ${i + 1} stage`}
+                        aria-label={fmt(t.services.documentStage, { i: i + 1 })}
                         value={d.stage_position}
                         onChange={(e) =>
                           set(
@@ -432,10 +443,10 @@ export default function ServiceCatalog() {
                           )
                         }
                       >
-                        <option value="">Any stage</option>
+                        <option value="">{t.services.anyStage}</option>
                         {draft.stages.map((s, k) => (
                           <option key={k} value={k + 1}>
-                            Stage {k + 1}
+                            {fmt(t.services.stage2, { k: k + 1 })}
                           </option>
                         ))}
                       </NativeSelect>
@@ -443,7 +454,7 @@ export default function ServiceCatalog() {
                         type="button"
                         variant="ghost"
                         size="icon"
-                        aria-label="Remove document"
+                        aria-label={t.services.removeDocument}
                         onClick={() =>
                           set(
                             "documents",
@@ -463,7 +474,7 @@ export default function ServiceCatalog() {
                       set("documents", [...draft.documents, { name: "", stage_position: "" }])
                     }
                   >
-                    <Plus size={14} /> Add document
+                    <Plus size={14} /> {t.services.addDocument}
                   </Button>
                 </div>
               </Field>

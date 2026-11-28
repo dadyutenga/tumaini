@@ -20,6 +20,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { useGet, useWrite } from "@/hooks/useApi";
 import { formatMoney, toNumber } from "@/lib/formatters";
 import type { Client } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
 
 /** The form fields shared by "new client" and "edit client". */
 export function ClientFields({
@@ -29,36 +30,37 @@ export function ClientFields({
   draft: typeof clientBlank;
   setDraft: (next: typeof clientBlank) => void;
 }) {
+  const { t } = useI18n();
   const set = (k: keyof typeof clientBlank) => (e: { target: { value: string } }) =>
     setDraft({ ...draft, [k]: e.target.value });
   return (
     <div className="grid gap-3 sm:grid-cols-2">
-      <Field label="Name *" className="sm:col-span-2">
+      <Field label={t.common.name} className="sm:col-span-2">
         <Input required value={draft.name} onChange={set("name")} />
       </Field>
-      <Field label="Phone">
+      <Field label={t.common.phone}>
         <Input inputMode="tel" value={draft.phone} onChange={set("phone")} />
       </Field>
-      <Field label="Email">
+      <Field label={t.common.email}>
         <Input type="email" value={draft.email} onChange={set("email")} />
       </Field>
-      <Field label="Address" className="sm:col-span-2">
+      <Field label={t.common.address} className="sm:col-span-2">
         <Input value={draft.address} onChange={set("address")} />
       </Field>
-      <Field label="ID number">
+      <Field label={t.services.idNumber}>
         <Input value={draft.id_number} onChange={set("id_number")} />
       </Field>
-      <Field label="Where did they hear of us?">
+      <Field label={t.services.whereDidTheyHearOf}>
         <Input
           value={draft.source}
           onChange={set("source")}
-          placeholder="Walk-in, referral, Instagram…"
+          placeholder={t.services.walkInReferralInstagram}
         />
       </Field>
-      <Field label="What do they need?" className="sm:col-span-2">
+      <Field label={t.services.whatDoTheyNeed} className="sm:col-span-2">
         <Textarea rows={2} value={draft.needs} onChange={set("needs")} />
       </Field>
-      <Field label="Notes" className="sm:col-span-2">
+      <Field label={t.common.notes} className="sm:col-span-2">
         <Textarea rows={2} value={draft.notes} onChange={set("notes")} />
       </Field>
     </div>
@@ -66,6 +68,7 @@ export function ClientFields({
 }
 
 export default function Clients() {
+  const { t } = useI18n();
   const { can } = useAuth();
   const navigate = useNavigate();
   const [q, setQ] = useState("");
@@ -76,7 +79,7 @@ export default function Clients() {
   const [draft, setDraft] = useState(clientBlank);
   const create = useWrite<unknown, Client>("POST", "/clients", {
     invalidate: ["/clients", "/services"],
-    success: "Client added",
+    success: t.services.clientAdded,
     onSuccess: (c) => {
       setOpen(false);
       setDraft(clientBlank);
@@ -91,22 +94,22 @@ export default function Clients() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Clients and leads"
-        description="Service clients, pipeline leads and outstanding receivables."
+        title={t.common.clientsAndLeads}
+        description={t.services.serviceClientsPipelineLeadsAnd}
         actions={
           can("services.client.manage") && (
             <Button size="sm" onClick={() => setOpen(true)}>
-              <Plus size={14} /> New client
+              <Plus size={14} /> {t.common.newClient}
             </Button>
           )
         }
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Matching records" value={rows.length} />
-        <StatCard label="Leads in view" value={leadsCount} />
+        <StatCard label={t.services.matchingRecords} value={rows.length} />
+        <StatCard label={t.services.leadsInView} value={leadsCount} />
         <StatCard
-          label="Clients owe us"
+          label={t.services.clientsOweUs}
           value={formatMoney(owed)}
           tone={owed > 0 ? "bad" : "good"}
         />
@@ -119,22 +122,22 @@ export default function Clients() {
             className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
           />
           <Input
-            aria-label="Search clients"
+            aria-label={t.services.searchClients}
             className="pl-9"
-            placeholder="Search name or phone…"
+            placeholder={t.common.searchNameOrPhone}
             value={q}
             onChange={(e) => setQ(e.target.value)}
           />
         </div>
         <SegmentedChips
-          ariaLabel="Client status"
+          ariaLabel={t.services.clientStatus}
           value={status}
           onChange={setStatus}
           options={[
-            { value: "", label: "All" },
-            { value: "lead", label: "Leads" },
-            { value: "active", label: "Active" },
-            { value: "completed", label: "Completed" },
+            { value: "", label: t.common.all },
+            { value: "lead", label: t.services.leads },
+            { value: "active", label: t.services.active },
+            { value: "completed", label: t.common.completed },
           ]}
         />
       </FilterBar>
@@ -143,16 +146,16 @@ export default function Clients() {
         rows={rows}
         loading={clients.isLoading}
         rowKey={(c) => c.id}
-        empty="No clients yet. Add the first one."
+        empty={t.services.noClientsYetAddThe}
         onRowClick={(c) => navigate(`/clients/${c.id}`)}
         columns={[
           {
-            header: "Name",
+            header: t.common.name2,
             sortValue: (c) => c.name,
             cell: (c) => <span className="font-medium">{c.name}</span>,
           },
           {
-            header: "Phone",
+            header: t.common.phone,
             cell: (c) => (
               <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
                 {c.phone ?? "—"}
@@ -160,21 +163,21 @@ export default function Clients() {
             ),
           },
           {
-            header: "Status",
+            header: t.common.status,
             cell: (c) => <StatusBadge value={c.is_active ? c.status : "inactive"} />,
           },
           {
-            header: "Source",
+            header: t.common.source,
             cell: (c) => <span className="text-[var(--od-ink-secondary)]">{c.source ?? "—"}</span>,
           },
           {
-            header: "Projects",
+            header: t.common.projects,
             align: "right",
             sortValue: (c) => c.projects,
             cell: (c) => c.projects,
           },
           {
-            header: "Owes",
+            header: t.common.owes,
             align: "right",
             sortValue: (c) => toNumber(c.balance),
             cell: (c) => (
@@ -189,8 +192,8 @@ export default function Clients() {
       <FormDialog
         open={open}
         onOpenChange={setOpen}
-        title="New client"
-        description="A name is enough to start. A lead becomes an active client when their first project starts."
+        title={t.common.newClient}
+        description={t.services.aNameIsEnoughTo}
         busy={create.isPending}
         onSubmit={() => create.mutate(draft)}
         wide

@@ -1,6 +1,11 @@
 import type { Translations } from "../en";
 
 export default {
+  government_fee: "ada ya serikali",
+  materials: "vifaa",
+  stock_images: "picha za kununua",
+  fonts: "fonti",
+  designer_time: "muda wa mbunifu",
   active: "inatumika",
   suspended: "imesimamishwa",
   closed: "imefungwa",
@@ -128,7 +133,7 @@ export default {
   in_design: "kwenye ubunifu",
   internal_review: "mapitio ya ndani",
   with_client: "kwa mteja",
-  printing: "inachapishwa",
+  printing: "uchapishaji",
   delivered: "imekabidhiwa",
   print: "chapa",
   digital: "kidijitali",

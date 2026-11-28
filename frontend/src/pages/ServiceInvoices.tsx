@@ -31,6 +31,8 @@ import { useGet, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 import type { InvoiceDetail, InvoiceRow, ProjectRow } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 interface Draft {
   id?: string;
@@ -54,6 +56,7 @@ const blank: Draft = {
 };
 
 function InvoiceForm({ draft, onClose }: { draft: Draft; onClose: () => void }) {
+  const { t } = useI18n();
   const [d, setD] = useState(draft);
   const projects = useGet<ProjectRow[]>(
     "/projects",
@@ -71,12 +74,12 @@ function InvoiceForm({ draft, onClose }: { draft: Draft; onClose: () => void }) 
   });
   const create = useWrite("POST", "/service-invoices", {
     invalidate: ["/service-invoices"],
-    success: "Invoice saved as a draft",
+    success: t.services.invoiceSavedAsADraft,
     onSuccess: onClose,
   });
   const edit = useWrite("PUT", `/service-invoices/${d.id}`, {
     invalidate: ["/service-invoices"],
-    success: "Invoice updated",
+    success: t.services.invoiceUpdated,
     onSuccess: onClose,
   });
   const planned = d.installments.reduce((s, i) => s + toNumber(i.amount), 0);
@@ -84,26 +87,26 @@ function InvoiceForm({ draft, onClose }: { draft: Draft; onClose: () => void }) 
     <FormDialog
       open
       onOpenChange={(o) => !o && onClose()}
-      title={d.id ? "Edit invoice" : "New invoice"}
-      description="Saved as a draft. Nothing is booked until you issue it."
+      title={d.id ? t.services.editInvoice : t.services.newInvoice}
+      description={t.services.savedAsADraftNothing}
       busy={create.isPending || edit.isPending}
       onSubmit={() => (d.id ? edit.mutate(body()) : create.mutate(body()))}
       wide
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Client *">
+        <Field label={t.common.client2}>
           <ClientSelect
             required
             value={d.client_id}
             onChange={(v) => setD({ ...d, client_id: v, project_id: "" })}
           />
         </Field>
-        <Field label="Project (optional)">
+        <Field label={t.common.projectOptional}>
           <NativeSelect
             value={d.project_id}
             onChange={(e) => setD({ ...d, project_id: e.target.value })}
           >
-            <option value="">No project</option>
+            <option value="">{t.services.noProject}</option>
             {projects.data?.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.number} · {p.name}
@@ -111,14 +114,14 @@ function InvoiceForm({ draft, onClose }: { draft: Draft; onClose: () => void }) 
             ))}
           </NativeSelect>
         </Field>
-        <Field label="Due date">
+        <Field label={t.common.dueDate}>
           <Input
             type="date"
             value={d.due_date}
             onChange={(e) => setD({ ...d, due_date: e.target.value })}
           />
         </Field>
-        <Field label="Discount">
+        <Field label={t.common.discount}>
           <Input
             inputMode="decimal"
             value={d.discount}
@@ -127,13 +130,13 @@ function InvoiceForm({ draft, onClose }: { draft: Draft; onClose: () => void }) 
         </Field>
       </div>
       <LinesEditor lines={d.lines} onChange={(lines) => setD({ ...d, lines })} />
-      <Field label="Installment plan (optional)">
+      <Field label={t.services.installmentPlanOptional}>
         <div className="space-y-2">
           {d.installments.map((inst, i) => (
             <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2">
               <Input
                 type="date"
-                aria-label="Installment due date"
+                aria-label={t.services.installmentDueDate}
                 required
                 value={inst.due_date}
                 onChange={(e) =>
@@ -146,9 +149,9 @@ function InvoiceForm({ draft, onClose }: { draft: Draft; onClose: () => void }) 
                 }
               />
               <Input
-                aria-label="Installment amount"
+                aria-label={t.services.installmentAmount}
                 inputMode="decimal"
-                placeholder="Amount"
+                placeholder={t.common.amount}
                 required
                 value={inst.amount}
                 onChange={(e) =>
@@ -164,7 +167,7 @@ function InvoiceForm({ draft, onClose }: { draft: Draft; onClose: () => void }) 
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label="Remove installment"
+                aria-label={t.services.removeInstallment}
                 onClick={() =>
                   setD({ ...d, installments: d.installments.filter((_, j) => j !== i) })
                 }
@@ -182,15 +185,17 @@ function InvoiceForm({ draft, onClose }: { draft: Draft; onClose: () => void }) 
                 setD({ ...d, installments: [...d.installments, { due_date: "", amount: "" }] })
               }
             >
-              <Plus size={14} /> Add installment
+              <Plus size={14} /> {t.services.addInstallment}
             </Button>
             {d.installments.length > 0 && (
-              <p className="od-caption od-tabular">Planned {formatMoney(planned)}</p>
+              <p className="od-caption od-tabular">
+                {fmt(t.services.planned, { planned: formatMoney(planned) })}
+              </p>
             )}
           </div>
         </div>
       </Field>
-      <Field label="Notes">
+      <Field label={t.common.notes}>
         <Textarea
           rows={2}
           value={d.notes}
@@ -210,6 +215,7 @@ function Detail({
   onClose: () => void;
   onEdit: (i: InvoiceDetail) => void;
 }) {
+  const { t } = useI18n();
   const { can } = useAuth();
   const navigate = useNavigate();
   const invoice = useGet<InvoiceDetail>(`/service-invoices/${id}`);
@@ -218,11 +224,11 @@ function Detail({
   const refresh = ["/service-invoices", "/service-payments", "/projects", "/clients", "/services"];
   const issue = useWrite("POST", `/service-invoices/${id}/issue`, {
     invalidate: refresh,
-    success: "Invoice issued. Deposits already paid were applied.",
+    success: t.services.invoiceIssuedDepositsAlreadyPaid,
   });
   const voidInvoice = useWrite<{ reason: string }>("POST", `/service-invoices/${id}/void`, {
     invalidate: refresh,
-    success: "Invoice voided",
+    success: t.services.invoiceVoided,
     onSuccess: () => setVoiding(false),
   });
   const i = invoice.data;
@@ -234,8 +240,8 @@ function Detail({
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{i ? `${i.number} · ${i.client_name}` : "Invoice"}</DialogTitle>
-          <DialogDescription className="sr-only">Invoice details</DialogDescription>
+          <DialogTitle>{i ? `${i.number} · ${i.client_name}` : t.common.invoice}</DialogTitle>
+          <DialogDescription className="sr-only">{t.services.invoiceDetails}</DialogDescription>
         </DialogHeader>
         {!i ? (
           <PageLoader />
@@ -243,33 +249,39 @@ function Detail({
           <div className="space-y-4">
             <div className="flex flex-wrap items-center gap-3 text-[13px]">
               <StatusBadge value={i.status} />
-              {i.due_date && <span className="od-caption">Due {formatDate(i.due_date)}</span>}
+              {i.due_date && (
+                <span className="od-caption">
+                  {fmt(t.common.due, { due_date: formatDate(i.due_date) })}
+                </span>
+              )}
               {i.project_number && (
-                <span className="od-mono od-caption">Project {i.project_number}</span>
+                <span className="od-mono od-caption">
+                  {fmt(t.services.project, { project_number: i.project_number })}
+                </span>
               )}
             </div>
             <LinesTable lines={i.lines} />
             <div className="ml-auto w-full max-w-xs space-y-1.5 rounded-[var(--od-radius-md,12px)] bg-[var(--od-surface-subtle)] p-4 text-[13px]">
               <p className="flex justify-between text-[var(--od-ink-secondary)]">
-                <span>Subtotal</span>
+                <span>{t.common.subtotal}</span>
                 <span className="od-tabular">{formatMoney(i.subtotal)}</span>
               </p>
               {toNumber(i.discount) > 0 && (
                 <p className="flex justify-between text-[var(--od-ink-secondary)]">
-                  <span>Discount</span>
+                  <span>{t.common.discount}</span>
                   <span className="od-tabular">{formatMoney(i.discount)}</span>
                 </p>
               )}
               <p className="flex justify-between border-t border-[var(--od-border)] pt-1.5 font-semibold">
-                <span>Total</span>
+                <span>{t.common.total}</span>
                 <span className="od-tabular">{formatMoney(i.total)}</span>
               </p>
               <p className="flex justify-between text-[var(--od-ink-secondary)]">
-                <span>Paid</span>
+                <span>{t.common.paid}</span>
                 <span className="od-tabular">{formatMoney(i.paid_total)}</span>
               </p>
               <p className="flex justify-between font-semibold">
-                <span>Balance</span>
+                <span>{t.common.balance}</span>
                 <span
                   className={cn("od-tabular", toNumber(i.balance) > 0 && "text-[var(--od-bad)]")}
                 >
@@ -279,16 +291,20 @@ function Detail({
             </div>
             {i.installments.length > 0 && (
               <div className="space-y-2">
-                <h3 className="od-card-title">Installments</h3>
+                <h3 className="od-card-title">{t.services.installments}</h3>
                 <DataGrid
                   rows={i.installments}
                   rowKey={(x) => x.id ?? x.due_date}
                   columns={[
-                    { header: "Due", cell: (x) => formatDate(x.due_date) },
-                    { header: "Amount", align: "right", cell: (x) => formatMoney(x.amount) },
-                    { header: "Paid", align: "right", cell: (x) => formatMoney(x.paid ?? 0) },
+                    { header: t.common.due2, cell: (x) => formatDate(x.due_date) },
+                    { header: t.common.amount, align: "right", cell: (x) => formatMoney(x.amount) },
                     {
-                      header: "Status",
+                      header: t.common.paid,
+                      align: "right",
+                      cell: (x) => formatMoney(x.paid ?? 0),
+                    },
+                    {
+                      header: t.common.status,
                       cell: (x) => (x.status ? <StatusBadge value={x.status} /> : "—"),
                     },
                   ]}
@@ -297,25 +313,25 @@ function Detail({
             )}
             {i.payments.length > 0 && (
               <div className="space-y-2">
-                <h3 className="od-card-title">Payments</h3>
+                <h3 className="od-card-title">{t.common.payments}</h3>
                 <DataGrid
                   rows={i.payments}
                   rowKey={(x) => x.id}
                   columns={[
                     {
-                      header: "Receipt",
+                      header: t.common.receipt2,
                       cell: (x) => <span className="od-mono font-medium">{x.number}</span>,
                     },
-                    { header: "Date", cell: (x) => formatDate(x.date) },
-                    { header: "Method", cell: (x) => label(x.method) },
-                    { header: "Amount", align: "right", cell: (x) => formatMoney(x.amount) },
+                    { header: t.common.date, cell: (x) => formatDate(x.date) },
+                    { header: t.common.method, cell: (x) => label(x.method) },
+                    { header: t.common.amount, align: "right", cell: (x) => formatMoney(x.amount) },
                   ]}
                 />
               </div>
             )}
             {i.status === "void" && i.void_reason && (
               <p className="rounded-[var(--od-radius-sm,8px)] bg-[color-mix(in_srgb,var(--od-bad-mark)_10%,transparent)] p-3 text-[13px] font-medium text-[var(--od-bad)]">
-                Voided: {i.void_reason}
+                {fmt(t.services.voided, { void_reason: i.void_reason })}
               </p>
             )}
             <div className="flex flex-wrap justify-end gap-2 pt-1">
@@ -330,12 +346,12 @@ function Detail({
                   variant="outline"
                   onClick={() => navigate(`/projects/${i.project_id}`)}
                 >
-                  Open project
+                  {t.services.openProject}
                 </Button>
               )}
               {canDraft && i.status === "draft" && (
                 <Button size="sm" variant="outline" onClick={() => onEdit(i)}>
-                  Edit
+                  {t.common.edit}
                 </Button>
               )}
               {manage && i.status === "draft" && (
@@ -344,12 +360,12 @@ function Detail({
                   onClick={() => issue.mutate(undefined)}
                   disabled={issue.isPending}
                 >
-                  Issue invoice
+                  {t.services.issueInvoice}
                 </Button>
               )}
               {canReceive && open && (
                 <Button size="sm" onClick={() => setPaying(true)}>
-                  Record payment
+                  {t.services.recordPayment}
                 </Button>
               )}
               {manage && (i.status === "draft" || (open && toNumber(i.paid_total) === 0)) && (
@@ -359,7 +375,7 @@ function Detail({
                   className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                   onClick={() => setVoiding(true)}
                 >
-                  Void
+                  {t.common.void}
                 </Button>
               )}
             </div>
@@ -368,8 +384,8 @@ function Detail({
         <PaymentDialog
           open={paying}
           onOpenChange={setPaying}
-          title="Record payment"
-          hint="You cannot take more than the balance."
+          title={t.services.recordPayment}
+          hint={t.services.youCannotTakeMoreThan}
           path={`/service-invoices/${id}/payments`}
           defaultAmount={i?.balance}
           invalidate={refresh}
@@ -377,9 +393,9 @@ function Detail({
         <ReasonDialog
           open={voiding}
           onOpenChange={setVoiding}
-          title="Void this invoice?"
-          description="An issued invoice reverses the amount the client owed. This cannot be undone."
-          submitLabel="Void invoice"
+          title={t.services.voidThisInvoice}
+          description={t.services.anIssuedInvoiceReversesThe}
+          submitLabel={t.services.voidInvoice}
           busy={voidInvoice.isPending}
           onSubmit={(reason) => voidInvoice.mutate({ reason })}
         />
@@ -389,6 +405,7 @@ function Detail({
 }
 
 export default function ServiceInvoices() {
+  const { t } = useI18n();
   const { canAny } = useAuth();
   const [params, setParams] = useSearchParams();
   const [status, setStatus] = useState("");
@@ -428,22 +445,22 @@ export default function ServiceInvoices() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Invoices"
-        description="Client billing, installment schedules and payment collection."
+        title={t.services.invoices}
+        description={t.services.clientBillingInstallmentSchedulesAnd}
         actions={
           canAny("services.invoice.manage", "services.invoice.draft") && (
             <Button size="sm" onClick={() => setForm(blank)}>
-              <Plus size={14} /> New invoice
+              <Plus size={14} /> {t.services.newInvoice}
             </Button>
           )
         }
       />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard label="Invoices in view" value={rows.length} />
-        <StatCard label="Total billed" value={formatMoney(totalBilled)} />
+        <StatCard label={t.services.invoicesInView} value={rows.length} />
+        <StatCard label={t.services.totalBilled} value={formatMoney(totalBilled)} />
         <StatCard
-          label="Still to collect"
+          label={t.services.stillToCollect}
           value={formatMoney(totalBalance)}
           tone={totalBalance > 0 ? "bad" : "good"}
         />
@@ -457,9 +474,9 @@ export default function ServiceInvoices() {
               className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
             />
             <Input
-              aria-label="Search"
+              aria-label={t.common.search}
               className="pl-9"
-              placeholder="Search number or client…"
+              placeholder={t.services.searchNumberOrClient}
               value={q}
               onChange={(e) => setQ(e.target.value)}
             />
@@ -474,20 +491,20 @@ export default function ServiceInvoices() {
                 : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
             )}
           >
-            <AlertCircle size={14} /> Overdue only
+            <AlertCircle size={14} /> {t.services.overdueOnly}
           </button>
         </div>
         <SegmentedChips
-          ariaLabel="Invoice status"
+          ariaLabel={t.services.invoiceStatus}
           value={status}
           onChange={setStatus}
           options={[
-            { value: "", label: "All" },
-            { value: "draft", label: "Draft" },
-            { value: "issued", label: "Issued" },
-            { value: "partial", label: "Part paid" },
-            { value: "paid", label: "Paid" },
-            { value: "void", label: "Void" },
+            { value: "", label: t.common.all },
+            { value: "draft", label: t.common.draft },
+            { value: "issued", label: t.common.issued },
+            { value: "partial", label: t.services.partPaid },
+            { value: "paid", label: t.common.paid },
+            { value: "void", label: t.common.void },
           ]}
         />
       </FilterBar>
@@ -496,17 +513,17 @@ export default function ServiceInvoices() {
         rows={rows}
         loading={list.isLoading}
         rowKey={(r) => r.id}
-        empty="No invoices yet"
+        empty={t.services.noInvoicesYet}
         onRowClick={(r) => setOpenId(r.id)}
         columns={[
           {
-            header: "Number",
+            header: t.common.number,
             sortValue: (r) => r.number,
             cell: (r) => <span className="od-mono font-medium">{r.number}</span>,
           },
-          { header: "Client", sortValue: (r) => r.client_name, cell: (r) => r.client_name },
+          { header: t.common.client, sortValue: (r) => r.client_name, cell: (r) => r.client_name },
           {
-            header: "Project",
+            header: t.common.project,
             cell: (r) => (
               <span className="od-mono text-xs text-[var(--od-ink-secondary)]">
                 {r.project_number ?? "—"}
@@ -514,25 +531,25 @@ export default function ServiceInvoices() {
             ),
           },
           {
-            header: "Due",
+            header: t.common.due2,
             sortValue: (r) => r.due_date ?? "",
             cell: (r) => (r.due_date ? formatDate(r.due_date) : "—"),
           },
-          { header: "Status", cell: (r) => <StatusBadge value={r.status} /> },
+          { header: t.common.status, cell: (r) => <StatusBadge value={r.status} /> },
           {
-            header: "Total",
+            header: t.common.total,
             align: "right",
             sortValue: (r) => toNumber(r.total),
             cell: (r) => formatMoney(r.total),
           },
           {
-            header: "Paid",
+            header: t.common.paid,
             align: "right",
             sortValue: (r) => toNumber(r.paid_total),
             cell: (r) => formatMoney(r.paid_total),
           },
           {
-            header: "Balance",
+            header: t.common.balance,
             align: "right",
             sortValue: (r) => toNumber(r.balance),
             cell: (r) => (

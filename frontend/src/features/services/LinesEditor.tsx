@@ -6,6 +6,7 @@ import { useGet } from "@/hooks/useApi";
 import { formatMoney, toNumber } from "@/lib/formatters";
 import { blankLine, linesTotal, type LineDraft } from "@/features/services/lines";
 import type { CatalogItem, DocLine } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
 
 /** Editable list of invoice or quotation lines. Picking a service fills the description and price. */
 export function LinesEditor({
@@ -15,6 +16,7 @@ export function LinesEditor({
   lines: LineDraft[];
   onChange: (lines: LineDraft[]) => void;
 }) {
+  const { t } = useI18n();
   const catalog = useGet<CatalogItem[]>("/service-catalog", { per_page: 100 });
   const patch = (i: number, p: Partial<LineDraft>) =>
     onChange(lines.map((l, j) => (j === i ? { ...l, ...p } : l)));
@@ -24,7 +26,7 @@ export function LinesEditor({
         <div key={i} className="grid gap-2 rounded-xl border p-3 sm:grid-cols-[1fr_5rem_8rem_auto]">
           <div className="space-y-2">
             <NativeSelect
-              aria-label="Service"
+              aria-label={t.services.service}
               value={l.service_id}
               onChange={(e) => {
                 const s = catalog.data?.find((x) => x.id === e.target.value);
@@ -35,7 +37,7 @@ export function LinesEditor({
                 });
               }}
             >
-              <option value="">Other (type below)</option>
+              <option value="">{t.services.otherTypeBelow}</option>
               {catalog.data
                 ?.filter((s) => s.is_active)
                 .map((s) => (
@@ -45,23 +47,23 @@ export function LinesEditor({
                 ))}
             </NativeSelect>
             <Input
-              aria-label="Description"
-              placeholder="Description"
+              aria-label={t.common.description}
+              placeholder={t.common.description}
               required
               value={l.description}
               onChange={(e) => patch(i, { description: e.target.value })}
             />
           </div>
           <Input
-            aria-label="Quantity"
+            aria-label={t.common.quantity}
             inputMode="decimal"
             value={l.quantity}
             onChange={(e) => patch(i, { quantity: e.target.value })}
           />
           <Input
-            aria-label="Unit price"
+            aria-label={t.common.unitPrice}
             inputMode="decimal"
-            placeholder="Price"
+            placeholder={t.common.price}
             required
             value={l.unit_price}
             onChange={(e) => patch(i, { unit_price: e.target.value })}
@@ -70,7 +72,7 @@ export function LinesEditor({
             type="button"
             variant="ghost"
             size="icon"
-            aria-label="Remove line"
+            aria-label={t.common.removeLine}
             disabled={lines.length === 1}
             onClick={() => onChange(lines.filter((_, j) => j !== i))}
           >
@@ -85,10 +87,10 @@ export function LinesEditor({
           size="sm"
           onClick={() => onChange([...lines, { ...blankLine }])}
         >
-          <Plus size={14} /> Add line
+          <Plus size={14} /> {t.common.addLine}
         </Button>
         <p className="text-sm">
-          Subtotal <strong>{formatMoney(linesTotal(lines))}</strong>
+          {t.common.subtotal} <strong>{formatMoney(linesTotal(lines))}</strong>
         </p>
       </div>
     </div>
@@ -97,15 +99,16 @@ export function LinesEditor({
 
 /** Read-only table of lines for detail views. */
 export function LinesTable({ lines }: { lines: DocLine[] }) {
+  const { t } = useI18n();
   return (
     <div className="overflow-x-auto rounded-xl border">
       <table className="w-full text-sm">
         <thead>
           <tr className="border-b text-left text-muted-foreground">
-            <th className="px-3 py-2 font-medium">Description</th>
-            <th className="px-3 py-2 text-right font-medium">Qty</th>
-            <th className="px-3 py-2 text-right font-medium">Price</th>
-            <th className="px-3 py-2 text-right font-medium">Total</th>
+            <th className="px-3 py-2 font-medium">{t.common.description}</th>
+            <th className="px-3 py-2 text-right font-medium">{t.common.qty}</th>
+            <th className="px-3 py-2 text-right font-medium">{t.common.price}</th>
+            <th className="px-3 py-2 text-right font-medium">{t.common.total}</th>
           </tr>
         </thead>
         <tbody>

@@ -32,6 +32,8 @@ import {
   type ProjectNote,
   type Stage,
 } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 const STAGE_STATUSES = ["not_started", "in_progress", "done", "stuck"] as const;
 
@@ -44,6 +46,7 @@ function StageDialog({
   stage: Stage | null;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [status, setStatus] = useState<string>(stage?.status ?? "in_progress");
   const [note, setNote] = useState("");
   const [owner, setOwner] = useState(stage?.owner_id ?? "");
@@ -52,15 +55,15 @@ function StageDialog({
   const [item, setItem] = useState("");
   const save = useWrite("PUT", `/projects/${projectId}/stages/${stage?.id}`, {
     invalidate: ["/projects", "/services", "/clients"],
-    success: "Stage updated",
+    success: t.services.stageUpdated,
     onSuccess: onClose,
   });
   return (
     <FormDialog
       open={!!stage}
       onOpenChange={(o) => !o && onClose()}
-      title={stage ? `${stage.position}. ${stage.name}` : "Stage"}
-      description="Your name and the time are recorded with the change."
+      title={stage ? `${stage.position}. ${stage.name}` : t.services.stage}
+      description={t.services.yourNameAndTheTime}
       busy={save.isPending}
       onSubmit={() =>
         save.mutate({
@@ -73,7 +76,7 @@ function StageDialog({
       }
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Status">
+        <Field label={t.common.status}>
           <NativeSelect value={status} onChange={(e) => setStatus(e.target.value)}>
             {STAGE_STATUSES.map((s) => (
               <option key={s} value={s}>
@@ -82,20 +85,20 @@ function StageDialog({
             ))}
           </NativeSelect>
         </Field>
-        <Field label="Deadline">
+        <Field label={t.common.deadline}>
           <Input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
         </Field>
-        <Field label="Owner" className="sm:col-span-2">
-          <StaffSelect value={owner} onChange={setOwner} empty="Keep current owner" />
+        <Field label={t.common.owner} className="sm:col-span-2">
+          <StaffSelect value={owner} onChange={setOwner} empty={t.services.keepCurrentOwner} />
         </Field>
       </div>
-      <Field label="Checklist">
+      <Field label={t.services.checklist}>
         <div className="space-y-2">
           {checklist.map((c, i) => (
             <div key={i} className="flex items-center gap-2">
               <input
                 type="checkbox"
-                aria-label={`Done: ${c.text}`}
+                aria-label={fmt(t.services.done, { text: c.text })}
                 checked={c.done}
                 onChange={(e) =>
                   setChecklist((list) =>
@@ -112,7 +115,7 @@ function StageDialog({
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label="Remove item"
+                aria-label={t.services.removeItem}
                 onClick={() => setChecklist((list) => list.filter((_, j) => j !== i))}
               >
                 <Trash2 size={14} />
@@ -121,7 +124,7 @@ function StageDialog({
           ))}
           <div className="flex gap-2">
             <Input
-              placeholder="Add a step…"
+              placeholder={t.services.addAStep}
               value={item}
               onChange={(e) => setItem(e.target.value)}
               onKeyDown={(e) => {
@@ -141,12 +144,12 @@ function StageDialog({
                 setItem("");
               }}
             >
-              Add
+              {t.common.add}
             </Button>
           </div>
         </div>
       </Field>
-      <Field label="Note (optional)">
+      <Field label={t.common.noteOptional}>
         <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
       </Field>
     </FormDialog>
@@ -162,10 +165,11 @@ function DesignJobsDialog({
   stage: Stage | null;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [jobs, setJobs] = useState([{ job_type: "logo", title: "", deadline: "" }]);
   const create = useWrite("POST", `/projects/${projectId}/stages/${stage?.id}/design-jobs`, {
     invalidate: ["/projects", "/design-jobs"],
-    success: "Design jobs created",
+    success: t.services.designJobsCreated,
     onSuccess: () => {
       setJobs([{ job_type: "logo", title: "", deadline: "" }]);
       onClose();
@@ -175,8 +179,8 @@ function DesignJobsDialog({
     <FormDialog
       open={!!stage}
       onOpenChange={(o) => !o && onClose()}
-      title={`Design jobs for ${stage?.name ?? "this stage"}`}
-      description="The stage is marked done when every job here is approved or delivered."
+      title={fmt(t.services.designJobsFor, { name: stage?.name ?? t.services.thisStage })}
+      description={t.services.theStageIsMarkedDone}
       busy={create.isPending}
       onSubmit={() =>
         create.mutate({
@@ -189,22 +193,22 @@ function DesignJobsDialog({
         {jobs.map((j, i) => (
           <div key={i} className="grid gap-2 sm:grid-cols-[10rem_1fr_9rem_auto]">
             <NativeSelect
-              aria-label="Job type"
+              aria-label={t.services.jobType}
               value={j.job_type}
               onChange={(e) =>
                 setJobs((l) => l.map((x, k) => (k === i ? { ...x, job_type: e.target.value } : x)))
               }
             >
-              {JOB_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {label(t)}
+              {JOB_TYPES.map((item) => (
+                <option key={item} value={item}>
+                  {label(item)}
                 </option>
               ))}
             </NativeSelect>
             <Input
               required
-              aria-label="Title"
-              placeholder="Title, for example Logo"
+              aria-label={t.common.title}
+              placeholder={t.services.titleForExampleLogo}
               value={j.title}
               onChange={(e) =>
                 setJobs((l) => l.map((x, k) => (k === i ? { ...x, title: e.target.value } : x)))
@@ -212,7 +216,7 @@ function DesignJobsDialog({
             />
             <Input
               type="date"
-              aria-label="Deadline"
+              aria-label={t.common.deadline}
               value={j.deadline}
               onChange={(e) =>
                 setJobs((l) => l.map((x, k) => (k === i ? { ...x, deadline: e.target.value } : x)))
@@ -222,7 +226,7 @@ function DesignJobsDialog({
               type="button"
               variant="ghost"
               size="icon"
-              aria-label="Remove job"
+              aria-label={t.services.removeJob}
               disabled={jobs.length === 1}
               onClick={() => setJobs((l) => l.filter((_, k) => k !== i))}
             >
@@ -238,7 +242,7 @@ function DesignJobsDialog({
             setJobs((l) => [...l, { job_type: "business_card", title: "", deadline: "" }])
           }
         >
-          <Plus size={14} /> Another job
+          <Plus size={14} /> {t.services.anotherJob}
         </Button>
       </div>
     </FormDialog>
@@ -246,6 +250,7 @@ function DesignJobsDialog({
 }
 
 export default function ProjectDetail() {
+  const { t } = useI18n();
   const { id = "" } = useParams();
   const { can } = useAuth();
   const project = useGet<Project>(`/projects/${id}`);
@@ -272,12 +277,12 @@ export default function ProjectDetail() {
   const refresh = ["/projects", "/services", "/clients", "/client-documents", "/service-"];
   const update = useWrite("PUT", `/projects/${id}`, {
     invalidate: refresh,
-    success: "Project updated",
+    success: t.services.projectUpdated,
     onSuccess: () => setEditing(false),
   });
   const addStage = useWrite("POST", `/projects/${id}/stages`, {
     invalidate: refresh,
-    success: "Stage added",
+    success: t.services.stageAdded,
     onSuccess: () => {
       setAddingStage(false);
       setNewStage({ name: "", deadline: "" });
@@ -285,7 +290,7 @@ export default function ProjectDetail() {
   });
   const addNote = useWrite("POST", `/projects/${id}/notes`, {
     invalidate: ["/projects", "/clients"],
-    success: "Note added",
+    success: t.services.noteAdded,
     onSuccess: () => setNote((n) => ({ ...n, body: "" })),
   });
   const sendUpdate = useWrite<
@@ -297,7 +302,7 @@ export default function ProjectDetail() {
       setMessaging(false);
       setMessage("");
       setMsgUnavailable(false);
-      toast.success("Update queued for the client");
+      toast.success(t.services.updateQueuedForTheClient);
     },
     onError: (err) => {
       if (err instanceof ApiError && err.status === 503) {
@@ -310,7 +315,7 @@ export default function ProjectDetail() {
     (b) => `/client-documents/${b.docId}`,
     {
       invalidate: refresh,
-      success: "Document updated",
+      success: t.services.documentUpdated,
       toBody: ({ docId: _docId, ...rest }) => rest,
     },
   );
@@ -319,7 +324,7 @@ export default function ProjectDetail() {
     (b) => `/service-payments/${b.id}/void`,
     {
       invalidate: refresh,
-      success: "Payment voided",
+      success: t.services.paymentVoided,
       toBody: (b) => ({ reason: b.reason }),
       onSuccess: () => setVoiding(null),
     },
@@ -329,7 +334,7 @@ export default function ProjectDetail() {
     (b) => `/service-costs/${b.id}/void`,
     {
       invalidate: refresh,
-      success: "Cost voided",
+      success: t.services.costVoided,
       toBody: (b) => ({ reason: b.reason }),
       onSuccess: () => setVoidingCost(null),
     },
@@ -340,9 +345,11 @@ export default function ProjectDetail() {
   if (!p)
     return (
       <div className="od-card items-center py-10 text-center">
-        <p className="text-[14px] font-semibold text-[var(--od-bad)]">Project not found.</p>
+        <p className="text-[14px] font-semibold text-[var(--od-bad)]">
+          {t.services.projectNotFound}
+        </p>
         <Button asChild variant="outline" size="sm" className="mt-3">
-          <Link to="/projects">Back to projects</Link>
+          <Link to="/projects">{t.services.backToProjects}</Link>
         </Button>
       </div>
     );
@@ -366,10 +373,14 @@ export default function ProjectDetail() {
     <div className="space-y-6">
       <PageHeader
         backTo="/projects"
-        backLabel="Projects"
+        backLabel={t.common.projects}
         title={p.name}
         badge={<StatusBadge value={p.status} />}
-        description={`${p.number} · Client: ${p.client_name}${p.owner_name ? ` · Owner: ${p.owner_name}` : ""}`}
+        description={fmt(t.common.client3, {
+          number: p.number,
+          client_name: p.client_name,
+          value: p.owner_name ? ` ${fmt(t.services.owner, { owner_name: p.owner_name })}` : "",
+        })}
         actions={
           <>
             {manage && (
@@ -386,22 +397,22 @@ export default function ProjectDetail() {
                   setEditing(true);
                 }}
               >
-                Edit
+                {t.common.edit}
               </Button>
             )}
             {billing && (
               <Button size="sm" onClick={() => setPaying(true)}>
-                Add payment
+                {t.common.addPayment}
               </Button>
             )}
             {billing && (
               <Button size="sm" variant="outline" onClick={() => setCosting(true)}>
-                Add expense
+                {t.services.addExpense}
               </Button>
             )}
             {manage && (
               <Button size="sm" variant="outline" onClick={() => setMessaging(true)}>
-                Send update to client
+                {t.services.sendUpdateToClient}
               </Button>
             )}
           </>
@@ -411,10 +422,15 @@ export default function ProjectDetail() {
       <SectionCard>
         <div className="flex items-center justify-between text-[13px]">
           <span className="font-semibold text-[var(--od-ink)]">
-            {p.stages_done} of {p.stages_total} stages done
+            {fmt(t.services.ofStagesDone, {
+              stages_done: p.stages_done,
+              stages_total: p.stages_total,
+            })}
           </span>
           <span className="od-caption">
-            {p.current_stage ? `Now: ${p.current_stage}` : "All stages complete"}
+            {p.current_stage
+              ? fmt(t.services.now, { current_stage: p.current_stage })
+              : t.services.allStagesComplete}
           </span>
         </div>
         <Progress className="h-2" value={percent} />
@@ -424,11 +440,11 @@ export default function ProjectDetail() {
         <table className="w-full text-[13px]">
           <thead>
             <tr className="border-b border-[var(--od-border-strong)] bg-[var(--od-surface-subtle)]/70 text-left text-[12px] text-[var(--od-ink-muted)]">
-              <th className="px-4 py-2.5 font-medium">Stage</th>
-              <th className="px-4 py-2.5 font-medium">Status</th>
-              <th className="px-4 py-2.5 font-medium">Owner</th>
-              <th className="px-4 py-2.5 font-medium">Deadline</th>
-              <th className="px-4 py-2.5 font-medium">Documents</th>
+              <th className="px-4 py-2.5 font-medium">{t.services.stage}</th>
+              <th className="px-4 py-2.5 font-medium">{t.common.status}</th>
+              <th className="px-4 py-2.5 font-medium">{t.common.owner}</th>
+              <th className="px-4 py-2.5 font-medium">{t.common.deadline}</th>
+              <th className="px-4 py-2.5 font-medium">{t.common.documents}</th>
               <th className="px-4 py-2.5" />
             </tr>
           </thead>
@@ -445,7 +461,7 @@ export default function ProjectDetail() {
                     </p>
                     {s.checklist.length > 0 && (
                       <p className="od-caption od-tabular">
-                        Checklist {done}/{s.checklist.length}
+                        {fmt(t.services.checklist2, { done, count: s.checklist.length })}
                       </p>
                     )}
                     {s.note && <p className="od-caption">{s.note}</p>}
@@ -460,12 +476,12 @@ export default function ProjectDetail() {
                     className={`px-4 py-3 ${late ? "font-semibold text-[var(--od-bad)]" : "text-[var(--od-ink-secondary)]"}`}
                   >
                     {s.deadline ? formatDate(s.deadline) : "—"}
-                    {late && ` (${-left!}d late)`}
+                    {late && ` ${fmt(t.services.dLate, { value: -left! })}`}
                   </td>
                   <td className="px-4 py-3">
                     {s.documents_missing > 0 ? (
                       <span className="font-medium text-[var(--od-bad)]">
-                        {s.documents_missing} missing
+                        {fmt(t.services.missing2, { documents_missing: s.documents_missing })}
                       </span>
                     ) : (
                       <span className="text-[var(--od-ink-muted)]">—</span>
@@ -476,12 +492,12 @@ export default function ProjectDetail() {
                       s.status !== "done" &&
                       /brand|design|logo/i.test(s.name) && (
                         <Button size="sm" variant="outline" onClick={() => setJobsFor(s)}>
-                          Design jobs
+                          {t.common.designJobs}
                         </Button>
                       )}
                     {manage && (
                       <Button size="sm" variant="outline" onClick={() => setStage(s)}>
-                        Update
+                        {t.services.update}
                       </Button>
                     )}
                   </td>
@@ -493,50 +509,53 @@ export default function ProjectDetail() {
         {manage && (
           <div className="border-t border-[var(--od-border)] px-4 py-2.5">
             <Button size="sm" variant="ghost" onClick={() => setAddingStage(true)}>
-              <Plus size={14} /> Add a stage
+              <Plus size={14} /> {t.services.addAStage}
             </Button>
           </div>
         )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Tile label="Total" value={formatMoney(p.total_price)} />
-        <Tile label="Paid" value={formatMoney(p.paid)} />
+        <Tile label={t.common.total} value={formatMoney(p.total_price)} />
+        <Tile label={t.common.paid} value={formatMoney(p.paid)} />
         <Tile
-          label="Balance"
+          label={t.common.balance}
           value={formatMoney(p.balance)}
           tone={toNumber(p.balance) > 0 ? "bad" : undefined}
         />
-        <Tile label={`Costs · profit ${formatMoney(p.profit)}`} value={formatMoney(p.costs)} />
+        <Tile
+          label={fmt(t.common.costsProfit, { profit: formatMoney(p.profit) })}
+          value={formatMoney(p.costs)}
+        />
       </div>
 
       <Tabs defaultValue="overview">
         <TabsList>
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="documents">Documents</TabsTrigger>
-          <TabsTrigger value="payments">Payments</TabsTrigger>
-          <TabsTrigger value="costs">Costs</TabsTrigger>
-          <TabsTrigger value="notes">Notes</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
+          <TabsTrigger value="overview">{t.common.overview}</TabsTrigger>
+          <TabsTrigger value="documents">{t.common.documents}</TabsTrigger>
+          <TabsTrigger value="payments">{t.common.payments}</TabsTrigger>
+          <TabsTrigger value="costs">{t.common.costs}</TabsTrigger>
+          <TabsTrigger value="notes">{t.common.notes}</TabsTrigger>
+          <TabsTrigger value="history">{t.common.history}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-6">
           {p.notes && (
-            <SectionCard title="Project notes">
+            <SectionCard title={t.services.projectNotes}>
               <p className="text-[13px] leading-relaxed text-[var(--od-ink-secondary)]">
                 {p.notes}
               </p>
             </SectionCard>
           )}
           <div className="space-y-2.5">
-            <h2 className="od-section-title">Invoices</h2>
+            <h2 className="od-section-title">{t.services.invoices}</h2>
             <DataGrid
               rows={p.invoices}
               rowKey={(i) => i.id}
-              empty="No invoices for this project"
+              empty={t.services.noInvoicesForThisProject}
               columns={[
                 {
-                  header: "Invoice",
+                  header: t.common.invoice,
                   cell: (i) => (
                     <Link
                       className="od-mono font-medium underline underline-offset-4"
@@ -546,21 +565,21 @@ export default function ProjectDetail() {
                     </Link>
                   ),
                 },
-                { header: "Status", cell: (i) => <StatusBadge value={i.status} /> },
-                { header: "Total", align: "right", cell: (i) => formatMoney(i.total) },
-                { header: "Balance", align: "right", cell: (i) => formatMoney(i.balance) },
+                { header: t.common.status, cell: (i) => <StatusBadge value={i.status} /> },
+                { header: t.common.total, align: "right", cell: (i) => formatMoney(i.total) },
+                { header: t.common.balance, align: "right", cell: (i) => formatMoney(i.balance) },
               ]}
             />
           </div>
           <div className="space-y-2.5">
-            <h2 className="od-section-title">Design jobs</h2>
+            <h2 className="od-section-title">{t.common.designJobs}</h2>
             <DataGrid
               rows={p.design_jobs}
               rowKey={(j) => j.id}
-              empty="No design jobs linked to this project"
+              empty={t.services.noDesignJobsLinkedTo}
               columns={[
                 {
-                  header: "Job",
+                  header: t.common.job,
                   cell: (j) => (
                     <Link
                       className="font-medium underline underline-offset-4"
@@ -570,9 +589,9 @@ export default function ProjectDetail() {
                     </Link>
                   ),
                 },
-                { header: "Type", cell: (j) => label(j.job_type) },
-                { header: "Designer", cell: (j) => j.designer_name ?? "—" },
-                { header: "Status", cell: (j) => <StatusBadge value={j.status} /> },
+                { header: t.common.type, cell: (j) => label(j.job_type) },
+                { header: t.common.designer, cell: (j) => j.designer_name ?? "—" },
+                { header: t.common.status, cell: (j) => <StatusBadge value={j.status} /> },
               ]}
             />
           </div>
@@ -591,12 +610,15 @@ export default function ProjectDetail() {
           <DataGrid
             rows={p.documents}
             rowKey={(d) => d.id}
-            empty="This service needs no documents"
+            empty={t.services.thisServiceNeedsNoDocuments}
             columns={[
-              { header: "Document", cell: (d) => <span className="font-medium">{d.name}</span> },
-              { header: "Status", cell: (d) => <StatusBadge value={d.status} /> },
               {
-                header: "Received",
+                header: t.common.document,
+                cell: (d) => <span className="font-medium">{d.name}</span>,
+              },
+              { header: t.common.status, cell: (d) => <StatusBadge value={d.status} /> },
+              {
+                header: t.common.received,
                 cell: (d) => (d.received_at ? formatDate(d.received_at) : "—"),
               },
               {
@@ -611,7 +633,7 @@ export default function ProjectDetail() {
                           variant="outline"
                           onClick={() => setPreviewDoc({ id: d.file_id!, name: d.name })}
                         >
-                          <Eye size={13} /> Preview
+                          <Eye size={13} /> {t.common.preview}
                         </Button>
                         <Button
                           size="sm"
@@ -622,7 +644,7 @@ export default function ProjectDetail() {
                             )
                           }
                         >
-                          <Download size={13} /> Download
+                          <Download size={13} /> {t.common.download}
                         </Button>
                       </>
                     )}
@@ -636,7 +658,7 @@ export default function ProjectDetail() {
                             fileInput.current?.click();
                           }}
                         >
-                          <Upload size={13} /> Upload
+                          <Upload size={13} /> {t.common.upload}
                         </Button>
                         <Button
                           size="sm"
@@ -648,7 +670,9 @@ export default function ProjectDetail() {
                             })
                           }
                         >
-                          {d.status === "received" ? "Mark missing" : "Mark received"}
+                          {d.status === "received"
+                            ? t.services.markMissing
+                            : t.services.markReceived}
                         </Button>
                       </>
                     )}
@@ -663,17 +687,17 @@ export default function ProjectDetail() {
           <DataGrid
             rows={p.payments}
             rowKey={(x) => x.id}
-            empty="No payments yet. Add the deposit to issue a receipt."
+            empty={t.services.noPaymentsYetAddThe}
             columns={[
               {
-                header: "Receipt",
+                header: t.common.receipt2,
                 cell: (x) => <span className="od-mono font-medium">{x.number}</span>,
               },
-              { header: "Date", cell: (x) => formatDate(x.date) },
-              { header: "Method", cell: (x) => label(x.method) },
-              { header: "Status", cell: (x) => <StatusBadge value={x.status} /> },
+              { header: t.common.date, cell: (x) => formatDate(x.date) },
+              { header: t.common.method, cell: (x) => label(x.method) },
+              { header: t.common.status, cell: (x) => <StatusBadge value={x.status} /> },
               {
-                header: "Amount",
+                header: t.common.amount,
                 align: "right",
                 cell: (x) => <span className="font-medium">{formatMoney(x.amount)}</span>,
               },
@@ -693,7 +717,7 @@ export default function ProjectDetail() {
                         ).catch((e) => toast.error(errorMessage(e)))
                       }
                     >
-                      <Download size={13} /> Receipt PDF
+                      <Download size={13} /> {t.common.receiptPdf}
                     </Button>
                     {billing && x.status === "posted" && (
                       <Button
@@ -702,7 +726,7 @@ export default function ProjectDetail() {
                         className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                         onClick={() => setVoiding(x.id)}
                       >
-                        Void
+                        {t.common.void}
                       </Button>
                     )}
                   </div>
@@ -711,7 +735,7 @@ export default function ProjectDetail() {
             ]}
           />
           <p className="od-caption">
-            Balance still due:{" "}
+            {t.services.balanceStillDue}{" "}
             <strong className="od-tabular text-[var(--od-ink)]">{formatMoney(p.balance)}</strong>
           </p>
         </TabsContent>
@@ -720,15 +744,15 @@ export default function ProjectDetail() {
           <DataGrid
             rows={p.costs_list}
             rowKey={(x) => x.id}
-            empty="No costs recorded"
+            empty={t.common.noCostsRecorded}
             columns={[
-              { header: "Date", cell: (x) => formatDate(x.date) },
-              { header: "Type", cell: (x) => label(x.kind) },
-              { header: "Description", cell: (x) => x.description },
-              { header: "Contractor", cell: (x) => x.contractor_name ?? "—" },
-              { header: "Status", cell: (x) => <StatusBadge value={x.status} /> },
+              { header: t.common.date, cell: (x) => formatDate(x.date) },
+              { header: t.common.type, cell: (x) => label(x.kind) },
+              { header: t.common.description, cell: (x) => x.description },
+              { header: t.common.contractor, cell: (x) => x.contractor_name ?? "—" },
+              { header: t.common.status, cell: (x) => <StatusBadge value={x.status} /> },
               {
-                header: "Amount",
+                header: t.common.amount,
                 align: "right",
                 cell: (x) => <span className="font-medium">{formatMoney(x.amount)}</span>,
               },
@@ -743,14 +767,14 @@ export default function ProjectDetail() {
                       className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                       onClick={() => setVoidingCost(x.id)}
                     >
-                      Void
+                      {t.common.void}
                     </Button>
                   ) : null,
               },
             ]}
           />
           <p className="od-caption">
-            Profit = payments received minus costs:{" "}
+            {t.services.profitPaymentsReceivedMinusCosts}{" "}
             <strong className="od-tabular text-[var(--od-ink)]">{formatMoney(p.profit)}</strong>
           </p>
         </TabsContent>
@@ -765,25 +789,25 @@ export default function ProjectDetail() {
               }}
             >
               <NativeSelect
-                aria-label="Type"
+                aria-label={t.common.type}
                 className="w-36"
                 value={note.kind}
                 onChange={(e) => setNote((n) => ({ ...n, kind: e.target.value }))}
               >
-                <option value="call">Call</option>
-                <option value="message">Message</option>
-                <option value="meeting">Meeting</option>
-                <option value="note">Note</option>
+                <option value="call">{t.services.call}</option>
+                <option value="message">{t.common.message}</option>
+                <option value="meeting">{t.services.meeting}</option>
+                <option value="note">{t.common.note}</option>
               </NativeSelect>
               <Input
-                aria-label="Note"
+                aria-label={t.common.note}
                 className="min-w-60 flex-1"
-                placeholder="What was said or agreed?"
+                placeholder={t.services.whatWasSaidOrAgreed}
                 value={note.body}
                 onChange={(e) => setNote((n) => ({ ...n, body: e.target.value }))}
               />
               <Button type="submit" disabled={addNote.isPending}>
-                Add note
+                {t.services.addNote}
               </Button>
             </form>
           )}
@@ -791,40 +815,44 @@ export default function ProjectDetail() {
             rows={notes.data}
             loading={notes.isLoading}
             rowKey={(n) => n.id}
-            empty="No calls, messages or meetings recorded"
+            empty={t.services.noCallsMessagesOrMeetings}
             columns={[
-              { header: "Date", cell: (n) => formatDate(n.noted_on) },
-              { header: "Type", cell: (n) => label(n.kind) },
-              { header: "By", cell: (n) => n.author ?? "—" },
-              { header: "Note", cell: (n) => n.body, className: "whitespace-normal" },
+              { header: t.common.date, cell: (n) => formatDate(n.noted_on) },
+              { header: t.common.type, cell: (n) => label(n.kind) },
+              { header: t.common.by, cell: (n) => n.author ?? "—" },
+              { header: t.common.note, cell: (n) => n.body, className: "whitespace-normal" },
             ]}
           />
         </TabsContent>
 
         <TabsContent value="history" className="space-y-6">
           <div className="space-y-2.5">
-            <h2 className="od-section-title">Stage updates</h2>
+            <h2 className="od-section-title">{t.services.stageUpdates}</h2>
             <DataGrid
               rows={p.stage_events ?? []}
               rowKey={(e) => e.id}
-              empty="No stage updates yet"
+              empty={t.services.noStageUpdatesYet}
               columns={[
-                { header: "When", cell: (e) => formatDateTime(e.created_at) },
+                { header: t.common.when, cell: (e) => formatDateTime(e.created_at) },
                 {
-                  header: "Stage",
+                  header: t.services.stage,
                   cell: (e) => <span className="font-medium">{e.stage_name}</span>,
                 },
                 {
-                  header: "Change",
+                  header: t.common.change,
                   cell: (e) =>
-                    `${e.from_status ? label(e.from_status) : "Created"} → ${label(e.to_status)}`,
+                    `${e.from_status ? label(e.from_status) : t.common.created} → ${label(e.to_status)}`,
                 },
-                { header: "By", cell: (e) => e.actor_name ?? "—" },
-                { header: "Note", cell: (e) => e.note ?? "—", className: "whitespace-normal" },
+                { header: t.common.by, cell: (e) => e.actor_name ?? "—" },
+                {
+                  header: t.common.note,
+                  cell: (e) => e.note ?? "—",
+                  className: "whitespace-normal",
+                },
               ]}
             />
           </div>
-          <SectionCard title="Record audit log">
+          <SectionCard title={t.common.recordAuditLog}>
             <RecordHistoryTab entityType="svc_project" entityId={p.id} />
           </SectionCard>
         </TabsContent>
@@ -845,12 +873,12 @@ export default function ProjectDetail() {
       <PaymentDialog
         open={paying}
         onOpenChange={setPaying}
-        title="Add payment"
-        hint="Pays issued invoices first. Anything left is held as a deposit for this project."
+        title={t.common.addPayment}
+        hint={t.services.paysIssuedInvoicesFirstAnything}
         path={`/projects/${id}/payments`}
         defaultAmount={toNumber(p.balance) > 0 ? p.balance : undefined}
         invalidate={refresh}
-        success="Payment received. Receipt issued."
+        success={t.services.paymentReceivedReceiptIssued}
       />
       <CostDialog
         open={costing}
@@ -861,17 +889,17 @@ export default function ProjectDetail() {
       <ReasonDialog
         open={!!voiding}
         onOpenChange={(o) => !o && setVoiding(null)}
-        title="Void this payment?"
-        description="Its invoice allocations and deposit are reversed and the money leaves the account."
-        submitLabel="Void payment"
+        title={t.services.voidThisPayment}
+        description={t.services.itsInvoiceAllocationsAndDeposit}
+        submitLabel={t.common.voidPayment}
         busy={voidPayment.isPending}
         onSubmit={(reason) => voiding && voidPayment.mutate({ id: voiding, reason })}
       />
       <ReasonDialog
         open={!!voidingCost}
         onOpenChange={(o) => !o && setVoidingCost(null)}
-        title="Void this cost?"
-        submitLabel="Void cost"
+        title={t.services.voidThisCost}
+        submitLabel={t.services.voidCost}
         busy={voidCost.isPending}
         onSubmit={(reason) => voidingCost && voidCost.mutate({ id: voidingCost, reason })}
       />
@@ -881,16 +909,16 @@ export default function ProjectDetail() {
           setMessaging(o);
           if (!o) setMsgUnavailable(false);
         }}
-        title="Send update to client"
-        description="Queued through the business outbox and saved in the client's history."
-        submitLabel="Send"
+        title={t.services.sendUpdateToClient}
+        description={t.services.queuedThroughTheBusinessOutbox}
+        submitLabel={t.common.send}
         busy={sendUpdate.isPending}
         onSubmit={() => {
           setMsgUnavailable(false);
           sendUpdate.mutate({ message, channel: msgChannel });
         }}
       >
-        <Field label="Channel">
+        <Field label={t.common.channel}>
           <NativeSelect
             value={msgChannel}
             onChange={(e) => {
@@ -900,22 +928,28 @@ export default function ProjectDetail() {
           >
             <option value="sms">SMS</option>
             <option value="whatsapp">WhatsApp</option>
-            <option value="email">Email</option>
+            <option value="email">{t.common.email}</option>
           </NativeSelect>
         </Field>
         <div className="flex flex-wrap gap-1.5">
           {[
-            "Your TIN is ready.",
-            "Your business name has been approved.",
-            "We need one more document from you. Please bring it to the office.",
-            "Your project is complete. You can collect your documents.",
-          ].map((t) => (
-            <Button key={t} type="button" size="sm" variant="outline" onClick={() => setMessage(t)}>
-              {t.length > 28 ? `${t.slice(0, 28)}…` : t}
+            t.services.yourTinIsReady,
+            t.services.yourBusinessNameHasBeen,
+            t.services.weNeedOneMoreDocument,
+            t.services.yourProjectIsCompleteYou,
+          ].map((item) => (
+            <Button
+              key={item}
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => setMessage(item)}
+            >
+              {item.length > 28 ? `${item.slice(0, 28)}…` : item}
             </Button>
           ))}
         </div>
-        <Field label="Message">
+        <Field label={t.common.message}>
           <Textarea
             required
             rows={3}
@@ -926,7 +960,7 @@ export default function ProjectDetail() {
         {msgUnavailable && message.trim() && (
           <div className="flex items-center justify-between gap-2 rounded-[var(--od-radius-sm,8px)] bg-[var(--od-warning-soft)] p-3 text-xs">
             <span className="font-medium text-[var(--od-warning)]">
-              Channel not configured. Send manually via WhatsApp:
+              {t.services.channelNotConfiguredSendManually}
             </span>
             <Button type="button" size="sm" variant="outline" asChild>
               <a
@@ -934,7 +968,7 @@ export default function ProjectDetail() {
                 target="_blank"
                 rel="noreferrer"
               >
-                <MessageCircle size={13} /> Open in WhatsApp
+                <MessageCircle size={13} /> {t.common.openInWhatsapp}
               </a>
             </Button>
           </div>
@@ -943,7 +977,7 @@ export default function ProjectDetail() {
       <FormDialog
         open={editing}
         onOpenChange={setEditing}
-        title="Edit project"
+        title={t.services.editProject}
         busy={update.isPending}
         onSubmit={() =>
           update.mutate({
@@ -954,7 +988,7 @@ export default function ProjectDetail() {
           })
         }
       >
-        <Field label="Name">
+        <Field label={t.common.name2}>
           <Input
             required
             value={edit.name}
@@ -962,18 +996,18 @@ export default function ProjectDetail() {
           />
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Status">
+          <Field label={t.common.status}>
             <NativeSelect
               value={edit.status}
               onChange={(e) => setEdit({ ...edit, status: e.target.value })}
             >
-              <option value="in_progress">In progress</option>
-              <option value="on_hold">On hold</option>
-              <option value="completed">Completed</option>
-              <option value="cancelled">Cancelled</option>
+              <option value="in_progress">{t.services.inProgress}</option>
+              <option value="on_hold">{t.services.onHold}</option>
+              <option value="completed">{t.common.completed}</option>
+              <option value="cancelled">{t.common.cancelled}</option>
             </NativeSelect>
           </Field>
-          <Field label="Total price">
+          <Field label={t.services.totalPrice}>
             <Input
               inputMode="decimal"
               value={edit.total_price}
@@ -981,7 +1015,7 @@ export default function ProjectDetail() {
             />
           </Field>
         </div>
-        <Field label="Notes">
+        <Field label={t.common.notes}>
           <Textarea
             rows={2}
             value={edit.notes}
@@ -992,20 +1026,20 @@ export default function ProjectDetail() {
       <FormDialog
         open={addingStage}
         onOpenChange={setAddingStage}
-        title="Add a stage"
+        title={t.services.addAStage}
         busy={addStage.isPending}
         onSubmit={() =>
           addStage.mutate({ name: newStage.name, deadline: newStage.deadline || undefined })
         }
       >
-        <Field label="Stage name">
+        <Field label={t.services.stageName}>
           <Input
             required
             value={newStage.name}
             onChange={(e) => setNewStage({ ...newStage, name: e.target.value })}
           />
         </Field>
-        <Field label="Deadline">
+        <Field label={t.common.deadline}>
           <Input
             type="date"
             value={newStage.deadline}

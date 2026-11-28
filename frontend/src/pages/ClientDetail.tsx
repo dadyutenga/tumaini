@@ -22,8 +22,11 @@ import { download } from "@/lib/api";
 import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import { ClientFields } from "@/pages/Clients";
 import type { ClientDetail as ClientDetailType } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 export default function ClientDetail() {
+  const { t } = useI18n();
   const { id = "" } = useParams();
   const { can, canAny } = useAuth();
   const navigate = useNavigate();
@@ -36,16 +39,16 @@ export default function ClientDetail() {
   const refresh = ["/clients"];
   const save = useWrite<typeof clientBlank>("PUT", `/clients/${id}`, {
     invalidate: refresh,
-    success: "Client updated",
+    success: t.services.clientUpdated,
     onSuccess: () => setEditing(false),
   });
   const convert = useWrite("POST", `/clients/${id}/convert`, {
     invalidate: refresh,
-    success: "Lead converted to a client",
+    success: t.services.leadConvertedToAClient,
   });
   const deactivate = useWrite("POST", `/clients/${id}/deactivate`, {
     invalidate: refresh,
-    success: "Client deactivated",
+    success: t.services.clientDeactivated,
   });
 
   if (client.isLoading) return <PageLoader />;
@@ -53,9 +56,11 @@ export default function ClientDetail() {
   if (!c)
     return (
       <div className="od-card items-center py-10 text-center">
-        <p className="text-[14px] font-semibold text-[var(--od-bad)]">Client not found.</p>
+        <p className="text-[14px] font-semibold text-[var(--od-bad)]">
+          {t.services.clientNotFound}
+        </p>
         <Button asChild variant="outline" size="sm" className="mt-3">
-          <Link to="/clients">Back to clients</Link>
+          <Link to="/clients">{t.services.backToClients}</Link>
         </Button>
       </div>
     );
@@ -64,7 +69,7 @@ export default function ClientDetail() {
     <div className="space-y-6">
       <PageHeader
         backTo="/clients"
-        backLabel="Clients and leads"
+        backLabel={t.common.clientsAndLeads}
         title={c.name}
         badge={<StatusBadge value={c.is_active ? c.status : "inactive"} />}
         description={[c.phone, c.email, c.address].filter(Boolean).join(" · ") || undefined}
@@ -89,12 +94,12 @@ export default function ClientDetail() {
                   setEditing(true);
                 }}
               >
-                Edit
+                {t.common.edit}
               </Button>
             )}
             {can("services.client.manage") && c.status === "lead" && (
               <Button size="sm" variant="outline" onClick={() => convert.mutate(undefined)}>
-                Convert to client
+                {t.services.convertToClient}
               </Button>
             )}
             {canAny("services.quotation.manage", "services.quotation.draft") && (
@@ -103,7 +108,7 @@ export default function ClientDetail() {
                 variant="outline"
                 onClick={() => navigate(`/service-quotations?client=${c.id}`)}
               >
-                Create quotation
+                {t.services.createQuotation}
               </Button>
             )}
             {canAny("services.invoice.manage", "services.invoice.draft", "finance.debt.view") && (
@@ -113,22 +118,25 @@ export default function ClientDetail() {
                   path={`/clients/${id}/statement`}
                   filename={`statement-${c.name}.pdf`}
                 >
-                  Statement
+                  {t.common.statement}
                 </PdfButton>
                 <SendOutboundButton
                   size="sm"
-                  label="Send statement"
-                  title="Send client statement"
+                  label={t.common.sendStatement}
+                  title={t.services.sendClientStatement}
                   path={`/clients/${id}/statement/send`}
-                  successMessage="Statement queued"
+                  successMessage={t.common.statementQueued}
                   phone={c.phone}
-                  whatsappText={`Statement for ${c.name}: current balance ${formatMoney(c.balance)}.`}
+                  whatsappText={fmt(t.services.statementForCurrentBalance, {
+                    name: c.name,
+                    balance: formatMoney(c.balance),
+                  })}
                 />
               </>
             )}
             {can("services.project.manage") && (
               <Button size="sm" onClick={() => setStarting(true)}>
-                New project
+                {t.common.newProject}
               </Button>
             )}
           </>
@@ -136,45 +144,48 @@ export default function ClientDetail() {
       />
 
       {c.needs && (
-        <SectionCard title="Client brief & needs">
+        <SectionCard title={t.services.clientBriefNeeds}>
           <p className="text-[13px] leading-relaxed text-[var(--od-ink-secondary)]">{c.needs}</p>
         </SectionCard>
       )}
 
       <div className="grid gap-4 sm:grid-cols-3">
         <Tile
-          label="Owes us"
+          label={t.services.owesUs}
           value={formatMoney(c.balance)}
           tone={toNumber(c.balance) > 0 ? "bad" : undefined}
         />
-        <Tile label="Deposits held" value={formatMoney(c.deposit_held)} />
-        <Tile label="Projects" value={c.projects} />
+        <Tile label={t.services.depositsHeld} value={formatMoney(c.deposit_held)} />
+        <Tile label={t.common.projects} value={c.projects} />
       </div>
 
       <Tabs defaultValue="projects">
         <TabsList>
-          <TabsTrigger value="projects">Projects</TabsTrigger>
-          <TabsTrigger value="invoices">Invoices</TabsTrigger>
-          <TabsTrigger value="payments">Payments</TabsTrigger>
-          <TabsTrigger value="documents">Documents</TabsTrigger>
-          <TabsTrigger value="communication">Communication</TabsTrigger>
+          <TabsTrigger value="projects">{t.common.projects}</TabsTrigger>
+          <TabsTrigger value="invoices">{t.services.invoices}</TabsTrigger>
+          <TabsTrigger value="payments">{t.common.payments}</TabsTrigger>
+          <TabsTrigger value="documents">{t.common.documents}</TabsTrigger>
+          <TabsTrigger value="communication">{t.services.communication}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="projects">
           <DataGrid
             rows={c.projects_list}
             rowKey={(p) => p.id}
-            empty="No projects yet"
+            empty={t.services.noProjectsYet}
             onRowClick={(p) => navigate(`/projects/${p.id}`)}
             columns={[
               {
-                header: "Number",
+                header: t.common.number,
                 cell: (p) => <span className="od-mono font-medium">{p.number}</span>,
               },
-              { header: "Project", cell: (p) => <span className="font-medium">{p.name}</span> },
-              { header: "Status", cell: (p) => <StatusBadge value={p.status} /> },
-              { header: "Price", align: "right", cell: (p) => formatMoney(p.total_price) },
-              { header: "Paid", align: "right", cell: (p) => formatMoney(p.paid) },
+              {
+                header: t.common.project,
+                cell: (p) => <span className="font-medium">{p.name}</span>,
+              },
+              { header: t.common.status, cell: (p) => <StatusBadge value={p.status} /> },
+              { header: t.common.price, align: "right", cell: (p) => formatMoney(p.total_price) },
+              { header: t.common.paid, align: "right", cell: (p) => formatMoney(p.paid) },
             ]}
           />
         </TabsContent>
@@ -183,19 +194,19 @@ export default function ClientDetail() {
           <DataGrid
             rows={c.invoices}
             rowKey={(i) => i.id}
-            empty="No invoices yet"
+            empty={t.services.noInvoicesYet}
             onRowClick={(i) => navigate(`/service-invoices?open=${i.id}`)}
             columns={[
               {
-                header: "Invoice",
+                header: t.common.invoice,
                 cell: (i) => <span className="od-mono font-medium">{i.number}</span>,
               },
-              { header: "Status", cell: (i) => <StatusBadge value={i.status} /> },
-              { header: "Due", cell: (i) => (i.due_date ? formatDate(i.due_date) : "—") },
-              { header: "Total", align: "right", cell: (i) => formatMoney(i.total) },
-              { header: "Paid", align: "right", cell: (i) => formatMoney(i.paid_total) },
+              { header: t.common.status, cell: (i) => <StatusBadge value={i.status} /> },
+              { header: t.common.due2, cell: (i) => (i.due_date ? formatDate(i.due_date) : "—") },
+              { header: t.common.total, align: "right", cell: (i) => formatMoney(i.total) },
+              { header: t.common.paid, align: "right", cell: (i) => formatMoney(i.paid_total) },
               {
-                header: "Balance",
+                header: t.common.balance,
                 align: "right",
                 cell: (i) => (
                   <span
@@ -215,17 +226,17 @@ export default function ClientDetail() {
           <DataGrid
             rows={c.payments}
             rowKey={(p) => p.id}
-            empty="No payments yet"
+            empty={t.common.noPaymentsYet}
             columns={[
               {
-                header: "Receipt",
+                header: t.common.receipt2,
                 cell: (p) => <span className="od-mono font-medium">{p.number}</span>,
               },
-              { header: "Date", cell: (p) => formatDate(p.date) },
-              { header: "Method", cell: (p) => label(p.method) },
-              { header: "Status", cell: (p) => <StatusBadge value={p.status} /> },
+              { header: t.common.date, cell: (p) => formatDate(p.date) },
+              { header: t.common.method, cell: (p) => label(p.method) },
+              { header: t.common.status, cell: (p) => <StatusBadge value={p.status} /> },
               {
-                header: "Amount",
+                header: t.common.amount,
                 align: "right",
                 cell: (p) => <span className="font-medium">{formatMoney(p.amount)}</span>,
               },
@@ -244,7 +255,7 @@ export default function ClientDetail() {
                       ).catch((e) => toast.error(errorMessage(e)))
                     }
                   >
-                    <Download size={13} /> Receipt PDF
+                    <Download size={13} /> {t.common.receiptPdf}
                   </Button>
                 ),
               },
@@ -256,23 +267,26 @@ export default function ClientDetail() {
           <DataGrid
             rows={c.documents}
             rowKey={(d) => d.id}
-            empty="No documents yet"
+            empty={t.services.noDocumentsYet}
             columns={[
-              { header: "Document", cell: (d) => <span className="font-medium">{d.name}</span> },
-              { header: "Status", cell: (d) => <StatusBadge value={d.status} /> },
               {
-                header: "Received",
+                header: t.common.document,
+                cell: (d) => <span className="font-medium">{d.name}</span>,
+              },
+              { header: t.common.status, cell: (d) => <StatusBadge value={d.status} /> },
+              {
+                header: t.common.received,
                 cell: (d) => (d.received_at ? formatDate(d.received_at) : "—"),
               },
             ]}
           />
           <p className="od-caption">
-            Upload and mark documents in the{" "}
+            {t.services.uploadAndMarkDocumentsIn}{" "}
             <Link
               className="font-medium text-[var(--od-ink)] underline underline-offset-4"
               to={`/client-documents?client=${c.id}`}
             >
-              document library
+              {t.services.documentLibrary}
             </Link>
             .
           </p>
@@ -282,15 +296,15 @@ export default function ClientDetail() {
           <DataGrid
             rows={c.communication}
             rowKey={(m) => m.id}
-            empty="No calls or messages recorded"
+            empty={t.services.noCallsOrMessagesRecorded}
             columns={[
-              { header: "Date", cell: (m) => formatDate(m.noted_on) },
-              { header: "Type", cell: (m) => label(m.kind) },
+              { header: t.common.date, cell: (m) => formatDate(m.noted_on) },
+              { header: t.common.type, cell: (m) => label(m.kind) },
               {
-                header: "Project",
+                header: t.common.project,
                 cell: (m) => <span className="od-mono text-xs">{m.project_number ?? "—"}</span>,
               },
-              { header: "Note", cell: (m) => m.body, className: "whitespace-normal" },
+              { header: t.common.note, cell: (m) => m.body, className: "whitespace-normal" },
             ]}
           />
         </TabsContent>
@@ -304,7 +318,7 @@ export default function ClientDetail() {
             className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
             onClick={() => setDeactivating(true)}
           >
-            Deactivate client
+            {t.services.deactivateClient}
           </Button>
         </div>
       )}
@@ -312,7 +326,7 @@ export default function ClientDetail() {
       <FormDialog
         open={editing}
         onOpenChange={setEditing}
-        title="Edit client"
+        title={t.services.editClient}
         busy={save.isPending}
         onSubmit={() => save.mutate(draft)}
         wide
@@ -323,9 +337,9 @@ export default function ClientDetail() {
       <ConfirmDialog
         open={deactivating}
         onOpenChange={setDeactivating}
-        title="Deactivate this client?"
-        description="They will no longer appear when you pick a client. A client who still owes money cannot be deactivated."
-        confirmLabel="Deactivate"
+        title={t.services.deactivateThisClient}
+        description={t.services.theyWillNoLongerAppear}
+        confirmLabel={t.common.deactivate}
         destructive
         onConfirm={() => deactivate.mutate(undefined)}
       />

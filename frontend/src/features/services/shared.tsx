@@ -11,22 +11,25 @@ import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { today } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
 import type { Client } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import type { Translations } from "@/features/i18n/i18n";
 
 export function StaffSelect({
   value,
   onChange,
-  empty = "Unassigned",
+  empty,
 }: {
   value: string;
   onChange: (id: string) => void;
   empty?: string;
 }) {
+  const { t } = useI18n();
   const staff = useStaff();
   const { can } = useAuth();
   if (!can("security.user.manage")) return null;
   return (
     <NativeSelect value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">{empty}</option>
+      <option value="">{empty ?? t.common.unassigned}</option>
       {staff.map((u) => (
         <option key={u.id} value={u.id}>
           {u.name}
@@ -45,10 +48,11 @@ export function ClientSelect({
   onChange: (id: string) => void;
   required?: boolean;
 }) {
+  const { t } = useI18n();
   const clients = useGet<Client[]>("/clients", { is_active: true, per_page: 100 });
   return (
     <NativeSelect required={required} value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">Choose a client…</option>
+      <option value="">{t.services.chooseAClient}</option>
       {clients.data?.map((c) => (
         <option key={c.id} value={c.id}>
           {c.name}
@@ -99,11 +103,11 @@ export function PdfButton({
   );
 }
 
-const METHODS = [
-  ["cash", "Cash"],
-  ["mobile_money", "Mobile money"],
-  ["bank", "Bank"],
-] as const;
+const methodOptions = (t: Translations) => [
+  ["cash", t.common.cash],
+  ["mobile_money", t.common.mobileMoney],
+  ["bank", t.common.bank],
+];
 
 export interface PayValues {
   amount: string;
@@ -123,7 +127,7 @@ export function PaymentDialog({
   hint,
   defaultAmount,
   invalidate,
-  success = "Payment recorded",
+  success,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -134,6 +138,7 @@ export function PaymentDialog({
   invalidate: string[];
   success?: string;
 }) {
+  const { t } = useI18n();
   const { canAny } = useAuth();
   const accounts = useGet<MoneyAccount[]>("/money-accounts", undefined, {
     enabled: canAny("finance.account.view", "finance.payment.receive", "services.invoice.manage"),
@@ -142,7 +147,7 @@ export function PaymentDialog({
   const write = useWrite<unknown>("POST", path, {
     idempotent: true,
     invalidate,
-    success,
+    success: success ?? t.common.paymentRecorded,
     onSuccess: () => {
       setPay(blankPay);
       onOpenChange(false);
@@ -157,7 +162,7 @@ export function PaymentDialog({
       title={title}
       description={hint}
       busy={write.isPending}
-      submitLabel="Record payment"
+      submitLabel={t.services.recordPayment}
       onSubmit={() =>
         write.mutate({
           ...pay,
@@ -167,7 +172,7 @@ export function PaymentDialog({
         })
       }
     >
-      <Field label="Amount">
+      <Field label={t.common.amount}>
         <Input
           required
           inputMode="decimal"
@@ -177,27 +182,27 @@ export function PaymentDialog({
         />
       </Field>
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Method">
+        <Field label={t.common.method}>
           <NativeSelect
             value={pay.method}
             onChange={(e) =>
               setPay((p) => ({ ...p, method: e.target.value, money_account_id: "" }))
             }
           >
-            {METHODS.map(([v, l]) => (
+            {methodOptions(t).map(([v, l]) => (
               <option key={v} value={v}>
                 {l}
               </option>
             ))}
           </NativeSelect>
         </Field>
-        <Field label="Account">
+        <Field label={t.common.account}>
           <NativeSelect
             required
             value={pay.money_account_id || typed[0]?.id || ""}
             onChange={(e) => set("money_account_id", e.target.value)}
           >
-            {typed.length === 0 && <option value="">No account for this method</option>}
+            {typed.length === 0 && <option value="">{t.services.noAccountForThisMethod}</option>}
             {typed.map((a) => (
               <option key={a.id} value={a.id}>
                 {a.name}
@@ -206,7 +211,7 @@ export function PaymentDialog({
           </NativeSelect>
         </Field>
       </div>
-      <Field label="Reference (optional)">
+      <Field label={t.common.referenceOptional}>
         <Input value={pay.reference} onChange={(e) => set("reference", e.target.value)} />
       </Field>
     </FormDialog>
@@ -231,6 +236,7 @@ export function ReasonDialog({
   busy?: boolean;
   onSubmit: (reason: string) => void;
 }) {
+  const { t } = useI18n();
   const [reason, setReason] = useState("");
   return (
     <FormDialog
@@ -245,7 +251,7 @@ export function ReasonDialog({
         setReason("");
       }}
     >
-      <Field label="Reason">
+      <Field label={t.common.reason}>
         <Input required value={reason} onChange={(e) => setReason(e.target.value)} />
       </Field>
     </FormDialog>
