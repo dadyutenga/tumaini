@@ -265,6 +265,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -404,6 +408,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -554,6 +562,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -693,6 +705,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -827,6 +843,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -961,6 +981,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -1091,6 +1115,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -1223,6 +1251,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -1359,6 +1391,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -1499,6 +1535,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -1638,6 +1678,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -1782,6 +1826,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -1942,6 +1990,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -2072,6 +2124,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -2207,6 +2263,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -2337,6 +2397,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -2476,6 +2540,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -2606,6 +2674,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -2736,6 +2808,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -2866,6 +2942,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -2996,6 +3076,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -3126,6 +3210,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -3266,6 +3354,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -3396,6 +3488,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -3526,6 +3622,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -3657,6 +3757,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -3792,6 +3896,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:
@@ -3923,6 +4031,10 @@ paths:
       - bearerAuth: []
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [shop, services]}
+        description: Narrow to one business; 403 when the caller does not work in it
       - name: from
         in: query
         schema:

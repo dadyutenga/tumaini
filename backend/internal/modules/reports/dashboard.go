@@ -328,7 +328,7 @@ func (s *Service) Dashboard(ctx context.Context, p *auth.Principal, f Filter) (m
 			f.branch(q, "r.location_id")
 			v, err := one(ctx, tx, `
 				SELECT COALESCE(SUM(pl.net_pay), 0) AS v
-				FROM app.payroll_lines pl
+				FROM app.payroll_lines pl JOIN app.employees emp ON emp.id = pl.employee_id
 				JOIN app.payroll_runs r ON r.id = pl.payroll_run_id`+q.Where(), q.Args...)
 			if err != nil {
 				return err

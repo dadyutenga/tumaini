@@ -75,54 +75,53 @@ func (s *Service) pl(ctx context.Context, tx pgx.Tx, f Filter) (plResult, error)
 		}
 	}
 
-	if biz != "services" {
-		eq := sqlq.New()
-		eq.Add("e.status IN ('approved','paid') AND e.project_id IS NULL AND e.design_job_id IS NULL")
-		f.dates(eq, "e.expense_date")
-		f.branch(eq, "e.location_id")
-		expCats, err := rows(ctx, tx, `
-			SELECT c.name::text AS name, COALESCE(SUM(e.amount), 0) AS amount
-			FROM app.expenses e
-			JOIN app.expense_categories c ON c.id = e.category_id`+eq.Where()+`
-			GROUP BY c.id, c.name HAVING SUM(e.amount) <> 0 ORDER BY amount DESC`, eq.Args...)
-		if err != nil {
-			return r, err
-		}
-		for _, ec := range expCats {
-			amt := num(ec, "amount")
-			r.Expense = r.Expense.Add(amt)
-			r.ExpensesByCat = append(r.ExpensesByCat, map[string]any{"code": "6000", "name": ec["name"], "amount": amt})
-			r.Lines = append(r.Lines, map[string]any{"code": "6000", "name": ec["name"], "type": "expense", "amount": amt})
-		}
+	// Overheads and pay of whichever business the report covers; row security has already narrowed them.
+	eq := sqlq.New()
+	eq.Add("e.status IN ('approved','paid') AND e.project_id IS NULL AND e.design_job_id IS NULL")
+	f.dates(eq, "e.expense_date")
+	f.branch(eq, "e.location_id")
+	expCats, err := rows(ctx, tx, `
+		SELECT c.name::text AS name, COALESCE(SUM(e.amount), 0) AS amount
+		FROM app.expenses e
+		JOIN app.expense_categories c ON c.id = e.category_id`+eq.Where()+`
+		GROUP BY c.id, c.name HAVING SUM(e.amount) <> 0 ORDER BY amount DESC`, eq.Args...)
+	if err != nil {
+		return r, err
+	}
+	for _, ec := range expCats {
+		amt := num(ec, "amount")
+		r.Expense = r.Expense.Add(amt)
+		r.ExpensesByCat = append(r.ExpensesByCat, map[string]any{"code": "6000", "name": ec["name"], "amount": amt})
+		r.Lines = append(r.Lines, map[string]any{"code": "6000", "name": ec["name"], "type": "expense", "amount": amt})
+	}
 
-		// Include approved/paid payroll runs in operating expenses.
-		pq := sqlq.New()
-		pq.Add("pr.status IN ('approved','paid')")
-		if f.From != "" {
-			pq.Add("make_date(pr.period_year, pr.period_month, 1) >= date_trunc('month', ?::date)::date", f.From)
-		}
-		if f.To != "" {
-			pq.Add("make_date(pr.period_year, pr.period_month, 1) <= date_trunc('month', ?::date)::date", f.To)
-		}
-		f.branch(pq, "pr.location_id")
-		payRow, err := one(ctx, tx, `
-			SELECT COALESCE(SUM(pl.gross_pay), 0) + COALESCE(SUM(si.employer_total), 0) AS amt
-			FROM app.payroll_runs pr
-			JOIN app.payroll_lines pl ON pl.payroll_run_id = pr.id
-			LEFT JOIN (
-				SELECT payroll_line_id, SUM(employer_amount) AS employer_total
-				FROM app.payroll_statutory_items
-				GROUP BY payroll_line_id
-			) si ON si.payroll_line_id = pl.id`+pq.Where(), pq.Args...)
-		if err != nil {
-			return r, err
-		}
-		payAmt := num(payRow, "amt")
-		if !payAmt.IsZero() {
-			r.Expense = r.Expense.Add(payAmt)
-			r.ExpensesByCat = append(r.ExpensesByCat, map[string]any{"code": "6100", "name": "Salaries and payroll", "amount": payAmt})
-			r.Lines = append(r.Lines, map[string]any{"code": "6100", "name": "Salaries and payroll", "type": "expense", "amount": payAmt})
-		}
+	// Include approved/paid payroll runs in operating expenses.
+	pq := sqlq.New()
+	pq.Add("pr.status IN ('approved','paid')")
+	if f.From != "" {
+		pq.Add("make_date(pr.period_year, pr.period_month, 1) >= date_trunc('month', ?::date)::date", f.From)
+	}
+	if f.To != "" {
+		pq.Add("make_date(pr.period_year, pr.period_month, 1) <= date_trunc('month', ?::date)::date", f.To)
+	}
+	f.branch(pq, "pr.location_id")
+	payRow, err := one(ctx, tx, `
+		SELECT COALESCE(SUM(pl.gross_pay), 0) + COALESCE(SUM(si.employer_total), 0) AS amt
+		FROM app.payroll_runs pr
+		JOIN app.payroll_lines pl ON pl.payroll_run_id = pr.id JOIN app.employees emp ON emp.id = pl.employee_id
+		LEFT JOIN (
+			SELECT payroll_line_id, SUM(employer_amount) AS employer_total
+			FROM app.payroll_statutory_items
+			GROUP BY payroll_line_id
+		) si ON si.payroll_line_id = pl.id`+pq.Where(), pq.Args...)
+	if err != nil {
+		return r, err
+	}
+	payAmt := num(payRow, "amt")
+	if !payAmt.IsZero() {
+		r.Expense = r.Expense.Add(payAmt)
+		r.ExpensesByCat = append(r.ExpensesByCat, map[string]any{"code": "6100", "name": "Salaries and payroll", "amount": payAmt})
+		r.Lines = append(r.Lines, map[string]any{"code": "6100", "name": "Salaries and payroll", "type": "expense", "amount": payAmt})
 	}
 
 	r.Income = r.Revenue.Add(r.ServiceIncome).Add(r.OtherIncome)
@@ -363,7 +362,7 @@ func (s *Service) BalanceSheet(ctx context.Context, p *auth.Principal, f Filter)
 		// Unpaid approved payroll.
 		prRow, err := one(ctx, tx, `
 			SELECT COALESCE(SUM(pl.net_pay), 0) AS amt
-			FROM app.payroll_lines pl
+			FROM app.payroll_lines pl JOIN app.employees emp ON emp.id = pl.employee_id
 			JOIN app.payroll_runs r ON r.id = pl.payroll_run_id
 			WHERE r.status = 'approved' AND make_date(r.period_year, r.period_month, 1) <= $1::date`, asOf)
 		if err != nil {

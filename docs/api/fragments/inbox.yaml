@@ -652,6 +652,12 @@ paths:
           type: integer
           default: 5
           maximum: 25
+      - name: business_unit
+        in: query
+        description: A, B or all; overrides the X-Business-Unit header.
+        schema:
+          type: string
+          enum: [A, B, all]
       - name: location
         in: query
         description: A location id or `all`; overrides the X-Branch-Id header.

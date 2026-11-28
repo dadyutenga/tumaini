@@ -15,6 +15,7 @@ import {
 } from "@/components/shared/kit";
 import { PageLoader, StatCard } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
+import { BusinessBadges } from "@/features/business/BusinessBadges";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import { download } from "@/lib/api";
 import { formatDate, formatMoney } from "@/lib/formatters";
@@ -28,6 +29,7 @@ interface Slip {
   number: string;
   name: string;
   employee_no: string;
+  business_unit?: "A" | "B";
   base_pay: string;
   gross: string;
   total_deductions: string;
@@ -210,6 +212,10 @@ export default function PayrollRun() {
                 )}
               </div>
             ),
+          },
+          {
+            header: t.business.business,
+            cell: (s) => <BusinessBadges units={[s.business_unit]} />,
           },
           {
             header: t.common.basePay,

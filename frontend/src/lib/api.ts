@@ -36,6 +36,7 @@ function baseUrl() {
 
 let accessToken: string | null = null;
 let branchId: string | null = null;
+let businessUnit: string | null = null;
 let onSessionLost: (() => void) | null = null;
 let onReauthRequired: (() => Promise<boolean>) | null = null;
 let refreshing: Promise<boolean> | null = null;
@@ -47,6 +48,10 @@ export const session = {
   getToken: () => accessToken,
   setBranch: (id: string | null) => {
     branchId = id;
+  },
+  /** The business chosen in the switcher, sent as X-Business-Unit; null shows every business. */
+  setBusiness: (code: string | null) => {
+    businessUnit = code;
   },
   onLost: (fn: (() => void) | null) => {
     onSessionLost = fn;
@@ -115,6 +120,7 @@ async function send(path: string, options: RequestOptions): Promise<Response> {
   if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
   const branch = options.branch ?? branchId;
   if (branch) headers["X-Branch-Id"] = branch;
+  if (businessUnit) headers["X-Business-Unit"] = businessUnit;
   if (options.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
   try {
     return await fetch(buildUrl(path, options.query), {
@@ -189,9 +195,9 @@ export interface WriteResult<T> {
   status: number;
 }
 
-/** POST, PUT or DELETE. Returns the unwrapped payload. */
+/** POST, PUT, PATCH or DELETE. Returns the unwrapped payload. */
 export async function send_<T>(
-  method: "POST" | "PUT" | "DELETE",
+  method: "POST" | "PUT" | "PATCH" | "DELETE",
   path: string,
   body?: unknown,
   options: Pick<RequestOptions, "idempotencyKey" | "noRefresh"> = {},
@@ -209,6 +215,7 @@ export const api = {
     options?: Pick<RequestOptions, "idempotencyKey" | "noRefresh">,
   ) => send_<T>("POST", path, body, options),
   put: <T>(path: string, body?: unknown) => send_<T>("PUT", path, body),
+  patch: <T>(path: string, body?: unknown) => send_<T>("PATCH", path, body),
   del: <T>(path: string) => send_<T>("DELETE", path),
 };
 
@@ -248,13 +255,18 @@ export async function download(path: string, query: Query, filename: string) {
 
 /** Upload one file as multipart form data. Returns the stored file id. */
 export async function uploadFile(file: File): Promise<string> {
+  return uploadTo("/files", file);
+}
+
+/** Upload one file to an endpoint that stores it. Returns the stored file id. */
+export async function uploadTo(path: string, file: File): Promise<string> {
   const send = () => {
     const form = new FormData();
     form.append("file", file);
     const headers: Record<string, string> = {};
     if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
     if (branchId) headers["X-Branch-Id"] = branchId;
-    return fetch(buildUrl("/files"), {
+    return fetch(buildUrl(path), {
       method: "POST",
       headers,
       credentials: "include",
@@ -269,7 +281,7 @@ export async function uploadFile(file: File): Promise<string> {
     throw new ApiError(activeT().common.cannotReachTheServerCheck, 0, "network");
   }
   const json = (await response.json().catch(() => null)) as {
-    data?: { id: string };
+    data?: { id?: string; file_id?: string };
     error?: { code?: string; message?: string };
   } | null;
   if (!response.ok || !json?.data) {
@@ -281,7 +293,7 @@ export async function uploadFile(file: File): Promise<string> {
       json?.error?.code,
     );
   }
-  return json.data.id;
+  return json.data.id ?? json.data.file_id ?? "";
 }
 
 /** Fetch an authenticated binary file (image, PDF) as a temporary object URL for inline preview. */

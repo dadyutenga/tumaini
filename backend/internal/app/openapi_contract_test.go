@@ -68,7 +68,7 @@ func diff(a, b map[string]bool) []string {
 func apiReferenceRoutes(t *testing.T) map[string]bool {
 	raw, err := os.ReadFile("../../../docs/spec/API reference.md")
 	require.NoError(t, err)
-	seg := regexp.MustCompile(`^((?:GET|POST|PUT|DELETE)(?:,\s*(?:GET|POST|PUT|DELETE))*)\s+(.*)$`)
+	seg := regexp.MustCompile(`^((?:GET|POST|PUT|PATCH|DELETE)(?:,\s*(?:GET|POST|PUT|PATCH|DELETE))*)\s+(.*)$`)
 	tick := regexp.MustCompile("`([^`]+)`")
 	out := map[string]bool{}
 	for _, line := range strings.Split(string(raw), "\n") {

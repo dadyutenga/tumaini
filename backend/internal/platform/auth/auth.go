@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -215,14 +216,78 @@ type Principal struct {
 	BranchID          *uuid.UUID
 	SessionID         uuid.UUID
 	ReauthenticatedAt time.Time
-	IP                string
-	UserAgent         string
-	RequestID         string
+	// Units are the businesses the person may work in, Active the ones this request is limited to
+	// (the X-Business-Unit header narrows it). Business access is checked on top of permissions.
+	Units  []Unit
+	Active []Unit
+	// Locations are the branches the person is limited to; empty means no such limit.
+	Locations []uuid.UUID
+	IP        string
+	UserAgent string
+	RequestID string
 }
+
+// Unit is one of the businesses: "A" is the shop, "B" the services business.
+type Unit struct {
+	ID      uuid.UUID
+	Code    string
+	Primary bool
+}
+
+const (
+	Shop     = "A"
+	Services = "B"
+)
 
 // Actor is the database request context for this caller.
 func (p *Principal) Actor() db.Actor {
-	return db.Actor{UserID: p.UserID, MembershipID: p.MembershipID, RequestID: p.RequestID, ClientIP: p.IP}
+	a := db.Actor{UserID: p.UserID, MembershipID: p.MembershipID, RequestID: p.RequestID, ClientIP: p.IP}
+	for _, u := range p.Active {
+		a.BusinessUnits = append(a.BusinessUnits, u.ID)
+	}
+	return a
+}
+
+// ActorAllUnits is Actor without the narrowing of the switcher, for work that must count money of
+// every business, such as closing a till that both use.
+func (p *Principal) ActorAllUnits() db.Actor {
+	a := p.Actor()
+	a.BusinessUnits = nil
+	return a
+}
+
+// MayUseBusiness reports whether the person may work in the business with this code.
+func (p *Principal) MayUseBusiness(code string) bool { return unitByCode(p.Units, code) != nil }
+
+// ActiveBusiness reports whether this request covers the business with this code.
+func (p *Principal) ActiveBusiness(code string) bool { return unitByCode(p.Active, code) != nil }
+
+// MayUseUnit reports whether the person may work in the business unit with this id.
+func (p *Principal) MayUseUnit(id uuid.UUID) bool {
+	for _, u := range p.Units {
+		if u.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// UnitCodes lists the codes of units.
+func UnitCodes(units []Unit) []string {
+	out := []string{}
+	for _, u := range units {
+		out = append(out, u.Code)
+	}
+	return out
+}
+
+func unitByCode(units []Unit, code string) *Unit {
+	for i := range units {
+		if units[i].Code == code {
+			return &units[i]
+		}
+	}
+	return nil
 }
 
 // Has reports whether the caller holds a permission code.
@@ -250,6 +315,9 @@ func (p *Principal) Can(key string) (Grant, bool) {
 // across all branches ("X-Branch-Id: all"). Users pinned to a default location without
 // cross-branch oversight permissions are restricted to their assigned branch.
 func (p *Principal) CanAccessAllBranches() bool {
+	if len(p.Locations) > 0 {
+		return false
+	}
 	if p.IsOwner || len(p.BranchIDs) == 0 {
 		return true
 	}
@@ -271,6 +339,9 @@ func (p *Principal) CanAccessAllBranches() bool {
 
 // AllowsBranch reports whether the caller is authorized to operate on branch id.
 func (p *Principal) AllowsBranch(id uuid.UUID) bool {
+	if len(p.Locations) > 0 {
+		return slices.Contains(p.Locations, id)
+	}
 	if p.CanAccessAllBranches() {
 		return true
 	}
@@ -288,6 +359,9 @@ func (p *Principal) AllowsBranch(id uuid.UUID) bool {
 func (p *Principal) BranchFilter(g Grant) []uuid.UUID {
 	if p.BranchID != nil {
 		return []uuid.UUID{*p.BranchID}
+	}
+	if len(p.Locations) > 0 {
+		return p.Locations
 	}
 	if p.IsOwner || g.Scope == "all" {
 		return nil

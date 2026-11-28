@@ -111,7 +111,7 @@ func (s *Service) loadSale(ctx context.Context, tx pgx.Tx, p *auth.Principal, id
 	}
 	var cashierUser uuid.UUID
 	var custName, custPhone, cashierName, branchName, footer *string
-	if err := tx.QueryRow(ctx, "\n\t\tSELECT COALESCE((SELECT user_id FROM app.memberships WHERE id = $2), $2),\n\t\t       (SELECT full_name::text FROM app.customers WHERE id = $1),\n\t\t       (SELECT phone::text FROM app.customers WHERE id = $1),\n\t\t       (SELECT u.full_name::text FROM app.memberships m JOIN iam.users u ON u.id = m.user_id WHERE m.id = $2),\n\t\t       (SELECT name::text FROM app.locations WHERE id = $3),\n\t\t       (SELECT receipt_footer FROM app.business_settings WHERE true)", customer, soldBy, branch).Scan(&cashierUser, &custName, &custPhone, &cashierName, &branchName, &footer); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tSELECT COALESCE((SELECT user_id FROM app.memberships WHERE id = $2), $2),\n\t\t       (SELECT full_name::text FROM app.customers WHERE id = $1),\n\t\t       (SELECT phone::text FROM app.customers WHERE id = $1),\n\t\t       (SELECT u.full_name::text FROM app.memberships m JOIN iam.users u ON u.id = m.user_id WHERE m.id = $2),\n\t\t       (SELECT name::text FROM app.locations WHERE id = $3),\n\t\t       (SELECT coalesce(u.receipt_footer, bs.receipt_footer) FROM app.business_settings bs LEFT JOIN app.business_units u ON u.code = 'A')", customer, soldBy, branch).Scan(&cashierUser, &custName, &custPhone, &cashierName, &branchName, &footer); err != nil {
 		return nil, err
 	}
 	items, costTotal, err := s.items(ctx, tx, p, id)

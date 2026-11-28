@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -79,6 +80,9 @@ type Actor struct {
 	MembershipID uuid.UUID
 	RequestID    string
 	ClientIP     string
+	// BusinessUnits limits business-tagged records to these units. Empty leaves the transaction
+	// unlimited, which is only for the system's own work.
+	BusinessUnits []uuid.UUID
 }
 
 func nilIfZero(id uuid.UUID) string {
@@ -96,9 +100,22 @@ func setContext(ctx context.Context, tx pgx.Tx, a Actor) error {
 		ip = ""
 	}
 	_, err := tx.Exec(ctx, `SELECT set_config('app.user_id', $1, true),
-		set_config('app.membership_id', $2, true), set_config('app.request_id', $3, true), set_config('app.client_ip', $4, true)`,
-		nilIfZero(a.UserID), nilIfZero(a.MembershipID), a.RequestID, ip)
+		set_config('app.membership_id', $2, true), set_config('app.request_id', $3, true), set_config('app.client_ip', $4, true),
+		set_config('app.business_units', $5, true)`,
+		nilIfZero(a.UserID), nilIfZero(a.MembershipID), a.RequestID, ip, uuidArray(a.BusinessUnits))
 	return err
+}
+
+// uuidArray writes ids as a PostgreSQL array literal; "" for none.
+func uuidArray(ids []uuid.UUID) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = id.String()
+	}
+	return "{" + strings.Join(parts, ",") + "}"
 }
 
 func inTx(ctx context.Context, pool *pgxpool.Pool, a Actor, fn func(ctx context.Context, tx pgx.Tx) error) error {

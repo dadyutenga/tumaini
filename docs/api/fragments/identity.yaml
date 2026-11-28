@@ -463,6 +463,15 @@ paths:
             schema:
               type: object
               properties:
+                business_units:
+                  type: array
+                  description: The businesses the person works in, at least one. An Admin always has both.
+                  items: {type: string, enum: [A, B]}
+                primary_business_unit: {type: string, enum: [A, B]}
+                locations:
+                  type: array
+                  description: Branches the person is limited to; empty allows every branch of their businesses.
+                  items: {type: string, format: uuid}
                 name:
                   type: string
                 phone:
@@ -566,6 +575,15 @@ paths:
             schema:
               type: object
               properties:
+                business_units:
+                  type: array
+                  description: The businesses the person works in, at least one. An Admin always has both.
+                  items: {type: string, enum: [A, B]}
+                primary_business_unit: {type: string, enum: [A, B]}
+                locations:
+                  type: array
+                  description: Branches the person is limited to; empty allows every branch of their businesses.
+                  items: {type: string, format: uuid}
                 name:
                   type: string
                 phone:

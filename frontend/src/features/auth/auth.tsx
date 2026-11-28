@@ -22,7 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import type { Me } from "@/types";
+import type { BusinessChoice, BusinessCode, Me } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
 
@@ -45,6 +45,9 @@ interface Auth {
   user: Me["user"] | null;
   branchId: string | null;
   setBranchId: (id: string) => void;
+  /** What the business switcher shows. */
+  business: BusinessChoice;
+  setBusiness: (choice: BusinessChoice) => void;
   can: (permission: string) => boolean;
   canAny: (...permissions: string[]) => boolean;
   limit: (code: string) => string | null;
@@ -56,6 +59,7 @@ interface Auth {
 
 const Context = createContext<Auth | null>(null);
 const BRANCH_KEY = "bms-branch";
+const businessKey = (userId: string) => `bms-business:${userId}`;
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const WARN_BEFORE_MS = 60 * 1000;
 
@@ -67,12 +71,25 @@ function storedBranch() {
   }
 }
 
+/** The saved switcher choice, while the person still has that business among several. */
+function storedBusiness(profile: Me): BusinessChoice {
+  const units = profile.business_units ?? [];
+  if (units.length < 2) return "all";
+  try {
+    const saved = localStorage.getItem(businessKey(profile.user.id));
+    return units.find((u) => u === saved) ?? "all";
+  } catch {
+    return "all";
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<Status>("loading");
   const [me, setMe] = useState<Me | null>(null);
   const [branchId, setBranch] = useState<string | null>(storedBranch);
+  const [business, setChoice] = useState<BusinessChoice>("all");
   const [warnSeconds, setWarnSeconds] = useState<number | null>(null);
   const [reauthOpen, setReauthOpen] = useState(false);
   const [reauthPassword, setReauthPassword] = useState("");
@@ -91,6 +108,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       session.setBranch(next);
       setBranch(next);
+      const choice = storedBusiness(profile);
+      session.setBusiness(choice === "all" ? null : choice);
+      setChoice(choice);
       setMe(profile);
       setStatus("authed");
     },
@@ -100,6 +120,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const clear = useCallback(() => {
     session.setToken(null);
     session.setBranch(null);
+    session.setBusiness(null);
+    setChoice("all");
     setMe(null);
     setWarnSeconds(null);
     setStatus("anon");
@@ -251,6 +273,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [queryClient],
   );
 
+  const userId = me?.user?.id;
+  const setBusiness = useCallback(
+    (choice: BusinessChoice) => {
+      session.setBusiness(choice === "all" ? null : choice);
+      setChoice(choice);
+      try {
+        if (userId) localStorage.setItem(businessKey(userId), choice);
+      } catch {
+        /* storage may be unavailable */
+      }
+      void queryClient.invalidateQueries();
+    },
+    [queryClient, userId],
+  );
+
   const value = useMemo<Auth>(() => {
     const perms = me?.permissions ?? {};
     const limits = me?.limits ?? {};
@@ -262,6 +299,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user: me?.user ?? null,
       branchId,
       setBranchId,
+      business,
+      setBusiness,
       can,
       canAny: (...permissions: string[]) => permissions.some(can),
       limit,
@@ -270,7 +309,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       reloadMe,
     };
-  }, [status, me, branchId, setBranchId, login, enter, logout, reloadMe]);
+  }, [status, me, branchId, setBranchId, business, setBusiness, login, enter, logout, reloadMe]);
 
   return (
     <Context.Provider value={value}>
@@ -437,12 +476,14 @@ function FirstLoginPasswordScreen() {
 export function ProtectedRoute({
   children,
   permission,
+  business,
 }: {
   children: ReactNode;
   permission?: string | string[];
+  business?: BusinessCode;
 }) {
   const { t } = useI18n();
-  const { status, user, can } = useAuth();
+  const { status, user, can, me } = useAuth();
   const location = useLocation();
   if (status === "loading")
     return (
@@ -456,5 +497,8 @@ export function ProtectedRoute({
   const needed =
     permission === undefined ? [] : Array.isArray(permission) ? permission : [permission];
   if (needed.length > 0 && !needed.some(can)) return <Navigate to="/403" replace />;
+  // Business access is a limit on top of the permission.
+  if (business && me?.business_units?.length && !me.business_units.includes(business))
+    return <Navigate to="/403" replace />;
   return children;
 }

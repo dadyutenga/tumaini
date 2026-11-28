@@ -19,10 +19,12 @@ import {
 } from "@/components/shared/kit";
 import { CopyButton } from "@/components/shared/Display";
 import { useAuth } from "@/features/auth/auth";
+import { BusinessBadges } from "@/features/business/BusinessBadges";
+import { useBusiness } from "@/features/business/useBusiness";
 import { errorMessage, useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { api } from "@/lib/api";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
-import type { Branch } from "@/types";
+import type { Branch, BusinessCode } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
 import type { Translations } from "@/features/i18n/i18n";
@@ -30,6 +32,7 @@ import { statusLabel } from "@/features/i18n/status";
 import { useSearchBox } from "@/hooks/useSearchBox";
 
 interface Employee {
+  business_unit?: BusinessCode;
   id: string;
   employee_no: string;
   name: string;
@@ -125,7 +128,13 @@ function EmployeesTab() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [q, setQ] = useSearchBox(() => setPage(1));
   const [page, setPage] = useState(1);
-  const list = useGetPage<Employee>("/employees", { q: q || undefined, page });
+  const { units } = useBusiness();
+  const [unitFilter, setUnitFilter] = useState("");
+  const list = useGetPage<Employee>("/employees", {
+    q: q || undefined,
+    business: unitFilter || undefined,
+    page,
+  });
   const canGrantAccess = can("security.user.manage");
   const roles = useGet<RoleOption[]>("/roles", undefined, { enabled: canGrantAccess });
   const branches = useGet<Branch[]>("/branches");
@@ -149,6 +158,7 @@ function EmployeesTab() {
     role_id: "",
     default_branch_id: "",
     password: "",
+    business_unit: "",
   };
   const [draft, setDraft] = useState(blank);
   const [creatingWithAccess, setCreatingWithAccess] = useState(false);
@@ -205,6 +215,7 @@ function EmployeesTab() {
       email: draft.email || undefined,
       position: draft.position,
       hire_date: draft.hire_date,
+      business_unit: draft.business_unit || undefined,
     };
     if (canSetSalary && draft.base_pay.trim() !== "") {
       payload.base_pay = draft.base_pay.trim();
@@ -281,6 +292,21 @@ function EmployeesTab() {
             }}
           />
         </div>
+        {units.length > 1 && (
+          <NativeSelect
+            aria-label={t.business.business}
+            className="w-48"
+            value={unitFilter}
+            onChange={(e) => {
+              setUnitFilter(e.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">{t.business.bothBusinesses}</option>
+            <option value="A">{t.business.shopA}</option>
+            <option value="B">{t.business.servicesB}</option>
+          </NativeSelect>
+        )}
         {can("hr.employee.manage") && (
           <Button onClick={() => setOpen(true)}>
             <Plus size={16} /> {t.common.newEmployee}
@@ -310,6 +336,10 @@ function EmployeesTab() {
           {
             header: t.hr.position,
             cell: (e) => e.position || e.position_name || e.department_name || "-",
+          },
+          {
+            header: t.business.business,
+            cell: (e) => <BusinessBadges units={[e.business_unit]} />,
           },
           { header: t.common.location, cell: (e) => e.branch_name ?? "-" },
           { header: t.hr.hired, cell: (e) => (e.hire_date ? formatDate(e.hire_date) : "-") },
@@ -406,6 +436,18 @@ function EmployeesTab() {
               onChange={(e) => setDraft((d) => ({ ...d, hire_date: e.target.value }))}
             />
           </Field>
+          {units.length > 1 && (
+            <Field label={t.business.business} hint={t.business.payBusinessHint}>
+              <NativeSelect
+                value={draft.business_unit}
+                onChange={(e) => setDraft((d) => ({ ...d, business_unit: e.target.value }))}
+              >
+                <option value="">{t.business.branchDefault}</option>
+                <option value="A">{t.business.shopA}</option>
+                <option value="B">{t.business.servicesB}</option>
+              </NativeSelect>
+            </Field>
+          )}
           {canSetSalary && (
             <Field label={t.hr.monthlyBasicSalary} className="col-span-2">
               <Input

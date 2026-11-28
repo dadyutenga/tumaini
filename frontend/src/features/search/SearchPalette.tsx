@@ -13,6 +13,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { useAuth } from "@/features/auth/auth";
+import { useBusiness } from "@/features/business/useBusiness";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
 import { useGet } from "@/hooks/useApi";
@@ -73,7 +74,10 @@ export function SearchPalette() {
   latestInput.current = open ? input : "";
 
   const { mode, text } = parseQuery(input);
-  const chips = SCOPES.filter((s) => !s.permissions.length || canAny(...s.permissions));
+  const { shows } = useBusiness();
+  const chips = SCOPES.filter(
+    (s) => (!s.permissions.length || canAny(...s.permissions)) && shows(s.business),
+  );
   const active = chips.find((s) => s.id === scope) ?? chips[0];
   const searchesRecords = mode !== "actions" && active.id !== "pages";
   const search = useSearch(
@@ -407,8 +411,10 @@ export function SearchPalette() {
           aria-label={t.search.open}
         >
           <Search size={14} />
-          <span className="hidden text-xs lg:inline">{t.common.globalSearchPlaceholder}</span>
-          <kbd className="od-mono hidden rounded border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--od-ink-muted)] xl:inline">
+          <span className="hidden whitespace-nowrap text-xs 2xl:inline">
+            {t.common.globalSearchPlaceholder}
+          </span>
+          <kbd className="od-mono hidden whitespace-nowrap rounded border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-1.5 py-0.5 text-[10px] font-medium text-[var(--od-ink-muted)] xl:inline">
             Ctrl K
           </kbd>
         </Button>

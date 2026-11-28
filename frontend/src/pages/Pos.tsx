@@ -1122,6 +1122,10 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
   const { t } = useI18n();
   const [isCopy, setIsCopy] = useState(false);
   const [printing, setPrinting] = useState(false);
+  // What the business that made the sale prints at the top of its receipts.
+  const heading = useGet<{
+    business?: { name?: string; header?: string | null; address?: string; phone?: string };
+  }>(`/sales/${sale.id}/receipt`, undefined, { enabled: Boolean(sale.id) }).data?.business;
   const summaryText = `Receipt ${sale.number ?? ""}\nTotal: ${formatMoney(sale.total)}\nPaid: ${formatMoney(sale.paid_total)}${
     toNumber(sale.balance) > 0 ? `\nBalance: ${formatMoney(sale.balance)}` : ""
   }\nThank you for your business!`;
@@ -1161,6 +1165,16 @@ function ReceiptDialog({ sale, onClose }: { sale: Sale; onClose: () => void }) {
         translate="no"
         className="print-document space-y-2.5 rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] p-4 text-[13px]"
       >
+        {heading && (
+          <div className="text-center" data-testid="receipt-heading">
+            {heading.name && <p className="font-bold">{heading.name}</p>}
+            {[heading.header, heading.address, heading.phone].filter(Boolean).map((line) => (
+              <p key={line} className="text-xs text-[var(--od-ink-secondary)]">
+                {line}
+              </p>
+            ))}
+          </div>
+        )}
         {isCopy && (
           <p className="rounded border border-dashed border-[var(--od-border-strong)] py-1 text-center text-xs font-bold tracking-widest uppercase">
             *** COPY ***

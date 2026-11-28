@@ -720,8 +720,8 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 			return ended
 		}
 		p.RoleSlug, p.IsOwner, p.EmployeeID = roleCode, roleCode == "admin", employee
-		if defaultLoc != nil {
-			p.BranchIDs = []uuid.UUID{*defaultLoc}
+		if err := loadBusinessAccess(ctx, tx, p, defaultLoc); err != nil {
+			return err
 		}
 		// Effective permissions: a user override (allow or deny, unexpired) beats the role, exactly as app.has_permission does.
 		rows, err := tx.Query(ctx, `
@@ -773,4 +773,63 @@ func (s *Service) Load(ctx context.Context, claims auth.Claims) (*auth.Principal
 		return nil, err
 	}
 	return p, nil
+}
+
+// loadBusinessAccess reads which businesses and branches the person is limited to, and picks the
+// branch they work in when a request names none: their default branch, unless it belongs to a
+// business they do not have.
+func loadBusinessAccess(ctx context.Context, tx pgx.Tx, p *auth.Principal, defaultLoc *uuid.UUID) error {
+	if err := tx.QueryRow(ctx, `
+		SELECT coalesce(array_agg(location_id ORDER BY location_id), '{}') FROM app.membership_locations WHERE membership_id = $1`,
+		p.MembershipID).Scan(&p.Locations); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT u.id, u.code, b.is_primary FROM app.membership_business_units b
+		JOIN app.business_units u ON u.id = b.business_unit_id AND u.status = 'active'
+		WHERE b.membership_id = $1 ORDER BY u.code`, p.MembershipID)
+	if err != nil {
+		return err
+	}
+	p.Units, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (u auth.Unit, err error) {
+		err = row.Scan(&u.ID, &u.Code, &u.Primary)
+		return u, err
+	})
+	if err != nil {
+		return err
+	}
+	// Nobody works without a business: an empty list would leave the request unlimited.
+	if len(p.Units) == 0 {
+		return httpx.Forbidden("business_forbidden", "Your account is not assigned to a business. Ask an Admin.")
+	}
+	p.Active = p.Units
+
+	var units []uuid.UUID
+	for _, u := range p.Units {
+		units = append(units, u.ID)
+	}
+	var branch *uuid.UUID
+	err = tx.QueryRow(ctx, `
+		SELECT id FROM app.locations
+		WHERE status = 'active' AND business_unit_id = ANY($1) AND (coalesce(cardinality($2::uuid[]), 0) = 0 OR id = ANY($2))
+		ORDER BY (id IS NOT DISTINCT FROM $3) DESC, is_default DESC, created_at, id LIMIT 1`,
+		units, p.Locations, defaultLoc).Scan(&branch)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	// A business may have no branch of its own (services run from the shop's premises). Its staff
+	// work at the main branch, so that money they take is recorded somewhere.
+	shared := branch == nil && len(p.Locations) == 0
+	if shared {
+		err = tx.QueryRow(ctx, `SELECT id FROM app.locations WHERE status = 'active' ORDER BY is_default DESC, created_at, id LIMIT 1`).Scan(&branch)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+	}
+	p.BranchIDs = nil
+	// A person without a default branch stays unpinned, as before.
+	if branch != nil && (defaultLoc != nil || len(p.Locations) > 0 || shared) {
+		p.BranchIDs = []uuid.UUID{*branch}
+	}
+	return nil
 }

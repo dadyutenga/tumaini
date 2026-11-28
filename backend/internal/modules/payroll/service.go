@@ -217,6 +217,7 @@ func (s *Service) slipSummaries(ctx context.Context, tx pgx.Tx, runID uuid.UUID)
 		SELECT pl.id, pl.id AS payroll_line_id, ps.id AS payslip_id,
 		       COALESCE(ps.payslip_no, '') AS number,
 		       pl.employee_id, e.full_name::text AS name, e.employee_no,
+		       (SELECT bu.code FROM app.business_units bu WHERE bu.id = e.business_unit_id) AS business_unit,
 		       pl.basic_salary, pl.basic_salary AS base_pay,
 		       pl.allowances, pl.allowances AS allowance,
 		       pl.commission, pl.overtime, pl.bonuses,
@@ -794,7 +795,8 @@ func (s *Service) Submit(ctx context.Context, p *auth.Principal, runID uuid.UUID
 			return httpx.Conflict("invalid_status", "Calculate the run before submitting it")
 		}
 		var loc *uuid.UUID
-		if id, ok := run["location_id"].(uuid.UUID); ok {
+		// Rows read through hrkit carry identifiers as text.
+		if id, err := uuid.Parse(asStr(run["location_id"])); err == nil {
 			loc = &id
 		}
 		if err := s.Notify.ToPermission(ctx, tx, loc, "hr.payroll.approve", notify.Message{
@@ -1062,6 +1064,7 @@ func (s *Service) slip(ctx context.Context, tx pgx.Tx, id uuid.UUID) (map[string
 		       CASE WHEN r.id IS NOT NULL THEN make_date(r.period_year, r.period_month, 1)::text ELSE '' END AS period_start,
 		       CASE WHEN r.id IS NOT NULL THEN (make_date(r.period_year, r.period_month, 1) + interval '1 month' - interval '1 day')::date::text ELSE '' END AS period_end,
 		       pl.employee_id, e.full_name::text AS employee_name, e.employee_no, e.location_id AS branch_id,
+		       (SELECT bu.code FROM app.business_units bu WHERE bu.id = e.business_unit_id) AS business_unit,
 		       pl.basic_salary, pl.basic_salary AS base_pay,
 		       pl.allowances, pl.commission, pl.overtime, pl.bonuses,
 		       pl.deductions, pl.advance_repayment, pl.statutory_deductions,
@@ -1090,7 +1093,10 @@ func (s *Service) Payslip(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 			return err
 		}
 		hasView := p.IsOwner || p.Has("hr.payroll.view") || p.Has("hr.payroll.manage") || p.Has("hr.payroll.approve")
-		empID, _ := sl["employee_id"].(uuid.UUID)
+		empID, err := uuid.Parse(asStr(sl["employee_id"]))
+		if err != nil {
+			return err
+		}
 		mine := p.EmployeeID != nil && empID == *p.EmployeeID
 		if !hasView {
 			if !mine || sl["payslip_id"] == nil {
@@ -1098,7 +1104,10 @@ func (s *Service) Payslip(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 			}
 		}
 
-		lineID := sl["payroll_line_id"].(uuid.UUID)
+		lineID, err := uuid.Parse(asStr(sl["payroll_line_id"]))
+		if err != nil {
+			return err
+		}
 		var lines []map[string]any
 		addLine := func(kind, label string, amt decimal.Decimal) {
 			if amt.IsPositive() {
@@ -1209,6 +1218,7 @@ func (s *Service) SalaryPayments(ctx context.Context, p *auth.Principal, employe
 			       ft.amount, pl.pay_method::text AS method, 'posted' AS status,
 			       COALESCE(pl.payment_reference, '') AS reference,
 			       pl.employee_id, e.full_name::text AS employee_name,
+			       (SELECT bu.code FROM app.business_units bu WHERE bu.id = e.business_unit_id) AS business_unit,
 			       fa.name::text AS money_account,
 			       ps.id AS payslip_id, COALESCE(ps.payslip_no, '') AS payslip_number,
 			       r.id AS run_id, format('PR-%s-%s', r.period_year, lpad(r.period_month::text, 2, '0')) AS run_number`+

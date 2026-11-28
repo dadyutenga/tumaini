@@ -16,6 +16,7 @@ import {
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
+import { BusinessUnitsPanel } from "@/features/business/BusinessUnitsPanel";
 import { useI18n } from "@/features/i18n/i18n";
 import { errorMessage, useGet, useWrite } from "@/hooks/useApi";
 import {
@@ -150,6 +151,7 @@ export default function Settings() {
       <Tabs defaultValue="business">
         <TabsList className="mb-4 flex flex-wrap">
           <TabsTrigger value="business">{t.common.business}</TabsTrigger>
+          <TabsTrigger value="businesses">{t.business.businesses}</TabsTrigger>
           <TabsTrigger value="branches">{t.settings.locations}</TabsTrigger>
           <TabsTrigger value="finance">{t.settings.financeTax}</TabsTrigger>
           <TabsTrigger value="documents">{t.common.documents}</TabsTrigger>
@@ -240,6 +242,10 @@ export default function Settings() {
               )}
             </form>
           )}
+        </TabsContent>
+
+        <TabsContent value="businesses">
+          <BusinessUnitsPanel profile={business.data} />
         </TabsContent>
 
         <TabsContent value="branches" className="space-y-4">

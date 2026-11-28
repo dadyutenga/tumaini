@@ -117,8 +117,10 @@ type searchField struct {
 
 // searchSource is one kind of record: who may see it, where it lives and what it shows.
 type searchSource struct {
-	kind  string
-	perms []string
+	kind string
+	// business ("A" or "B") must be among those the request covers.
+	business string
+	perms    []string
 	// title, subtitle, meta and unit are SQL expressions; recent orders equal matches.
 	title, subtitle, meta, unit, recent string
 	from                                string
@@ -142,7 +144,7 @@ func searchSources(p *auth.Principal, today string, q *sqlq.Q) []searchSource {
 	date := func() string { return q.Arg(today) + "::date" }
 	return []searchSource{
 		{
-			kind: "product", perms: []string{"shop.product.view"}, bindBranch: branch,
+			kind: "product", business: "A", perms: []string{"shop.product.view"}, bindBranch: branch,
 			title: "pr.name::text", subtitle: "coalesce(nullif(pr.barcode, ''), pr.sku::text, '')",
 			from: ` FROM app.products pr
 				CROSS JOIN app.business_settings bs
@@ -157,7 +159,7 @@ func searchSources(p *auth.Principal, today string, q *sqlq.Q) []searchSource {
 			link:   linkTo("/products/"),
 		},
 		{
-			kind: "customer", perms: []string{"shop.customer.view_all", "shop.customer.manage"},
+			kind: "customer", business: "A", perms: []string{"shop.customer.view_all", "shop.customer.manage"},
 			title: "c.full_name::text", subtitle: "coalesce(c.phone::text, '')",
 			from: ` FROM app.customers c`,
 			meta: `jsonb_build_object('phone', c.phone::text, 'balance', coalesce((SELECT sum(s.balance_due) FROM app.sales s
@@ -175,7 +177,7 @@ func searchSources(p *auth.Principal, today string, q *sqlq.Q) []searchSource {
 			link: linkTo("/customers/"),
 		},
 		{
-			kind: "client", perms: []string{"services.client.view_all", "services.client.manage"},
+			kind: "client", business: "B", perms: []string{"services.client.view_all", "services.client.manage"},
 			title: "c.full_name::text", subtitle: "coalesce(c.phone::text, '')",
 			from: ` FROM app.customers c`,
 			meta: `jsonb_build_object('phone', c.phone::text, 'balance', coalesce((SELECT sum(i.balance_due) FROM app.invoices i
@@ -192,7 +194,7 @@ func searchSources(p *auth.Principal, today string, q *sqlq.Q) []searchSource {
 			link: linkTo("/clients/"),
 		},
 		{
-			kind: "sale", perms: []string{"shop.sale.view_all", "shop.sale.create"},
+			kind: "sale", business: "A", perms: []string{"shop.sale.view_all", "shop.sale.create"},
 			title: "s.receipt_no", subtitle: "coalesce(c.full_name::text, '')",
 			from: ` FROM app.sales s
 				LEFT JOIN app.customers c ON c.id = s.customer_id
@@ -208,7 +210,7 @@ func searchSources(p *auth.Principal, today string, q *sqlq.Q) []searchSource {
 			link: linkTo("/sales/"),
 		},
 		{
-			kind: "service_invoice", perms: []string{"services.invoice.manage", "services.invoice.draft"}, bindToday: date,
+			kind: "service_invoice", business: "B", perms: []string{"services.invoice.manage", "services.invoice.draft"}, bindToday: date,
 			title: "i.invoice_no", subtitle: "c.full_name::text",
 			from: ` FROM app.invoices i
 				JOIN app.customers c ON c.id = i.customer_id
@@ -224,7 +226,7 @@ func searchSources(p *auth.Principal, today string, q *sqlq.Q) []searchSource {
 			link: linkTo("/service-invoices?open="),
 		},
 		{
-			kind: "quotation", perms: []string{"services.quotation.manage", "services.quotation.draft"},
+			kind: "quotation", business: "B", perms: []string{"services.quotation.manage", "services.quotation.draft"},
 			title: "qu.quotation_no", subtitle: "c.full_name::text",
 			from: ` FROM app.quotations qu
 				JOIN app.customers c ON c.id = qu.customer_id
@@ -238,7 +240,7 @@ func searchSources(p *auth.Principal, today string, q *sqlq.Q) []searchSource {
 			link: linkTo("/service-quotations?open="),
 		},
 		{
-			kind: "project", perms: []string{"services.project.view_all", "services.project.manage"}, bindToday: date,
+			kind: "project", business: "B", perms: []string{"services.project.view_all", "services.project.manage"}, bindToday: date,
 			title: "pr.project_no || ' · ' || pr.title::text", subtitle: "c.full_name::text",
 			from: ` FROM app.projects pr
 				JOIN app.customers c ON c.id = pr.customer_id
@@ -256,7 +258,7 @@ func searchSources(p *auth.Principal, today string, q *sqlq.Q) []searchSource {
 			link: linkTo("/projects/"),
 		},
 		{
-			kind: "design_job", perms: []string{"services.design.view_all", "services.design.manage"}, bindToday: date,
+			kind: "design_job", business: "B", perms: []string{"services.design.view_all", "services.design.manage"}, bindToday: date,
 			title: "j.job_no || ' · ' || j.title::text", subtitle: "c.full_name::text",
 			from: ` FROM app.design_jobs j
 				JOIN app.customers c ON c.id = j.customer_id
@@ -434,7 +436,7 @@ func (s *Service) Search(ctx context.Context, p *auth.Principal, in SearchReques
 
 	var wanted []string
 	for _, src := range searchSources(p, today, sqlq.New()) {
-		if maySearch(p, src.perms) && (in.Scope == "" || in.Scope == src.kind) {
+		if p.ActiveBusiness(src.business) && maySearch(p, src.perms) && (in.Scope == "" || in.Scope == src.kind) {
 			wanted = append(wanted, src.kind)
 		}
 	}

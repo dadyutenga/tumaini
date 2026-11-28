@@ -304,6 +304,7 @@ func (s *Service) CompleteReturn(ctx context.Context, p *auth.Principal, id uuid
 				}
 			}
 			pay, err := payments.Pay(ctx, tx, payments.PayInput{
+				Business:   auth.Shop,
 				LocationID: locID,
 				AccountID:  *in.AccountID,
 				CustomerID: custID, OtherPayee: otherPayee, Method: method,

@@ -15,6 +15,7 @@ import {
   StatusBadge,
 } from "@/components/shared/kit";
 import { useAuth } from "@/features/auth/auth";
+import { BusinessSelect, useBusinessChoice } from "@/features/business/BusinessSelect";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney, today } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
@@ -149,9 +150,11 @@ function RecurringTab() {
     description: "",
     day_of_month: String(Math.min(28, new Date().getDate())),
     next_run_on: today(),
+    business_unit: undefined as string | undefined,
   };
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(blank);
+  const business = useBusinessChoice(draft.business_unit);
   const create = useWrite<Record<string, unknown>, unknown>("POST", "/recurring-expenses", {
     invalidate: ["/recurring-expenses"],
     success: t.finance.recurringExpenseSaved,
@@ -232,6 +235,7 @@ function RecurringTab() {
             description: draft.description,
             day_of_month: Math.min(28, Math.max(1, Number(draft.day_of_month) || 1)),
             next_run_on: draft.next_run_on,
+            business_unit: business || undefined,
           })
         }
       >
@@ -256,6 +260,10 @@ function RecurringTab() {
             onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))}
           />
         </Field>
+        <BusinessSelect
+          value={draft.business_unit}
+          onChange={(business_unit) => setDraft((d) => ({ ...d, business_unit }))}
+        />
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <Field label={t.common.amount}>
             <Input

@@ -17,7 +17,7 @@ var P = middleware.Principal
 
 func (h *Handler) ListEmployees(c fiber.Ctx) error {
 	page := httpx.PageFrom(c)
-	f := EmployeeFilter{Q: c.Query("q"), Status: c.Query("status")}
+	f := EmployeeFilter{Q: c.Query("q"), Status: c.Query("status"), Business: c.Query("business")}
 	var err error
 	if f.BranchID, err = httpx.QueryUUID(c, "branch_id"); err != nil {
 		return err

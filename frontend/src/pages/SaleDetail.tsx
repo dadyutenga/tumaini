@@ -34,7 +34,13 @@ interface ReceiptPreview {
   copy?: boolean;
   receipt_prints?: number;
   receipt_footer?: string;
-  business?: { name?: string; address?: string; phone?: string; tax_number?: string };
+  business?: {
+    name?: string;
+    address?: string;
+    phone?: string;
+    tax_number?: string;
+    header?: string | null;
+  };
 }
 
 interface SaleReturnRow {
@@ -281,6 +287,7 @@ export default function SaleDetail() {
       >
         <div className="text-center">
           <p className="text-sm font-bold">{receiptPreview.data?.business?.name || "Receipt"}</p>
+          {receiptPreview.data?.business?.header && <p>{receiptPreview.data.business.header}</p>}
           {receiptPreview.data?.business?.address && <p>{receiptPreview.data.business.address}</p>}
           {receiptPreview.data?.business?.phone && <p>{receiptPreview.data.business.phone}</p>}
         </div>

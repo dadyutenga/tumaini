@@ -20,7 +20,14 @@ import { useAuth } from "@/features/auth/auth";
 import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { RoleEditor } from "@/features/auth/RoleEditor";
 import { UserPermissionsDialog } from "@/features/auth/UserPermissionsDialog";
-import type { Branch, SessionUser } from "@/types";
+import type { Branch, BusinessCode, SessionUser } from "@/types";
+import {
+  BusinessAccessFields,
+  withBusinesses,
+  type BusinessAccess,
+} from "@/features/business/BusinessAccessFields";
+import { BusinessBadges } from "@/features/business/BusinessBadges";
+import { useBusiness } from "@/features/business/useBusiness";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
 
@@ -39,6 +46,7 @@ interface EmployeeRef {
   email?: string | null;
   position?: string | null;
   branch_id?: string | null;
+  business_unit?: BusinessCode;
   user_id?: string | null;
   status: string;
 }
@@ -51,11 +59,16 @@ const blankGrant = {
   password: "",
   role_id: "",
   default_branch_id: "",
+  access: {
+    business_units: ["A", "B"],
+    primary_business_unit: "A",
+    locations: [],
+  } as BusinessAccess,
 };
 
 export default function Team() {
   const { t } = useI18n();
-  const { can } = useAuth();
+  const { can, me } = useAuth();
   const manage = can("security.user.manage");
   const [editingRole, setEditingRole] = useState<string | null | undefined>(undefined);
   const [retireRole, setRetireRole] = useState<Role | null>(null);
@@ -66,7 +79,8 @@ export default function Team() {
   const employees = useGet<EmployeeRef[]>(
     "/employees",
     { per_page: 200 },
-    { enabled: manage || can("hr.employee.view") },
+    // Anyone may need a login, wherever they work.
+    { enabled: manage || can("hr.employee.view"), branch: me?.is_owner ? "all" : undefined },
   );
 
   const [grantOpen, setGrantOpen] = useState(false);
@@ -77,6 +91,13 @@ export default function Team() {
   const [resetResult, setResetResult] = useState<{ name: string; password: string } | null>(null);
   const [kickTarget, setKickTarget] = useState<SessionUser | null>(null);
   const [permTarget, setPermTarget] = useState<SessionUser | null>(null);
+  const [unitFilter, setUnitFilter] = useState("");
+  const { units } = useBusiness();
+  // A new person starts with every business the Admin granting access has.
+  const startDraft = () => ({
+    ...blankGrant,
+    access: { business_units: units, primary_business_unit: units[0], locations: [] },
+  });
 
   const grantAccess = useWrite<Record<string, unknown>, unknown>(
     "POST",
@@ -143,6 +164,38 @@ export default function Team() {
   const employeeList = Array.isArray(employees.data) ? employees.data : [];
   const empById = new Map(employeeList.map((e) => [e.id, e]));
   const unlinkedEmployees = employeeList.filter((e) => !e.user_id && e.status !== "terminated");
+  const role = roles.data?.find((r) => r.id === draft.role_id);
+  const isAdmin = role?.slug === "admin";
+  // Branches the person being edited may have as their default.
+  const defaultChoices = activeBranches.filter(
+    (b) =>
+      isAdmin ||
+      (draft.access.locations.length
+        ? draft.access.locations.includes(b.id)
+        : !b.business_unit || draft.access.business_units.includes(b.business_unit)),
+  );
+  const defaultBranch = defaultChoices.some((b) => b.id === draft.default_branch_id)
+    ? draft.default_branch_id
+    : "";
+  const accessPayload = () => ({
+    business_units: isAdmin ? units : draft.access.business_units,
+    primary_business_unit: draft.access.primary_business_unit,
+    locations: isAdmin ? [] : draft.access.locations,
+    branch_ids: defaultBranch ? [defaultBranch] : [],
+  });
+  const noBusiness = !isAdmin && draft.access.business_units.length === 0;
+
+  function applyPreset(unit: BusinessCode) {
+    const staff = roles.data?.find((r) => r.slug === "staff");
+    setDraft((d) => ({
+      ...d,
+      role_id: staff?.id ?? d.role_id,
+      access: withBusinesses({ ...d.access, primary_business_unit: unit }, [unit], activeBranches),
+    }));
+  }
+  const shownUsers = users.data?.data.filter(
+    (u) => !unitFilter || u.business_units?.includes(unitFilter as BusinessCode),
+  );
 
   function onPickEmployee(empId: string) {
     const emp = empById.get(empId);
@@ -157,6 +210,15 @@ export default function Team() {
       phone: emp.phone ?? "",
       email: emp.email ?? "",
       default_branch_id: emp.branch_id ?? d.default_branch_id,
+      // Their login starts in the business their pay belongs to.
+      access:
+        emp.business_unit && units.includes(emp.business_unit)
+          ? withBusinesses(
+              { ...d.access, primary_business_unit: emp.business_unit },
+              [emp.business_unit],
+              activeBranches,
+            )
+          : d.access,
     }));
   }
 
@@ -175,7 +237,7 @@ export default function Team() {
               </Button>
               <Button
                 onClick={() => {
-                  setDraft(blankGrant);
+                  setDraft(startDraft());
                   setGrantOpen(true);
                 }}
               >
@@ -210,8 +272,22 @@ export default function Team() {
           <TabsTrigger value="roles">{t.admin.roles}</TabsTrigger>
         </TabsList>
         <TabsContent value="users">
+          {units.length > 1 && (
+            <FilterBar className="justify-end">
+              <NativeSelect
+                aria-label={t.business.business}
+                className="w-48"
+                value={unitFilter}
+                onChange={(e) => setUnitFilter(e.target.value)}
+              >
+                <option value="">{t.business.bothBusinesses}</option>
+                <option value="A">{t.business.shopA}</option>
+                <option value="B">{t.business.servicesB}</option>
+              </NativeSelect>
+            </FilterBar>
+          )}
           <DataGrid
-            rows={users.data?.data}
+            rows={shownUsers}
             loading={users.isLoading}
             rowKey={(u) => u.id}
             columns={[
@@ -257,6 +333,10 @@ export default function Team() {
                 cell: (u) => (u.role_name ? <Badge variant="secondary">{u.role_name}</Badge> : "-"),
               },
               {
+                header: t.business.business,
+                cell: (u) => <BusinessBadges units={u.business_units} />,
+              },
+              {
                 header: t.common.defaultLocation,
                 cell: (u) =>
                   (u.branch_ids ?? [])
@@ -285,6 +365,11 @@ export default function Team() {
                             password: "",
                             role_id: u.role_id ?? "",
                             default_branch_id: (u.branch_ids ?? [])[0] ?? "",
+                            access: {
+                              business_units: u.business_units ?? units,
+                              primary_business_unit: u.primary_business_unit ?? units[0],
+                              locations: u.locations ?? [],
+                            },
                           });
                           setEditingUser(u);
                         }}
@@ -398,13 +483,15 @@ export default function Team() {
             setGrantOpen(false);
             return;
           }
+          // The section below says why nothing happens.
+          if (noBusiness) return;
           grantAccess.mutate({
             name: draft.name,
             phone: draft.phone,
             email: draft.email,
             password: draft.password,
             role_id: draft.role_id,
-            branch_ids: draft.default_branch_id ? [draft.default_branch_id] : [],
+            ...accessPayload(),
           });
         }}
       >
@@ -470,11 +557,11 @@ export default function Team() {
               </Field>
               <Field label={t.common.defaultLocation}>
                 <NativeSelect
-                  value={draft.default_branch_id}
+                  value={defaultBranch}
                   onChange={(e) => setDraft((d) => ({ ...d, default_branch_id: e.target.value }))}
                 >
                   <option value="">{t.common.mainDefault}</option>
-                  {activeBranches.map((b) => (
+                  {defaultChoices.map((b) => (
                     <option key={b.id} value={b.id}>
                       {b.name}
                     </option>
@@ -482,6 +569,13 @@ export default function Team() {
                 </NativeSelect>
               </Field>
             </div>
+            <BusinessAccessFields
+              value={draft.access}
+              onChange={(access) => setDraft((d) => ({ ...d, access }))}
+              branches={activeBranches}
+              admin={isAdmin}
+              onPreset={applyPreset}
+            />
             <Field label={t.common.temporaryPassword}>
               <Input
                 required
@@ -508,12 +602,13 @@ export default function Team() {
         title={fmt(t.common.edit2, { name: editingUser?.name ?? "" })}
         busy={update.isPending}
         onSubmit={() => {
+          if (noBusiness) return;
           const payload: Record<string, unknown> = {
             name: draft.name,
             phone: draft.phone,
             email: draft.email,
             role_id: draft.role_id,
-            branch_ids: draft.default_branch_id ? [draft.default_branch_id] : [],
+            ...accessPayload(),
           };
           if (draft.employee_id && !editingUser?.employee_id) {
             payload.employee_id = draft.employee_id;
@@ -559,17 +654,24 @@ export default function Team() {
         </Field>
         <Field label={t.common.defaultLocation}>
           <NativeSelect
-            value={draft.default_branch_id}
+            value={defaultBranch}
             onChange={(e) => setDraft((d) => ({ ...d, default_branch_id: e.target.value }))}
           >
             <option value="">{t.common.mainDefault}</option>
-            {activeBranches.map((b) => (
+            {defaultChoices.map((b) => (
               <option key={b.id} value={b.id}>
                 {b.name}
               </option>
             ))}
           </NativeSelect>
         </Field>
+        <BusinessAccessFields
+          value={draft.access}
+          onChange={(access) => setDraft((d) => ({ ...d, access }))}
+          branches={activeBranches}
+          admin={isAdmin}
+          onPreset={applyPreset}
+        />
         {!editingUser?.employee_id && unlinkedEmployees.length > 0 && (
           <Field label={t.admin.linkToEmployeeProfile}>
             <NativeSelect

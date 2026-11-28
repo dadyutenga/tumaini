@@ -18,6 +18,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/kernel/audit"
+	"bms/internal/kernel/business"
 	"bms/internal/kernel/notify"
 	"bms/internal/kernel/outbound"
 	"bms/internal/platform/auth"
@@ -108,10 +109,9 @@ func (s *Service) defaultCustomService(ctx context.Context, tx pgx.Tx) (uuid.UUI
 	return id, err
 }
 
-func (s *Service) businessName(ctx context.Context, tx pgx.Tx) string {
-	var name string
-	_ = tx.QueryRow(ctx, `SELECT COALESCE(NULLIF(s.business_name::text,''), b.name::text) FROM app.business_profile b CROSS JOIN app.business_settings s`).Scan(&name)
-	return name
+// header is what the services business prints on its documents.
+func (s *Service) header(ctx context.Context, tx pgx.Tx) (business.Header, error) {
+	return business.HeaderFor(ctx, tx, auth.Services)
 }
 
 func clean(s string) string { return strings.TrimSpace(s) }

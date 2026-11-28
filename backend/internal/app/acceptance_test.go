@@ -378,6 +378,7 @@ type client struct {
 	app    *fiber.App
 	token  string
 	branch string
+	unit   string // X-Business-Unit
 }
 
 type result struct {
@@ -399,6 +400,9 @@ func (c *client) call(t *testing.T, method, path string, body any, idem string) 
 	req.Header.Set("Content-Type", "application/json")
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
+	if c.unit != "" {
+		req.Header.Set("X-Business-Unit", c.unit)
 	}
 	if c.branch != "" {
 		req.Header.Set("X-Branch-Id", c.branch)

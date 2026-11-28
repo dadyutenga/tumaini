@@ -333,8 +333,15 @@ Business A (shop) and Business B (services). Every money record carries business
 | updated_at | timestamp with time zone | NO | now() |  |  |
 | updated_by | uuid | yes |  | → memberships |  |
 | row_version | integer | NO | 1 |  |  |
+| display_name | app.short_text | yes |  |  |  |
+| logo_file_id | uuid | yes |  | → files |  |
+| phone | app.phone_e164 | yes |  |  |  |
+| address | text | yes |  |  |  |
+| tin | text | yes |  |  |  |
+| receipt_header | text | yes |  |  |  |
+| receipt_footer | text | yes |  |  |  |
 
-**Constraints:** `business_units_code_check` CHECK ((code ~ '^[A-Z0-9]{1,10}$'::text)); `business_units_tenant_id_code_key` UNIQUE (code); `business_units_tenant_id_id_key` UNIQUE (id)
+**Constraints:** `business_units_address_check` CHECK ((length(address) <= 500)); `business_units_code_check` CHECK ((code ~ '^[A-Z0-9]{1,10}$'::text)); `business_units_receipt_footer_check` CHECK ((length(receipt_footer) <= 500)); `business_units_receipt_header_check` CHECK ((length(receipt_header) <= 500)); `business_units_tenant_id_code_key` UNIQUE (code); `business_units_tenant_id_id_key` UNIQUE (id); `business_units_tin_check` CHECK ((length(tin) <= 40))
 
 **Indexes:** `CREATE UNIQUE INDEX business_units_pkey ON app.business_units USING btree (id)`; `CREATE UNIQUE INDEX business_units_tenant_id_code_key ON app.business_units USING btree (code)`; `CREATE UNIQUE INDEX business_units_tenant_id_id_key ON app.business_units USING btree (id)`
 
@@ -528,7 +535,7 @@ Shop Customers + Services Clients and Leads (spec §6, §7). Walk-in sales have 
 
 **Constraints:** `customers_address_check` CHECK ((length(address) <= 500)); `customers_business_name_check` CHECK ((length(business_name) <= 200)); `customers_check` CHECK ((is_shop_customer OR (client_status IS NOT NULL))); `customers_check1` CHECK (((national_id_ciphertext IS NULL) = (national_id_key_id IS NULL))); `customers_check2` CHECK (((national_id_ciphertext IS NULL) OR (national_id_hmac IS NOT NULL))); `customers_national_id_hmac_check` CHECK ((octet_length(national_id_hmac) = 32)); `customers_national_id_last4_check` CHECK ((national_id_last4 ~ '^[A-Z0-9]{4}$'::text)); `customers_needs_summary_check` CHECK ((length(needs_summary) <= 2000)); `customers_notes_check` CHECK ((length(notes) <= 4000)); `customers_tenant_id_id_key` UNIQUE (id)
 
-**Indexes:** `CREATE UNIQUE INDEX customers_pkey ON app.customers USING btree (id)`; `CREATE INDEX customers_assigned_idx ON app.customers USING btree (assigned_to) WHERE (assigned_to IS NOT NULL)`; `CREATE INDEX customers_client_status_idx ON app.customers USING btree (client_status) WHERE (client_status IS NOT NULL)`; `CREATE INDEX customers_name_trgm ON app.customers USING gin (full_name public.gin_trgm_ops)`; `CREATE UNIQUE INDEX customers_natid_uq ON app.customers USING btree (national_id_hmac) WHERE ((national_id_hmac IS NOT NULL) AND (archived_at IS NULL))`; `CREATE UNIQUE INDEX customers_phone_uq ON app.customers USING btree (phone) WHERE ((phone IS NOT NULL) AND (archived_at IS NULL))`; `CREATE INDEX customers_registered_idx ON app.customers USING btree (registered_by)`; `CREATE UNIQUE INDEX customers_tenant_id_id_key ON app.customers USING btree (id)`; `CREATE INDEX customers_phone_trgm ON app.customers USING gin (phone gin_trgm_ops)`
+**Indexes:** `CREATE UNIQUE INDEX customers_pkey ON app.customers USING btree (id)`; `CREATE INDEX customers_assigned_idx ON app.customers USING btree (assigned_to) WHERE (assigned_to IS NOT NULL)`; `CREATE INDEX customers_client_status_idx ON app.customers USING btree (client_status) WHERE (client_status IS NOT NULL)`; `CREATE INDEX customers_name_trgm ON app.customers USING gin (full_name public.gin_trgm_ops)`; `CREATE UNIQUE INDEX customers_natid_uq ON app.customers USING btree (national_id_hmac) WHERE ((national_id_hmac IS NOT NULL) AND (archived_at IS NULL))`; `CREATE INDEX customers_phone_trgm ON app.customers USING gin (phone public.gin_trgm_ops)`; `CREATE UNIQUE INDEX customers_phone_uq ON app.customers USING btree (phone) WHERE ((phone IS NOT NULL) AND (archived_at IS NULL))`; `CREATE INDEX customers_registered_idx ON app.customers USING btree (registered_by)`; `CREATE UNIQUE INDEX customers_tenant_id_id_key ON app.customers USING btree (id)`
 
 
 ## app.day_closing_lines
@@ -683,7 +690,7 @@ _(see spec section 5)_
 
 **Constraints:** `design_jobs_brief_check` CHECK (((length(btrim(brief)) >= 1) AND (length(btrim(brief)) <= 10000))); `design_jobs_check` CHECK (((project_stage_id IS NULL) OR (project_id IS NOT NULL))); `design_jobs_check1` CHECK (((status <> ALL (ARRAY['approved'::app.design_job_status, 'printing'::app.design_job_status, 'delivered'::app.design_job_status])) OR ((final_version_id IS NOT NULL) AND (approved_at IS NOT NULL)))); `design_jobs_check2` CHECK (((status <> 'delivered'::app.design_job_status) OR (delivered_at IS NOT NULL))); `design_jobs_check3` CHECK (((status <> ALL (ARRAY['in_design'::app.design_job_status, 'internal_review'::app.design_job_status, 'with_client'::app.design_job_status])) OR (designer_id IS NOT NULL))); `design_jobs_revisions_included_check` CHECK (((revisions_included >= 0) AND (revisions_included <= 50))); `design_jobs_revisions_used_check` CHECK ((revisions_used >= 0)); `design_jobs_size_format_check` CHECK ((length(size_format) <= 100)); `design_jobs_style_notes_check` CHECK ((length(style_notes) <= 4000)); `design_jobs_tenant_id_id_key` UNIQUE (id); `design_jobs_tenant_id_job_no_key` UNIQUE (job_no); `design_jobs_text_to_include_check` CHECK ((length(text_to_include) <= 4000))
 
-**Indexes:** `CREATE UNIQUE INDEX design_jobs_pkey ON app.design_jobs USING btree (id)`; `CREATE INDEX design_jobs_board_idx ON app.design_jobs USING btree (status, deadline)`; `CREATE INDEX design_jobs_designer_idx ON app.design_jobs USING btree (designer_id, status)`; `CREATE INDEX design_jobs_stage_idx ON app.design_jobs USING btree (project_stage_id) WHERE (project_stage_id IS NOT NULL)`; `CREATE UNIQUE INDEX design_jobs_tenant_id_id_key ON app.design_jobs USING btree (id)`; `CREATE UNIQUE INDEX design_jobs_tenant_id_job_no_key ON app.design_jobs USING btree (job_no)`; `CREATE INDEX design_jobs_job_no_trgm ON app.design_jobs USING gin (job_no gin_trgm_ops)`
+**Indexes:** `CREATE UNIQUE INDEX design_jobs_pkey ON app.design_jobs USING btree (id)`; `CREATE INDEX design_jobs_board_idx ON app.design_jobs USING btree (status, deadline)`; `CREATE INDEX design_jobs_designer_idx ON app.design_jobs USING btree (designer_id, status)`; `CREATE INDEX design_jobs_job_no_trgm ON app.design_jobs USING gin (job_no public.gin_trgm_ops)`; `CREATE INDEX design_jobs_stage_idx ON app.design_jobs USING btree (project_stage_id) WHERE (project_stage_id IS NOT NULL)`; `CREATE UNIQUE INDEX design_jobs_tenant_id_id_key ON app.design_jobs USING btree (id)`; `CREATE UNIQUE INDEX design_jobs_tenant_id_job_no_key ON app.design_jobs USING btree (job_no)`
 
 
 ## app.design_time_logs
@@ -914,10 +921,11 @@ HR master record. Salaries are NOT here: see app.employee_compensation (restrict
 | updated_at | timestamp with time zone | NO | now() |  |  |
 | updated_by | uuid | yes |  | → memberships |  |
 | row_version | integer | NO | 1 |  |  |
+| business_unit_id | uuid | NO |  | → business_units |  |
 
 **Constraints:** `employees_check` CHECK (((end_date IS NULL) OR (end_date >= start_date))); `employees_check1` CHECK (((status <> 'terminated'::app.employee_status) OR (end_date IS NOT NULL))); `employees_check2` CHECK (((national_id_ciphertext IS NULL) = (national_id_key_id IS NULL))); `employees_emergency_contact_name_check` CHECK ((length(emergency_contact_name) <= 200)); `employees_national_id_last4_check` CHECK ((national_id_last4 ~ '^[A-Z0-9]{4}$'::text)); `employees_tenant_id_employee_no_key` UNIQUE (employee_no); `employees_tenant_id_id_key` UNIQUE (id); `employees_tenant_id_membership_id_key` UNIQUE (membership_id)
 
-**Indexes:** `CREATE UNIQUE INDEX employees_pkey ON app.employees USING btree (id)`; `CREATE UNIQUE INDEX employees_tenant_id_employee_no_key ON app.employees USING btree (employee_no)`; `CREATE UNIQUE INDEX employees_tenant_id_id_key ON app.employees USING btree (id)`; `CREATE UNIQUE INDEX employees_tenant_id_membership_id_key ON app.employees USING btree (membership_id)`
+**Indexes:** `CREATE UNIQUE INDEX employees_pkey ON app.employees USING btree (id)`; `CREATE INDEX employees_business_unit_idx ON app.employees USING btree (business_unit_id)`; `CREATE UNIQUE INDEX employees_tenant_id_employee_no_key ON app.employees USING btree (employee_no)`; `CREATE UNIQUE INDEX employees_tenant_id_id_key ON app.employees USING btree (id)`; `CREATE UNIQUE INDEX employees_tenant_id_membership_id_key ON app.employees USING btree (membership_id)`
 
 
 ## app.expense_categories
@@ -1206,7 +1214,7 @@ _(see spec section 5)_
 
 **Constraints:** `invoices_check` CHECK ((due_date >= issue_date)); `invoices_check1` CHECK (((total)::numeric = (((subtotal)::numeric - (discount_amount)::numeric) + (tax_amount)::numeric))); `invoices_check2` CHECK (((discount_amount)::numeric <= (subtotal)::numeric)); `invoices_check3` CHECK (((amount_paid)::numeric <= (total)::numeric)); `invoices_check4` CHECK (((status = 'draft'::app.invoice_status) OR (issued_at IS NOT NULL))); `invoices_check5` CHECK (((status <> 'void'::app.invoice_status) OR ((voided_at IS NOT NULL) AND (void_reason IS NOT NULL) AND ((amount_paid)::numeric = (0)::numeric)))); `invoices_draft_unpaid_check` CHECK (((status <> 'draft'::app.invoice_status) OR ((amount_paid)::numeric = (0)::numeric))); `invoices_issued_unpaid_check` CHECK (((status <> 'issued'::app.invoice_status) OR ((amount_paid)::numeric = (0)::numeric))); `invoices_notes_check` CHECK ((length(notes) <= 2000)); `invoices_paid_status_check` CHECK (((status <> 'paid'::app.invoice_status) OR (((total)::numeric > (0)::numeric) AND ((amount_paid)::numeric = (total)::numeric)))); `invoices_partial_status_check` CHECK (((status <> 'partially_paid'::app.invoice_status) OR (((amount_paid)::numeric > (0)::numeric) AND ((amount_paid)::numeric < (total)::numeric)))); `invoices_tenant_id_id_key` UNIQUE (id); `invoices_tenant_id_invoice_no_key` UNIQUE (invoice_no); `invoices_void_reason_check` CHECK ((length(void_reason) <= 1000))
 
-**Indexes:** `CREATE UNIQUE INDEX invoices_pkey ON app.invoices USING btree (id)`; `CREATE INDEX invoices_customer_idx ON app.invoices USING btree (customer_id, issue_date DESC)`; `CREATE INDEX invoices_design_job_idx ON app.invoices USING btree (design_job_id) WHERE (design_job_id IS NOT NULL)`; `CREATE INDEX invoices_open_idx ON app.invoices USING btree (due_date) WHERE (status = ANY (ARRAY['issued'::app.invoice_status, 'partially_paid'::app.invoice_status]))`; `CREATE INDEX invoices_project_idx ON app.invoices USING btree (project_id) WHERE (project_id IS NOT NULL)`; `CREATE UNIQUE INDEX invoices_tenant_id_id_key ON app.invoices USING btree (id)`; `CREATE UNIQUE INDEX invoices_tenant_id_invoice_no_key ON app.invoices USING btree (invoice_no)`; `CREATE INDEX invoices_invoice_no_trgm ON app.invoices USING gin (invoice_no gin_trgm_ops)`
+**Indexes:** `CREATE UNIQUE INDEX invoices_pkey ON app.invoices USING btree (id)`; `CREATE INDEX invoices_customer_idx ON app.invoices USING btree (customer_id, issue_date DESC)`; `CREATE INDEX invoices_design_job_idx ON app.invoices USING btree (design_job_id) WHERE (design_job_id IS NOT NULL)`; `CREATE INDEX invoices_invoice_no_trgm ON app.invoices USING gin (invoice_no public.gin_trgm_ops)`; `CREATE INDEX invoices_open_idx ON app.invoices USING btree (due_date) WHERE (status = ANY (ARRAY['issued'::app.invoice_status, 'partially_paid'::app.invoice_status]))`; `CREATE INDEX invoices_project_idx ON app.invoices USING btree (project_id) WHERE (project_id IS NOT NULL)`; `CREATE UNIQUE INDEX invoices_tenant_id_id_key ON app.invoices USING btree (id)`; `CREATE UNIQUE INDEX invoices_tenant_id_invoice_no_key ON app.invoices USING btree (invoice_no)`
 
 
 ## app.job_queue
@@ -1341,6 +1349,39 @@ Branch / shop / office / store. Needed for stock transfers (spec §2) and per-ti
 **Constraints:** `locations_tenant_id_id_key` UNIQUE (id); `locations_tenant_id_name_key` UNIQUE (name)
 
 **Indexes:** `CREATE UNIQUE INDEX locations_pkey ON app.locations USING btree (id)`; `CREATE UNIQUE INDEX locations_one_default ON app.locations USING btree ((true)) WHERE is_default`; `CREATE UNIQUE INDEX locations_tenant_id_id_key ON app.locations USING btree (id)`; `CREATE UNIQUE INDEX locations_tenant_id_name_key ON app.locations USING btree (name)`
+
+
+## app.membership_business_units
+
+The businesses a person may work in, on top of role permissions. Admins always have all of them.
+
+| Column | Type | Null | Default | Key / FK | Notes |
+|---|---|---|---|---|---|
+| membership_id | uuid | NO |  | PK → memberships |  |
+| business_unit_id | uuid | NO |  | PK → business_units |  |
+| is_primary | boolean | NO | false |  |  |
+| created_at | timestamp with time zone | NO | now() |  |  |
+| created_by | uuid | yes | app.current_membership_id() | → memberships |  |
+
+**Constraints:**
+
+**Indexes:** `CREATE UNIQUE INDEX membership_business_units_pkey ON app.membership_business_units USING btree (membership_id, business_unit_id)`; `CREATE UNIQUE INDEX membership_business_units_one_primary ON app.membership_business_units USING btree (membership_id) WHERE is_primary`; `CREATE INDEX membership_business_units_unit_idx ON app.membership_business_units USING btree (business_unit_id)`
+
+
+## app.membership_locations
+
+Branches a person is limited to. No rows means no limit beyond the branches of their businesses.
+
+| Column | Type | Null | Default | Key / FK | Notes |
+|---|---|---|---|---|---|
+| membership_id | uuid | NO |  | PK → memberships |  |
+| location_id | uuid | NO |  | PK → locations |  |
+| created_at | timestamp with time zone | NO | now() |  |  |
+| created_by | uuid | yes | app.current_membership_id() | → memberships |  |
+
+**Constraints:**
+
+**Indexes:** `CREATE UNIQUE INDEX membership_locations_pkey ON app.membership_locations USING btree (membership_id, location_id)`; `CREATE INDEX membership_locations_location_idx ON app.membership_locations USING btree (location_id)`
 
 
 ## app.membership_permission_overrides
@@ -1925,7 +1966,7 @@ _(see spec section 5)_
 
 **Constraints:** `products_average_cost_check` CHECK ((average_cost >= (0)::numeric)); `products_barcode_check` CHECK ((barcode ~ '^[0-9A-Za-z-]{4,48}$'::text)); `products_check` CHECK (((NOT tracks_serial) OR (unit_of_measure = 'pcs'::text))); `products_description_check` CHECK ((length(description) <= 2000)); `products_min_stock_level_check` CHECK ((min_stock_level >= (0)::numeric)); `products_sku_check` CHECK ((sku ~ '^[A-Za-z0-9._-]{1,40}$'::text)); `products_tenant_id_id_key` UNIQUE (id); `products_unit_of_measure_check` CHECK ((unit_of_measure ~ '^[a-z]{1,10}$'::text)); `products_warranty_months_check` CHECK (((warranty_months >= 0) AND (warranty_months <= 120)))
 
-**Indexes:** `CREATE UNIQUE INDEX products_pkey ON app.products USING btree (id)`; `CREATE UNIQUE INDEX products_barcode_uq ON app.products USING btree (barcode) WHERE (barcode IS NOT NULL)`; `CREATE INDEX products_category_idx ON app.products USING btree (category_id) WHERE (status = 'active'::app.record_status)`; `CREATE INDEX products_name_trgm ON app.products USING gin (name public.gin_trgm_ops)`; `CREATE UNIQUE INDEX products_sku_uq ON app.products USING btree (sku) WHERE (sku IS NOT NULL)`; `CREATE UNIQUE INDEX products_tenant_id_id_key ON app.products USING btree (id)`; `CREATE INDEX products_sku_trgm ON app.products USING gin (sku gin_trgm_ops)`; `CREATE INDEX products_barcode_trgm ON app.products USING gin (barcode gin_trgm_ops)`
+**Indexes:** `CREATE UNIQUE INDEX products_pkey ON app.products USING btree (id)`; `CREATE INDEX products_barcode_trgm ON app.products USING gin (barcode public.gin_trgm_ops)`; `CREATE UNIQUE INDEX products_barcode_uq ON app.products USING btree (barcode) WHERE (barcode IS NOT NULL)`; `CREATE INDEX products_category_idx ON app.products USING btree (category_id) WHERE (status = 'active'::app.record_status)`; `CREATE INDEX products_name_trgm ON app.products USING gin (name public.gin_trgm_ops)`; `CREATE INDEX products_sku_trgm ON app.products USING gin (sku public.gin_trgm_ops)`; `CREATE UNIQUE INDEX products_sku_uq ON app.products USING btree (sku) WHERE (sku IS NOT NULL)`; `CREATE UNIQUE INDEX products_tenant_id_id_key ON app.products USING btree (id)`
 
 
 ## app.project_stage_checklist
@@ -2023,7 +2064,7 @@ _(see spec section 5)_
 
 **Constraints:** `projects_cancel_reason_check` CHECK ((length(cancel_reason) <= 1000)); `projects_check` CHECK (((target_end_date IS NULL) OR (target_end_date >= start_date))); `projects_check1` CHECK (((status <> 'completed'::app.project_status) OR (completed_at IS NOT NULL))); `projects_check2` CHECK (((status <> 'cancelled'::app.project_status) OR ((cancelled_at IS NOT NULL) AND (cancel_reason IS NOT NULL)))); `projects_tenant_id_id_key` UNIQUE (id); `projects_tenant_id_project_no_key` UNIQUE (project_no); `projects_tenant_id_quotation_id_key` UNIQUE (quotation_id)
 
-**Indexes:** `CREATE UNIQUE INDEX projects_pkey ON app.projects USING btree (id)`; `CREATE INDEX projects_customer_idx ON app.projects USING btree (customer_id)`; `CREATE INDEX projects_owner_idx ON app.projects USING btree (owner_id) WHERE (status = ANY (ARRAY['not_started'::app.project_status, 'in_progress'::app.project_status, 'on_hold'::app.project_status]))`; `CREATE INDEX projects_status_idx ON app.projects USING btree (status)`; `CREATE UNIQUE INDEX projects_tenant_id_id_key ON app.projects USING btree (id)`; `CREATE UNIQUE INDEX projects_tenant_id_project_no_key ON app.projects USING btree (project_no)`; `CREATE UNIQUE INDEX projects_tenant_id_quotation_id_key ON app.projects USING btree (quotation_id)`; `CREATE INDEX projects_project_no_trgm ON app.projects USING gin (project_no gin_trgm_ops)`
+**Indexes:** `CREATE UNIQUE INDEX projects_pkey ON app.projects USING btree (id)`; `CREATE INDEX projects_customer_idx ON app.projects USING btree (customer_id)`; `CREATE INDEX projects_owner_idx ON app.projects USING btree (owner_id) WHERE (status = ANY (ARRAY['not_started'::app.project_status, 'in_progress'::app.project_status, 'on_hold'::app.project_status]))`; `CREATE INDEX projects_project_no_trgm ON app.projects USING gin (project_no public.gin_trgm_ops)`; `CREATE INDEX projects_status_idx ON app.projects USING btree (status)`; `CREATE UNIQUE INDEX projects_tenant_id_id_key ON app.projects USING btree (id)`; `CREATE UNIQUE INDEX projects_tenant_id_project_no_key ON app.projects USING btree (project_no)`; `CREATE UNIQUE INDEX projects_tenant_id_quotation_id_key ON app.projects USING btree (quotation_id)`
 
 
 ## app.purchase_lines
@@ -2132,7 +2173,7 @@ _(see spec section 5)_
 
 **Constraints:** `quotations_check` CHECK ((valid_until >= issue_date)); `quotations_check1` CHECK (((total)::numeric = (((subtotal)::numeric - (discount_amount)::numeric) + (tax_amount)::numeric))); `quotations_check2` CHECK (((discount_amount)::numeric <= (subtotal)::numeric)); `quotations_check3` CHECK (((status <> ALL (ARRAY['sent'::app.quotation_status, 'accepted'::app.quotation_status, 'rejected'::app.quotation_status, 'converted'::app.quotation_status])) OR (sent_at IS NOT NULL))); `quotations_notes_check` CHECK ((length(notes) <= 2000)); `quotations_rejection_reason_check` CHECK ((length(rejection_reason) <= 1000)); `quotations_tenant_id_id_key` UNIQUE (id); `quotations_tenant_id_quotation_no_key` UNIQUE (quotation_no); `quotations_terms_check` CHECK ((length(terms) <= 4000))
 
-**Indexes:** `CREATE UNIQUE INDEX quotations_pkey ON app.quotations USING btree (id)`; `CREATE INDEX quotations_customer_idx ON app.quotations USING btree (customer_id, issue_date DESC)`; `CREATE INDEX quotations_open_idx ON app.quotations USING btree (valid_until) WHERE (status = ANY (ARRAY['draft'::app.quotation_status, 'sent'::app.quotation_status]))`; `CREATE UNIQUE INDEX quotations_tenant_id_id_key ON app.quotations USING btree (id)`; `CREATE UNIQUE INDEX quotations_tenant_id_quotation_no_key ON app.quotations USING btree (quotation_no)`; `CREATE INDEX quotations_no_trgm ON app.quotations USING gin (quotation_no gin_trgm_ops)`
+**Indexes:** `CREATE UNIQUE INDEX quotations_pkey ON app.quotations USING btree (id)`; `CREATE INDEX quotations_customer_idx ON app.quotations USING btree (customer_id, issue_date DESC)`; `CREATE INDEX quotations_no_trgm ON app.quotations USING gin (quotation_no public.gin_trgm_ops)`; `CREATE INDEX quotations_open_idx ON app.quotations USING btree (valid_until) WHERE (status = ANY (ARRAY['draft'::app.quotation_status, 'sent'::app.quotation_status]))`; `CREATE UNIQUE INDEX quotations_tenant_id_id_key ON app.quotations USING btree (id)`; `CREATE UNIQUE INDEX quotations_tenant_id_quotation_no_key ON app.quotations USING btree (quotation_no)`
 
 
 ## app.recurring_expenses
@@ -2398,7 +2439,7 @@ _(see spec section 5)_
 
 **Constraints:** `sales_check` CHECK (((discount_type IS NOT NULL) OR (discount_value = (0)::numeric))); `sales_check1` CHECK (((discount_type <> 'percent'::app.discount_type) OR (discount_value <= (100)::numeric))); `sales_check2` CHECK (((discount_amount)::numeric <= (subtotal)::numeric)); `sales_check3` CHECK (((total)::numeric = ((subtotal)::numeric - (discount_amount)::numeric))); `sales_check4` CHECK (((amount_paid)::numeric <= (total)::numeric)); `sales_check5` CHECK (((status <> ALL (ARRAY['completed'::app.sale_status, 'voided'::app.sale_status])) OR ((receipt_no IS NOT NULL) AND (completed_at IS NOT NULL)))); `sales_check6` CHECK (((status <> 'voided'::app.sale_status) OR ((voided_at IS NOT NULL) AND (voided_by IS NOT NULL) AND (void_reason IS NOT NULL)))); `sales_check7` CHECK (((status <> 'held'::app.sale_status) OR (held_at IS NOT NULL))); `sales_discount_value_check` CHECK ((discount_value >= (0)::numeric)); `sales_held_label_check` CHECK ((length(held_label) <= 60)); `sales_notes_check` CHECK ((length(notes) <= 1000)); `sales_tenant_id_client_ref_key` UNIQUE (client_ref); `sales_tenant_id_id_key` UNIQUE (id); `sales_tenant_id_receipt_no_key` UNIQUE (receipt_no); `sales_void_reason_check` CHECK ((length(void_reason) <= 1000))
 
-**Indexes:** `CREATE UNIQUE INDEX sales_pkey ON app.sales USING btree (id)`; `CREATE INDEX sales_customer_idx ON app.sales USING btree (customer_id) WHERE (customer_id IS NOT NULL)`; `CREATE INDEX sales_held_idx ON app.sales USING btree (location_id) WHERE (status = ANY (ARRAY['held'::app.sale_status, 'draft'::app.sale_status, 'pending_approval'::app.sale_status]))`; `CREATE INDEX sales_history_idx ON app.sales USING btree (business_date DESC, location_id) WHERE (status = ANY (ARRAY['completed'::app.sale_status, 'voided'::app.sale_status]))`; `CREATE INDEX sales_open_credit_idx ON app.sales USING btree (due_date) WHERE ((status = 'completed'::app.sale_status) AND (balance_due > (0)::numeric))`; `CREATE INDEX sales_seller_idx ON app.sales USING btree (sold_by, business_date DESC)`; `CREATE UNIQUE INDEX sales_tenant_id_client_ref_key ON app.sales USING btree (client_ref)`; `CREATE UNIQUE INDEX sales_tenant_id_id_key ON app.sales USING btree (id)`; `CREATE UNIQUE INDEX sales_tenant_id_receipt_no_key ON app.sales USING btree (receipt_no)`; `CREATE INDEX sales_receipt_no_trgm ON app.sales USING gin (receipt_no gin_trgm_ops)`
+**Indexes:** `CREATE UNIQUE INDEX sales_pkey ON app.sales USING btree (id)`; `CREATE INDEX sales_customer_idx ON app.sales USING btree (customer_id) WHERE (customer_id IS NOT NULL)`; `CREATE INDEX sales_held_idx ON app.sales USING btree (location_id) WHERE (status = ANY (ARRAY['held'::app.sale_status, 'draft'::app.sale_status, 'pending_approval'::app.sale_status]))`; `CREATE INDEX sales_history_idx ON app.sales USING btree (business_date DESC, location_id) WHERE (status = ANY (ARRAY['completed'::app.sale_status, 'voided'::app.sale_status]))`; `CREATE INDEX sales_open_credit_idx ON app.sales USING btree (due_date) WHERE ((status = 'completed'::app.sale_status) AND (balance_due > (0)::numeric))`; `CREATE INDEX sales_receipt_no_trgm ON app.sales USING gin (receipt_no public.gin_trgm_ops)`; `CREATE INDEX sales_seller_idx ON app.sales USING btree (sold_by, business_date DESC)`; `CREATE UNIQUE INDEX sales_tenant_id_client_ref_key ON app.sales USING btree (client_ref)`; `CREATE UNIQUE INDEX sales_tenant_id_id_key ON app.sales USING btree (id)`; `CREATE UNIQUE INDEX sales_tenant_id_receipt_no_key ON app.sales USING btree (receipt_no)`
 
 
 ## app.scheduled_job_marks

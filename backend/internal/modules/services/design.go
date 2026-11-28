@@ -931,12 +931,13 @@ func (s *Service) PublicApproval(ctx context.Context, token string) (map[string]
 			SELECT j.title::text AS title,
 			       CASE WHEN j.job_type = 'social_media_post' THEN 'social_media' ELSE j.job_type::text END AS job_type,
 			       c.full_name::text AS client_name,
-			       COALESCE(NULLIF(bs.business_name::text,''), bp.name::text) AS business_name,
+			       COALESCE(bu.display_name::text, NULLIF(bs.business_name::text,''), bp.name::text) AS business_name,
 			       j.revisions_included, j.revisions_used
 			FROM app.design_jobs j
 			JOIN app.customers c ON c.id = j.customer_id
 			CROSS JOIN app.business_profile bp
 			CROSS JOIN app.business_settings bs
+			LEFT JOIN app.business_units bu ON bu.code = 'B'
 			WHERE j.id = $1`, a.jobID)
 		if err != nil {
 			return err

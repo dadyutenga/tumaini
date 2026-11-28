@@ -120,7 +120,7 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	fiberApp.Use(cors.New(cors.Config{
 		AllowOrigins:     cfg.CORSOrigins,
 		AllowCredentials: true,
-		AllowHeaders:     []string{"Authorization", "Content-Type", "X-Branch-Id", "Idempotency-Key"},
+		AllowHeaders:     []string{"Authorization", "Content-Type", "X-Branch-Id", "X-Business-Unit", "Idempotency-Key"},
 	}))
 	fiberApp.Get("/healthz", func(c fiber.Ctx) error { return c.SendString("ok") })
 	fiberApp.Get("/readyz", func(c fiber.Ctx) error {
@@ -146,7 +146,8 @@ func New(ctx context.Context, cfg config.Config, clk clock.Clock) (*App, error) 
 	svcHandler := services.Build(d)
 	svcHandler.RegisterPublic(api.Group("/public"), limit)
 
-	private := api.Group("", middleware.Auth(auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, ident.Load), middleware.Branch(database))
+	private := api.Group("", middleware.Auth(auth.Tokens{Secret: []byte(cfg.JWTSecret), Access: cfg.AccessTokenTTL, Now: clk.Now}, ident.Load), middleware.Branch(database),
+		middleware.BusinessRoutes())
 	identity.Register(private, &identity.Handler{Svc: ident, CookieSecure: cfg.CookieSecure, CookieDomain: cfg.CookieDomain, RefreshTTL: cfg.RefreshTokenTTL, Shared: shared})
 	limitCostly(private, shared)
 	for _, mount := range []func(fiber.Router, deps.Deps){

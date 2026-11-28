@@ -27,6 +27,7 @@ type RecurringIn struct {
 	DayOfMonth     int             `json:"day_of_month" validate:"gte=0,lte=28"`
 	NextRunOn      string          `json:"next_run_on" validate:"date"`
 	StartDate      string          `json:"start_date" validate:"date"` // legacy alias for next_run_on
+	BusinessUnit   string          `json:"business_unit" validate:"omitempty,oneof=A B"`
 }
 
 func nextMonth(d time.Time, dayOfMonth int) time.Time {
@@ -44,7 +45,8 @@ func nextMonth(d time.Time, dayOfMonth int) time.Time {
 }
 
 const recurringCols = `r.id, r.location_id, r.category_id, ec.name::text, r.amount, r.description::text, r.account_id,
-	r.day_of_month, r.next_run_on::text, r.active, r.created_by, r.created_at`
+	r.day_of_month, r.next_run_on::text, r.active, r.created_by, r.created_at,
+	(SELECT bu.code FROM app.business_units bu WHERE bu.id = r.business_unit_id)`
 
 func scanRecurring(row pgx.Row) (map[string]any, error) {
 	var id, branch, category uuid.UUID
@@ -54,12 +56,13 @@ func scanRecurring(row pgx.Row) (map[string]any, error) {
 	var dom int
 	var active bool
 	var created time.Time
-	if err := row.Scan(&id, &branch, &category, &catName, &amount, &desc, &account, &dom, &next, &active, &by, &created); err != nil {
+	var unit string
+	if err := row.Scan(&id, &branch, &category, &catName, &amount, &desc, &account, &dom, &next, &active, &by, &created, &unit); err != nil {
 		return nil, err
 	}
 	return map[string]any{"id": id, "branch_id": branch, "category_id": category, "category_name": catName, "amount": amount,
 		"description": desc, "money_account_id": account, "day_of_month": dom, "frequency": "monthly",
-		"next_run": next, "next_run_on": next, "is_active": active, "created_by": by, "created_at": created}, nil
+		"next_run": next, "next_run_on": next, "is_active": active, "created_by": by, "created_at": created, "business_unit": unit}, nil
 }
 
 func (s *Service) Recurring(ctx context.Context, p *auth.Principal, page httpx.Page, active *bool) ([]map[string]any, int, error) {
@@ -151,8 +154,12 @@ func (s *Service) CreateRecurring(ctx context.Context, p *auth.Principal, in Rec
 		if err != nil {
 			return err
 		}
+		unit, err := businessFor(ctx, tx, p, in.BusinessUnit, branch)
+		if err != nil {
+			return err
+		}
 		var id uuid.UUID
-		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.recurring_expenses ( category_id, description, amount, business_unit_id, location_id, account_id, day_of_month, next_run_on)\n\t\t\tVALUES ($1,$2,$3,(SELECT business_unit_id FROM app.locations WHERE id = $4),$4,$5,$6,$7::date)\n\t\t\tRETURNING id", in.CategoryID, in.Description, money.Money(in.Amount), branch, in.MoneyAccountID, dom, next).Scan(&id); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.recurring_expenses ( category_id, description, amount, business_unit_id, location_id, account_id, day_of_month, next_run_on)\n\t\t\tVALUES ($1,$2,$3,$8,$4,$5,$6,$7::date)\n\t\t\tRETURNING id", in.CategoryID, in.Description, money.Money(in.Amount), branch, in.MoneyAccountID, dom, next, unit).Scan(&id); err != nil {
 			return err
 		}
 		out, err = s.getRecurring(ctx, tx, id, false)
@@ -179,7 +186,11 @@ func (s *Service) UpdateRecurring(ctx context.Context, p *auth.Principal, id uui
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.recurring_expenses\n\t\t\tSET business_unit_id = (SELECT business_unit_id FROM app.locations WHERE id = $2),\n\t\t\t    location_id = $2, category_id = $3, amount = $4, description = $5, account_id = $6, day_of_month = $7, next_run_on = $8::date\n\t\t\tWHERE id = $1", id, branch, in.CategoryID, money.Money(in.Amount), in.Description, in.MoneyAccountID, dom, next); err != nil {
+		chosen, err := chosenBusiness(p, in.BusinessUnit)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.recurring_expenses\n\t\t\tSET business_unit_id = coalesce($9, business_unit_id),\n\t\t\t    location_id = $2, category_id = $3, amount = $4, description = $5, account_id = $6, day_of_month = $7, next_run_on = $8::date\n\t\t\tWHERE id = $1", id, branch, in.CategoryID, money.Money(in.Amount), in.Description, in.MoneyAccountID, dom, next, chosen); err != nil {
 			return err
 		}
 		out, err = s.getRecurring(ctx, tx, id, false)

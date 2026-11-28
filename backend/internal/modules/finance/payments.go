@@ -11,6 +11,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"bms/internal/kernel/approval"
+	"bms/internal/kernel/business"
 	"bms/internal/kernel/payments"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
@@ -181,9 +182,16 @@ func (s *Service) Voucher(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 		if err != nil {
 			return err
 		}
-		var name string
-		var phone, address, tin *string
-		if err := tx.QueryRow(ctx, "SELECT business_name::text, phone::text, address, tin FROM app.business_settings WHERE true").Scan(&name, &phone, &address, &tin); err != nil {
+		// The voucher carries the business the money belongs to.
+		var code string
+		if err := tx.QueryRow(ctx, `
+			SELECT u.code FROM app.business_units u WHERE u.id = (
+				SELECT business_unit_id FROM app.payments_received WHERE id = $1
+				UNION ALL SELECT business_unit_id FROM app.payments_made WHERE id = $1 LIMIT 1)`, id).Scan(&code); err != nil {
+			return err
+		}
+		head, err := business.HeaderFor(ctx, tx, code)
+		if err != nil {
 			return err
 		}
 		var branchName string
@@ -193,7 +201,7 @@ func (s *Service) Voucher(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 			title = "Payment voucher"
 		}
 		out["title"] = title
-		out["business"] = map[string]any{"name": name, "phone": phone, "address": address, "tax_number": tin, "branch_name": branchName}
+		out["business"] = map[string]any{"name": head.Name, "phone": head.Phone, "address": head.Address, "tax_number": head.TaxNumber, "branch_name": branchName}
 		return nil
 	})
 	return out, err

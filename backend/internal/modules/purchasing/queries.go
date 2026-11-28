@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
+	"bms/internal/kernel/business"
 	"bms/internal/kernel/payments"
 	"bms/internal/platform/auth"
 	"bms/internal/platform/httpx"
@@ -167,7 +168,9 @@ func (s *Service) POPDF(ctx context.Context, p *auth.Principal, id uuid.UUID) (s
 	}
 	var bizName string
 	_ = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, "SELECT business_name::text FROM app.business_settings WHERE true").Scan(&bizName)
+		head, err := business.HeaderFor(ctx, tx, auth.Shop)
+		bizName = head.Name
+		return err
 	})
 	d := pdf.New()
 	d.Heading(bizName, 16)

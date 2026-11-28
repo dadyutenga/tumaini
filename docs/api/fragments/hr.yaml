@@ -8,6 +8,10 @@ paths:
       x-permission: employees.view
       parameters:
       - $ref: '#/components/parameters/BranchId'
+      - name: business
+        in: query
+        schema: {type: string, enum: [A, B]}
+        description: Only people whose pay belongs to this business
       - name: page
         in: query
         schema:
@@ -62,6 +66,11 @@ paths:
           application/json:
             schema:
               type: object
+              properties:
+                business_unit:
+                  type: string
+                  enum: [A, B]
+                  description: The business their pay is posted to; defaults to the branch's business.
       responses:
         '201':
           description: Created

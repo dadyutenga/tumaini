@@ -33,12 +33,12 @@ func (s *Service) PayrollSummary(ctx context.Context, p *auth.Principal, f Filte
 			       make_date(r.period_year, r.period_month, 1) AS period_start,
 			       (make_date(r.period_year, r.period_month, 1) + interval '1 month' - interval '1 day')::date AS period_end,
 			       r.status::text AS status, COALESCE(b.name::text, 'All branches') AS branch,
-			       (SELECT count(*) FROM app.payroll_lines pl WHERE pl.payroll_run_id = r.id) AS employees,
-			       COALESCE((SELECT SUM(pl.gross_pay) FROM app.payroll_lines pl WHERE pl.payroll_run_id = r.id), 0) AS gross,
-			       COALESCE((SELECT SUM(pl.deductions + pl.advance_repayment + pl.statutory_deductions) FROM app.payroll_lines pl WHERE pl.payroll_run_id = r.id), 0) AS deductions,
-			       COALESCE((SELECT SUM(pl.net_pay) FROM app.payroll_lines pl WHERE pl.payroll_run_id = r.id), 0) AS net,
-			       COALESCE((SELECT SUM(psi.employer_amount) FROM app.payroll_statutory_items psi JOIN app.payroll_lines pl ON pl.id = psi.payroll_line_id WHERE pl.payroll_run_id = r.id), 0) AS employer,
-			       COALESCE((SELECT SUM(pl.net_pay) FROM app.payroll_lines pl WHERE pl.payroll_run_id = r.id AND (r.status = 'paid' OR pl.paid_at IS NOT NULL)), 0) AS paid
+			       (SELECT count(*) FROM app.payroll_lines pl JOIN app.employees emp ON emp.id = pl.employee_id WHERE pl.payroll_run_id = r.id) AS employees,
+			       COALESCE((SELECT SUM(pl.gross_pay) FROM app.payroll_lines pl JOIN app.employees emp ON emp.id = pl.employee_id WHERE pl.payroll_run_id = r.id), 0) AS gross,
+			       COALESCE((SELECT SUM(pl.deductions + pl.advance_repayment + pl.statutory_deductions) FROM app.payroll_lines pl JOIN app.employees emp ON emp.id = pl.employee_id WHERE pl.payroll_run_id = r.id), 0) AS deductions,
+			       COALESCE((SELECT SUM(pl.net_pay) FROM app.payroll_lines pl JOIN app.employees emp ON emp.id = pl.employee_id WHERE pl.payroll_run_id = r.id), 0) AS net,
+			       COALESCE((SELECT SUM(psi.employer_amount) FROM app.payroll_statutory_items psi JOIN app.payroll_lines pl ON pl.id = psi.payroll_line_id JOIN app.employees emp ON emp.id = pl.employee_id WHERE pl.payroll_run_id = r.id), 0) AS employer,
+			       COALESCE((SELECT SUM(pl.net_pay) FROM app.payroll_lines pl JOIN app.employees emp ON emp.id = pl.employee_id WHERE pl.payroll_run_id = r.id AND (r.status = 'paid' OR pl.paid_at IS NOT NULL)), 0) AS paid
 			FROM app.payroll_runs r
 			LEFT JOIN app.locations b ON b.id = r.location_id`+q.Where()+`
 			ORDER BY r.period_year DESC, r.period_month DESC`, q.Args...)
@@ -83,23 +83,23 @@ func (s *Service) PayrollDeductions(ctx context.Context, p *auth.Principal, f Fi
 			SELECT kind, label, employees, amount FROM (
 				SELECT 'statutory'::text AS kind, psi.code AS label, count(DISTINCT pl.employee_id) AS employees, SUM(psi.employee_amount) AS amount
 				FROM app.payroll_statutory_items psi
-				JOIN app.payroll_lines pl ON pl.id = psi.payroll_line_id
+				JOIN app.payroll_lines pl ON pl.id = psi.payroll_line_id JOIN app.employees emp ON emp.id = pl.employee_id
 				JOIN app.payroll_runs r ON r.id = pl.payroll_run_id`+w+`
 				GROUP BY psi.code HAVING SUM(psi.employee_amount) > 0
 				UNION ALL
 				SELECT 'employer_contribution'::text, psi.code || ' (Employer)', count(DISTINCT pl.employee_id), SUM(psi.employer_amount)
 				FROM app.payroll_statutory_items psi
-				JOIN app.payroll_lines pl ON pl.id = psi.payroll_line_id
+				JOIN app.payroll_lines pl ON pl.id = psi.payroll_line_id JOIN app.employees emp ON emp.id = pl.employee_id
 				JOIN app.payroll_runs r ON r.id = pl.payroll_run_id`+w+`
 				GROUP BY psi.code HAVING SUM(psi.employer_amount) > 0
 				UNION ALL
 				SELECT 'loan'::text, 'Advance / loan repayment', count(DISTINCT pl.employee_id), SUM(pl.advance_repayment)
-				FROM app.payroll_lines pl
+				FROM app.payroll_lines pl JOIN app.employees emp ON emp.id = pl.employee_id
 				JOIN app.payroll_runs r ON r.id = pl.payroll_run_id`+w+`
 				HAVING COALESCE(SUM(pl.advance_repayment), 0) > 0
 				UNION ALL
 				SELECT 'deduction'::text, 'Other deductions', count(DISTINCT pl.employee_id), SUM(pl.deductions)
-				FROM app.payroll_lines pl
+				FROM app.payroll_lines pl JOIN app.employees emp ON emp.id = pl.employee_id
 				JOIN app.payroll_runs r ON r.id = pl.payroll_run_id`+w+`
 				HAVING COALESCE(SUM(pl.deductions), 0) > 0
 			) x ORDER BY kind, amount DESC`, q.Args...)
@@ -163,6 +163,7 @@ func (s *Service) StaffPerformance(ctx context.Context, p *auth.Principal, f Fil
 		var err error
 		list, err = rows(ctx, tx, `
 			SELECT e.id, e.full_name::text AS employee, e.employee_no, COALESCE(b.name::text, '') AS branch,
+			       (SELECT u.name::text FROM app.business_units u WHERE u.id = e.business_unit_id) AS business,
 			       COALESCE(sl.sales_count, 0) AS sales_count, COALESCE(sl.net_sales, 0) AS net_sales,
 			       COALESCE(a.present, 0) AS days_present, COALESCE(a.absent, 0) AS days_absent,
 			       COALESCE(a.late_count, 0) AS late_count, COALESCE(a.late_minutes, 0) AS late_minutes,
@@ -190,11 +191,11 @@ func (s *Service) StaffPerformance(ctx context.Context, p *auth.Principal, f Fil
 				FROM app.commission_entries ce WHERE true`+cq+`
 				GROUP BY ce.employee_id
 			) cm ON cm.employee_id = e.id`+ew+`
-			ORDER BY net_sales DESC, e.full_name`, q.Args...)
+			ORDER BY business, net_sales DESC, e.full_name`, q.Args...)
 		return err
 	})
 	return export.Table{Title: "Staff performance", Subtitle: f.subtitle(),
-		Columns: cols("employee", "branch", "sales_count", "net_sales", "days_present", "days_absent", "late_count", "late_minutes", "attendance_rate", "commission"),
+		Columns: cols("business", "employee", "branch", "sales_count", "net_sales", "days_present", "days_absent", "late_count", "late_minutes", "attendance_rate", "commission"),
 		Rows:    list, Totals: totals(list, "Total", "sales_count", "net_sales", "commission")}, nil, err
 }
 

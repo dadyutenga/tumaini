@@ -5,6 +5,8 @@ import { ChevronDown, ChevronRight, Menu, PanelLeft, PanelLeftClose } from "luci
 import { routes, type AppRoute } from "@/app/routes";
 import { useVisibleRoutes } from "@/app/useVisibleRoutes";
 import { BranchSwitcher } from "@/components/layout/BranchSwitcher";
+import { BusinessSwitcher } from "@/features/business/BusinessSwitcher";
+import { useBusiness } from "@/features/business/useBusiness";
 import { NotificationBell, QuickNewMenu, ThemeToggle, UserMenu } from "@/components/shared/Toolbar";
 import { LanguageSwitcher } from "@/features/i18n/LanguageSwitcher";
 import { useI18n } from "@/features/i18n/i18n";
@@ -39,6 +41,7 @@ function Navigation({
   const visible = useVisibleRoutes().filter((route) => route.navigation);
   const { t, groupLabel, routeLabel } = useI18n();
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const { shows } = useBusiness();
 
   const sections = useMemo(() => {
     const out: { name: string | null; items: AppRoute[] }[] = [];
@@ -58,13 +61,16 @@ function Navigation({
   return (
     <nav aria-label={t.common.mainNavigation} className="space-y-0.5 pb-6">
       {sections.map((sec, idx) => {
-        const isCollapsed = sec.name ? Boolean(collapsed[sec.name]) : false;
+        // The other business's pages stay reachable, folded away until asked for.
+        const folded = !shows(sec.items[0]?.business);
+        const isCollapsed = sec.name ? (collapsed[sec.name] ?? folded) : false;
         return (
           <div key={sec.name ?? `root-${idx}`} className={idx > 0 && !compact ? "pt-3" : undefined}>
             {sec.name && !compact && (
               <button
                 type="button"
-                onClick={() => setCollapsed((c) => ({ ...c, [sec.name!]: !c[sec.name!] }))}
+                aria-expanded={!isCollapsed}
+                onClick={() => setCollapsed((c) => ({ ...c, [sec.name!]: !isCollapsed }))}
                 className="mb-1 flex w-full items-center justify-between rounded-md px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.04em] text-[var(--od-ink-muted)] transition-colors hover:text-[var(--od-ink)]"
               >
                 <span>{groupLabel(sec.name)}</span>
@@ -190,6 +196,12 @@ export default function DashboardLayout() {
               <SheetDescription className="sr-only">
                 {t.common.chooseAPageToNavigate}
               </SheetDescription>
+              <BusinessSwitcher className="mb-3" />
+              {/* The narrowest screens have no room for these in the top bar. */}
+              <div className="mb-3 flex items-center gap-2 sm:hidden">
+                <LanguageSwitcher />
+                <ThemeToggle />
+              </div>
               <Navigation onNavigate={() => setOpen(false)} />
             </SheetContent>
           </Sheet>
@@ -207,7 +219,7 @@ export default function DashboardLayout() {
           </Button>
 
           {/* Breadcrumbs */}
-          <div className="hidden sm:block">
+          <div className="hidden min-w-0 whitespace-nowrap lg:block">
             <Breadcrumb>
               <BreadcrumbList className="text-[13px]">
                 <BreadcrumbItem>
@@ -234,9 +246,14 @@ export default function DashboardLayout() {
           <div className="ml-auto flex items-center gap-1.5">
             <SearchPalette />
             <QuickNewMenu />
+            <div className="hidden shrink-0 md:block">
+              <BusinessSwitcher />
+            </div>
             <BranchSwitcher />
-            <LanguageSwitcher />
-            <ThemeToggle />
+            <div className="hidden items-center gap-1.5 sm:flex">
+              <LanguageSwitcher />
+              <ThemeToggle />
+            </div>
             <NotificationBell />
             <UserMenu />
           </div>
