@@ -29,6 +29,7 @@ import type { Category, Customer, MoneyAccount, Product, Sale } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt, plural } from "@/features/i18n/format";
 import { activeLocale, activeT } from "@/features/i18n/active";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 interface CartLine {
   product: Product;
@@ -101,7 +102,7 @@ export default function Pos() {
   const [syncing, setSyncing] = useState(false);
 
   const [cart, setCart] = useState<CartLine[]>(() => readStorage<CartLine[]>(DRAFT_KEY, []));
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useSearchBox();
   const [categoryId, setCategoryId] = useState("");
   const debounced = useDebounce(search, 200);
   const [customerId, setCustomerId] = useState("");

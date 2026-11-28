@@ -22,6 +22,7 @@ import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { MoneyAccount, Product } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 export interface Supplier {
   id: string;
@@ -221,7 +222,7 @@ function OrdersTab({ suppliers }: { suppliers: Supplier[] }) {
 function SuppliersTab() {
   const { t } = useI18n();
   const { can, canAny } = useAuth();
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox(() => setPage(1));
   const [page, setPage] = useState(1);
   const [stmtFrom, setStmtFrom] = useState("");
   const [stmtTo, setStmtTo] = useState("");

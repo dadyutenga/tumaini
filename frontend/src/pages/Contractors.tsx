@@ -27,6 +27,7 @@ import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { Contractor, ContractorStatement } from "@/types/services";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 const blank = { name: "", trade: "", phone: "", email: "", address: "", notes: "" };
 
@@ -133,7 +134,7 @@ export default function Contractors() {
   const { t } = useI18n();
   const { can } = useAuth();
   const manage = can("services.contractor.manage");
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox();
   const list = useGet<Contractor[]>("/contractors", { q, all: manage || undefined, per_page: 100 });
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Contractor | null>(null);

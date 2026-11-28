@@ -21,6 +21,8 @@ import { useGet, useWrite } from "@/hooks/useApi";
 import { formatMoney, toNumber } from "@/lib/formatters";
 import type { Client } from "@/types/services";
 import { useI18n } from "@/features/i18n/i18n";
+import { useSearchBox } from "@/hooks/useSearchBox";
+import { useCreateFromLink } from "@/hooks/useCreateFromLink";
 
 /** The form fields shared by "new client" and "edit client". */
 export function ClientFields({
@@ -71,7 +73,7 @@ export default function Clients() {
   const { t } = useI18n();
   const { can } = useAuth();
   const navigate = useNavigate();
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox();
   const [status, setStatus] = useState("");
   const search = useDebounce(q, 300);
   const clients = useGet<Client[]>("/clients", { q: search, status, per_page: 100 });
@@ -85,6 +87,11 @@ export default function Clients() {
       setDraft(clientBlank);
       navigate(`/clients/${c.id}`);
     },
+  });
+
+  useCreateFromLink(can("services.client.manage"), (name) => {
+    setDraft({ ...clientBlank, name });
+    setOpen(true);
   });
 
   const rows = clients.data ?? [];

@@ -36,6 +36,7 @@ import {
 } from "@/types/services";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { useSearchBox } from "@/hooks/useSearchBox";
 
 /** Card edge colour using OpenDashboards semantic marks. */
 const EDGE: Record<string, string> = {
@@ -424,7 +425,7 @@ export default function DesignJobs() {
   const [status, setStatus] = useState("");
   const [printStatusFilter, setPrintStatusFilter] = useState("");
   const [overdue, setOverdue] = useState(false);
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox();
   const [creating, setCreating] = useState(false);
   const list = useGet<DesignJobRow[]>("/design-jobs", {
     q,

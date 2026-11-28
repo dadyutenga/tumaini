@@ -5,13 +5,7 @@ import { ChevronDown, ChevronRight, Menu, PanelLeft, PanelLeftClose } from "luci
 import { routes, type AppRoute } from "@/app/routes";
 import { useVisibleRoutes } from "@/app/useVisibleRoutes";
 import { BranchSwitcher } from "@/components/layout/BranchSwitcher";
-import {
-  NotificationBell,
-  QuickNewMenu,
-  SearchPalette,
-  ThemeToggle,
-  UserMenu,
-} from "@/components/shared/Toolbar";
+import { NotificationBell, QuickNewMenu, ThemeToggle, UserMenu } from "@/components/shared/Toolbar";
 import { LanguageSwitcher } from "@/features/i18n/LanguageSwitcher";
 import { useI18n } from "@/features/i18n/i18n";
 import { useGet } from "@/hooks/useApi";
@@ -33,6 +27,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb";
 import { cn } from "@/lib/utils";
+import { SearchPalette } from "@/features/search/SearchPalette";
 
 function Navigation({
   compact = false,

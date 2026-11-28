@@ -35,6 +35,8 @@ import { cn } from "@/lib/utils";
 import type { Category, Product, Unit } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { useSearchBox } from "@/hooks/useSearchBox";
+import { useCreateFromLink } from "@/hooks/useCreateFromLink";
 
 interface Draft {
   name: string;
@@ -76,7 +78,7 @@ export default function Products() {
   const canCategories = can("shop.product.manage");
   const canImport = can("shop.product.manage");
 
-  const [q, setQ] = useState("");
+  const [q, setQ] = useSearchBox(() => setPage(1));
   const [catFilter, setCatFilter] = useState("");
   const [page, setPage] = useState(1);
   const [low, setLow] = useState(false);
@@ -138,6 +140,11 @@ export default function Products() {
   const deleteCategory = useWrite<{ id: string }>("DELETE", (b) => `/categories/${b.id}`, {
     invalidate: ["/categories"],
     success: t.products.categoryRemoved,
+  });
+
+  useCreateFromLink(canImport && !units.isLoading, (name) => {
+    open("new");
+    setDraft((d) => ({ ...d, name }));
   });
 
   function open(product: Product | "new") {

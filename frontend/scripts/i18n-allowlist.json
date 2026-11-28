@@ -1,6 +1,6 @@
 [
   {
-    "file": "src/components/shared/Toolbar.tsx",
+    "file": "src/features/search/SearchPalette.tsx",
     "text": "Ctrl K",
     "why": "keyboard shortcut"
   },
@@ -123,5 +123,15 @@
     "file": "src/pages/SaleDetail.tsx",
     "text": ", Balance {balance}",
     "why": "message sent to the customer (message templates are out of scope)"
+  },
+  {
+    "file": "src/features/search/SearchPalette.tsx",
+    "text": "Esc",
+    "why": "keyboard key"
+  },
+  {
+    "file": "src/features/search/SearchPalette.tsx",
+    "text": "↑↓ {navigate} · ↵ {open} · Ctrl+↵ {newTab} · Tab {scope} · Esc {close}",
+    "why": "key names around translated words"
   }
 ]
