@@ -3,6 +3,7 @@ on:
   # The deploy workflow calls this one, so a release passes the same checks as a pull request.
   workflow_call:
   push:
+    branches-ignore: [main] # Deploy runs these checks on main
     paths: ["backend/**", "docs/api/**", "docs/spec/API reference.md", "backend/database/**", ".github/workflows/backend-ci.yml"]
   pull_request:
     paths: ["backend/**", "docs/api/**", "docs/spec/API reference.md", "backend/database/**", ".github/workflows/backend-ci.yml"]
