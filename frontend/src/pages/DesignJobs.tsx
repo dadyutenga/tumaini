@@ -34,6 +34,8 @@ import {
   type PrintOrderRow,
   type ProjectRow,
 } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
 
 /** Card edge colour using OpenDashboards semantic marks. */
 const EDGE: Record<string, string> = {
@@ -48,6 +50,7 @@ const EDGE: Record<string, string> = {
 };
 
 function JobCard({ job, onOpen }: { job: DesignJobRow; onOpen: () => void }) {
+  const { t } = useI18n();
   const left = daysUntil(job.deadline);
   const late = job.overdue || (left !== null && left < 0);
   return (
@@ -64,12 +67,14 @@ function JobCard({ job, onOpen }: { job: DesignJobRow; onOpen: () => void }) {
       <p className="font-semibold text-[var(--od-ink)]">{job.title}</p>
       <p className="od-caption mt-0.5">{job.client_name}</p>
       <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-        <span className="text-[var(--od-ink-secondary)]">{job.designer_name ?? "Unassigned"}</span>
+        <span className="text-[var(--od-ink-secondary)]">
+          {job.designer_name ?? t.common.unassigned}
+        </span>
         {job.deadline && (
           <span
             className={late ? "font-semibold text-[var(--od-bad)]" : "text-[var(--od-ink-muted)]"}
           >
-            {late ? "Late " : "Due "}
+            {late ? `${t.common.late} ` : `${t.common.due2} `}
             {formatDate(job.deadline)}
           </span>
         )}
@@ -80,18 +85,22 @@ function JobCard({ job, onOpen }: { job: DesignJobRow; onOpen: () => void }) {
               : "od-tabular text-[var(--od-ink-muted)]"
           }
         >
-          Rev {job.revisions_used}/{job.revisions_included}
+          {fmt(t.design.rev, {
+            revisions_used: job.revisions_used,
+            revisions_included: job.revisions_included,
+          })}
         </span>
         {job.priority === "urgent" && <StatusBadge value="urgent" />}
       </div>
       {job.status === "approved" && job.printing_needed && (
-        <p className="mt-1.5 text-xs font-medium text-[var(--od-good)]">Ready to print</p>
+        <p className="mt-1.5 text-xs font-medium text-[var(--od-good)]">{t.design.readyToPrint}</p>
       )}
     </button>
   );
 }
 
 function Board({ designer }: { designer: string }) {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const { can } = useAuth();
   const board = useGet<{ status: string; jobs: DesignJobRow[] }[]>("/design-jobs/board", {
@@ -115,7 +124,9 @@ function Board({ designer }: { designer: string }) {
     const job = jobs.find((j) => j.id === id);
     if (!job || job.status === status) return;
     if (!DESIGN_NEXT[job.status]?.includes(status as DesignStatus)) {
-      toast.error(`A job in ${label(job.status)} cannot go straight to ${label(status)}.`);
+      toast.error(
+        fmt(t.design.aJobInCannotGo, { status: label(job.status), status2: label(status) }),
+      );
       return;
     }
     move.mutate({ id, status });
@@ -185,6 +196,7 @@ function NewJobDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [d, setD] = useState(blank);
   const [refs, setRefs] = useState<{ id: string; name: string }[]>([]);
@@ -198,7 +210,7 @@ function NewJobDialog({
   const staff = useStaff();
   const create = useWrite<unknown, DesignJobRow>("POST", "/design-jobs", {
     invalidate: ["/design-jobs", "/services", "/projects"],
-    success: "Design job created",
+    success: t.design.designJobCreated,
     onSuccess: (job) => {
       onOpenChange(false);
       setD(blank);
@@ -226,8 +238,8 @@ function NewJobDialog({
     <FormDialog
       open={open}
       onOpenChange={onOpenChange}
-      title="New design job"
-      description="Price and included revisions come from the catalog and can be changed."
+      title={t.common.newDesignJob}
+      description={t.design.priceAndIncludedRevisionsCome}
       busy={create.isPending}
       onSubmit={() =>
         create.mutate({
@@ -254,16 +266,16 @@ function NewJobDialog({
       wide
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Client *">
+        <Field label={t.common.client2}>
           <ClientSelect
             required
             value={d.client_id}
             onChange={(v) => setD((x) => ({ ...x, client_id: v, project_id: "" }))}
           />
         </Field>
-        <Field label="Project (optional)">
+        <Field label={t.common.projectOptional}>
           <NativeSelect value={d.project_id} onChange={(e) => set("project_id", e.target.value)}>
-            <option value="">Stand-alone job</option>
+            <option value="">{t.design.standAloneJob}</option>
             {projects.data?.map((p) => (
               <option key={p.id} value={p.id}>
                 {p.number} · {p.name}
@@ -271,18 +283,18 @@ function NewJobDialog({
             ))}
           </NativeSelect>
         </Field>
-        <Field label="Job type *">
+        <Field label={t.design.jobType}>
           <NativeSelect value={d.job_type} onChange={(e) => set("job_type", e.target.value)}>
-            {JOB_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {label(t)}
+            {JOB_TYPES.map((item) => (
+              <option key={item} value={item}>
+                {label(item)}
               </option>
             ))}
           </NativeSelect>
         </Field>
-        <Field label="Price list item">
+        <Field label={t.design.priceListItem}>
           <NativeSelect value={d.service_id} onChange={(e) => set("service_id", e.target.value)}>
-            <option value="">None. Enter the price below</option>
+            <option value="">{t.design.noneEnterThePriceBelow}</option>
             {catalog.data?.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.name} · {formatMoney(s.standard_price)}
@@ -290,58 +302,58 @@ function NewJobDialog({
             ))}
           </NativeSelect>
         </Field>
-        <Field label="Title *" className="sm:col-span-2">
+        <Field label={t.design.title} className="sm:col-span-2">
           <Input
             required
-            placeholder="Logo for Client Business"
+            placeholder={t.design.logoForClientBusiness}
             value={d.title}
             onChange={(e) => set("title", e.target.value)}
           />
         </Field>
-        <Field label="Brief" className="sm:col-span-2">
+        <Field label={t.design.brief} className="sm:col-span-2">
           <Textarea
             rows={3}
-            placeholder="What the client wants, in their own words"
+            placeholder={t.design.whatTheClientWantsIn}
             value={d.brief}
             onChange={(e) => set("brief", e.target.value)}
           />
         </Field>
-        <Field label="Size and format">
+        <Field label={t.design.sizeAndFormat}>
           <Input
-            placeholder="A4 print, business card, banner 2x1m…"
+            placeholder={t.design.a4PrintBusinessCardBanner}
             value={d.size_format}
             onChange={(e) => set("size_format", e.target.value)}
           />
         </Field>
-        <Field label="Style notes">
+        <Field label={t.design.styleNotes}>
           <Input
-            placeholder="Colors, mood, fonts, examples"
+            placeholder={t.design.colorsMoodFontsExamples}
             value={d.style_notes}
             onChange={(e) => set("style_notes", e.target.value)}
           />
         </Field>
-        <Field label="Text to include" className="sm:col-span-2">
+        <Field label={t.design.textToInclude} className="sm:col-span-2">
           <Input
-            placeholder="Business name, slogan, phone, address, social handles"
+            placeholder={t.design.businessNameSloganPhoneAddress}
             value={d.text_to_include}
             onChange={(e) => set("text_to_include", e.target.value)}
           />
         </Field>
-        <Field label="Deadline">
+        <Field label={t.common.deadline}>
           <Input type="date" value={d.deadline} onChange={(e) => set("deadline", e.target.value)} />
         </Field>
-        <Field label="Priority">
+        <Field label={t.common.priority}>
           <NativeSelect value={d.priority} onChange={(e) => set("priority", e.target.value)}>
-            <option value="normal">Normal</option>
-            <option value="urgent">Urgent</option>
+            <option value="normal">{t.common.normal}</option>
+            <option value="urgent">{t.common.urgent}</option>
           </NativeSelect>
         </Field>
         {staff.length > 0 && (
-          <Field label="Designer">
+          <Field label={t.common.designer}>
             <StaffSelect value={d.designer_id} onChange={(v) => set("designer_id", v)} />
           </Field>
         )}
-        <Field label="Revisions included">
+        <Field label={t.design.revisionsIncluded}>
           <Input
             inputMode="numeric"
             placeholder={service ? String(service.included_revisions) : "3"}
@@ -349,7 +361,7 @@ function NewJobDialog({
             onChange={(e) => set("revisions_included", e.target.value)}
           />
         </Field>
-        <Field label="Price">
+        <Field label={t.common.price}>
           <Input
             inputMode="decimal"
             placeholder={service?.standard_price}
@@ -357,7 +369,7 @@ function NewJobDialog({
             onChange={(e) => set("price", e.target.value)}
           />
         </Field>
-        <Field label="Deposit">
+        <Field label={t.design.deposit}>
           <Input
             inputMode="decimal"
             value={d.deposit}
@@ -371,9 +383,9 @@ function NewJobDialog({
           checked={d.printing_needed}
           onChange={(e) => set("printing_needed", e.target.checked)}
         />
-        Printing needed (a print order is created after approval)
+        {t.design.printingNeededAPrintOrder}
       </label>
-      <Field label="Reference files">
+      <Field label={t.design.referenceFiles}>
         <input
           ref={fileInput}
           type="file"
@@ -388,7 +400,7 @@ function NewJobDialog({
             size="sm"
             onClick={() => fileInput.current?.click()}
           >
-            <Paperclip size={13} /> Add files
+            <Paperclip size={13} /> {t.design.addFiles}
           </Button>
           {refs.map((r) => (
             <span
@@ -405,6 +417,7 @@ function NewJobDialog({
 }
 
 export default function DesignJobs() {
+  const { t } = useI18n();
   const { can, user } = useAuth();
   const navigate = useNavigate();
   const [designer, setDesigner] = useState("");
@@ -429,7 +442,7 @@ export default function DesignJobs() {
     (b) => `/print-orders/${b.id}`,
     {
       invalidate: ["/print-orders", "/design-jobs", "/service-costs", "/contractors"],
-      success: "Print order updated",
+      success: t.design.printOrderUpdated,
       toBody: (b) => ({ status: b.status }),
     },
   );
@@ -446,8 +459,8 @@ export default function DesignJobs() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Design jobs"
-        description="Logos, cards, posters, banners and branding, from brief to delivery."
+        title={t.common.designJobs}
+        description={t.design.logosCardsPostersBannersAnd}
         actions={
           <div className="flex flex-wrap gap-2">
             {user?.id && (
@@ -456,12 +469,12 @@ export default function DesignJobs() {
                 variant={designer === user.id ? "default" : "outline"}
                 onClick={() => setDesigner((d) => (d === user.id ? "" : user.id))}
               >
-                My jobs{myJobs.length ? ` (${myJobs.length})` : ""}
+                {fmt(t.design.myJobs, { value: myJobs.length ? ` (${myJobs.length})` : "" })}
               </Button>
             )}
             {manage && (
               <Button size="sm" onClick={() => setCreating(true)}>
-                <Plus size={14} /> New job
+                <Plus size={14} /> {t.common.newJob}
               </Button>
             )}
           </div>
@@ -470,32 +483,32 @@ export default function DesignJobs() {
 
       {user?.id && myJobs.length > 0 && (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Assigned to me" value={myJobs.length} />
+          <StatCard label={t.design.assignedToMe} value={myJobs.length} />
           <StatCard
-            label="Due today / overdue"
+            label={t.design.dueTodayOverdue}
             value={myDueToday}
             tone={myDueToday > 0 ? "bad" : "neutral"}
           />
-          <StatCard label="Waiting for client" value={myWithClient} />
-          <StatCard label="In design" value={myInDesign} />
+          <StatCard label={t.common.waitingForClient} value={myWithClient} />
+          <StatCard label={t.design.inDesign} value={myInDesign} />
         </div>
       )}
 
       <Tabs defaultValue="board">
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <TabsList>
-            <TabsTrigger value="board">Board</TabsTrigger>
-            <TabsTrigger value="list">List</TabsTrigger>
-            <TabsTrigger value="print">Print orders</TabsTrigger>
+            <TabsTrigger value="board">{t.common.board}</TabsTrigger>
+            <TabsTrigger value="list">{t.common.list}</TabsTrigger>
+            <TabsTrigger value="print">{t.design.printOrders}</TabsTrigger>
           </TabsList>
           {staff.length > 0 && (
             <NativeSelect
-              aria-label="Designer"
+              aria-label={t.common.designer}
               className="w-48"
               value={designer}
               onChange={(e) => setDesigner(e.target.value)}
             >
-              <option value="">All designers</option>
+              <option value="">{t.design.allDesigners}</option>
               {staff.map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name}
@@ -517,20 +530,20 @@ export default function DesignJobs() {
                 className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-[var(--od-ink-muted)]"
               />
               <Input
-                aria-label="Search"
+                aria-label={t.common.search}
                 className="pl-9"
-                placeholder="Search title or client…"
+                placeholder={t.design.searchTitleOrClient}
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
             </div>
             <NativeSelect
-              aria-label="Status"
+              aria-label={t.common.status}
               className="w-44"
               value={status}
               onChange={(e) => setStatus(e.target.value)}
             >
-              <option value="">All steps</option>
+              <option value="">{t.design.allSteps}</option>
               {[...DESIGN_STATUSES, "cancelled"].map((s) => (
                 <option key={s} value={s}>
                   {label(s)}
@@ -547,7 +560,7 @@ export default function DesignJobs() {
                   : "border-[var(--od-border-strong)] bg-[var(--od-surface)] text-[var(--od-ink-secondary)] hover:text-[var(--od-ink)]",
               )}
             >
-              <AlertCircle size={14} /> Late only
+              <AlertCircle size={14} /> {t.common.lateOnly}
             </button>
           </FilterBar>
 
@@ -555,16 +568,16 @@ export default function DesignJobs() {
             rows={list.data}
             loading={list.isLoading}
             rowKey={(j) => j.id}
-            empty="No design jobs yet"
+            empty={t.design.noDesignJobsYet}
             onRowClick={(j) => navigate(`/design-jobs/${j.id}`)}
             columns={[
               {
-                header: "Number",
+                header: t.common.number,
                 sortValue: (j) => j.number,
                 cell: (j) => <span className="od-mono font-medium">{j.number}</span>,
               },
               {
-                header: "Job",
+                header: t.common.job,
                 sortValue: (j) => j.title,
                 cell: (j) => (
                   <div>
@@ -573,21 +586,21 @@ export default function DesignJobs() {
                   </div>
                 ),
               },
-              { header: "Type", cell: (j) => label(j.job_type) },
-              { header: "Designer", cell: (j) => j.designer_name ?? "—" },
-              { header: "Due", cell: (j) => (j.deadline ? formatDate(j.deadline) : "—") },
+              { header: t.common.type, cell: (j) => label(j.job_type) },
+              { header: t.common.designer, cell: (j) => j.designer_name ?? "—" },
+              { header: t.common.due2, cell: (j) => (j.deadline ? formatDate(j.deadline) : "—") },
               {
-                header: "Status",
+                header: t.common.status,
                 cell: (j) => <StatusBadge value={j.overdue ? "overdue" : j.status} />,
               },
               {
-                header: "Price",
+                header: t.common.price,
                 align: "right",
                 sortValue: (j) => toNumber(j.price),
                 cell: (j) => formatMoney(j.price),
               },
               {
-                header: "Balance",
+                header: t.common.balance,
                 align: "right",
                 sortValue: (j) => toNumber(j.balance),
                 cell: (j) => (
@@ -607,15 +620,15 @@ export default function DesignJobs() {
         <TabsContent value="print" className="space-y-4">
           <FilterBar>
             <SegmentedChips
-              ariaLabel="Print order status"
+              ariaLabel={t.design.printOrderStatus}
               value={printStatusFilter}
               onChange={setPrintStatusFilter}
               options={[
-                { value: "", label: "All" },
-                { value: "sent", label: "Sent to print" },
-                { value: "ready", label: "Ready" },
-                { value: "delivered", label: "Delivered" },
-                { value: "cancelled", label: "Cancelled" },
+                { value: "", label: t.common.all },
+                { value: "sent", label: t.design.sentToPrint },
+                { value: "ready", label: t.design.ready },
+                { value: "delivered", label: t.design.delivered },
+                { value: "cancelled", label: t.common.cancelled },
               ]}
             />
           </FilterBar>
@@ -623,11 +636,11 @@ export default function DesignJobs() {
             rows={printOrders.data}
             loading={printOrders.isLoading}
             rowKey={(o) => o.id}
-            empty="No print orders yet"
+            empty={t.design.noPrintOrdersYet}
             onRowClick={(o) => navigate(`/design-jobs/${o.job_id}`)}
             columns={[
               {
-                header: "Design job",
+                header: t.common.designJob,
                 cell: (o) => (
                   <div>
                     <p className="font-medium">{o.job_title}</p>
@@ -637,11 +650,11 @@ export default function DesignJobs() {
                   </div>
                 ),
               },
-              { header: "Printer", cell: (o) => o.contractor_name ?? "—" },
-              { header: "Qty", align: "right", cell: (o) => o.quantity },
-              { header: "Due", cell: (o) => (o.due_date ? formatDate(o.due_date) : "—") },
-              { header: "Status", cell: (o) => <StatusBadge value={o.status} /> },
-              { header: "Cost", align: "right", cell: (o) => formatMoney(o.cost) },
+              { header: t.design.printer, cell: (o) => o.contractor_name ?? "—" },
+              { header: t.common.qty, align: "right", cell: (o) => o.quantity },
+              { header: t.common.due2, cell: (o) => (o.due_date ? formatDate(o.due_date) : "—") },
+              { header: t.common.status, cell: (o) => <StatusBadge value={o.status} /> },
+              { header: t.design.cost, align: "right", cell: (o) => formatMoney(o.cost) },
               {
                 header: "",
                 className: "text-right",
@@ -654,7 +667,7 @@ export default function DesignJobs() {
                           variant="outline"
                           onClick={() => updatePrint.mutate({ id: o.id, status: "ready" })}
                         >
-                          Ready
+                          {t.design.ready}
                         </Button>
                       )}
                       {o.status === "ready" && (
@@ -663,7 +676,7 @@ export default function DesignJobs() {
                           variant="outline"
                           onClick={() => updatePrint.mutate({ id: o.id, status: "delivered" })}
                         >
-                          Delivered
+                          {t.design.delivered}
                         </Button>
                       )}
                       <Button
@@ -672,7 +685,7 @@ export default function DesignJobs() {
                         className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                         onClick={() => updatePrint.mutate({ id: o.id, status: "cancelled" })}
                       >
-                        Cancel
+                        {t.common.cancel}
                       </Button>
                     </div>
                   ) : null,

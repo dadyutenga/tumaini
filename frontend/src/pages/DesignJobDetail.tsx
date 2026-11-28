@@ -31,19 +31,24 @@ import {
   type DesignJobDetail as Job,
   type DesignVersion,
 } from "@/types/services";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import type { Translations } from "@/features/i18n/i18n";
 
-const STEP_LABEL: Record<string, string> = {
-  in_design: "Start design",
-  internal_review: "Internal review",
-  with_client: "Mark as with client",
-  changes_requested: "Client wants changes",
-  approved: "Mark approved",
-  printing: "Sent to print",
-  delivered: "Mark delivered",
-  cancelled: "Cancel job",
-};
+/** What the button that moves a job to each step says. */
+const stepLabels = (t: Translations): Record<string, string> => ({
+  in_design: t.design.startDesign,
+  internal_review: t.design.internalReview,
+  with_client: t.design.markAsWithClient,
+  changes_requested: t.design.clientWantsChanges,
+  approved: t.design.markApproved,
+  printing: t.design.sentToPrint,
+  delivered: t.design.markDelivered,
+  cancelled: t.design.cancelJob,
+});
 
 function VersionDialog({ job, onClose }: { job: Job | null; onClose: () => void }) {
+  const { t } = useI18n();
   const [kind, setKind] = useState("design");
   const [link, setLink] = useState("");
   const [notes, setNotes] = useState("");
@@ -53,7 +58,7 @@ function VersionDialog({ job, onClose }: { job: Job | null; onClose: () => void 
   const input = useRef<HTMLInputElement>(null);
   const add = useWrite("POST", `/design-jobs/${job?.id}/versions`, {
     invalidate: ["/design-jobs"],
-    success: "Version added",
+    success: t.design.versionAdded,
     onSuccess: () => {
       setLink("");
       setNotes("");
@@ -67,12 +72,12 @@ function VersionDialog({ job, onClose }: { job: Job | null; onClose: () => void 
     <FormDialog
       open={!!job}
       onOpenChange={(o) => !o && onClose()}
-      title="Upload a version"
-      description="Add an image or PDF, or a link to the working file."
+      title={t.design.uploadAVersion}
+      description={t.design.addAnImageOrPdf}
       busy={add.isPending || uploading}
       onSubmit={() => {
         if (!fileId && !link.trim()) {
-          toast.error("Add a file or a link");
+          toast.error(t.design.addAFileOrA);
           return;
         }
         add.mutate({
@@ -83,14 +88,14 @@ function VersionDialog({ job, onClose }: { job: Job | null; onClose: () => void 
         });
       }}
     >
-      <Field label="What is this?">
+      <Field label={t.design.whatIsThis}>
         <NativeSelect value={kind} onChange={(e) => setKind(e.target.value)}>
-          <option value="design">Design for the client</option>
-          {afterApproval && <option value="print_ready">Print-ready file</option>}
-          {afterApproval && <option value="source">Source file</option>}
+          <option value="design">{t.design.designForTheClient}</option>
+          {afterApproval && <option value="print_ready">{t.design.printReadyFile}</option>}
+          {afterApproval && <option value="source">{t.design.sourceFile}</option>}
         </NativeSelect>
       </Field>
-      <Field label="File">
+      <Field label={t.common.file}>
         <input
           ref={input}
           type="file"
@@ -119,12 +124,12 @@ function VersionDialog({ job, onClose }: { job: Job | null; onClose: () => void 
             disabled={uploading}
             onClick={() => input.current?.click()}
           >
-            <Upload size={14} /> {uploading ? "Uploading…" : "Choose file"}
+            <Upload size={14} /> {uploading ? t.common.uploading : t.common.chooseFile}
           </Button>
           <span className="od-caption">{fileName}</span>
         </div>
       </Field>
-      <Field label="Or a link">
+      <Field label={t.design.orALink}>
         <Input
           type="url"
           placeholder="https://…"
@@ -132,7 +137,7 @@ function VersionDialog({ job, onClose }: { job: Job | null; onClose: () => void 
           onChange={(e) => setLink(e.target.value)}
         />
       </Field>
-      <Field label="Notes">
+      <Field label={t.common.notes}>
         <Textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} />
       </Field>
     </FormDialog>
@@ -140,6 +145,7 @@ function VersionDialog({ job, onClose }: { job: Job | null; onClose: () => void 
 }
 
 function PrintDialog({ job, onClose }: { job: Job | null; onClose: () => void }) {
+  const { t } = useI18n();
   const { can } = useAuth();
   const contractors = useGet<Contractor[]>(
     "/contractors",
@@ -155,15 +161,15 @@ function PrintDialog({ job, onClose }: { job: Job | null; onClose: () => void })
   });
   const create = useWrite("POST", `/design-jobs/${job?.id}/print-orders`, {
     invalidate: ["/design-jobs", "/service-costs", "/contractors"],
-    success: "Print order created",
+    success: t.design.printOrderCreated,
     onSuccess: onClose,
   });
   return (
     <FormDialog
       open={!!job}
       onOpenChange={(o) => !o && onClose()}
-      title="Print order"
-      description="The cost is added to this job and owed to the printer."
+      title={t.design.printOrder}
+      description={t.design.theCostIsAddedTo}
       busy={create.isPending}
       onSubmit={() =>
         create.mutate({
@@ -177,12 +183,12 @@ function PrintDialog({ job, onClose }: { job: Job | null; onClose: () => void })
     >
       <div className="grid gap-3 sm:grid-cols-2">
         {can("services.contractor.manage") && (
-          <Field label="Printer" className="sm:col-span-2">
+          <Field label={t.design.printer} className="sm:col-span-2">
             <NativeSelect
               value={d.contractor_id}
               onChange={(e) => setD({ ...d, contractor_id: e.target.value })}
             >
-              <option value="">Choose a printer…</option>
+              <option value="">{t.design.chooseAPrinter}</option>
               {contractors.data
                 ?.filter((c) => c.is_active)
                 .map((c) => (
@@ -193,7 +199,7 @@ function PrintDialog({ job, onClose }: { job: Job | null; onClose: () => void })
             </NativeSelect>
           </Field>
         )}
-        <Field label="Quantity">
+        <Field label={t.common.quantity}>
           <Input
             required
             inputMode="numeric"
@@ -201,7 +207,7 @@ function PrintDialog({ job, onClose }: { job: Job | null; onClose: () => void })
             onChange={(e) => setD({ ...d, quantity: e.target.value })}
           />
         </Field>
-        <Field label="Cost">
+        <Field label={t.design.cost}>
           <Input
             required
             inputMode="decimal"
@@ -209,14 +215,14 @@ function PrintDialog({ job, onClose }: { job: Job | null; onClose: () => void })
             onChange={(e) => setD({ ...d, cost: e.target.value })}
           />
         </Field>
-        <Field label="Due date" className="sm:col-span-2">
+        <Field label={t.common.dueDate} className="sm:col-span-2">
           <Input
             type="date"
             value={d.due_date}
             onChange={(e) => setD({ ...d, due_date: e.target.value })}
           />
         </Field>
-        <Field label="Note" className="sm:col-span-2">
+        <Field label={t.common.note} className="sm:col-span-2">
           <Input value={d.note} onChange={(e) => setD({ ...d, note: e.target.value })} />
         </Field>
       </div>
@@ -225,6 +231,7 @@ function PrintDialog({ job, onClose }: { job: Job | null; onClose: () => void })
 }
 
 function EditDialog({ job, onClose }: { job: Job | null; onClose: () => void }) {
+  const { t } = useI18n();
   const [d, setD] = useState({
     title: job?.title ?? "",
     brief: job?.brief ?? "",
@@ -238,14 +245,14 @@ function EditDialog({ job, onClose }: { job: Job | null; onClose: () => void }) 
   });
   const save = useWrite("PUT", `/design-jobs/${job?.id}`, {
     invalidate: ["/design-jobs", "/services"],
-    success: "Job updated",
+    success: t.design.jobUpdated,
     onSuccess: onClose,
   });
   return (
     <FormDialog
       open={!!job}
       onOpenChange={(o) => !o && onClose()}
-      title="Edit design job"
+      title={t.design.editDesignJob}
       busy={save.isPending}
       onSubmit={() =>
         save.mutate({
@@ -263,50 +270,50 @@ function EditDialog({ job, onClose }: { job: Job | null; onClose: () => void }) 
       wide
     >
       <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Title" className="sm:col-span-2">
+        <Field label={t.common.title} className="sm:col-span-2">
           <Input required value={d.title} onChange={(e) => setD({ ...d, title: e.target.value })} />
         </Field>
-        <Field label="Brief" className="sm:col-span-2">
+        <Field label={t.design.brief} className="sm:col-span-2">
           <Textarea
             rows={3}
             value={d.brief}
             onChange={(e) => setD({ ...d, brief: e.target.value })}
           />
         </Field>
-        <Field label="Deadline">
+        <Field label={t.common.deadline}>
           <Input
             type="date"
             value={d.deadline}
             onChange={(e) => setD({ ...d, deadline: e.target.value })}
           />
         </Field>
-        <Field label="Priority">
+        <Field label={t.common.priority}>
           <NativeSelect
             value={d.priority}
             onChange={(e) => setD({ ...d, priority: e.target.value as "normal" | "urgent" })}
           >
-            <option value="normal">Normal</option>
-            <option value="urgent">Urgent</option>
+            <option value="normal">{t.common.normal}</option>
+            <option value="urgent">{t.common.urgent}</option>
           </NativeSelect>
         </Field>
-        <Field label="Designer">
+        <Field label={t.common.designer}>
           <StaffSelect value={d.designer_id} onChange={(v) => setD({ ...d, designer_id: v })} />
         </Field>
-        <Field label="Revisions included">
+        <Field label={t.design.revisionsIncluded}>
           <Input
             inputMode="numeric"
             value={d.revisions_included}
             onChange={(e) => setD({ ...d, revisions_included: e.target.value })}
           />
         </Field>
-        <Field label="Price">
+        <Field label={t.common.price}>
           <Input
             inputMode="decimal"
             value={d.price}
             onChange={(e) => setD({ ...d, price: e.target.value })}
           />
         </Field>
-        <Field label="Deposit">
+        <Field label={t.design.deposit}>
           <Input
             inputMode="decimal"
             value={d.deposit}
@@ -320,7 +327,7 @@ function EditDialog({ job, onClose }: { job: Job | null; onClose: () => void }) 
           checked={d.printing_needed}
           onChange={(e) => setD({ ...d, printing_needed: e.target.checked })}
         />
-        Printing needed
+        {t.design.printingNeeded}
       </label>
     </FormDialog>
   );
@@ -333,6 +340,7 @@ function Preview({
   v: DesignVersion;
   onPreview: (file: { id: string; name: string }) => void;
 }) {
+  const { t } = useI18n();
   if (v.file_id) {
     const name = v.file_name ?? `version-${v.version_no}`;
     return (
@@ -351,7 +359,7 @@ function Preview({
             download(`/files/${v.file_id}`, {}, name).catch((e) => toast.error(errorMessage(e)))
           }
         >
-          <Download size={12} /> Download
+          <Download size={12} /> {t.common.download}
         </Button>
       </div>
     );
@@ -365,16 +373,17 @@ function Preview({
           target="_blank"
           rel="noreferrer"
         >
-          Open link
+          {t.design.openLink}
         </a>
       ) : (
-        "No file"
+        t.design.noFile
       )}
     </div>
   );
 }
 
 export default function DesignJobDetail() {
+  const { t } = useI18n();
   const { id = "" } = useParams();
   const { can } = useAuth();
   const jobQuery = useGet<Job>(`/design-jobs/${id}`);
@@ -393,7 +402,7 @@ export default function DesignJobDetail() {
   const refresh = ["/design-jobs", "/services", "/service-", "/print-orders"];
   const chargeExtra = useWrite("POST", `/design-jobs/${id}/extra-revision-charge`, {
     invalidate: refresh,
-    success: "Extra revision charge added",
+    success: t.design.extraRevisionChargeAdded,
     onSuccess: () => {
       setCharging(false);
       setExtraCharge({ amount: "", extra_revisions: "1", note: "" });
@@ -401,7 +410,7 @@ export default function DesignJobDetail() {
   });
   const move = useWrite<{ status: string }>("POST", `/design-jobs/${id}/status`, {
     invalidate: refresh,
-    success: "Status updated",
+    success: t.design.statusUpdated,
   });
   const send = useWrite<
     { versionId: string; channel?: string },
@@ -412,7 +421,7 @@ export default function DesignJobDetail() {
     onSuccess: (r) => {
       const sent = Boolean(r.queued ?? r.delivered);
       setLink({ path: r.approval_path, delivered: sent });
-      if (sent) toast.success("Approval link queued for the client");
+      if (sent) toast.success(t.design.approvalLinkQueuedForThe);
     },
     onError: (err) => {
       if (err instanceof ApiError && err.status === 503) {
@@ -428,28 +437,28 @@ export default function DesignJobDetail() {
     `/design-jobs/${id}/feedback`,
     {
       invalidate: ["/design-jobs"],
-      success: "Comment added",
+      success: t.design.commentAdded,
       onSuccess: () => setComment(""),
     },
   );
   const startTimer = useWrite("POST", `/design-jobs/${id}/timer/start`, {
     invalidate: refresh,
-    success: "Timer started",
+    success: t.design.timerStarted,
   });
   const stopTimer = useWrite("POST", `/design-jobs/${id}/timer/stop`, {
     invalidate: refresh,
-    success: "Timer stopped",
+    success: t.design.timerStopped,
   });
   const invoice = useWrite<unknown, { id: string }>("POST", "/service-invoices", {
     invalidate: ["/service-invoices"],
-    success: "Draft invoice created. Open Invoices to issue it.",
+    success: t.design.draftInvoiceCreatedOpenInvoices,
   });
   const printStatus = useWrite<{ id: string; status: string }>(
     "PUT",
     (b) => `/print-orders/${b.id}`,
     {
       invalidate: refresh,
-      success: "Print order updated",
+      success: t.design.printOrderUpdated,
       toBody: (b) => ({ status: b.status }),
     },
   );
@@ -459,9 +468,11 @@ export default function DesignJobDetail() {
   if (!job)
     return (
       <div className="od-card items-center py-10 text-center">
-        <p className="text-[14px] font-semibold text-[var(--od-bad)]">Design job not found.</p>
+        <p className="text-[14px] font-semibold text-[var(--od-bad)]">
+          {t.design.designJobNotFound}
+        </p>
         <Button asChild variant="outline" size="sm" className="mt-3">
-          <Link to="/design-jobs">Back to design jobs</Link>
+          <Link to="/design-jobs">{t.design.backToDesignJobs}</Link>
         </Button>
       </div>
     );
@@ -476,7 +487,7 @@ export default function DesignJobDetail() {
     <div className="space-y-6">
       <PageHeader
         backTo="/design-jobs"
-        backLabel="Design jobs"
+        backLabel={t.common.designJobs}
         title={job.title}
         badge={
           <div className="flex items-center gap-1.5">
@@ -484,17 +495,23 @@ export default function DesignJobDetail() {
             {job.priority === "urgent" && <StatusBadge value="urgent" />}
           </div>
         }
-        description={`${job.number} · Client: ${job.client_name}${job.designer_name ? ` · Designer: ${job.designer_name}` : ""}`}
+        description={fmt(t.common.client3, {
+          number: job.number,
+          client_name: job.client_name,
+          value: job.designer_name
+            ? ` ${fmt(t.design.designer, { designer_name: job.designer_name })}`
+            : "",
+        })}
         actions={
           <>
             {manage && (
               <Button size="sm" variant="outline" onClick={() => setEditing(true)}>
-                Edit
+                {t.common.edit}
               </Button>
             )}
             {manage && (
               <Button size="sm" variant="outline" onClick={() => setVersioning(true)}>
-                Upload version
+                {t.design.uploadVersion}
               </Button>
             )}
             {manage &&
@@ -505,12 +522,12 @@ export default function DesignJobDetail() {
                   onClick={() => send.mutate({ versionId: latest.id })}
                   disabled={send.isPending}
                 >
-                  Send for approval
+                  {t.design.sendForApproval}
                 </Button>
               )}
             {billing && (
               <Button size="sm" variant="outline" onClick={() => setPaying(true)}>
-                Add payment
+                {t.common.addPayment}
               </Button>
             )}
           </>
@@ -520,7 +537,7 @@ export default function DesignJobDetail() {
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 rounded-[var(--od-radius-md,12px)] border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-4 py-2.5 text-[13px] text-[var(--od-ink-secondary)]">
         {job.project_id && (
           <span>
-            Project:{" "}
+            {t.design.project}{" "}
             <Link
               className="od-mono font-medium text-[var(--od-ink)] underline underline-offset-4"
               to={`/projects/${job.project_id}`}
@@ -529,10 +546,10 @@ export default function DesignJobDetail() {
             </Link>
           </span>
         )}
-        <span>Type: {label(job.job_type)}</span>
+        <span>{fmt(t.design.type, { job_type: label(job.job_type) })}</span>
         {job.deadline && (
           <span className={job.overdue ? "font-semibold text-[var(--od-bad)]" : undefined}>
-            Due: {formatDate(job.deadline)}
+            {fmt(t.design.due, { deadline: formatDate(job.deadline) })}
           </span>
         )}
         <span
@@ -540,19 +557,19 @@ export default function DesignJobDetail() {
             job.revisions_over ? "od-tabular font-semibold text-[var(--od-bad)]" : "od-tabular"
           }
         >
-          Revisions: {job.revisions_used} of {job.revisions_included}
+          {fmt(t.design.revisionsOf, {
+            revisions_used: job.revisions_used,
+            revisions_included: job.revisions_included,
+          })}
         </span>
       </div>
 
       {job.revisions_over && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--od-radius-md,12px)] border border-[color-mix(in_srgb,var(--od-bad-mark)_30%,transparent)] bg-[color-mix(in_srgb,var(--od-bad-mark)_10%,transparent)] px-4 py-3 text-[13px] font-medium text-[var(--od-bad)]">
-          <p>
-            The included revisions are used up. Add an extra charge to the price before more
-            changes.
-          </p>
+          <p>{t.design.theIncludedRevisionsAreUsed}</p>
           {manage && (
             <Button size="sm" variant="outline" onClick={() => setCharging(true)}>
-              Add extra charge
+              {t.design.addExtraCharge}
             </Button>
           )}
         </div>
@@ -561,9 +578,7 @@ export default function DesignJobDetail() {
       {link && (
         <SectionCard
           title={
-            link.delivered
-              ? "Approval link queued for the client (valid for 14 days)"
-              : "Share this private link with the client (valid for 14 days)"
+            link.delivered ? t.design.approvalLinkQueuedForThe2 : t.design.shareThisPrivateLinkWith
           }
         >
           <div className="flex flex-wrap items-center gap-2">
@@ -581,7 +596,7 @@ export default function DesignJobDetail() {
                   target="_blank"
                   rel="noreferrer"
                 >
-                  <MessageCircle size={13} /> Open in WhatsApp
+                  <MessageCircle size={13} /> {t.common.openInWhatsapp}
                 </a>
               </Button>
             )}
@@ -603,12 +618,12 @@ export default function DesignJobDetail() {
                 disabled={move.isPending}
                 onClick={() => move.mutate({ status: s })}
               >
-                {STEP_LABEL[s] ?? label(s)}
+                {stepLabels(t)[s] ?? label(s)}
               </Button>
             ))}
           {manage && job.status === "approved" && (
             <Button size="sm" onClick={() => setPrinting(true)}>
-              Create print order
+              {t.design.createPrintOrder}
             </Button>
           )}
           {billing && job.invoices.length === 0 && (
@@ -617,52 +632,58 @@ export default function DesignJobDetail() {
               variant="outline"
               onClick={() => invoice.mutate({ client_id: job.client_id, design_job_id: job.id })}
             >
-              Create invoice
+              {t.design.createInvoice}
             </Button>
           )}
           {canViewDesign &&
             (timerHere ? (
               <Button size="sm" variant="outline" onClick={() => stopTimer.mutate(undefined)}>
-                <Square size={13} /> Stop timer
+                <Square size={13} /> {t.design.stopTimer}
               </Button>
             ) : (
               <Button size="sm" variant="outline" onClick={() => startTimer.mutate(undefined)}>
-                <Play size={13} /> Start timer
+                <Play size={13} /> {t.design.startTimer}
               </Button>
             ))}
         </div>
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Tile label="Price" value={formatMoney(job.price)} />
-        <Tile label="Paid" value={formatMoney(job.paid)} />
+        <Tile label={t.common.price} value={formatMoney(job.price)} />
+        <Tile label={t.common.paid} value={formatMoney(job.paid)} />
         <Tile
-          label="Balance"
+          label={t.common.balance}
           value={formatMoney(job.balance)}
           tone={toNumber(job.balance) > 0 ? "bad" : undefined}
         />
-        <Tile label={`Costs · profit ${formatMoney(job.profit)}`} value={formatMoney(job.costs)} />
+        <Tile
+          label={fmt(t.common.costsProfit, { profit: formatMoney(job.profit) })}
+          value={formatMoney(job.costs)}
+        />
       </div>
 
       <Tabs defaultValue="files">
         <TabsList>
-          <TabsTrigger value="brief">Brief</TabsTrigger>
-          <TabsTrigger value="files">Files</TabsTrigger>
-          <TabsTrigger value="feedback">Feedback</TabsTrigger>
-          <TabsTrigger value="costs">Costs</TabsTrigger>
-          <TabsTrigger value="payments">Payments</TabsTrigger>
-          <TabsTrigger value="work">Print and time</TabsTrigger>
-          <TabsTrigger value="history">History</TabsTrigger>
+          <TabsTrigger value="brief">{t.design.brief}</TabsTrigger>
+          <TabsTrigger value="files">{t.design.files}</TabsTrigger>
+          <TabsTrigger value="feedback">{t.design.feedback}</TabsTrigger>
+          <TabsTrigger value="costs">{t.common.costs}</TabsTrigger>
+          <TabsTrigger value="payments">{t.common.payments}</TabsTrigger>
+          <TabsTrigger value="work">{t.design.printAndTime}</TabsTrigger>
+          <TabsTrigger value="history">{t.common.history}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="brief" className="grid gap-4 sm:grid-cols-2">
           {(
             [
-              ["Brief", job.brief],
-              ["Size and format", job.size_format],
-              ["Style notes", job.style_notes],
-              ["Text to include", job.text_to_include],
-              ["Printing", job.printing_needed ? "Needed after approval" : "Not needed"],
+              [t.design.brief, job.brief],
+              [t.design.sizeAndFormat, job.size_format],
+              [t.design.styleNotes, job.style_notes],
+              [t.design.textToInclude, job.text_to_include],
+              [
+                t.design.printing,
+                job.printing_needed ? t.design.neededAfterApproval : t.design.notNeeded,
+              ],
             ] as const
           ).map(([l, v]) => (
             <SectionCard key={l} title={l} className={l === "Brief" ? "sm:col-span-2" : undefined}>
@@ -672,7 +693,7 @@ export default function DesignJobDetail() {
             </SectionCard>
           ))}
           {job.references.length > 0 && (
-            <SectionCard title="Reference files" className="sm:col-span-2">
+            <SectionCard title={t.design.referenceFiles} className="sm:col-span-2">
               <div className="flex flex-wrap gap-2">
                 {job.references.map((r) => (
                   <Button
@@ -685,7 +706,7 @@ export default function DesignJobDetail() {
                       )
                     }
                   >
-                    <Download size={13} /> {r.file_name ?? "File"}
+                    <Download size={13} /> {r.file_name ?? t.common.file}
                   </Button>
                 ))}
               </div>
@@ -696,7 +717,7 @@ export default function DesignJobDetail() {
         <TabsContent value="files" className="space-y-3">
           {job.versions.length === 0 && (
             <SectionCard className="items-center py-8 text-center">
-              <p className="od-caption">No versions yet. Upload the first design.</p>
+              <p className="od-caption">{t.design.noVersionsYetUploadThe}</p>
             </SectionCard>
           )}
           {job.versions.map((v, i) => (
@@ -704,16 +725,21 @@ export default function DesignJobDetail() {
               <Preview v={v} onPreview={setPreviewFile} />
               <div className="min-w-48 flex-1 text-[13px]">
                 <p className="font-semibold text-[var(--od-ink)]">
-                  {v.kind === "design" ? `Version ${v.version_no}` : label(v.kind)}
-                  {i === 0 && v.kind === "design" && " (current)"}
+                  {v.kind === "design"
+                    ? fmt(t.design.version, { version_no: v.version_no })
+                    : label(v.kind)}
+                  {i === 0 && v.kind === "design" && ` ${t.design.current}`}
                   {v.is_final && (
                     <span className="ml-2 rounded-full bg-[color-mix(in_srgb,var(--od-good-mark)_12%,transparent)] px-2 py-0.5 text-[11px] font-semibold text-[var(--od-good)]">
-                      Final
+                      {t.design.final}
                     </span>
                   )}
                 </p>
                 <p className="od-caption mt-0.5">
-                  Uploaded {formatDateTime(v.created_at)} by {v.uploaded_by ?? "—"}
+                  {fmt(t.design.uploadedBy, {
+                    created_at: formatDateTime(v.created_at),
+                    uploaded_by: v.uploaded_by ?? "—",
+                  })}
                 </p>
                 {v.notes && <p className="mt-2 text-[var(--od-ink-secondary)]">{v.notes}</p>}
                 <div className="mt-2.5">
@@ -729,7 +755,7 @@ export default function DesignJobDetail() {
                     variant="outline"
                     onClick={() => send.mutate({ versionId: v.id })}
                   >
-                    {v.status === "sent" ? "Send new link" : "Send for approval"}
+                    {v.status === "sent" ? t.design.sendNewLink : t.design.sendForApproval}
                   </Button>
                 )}
             </div>
@@ -745,33 +771,34 @@ export default function DesignJobDetail() {
             }}
           >
             <Input
-              aria-label="Comment"
+              aria-label={t.design.comment}
               className="min-w-60 flex-1"
-              placeholder="Add a comment on the current version…"
+              placeholder={t.design.addACommentOnThe}
               value={comment}
               onChange={(e) => setComment(e.target.value)}
             />
             <Button type="submit" disabled={feedback.isPending}>
-              Add comment
+              {t.design.addComment}
             </Button>
           </form>
           <DataGrid
             rows={job.feedback}
             rowKey={(f) => `${f.created_at}-${f.comment}`}
-            empty="No feedback yet"
+            empty={t.design.noFeedbackYet}
             columns={[
-              { header: "When", cell: (f) => formatDateTime(f.created_at) },
+              { header: t.common.when, cell: (f) => formatDateTime(f.created_at) },
               {
-                header: "Version",
+                header: t.design.version3,
                 cell: (f) => (
                   <span className="od-mono">{f.version_no ? `v${f.version_no}` : "—"}</span>
                 ),
               },
               {
-                header: "From",
-                cell: (f) => (f.author_type === "client" ? "Client" : (f.author_name ?? "Staff")),
+                header: t.common.from,
+                cell: (f) =>
+                  f.author_type === "client" ? t.common.client : (f.author_name ?? t.common.staff),
               },
-              { header: "Comment", cell: (f) => f.comment, className: "whitespace-normal" },
+              { header: t.design.comment, cell: (f) => f.comment, className: "whitespace-normal" },
             ]}
           />
         </TabsContent>
@@ -780,21 +807,21 @@ export default function DesignJobDetail() {
           {billing && (
             <div className="flex justify-end">
               <Button size="sm" variant="outline" onClick={() => setCosting(true)}>
-                Add cost
+                {t.design.addCost}
               </Button>
             </div>
           )}
           <DataGrid
             rows={job.costs_list}
             rowKey={(c) => c.id}
-            empty="No costs recorded"
+            empty={t.common.noCostsRecorded}
             columns={[
-              { header: "Date", cell: (c) => formatDate(c.date) },
-              { header: "Type", cell: (c) => label(c.kind) },
-              { header: "Description", cell: (c) => c.description },
-              { header: "Contractor", cell: (c) => c.contractor_name ?? "—" },
-              { header: "Status", cell: (c) => <StatusBadge value={c.status} /> },
-              { header: "Amount", align: "right", cell: (c) => formatMoney(c.amount) },
+              { header: t.common.date, cell: (c) => formatDate(c.date) },
+              { header: t.common.type, cell: (c) => label(c.kind) },
+              { header: t.common.description, cell: (c) => c.description },
+              { header: t.common.contractor, cell: (c) => c.contractor_name ?? "—" },
+              { header: t.common.status, cell: (c) => <StatusBadge value={c.status} /> },
+              { header: t.common.amount, align: "right", cell: (c) => formatMoney(c.amount) },
             ]}
           />
         </TabsContent>
@@ -803,15 +830,15 @@ export default function DesignJobDetail() {
           <DataGrid
             rows={job.payments}
             rowKey={(p) => p.id}
-            empty="No payments yet"
+            empty={t.common.noPaymentsYet}
             columns={[
               {
-                header: "Receipt",
+                header: t.common.receipt2,
                 cell: (p) => <span className="od-mono font-medium">{p.number}</span>,
               },
-              { header: "Date", cell: (p) => formatDate(p.date) },
-              { header: "Method", cell: (p) => label(p.method) },
-              { header: "Amount", align: "right", cell: (p) => formatMoney(p.amount) },
+              { header: t.common.date, cell: (p) => formatDate(p.date) },
+              { header: t.common.method, cell: (p) => label(p.method) },
+              { header: t.common.amount, align: "right", cell: (p) => formatMoney(p.amount) },
               {
                 header: "",
                 className: "text-right",
@@ -827,7 +854,7 @@ export default function DesignJobDetail() {
                       ).catch((e) => toast.error(errorMessage(e)))
                     }
                   >
-                    <Download size={13} /> Receipt PDF
+                    <Download size={13} /> {t.common.receiptPdf}
                   </Button>
                 ),
               },
@@ -839,7 +866,7 @@ export default function DesignJobDetail() {
               rowKey={(i) => i.id}
               columns={[
                 {
-                  header: "Invoice",
+                  header: t.common.invoice,
                   cell: (i) => (
                     <Link
                       className="od-mono font-medium underline underline-offset-4"
@@ -849,9 +876,9 @@ export default function DesignJobDetail() {
                     </Link>
                   ),
                 },
-                { header: "Status", cell: (i) => <StatusBadge value={i.status} /> },
-                { header: "Total", align: "right", cell: (i) => formatMoney(i.total) },
-                { header: "Balance", align: "right", cell: (i) => formatMoney(i.balance) },
+                { header: t.common.status, cell: (i) => <StatusBadge value={i.status} /> },
+                { header: t.common.total, align: "right", cell: (i) => formatMoney(i.total) },
+                { header: t.common.balance, align: "right", cell: (i) => formatMoney(i.balance) },
               ]}
             />
           )}
@@ -859,17 +886,17 @@ export default function DesignJobDetail() {
 
         <TabsContent value="work" className="space-y-6">
           <div className="space-y-2.5">
-            <h2 className="od-section-title">Print orders</h2>
+            <h2 className="od-section-title">{t.design.printOrders}</h2>
             <DataGrid
               rows={job.print_orders}
               rowKey={(o) => o.id}
-              empty="No print orders"
+              empty={t.design.noPrintOrders}
               columns={[
-                { header: "Printer", cell: (o) => o.contractor_name ?? "—" },
-                { header: "Quantity", align: "right", cell: (o) => o.quantity },
-                { header: "Due", cell: (o) => (o.due_date ? formatDate(o.due_date) : "—") },
-                { header: "Status", cell: (o) => <StatusBadge value={o.status} /> },
-                { header: "Cost", align: "right", cell: (o) => formatMoney(o.cost) },
+                { header: t.design.printer, cell: (o) => o.contractor_name ?? "—" },
+                { header: t.common.quantity, align: "right", cell: (o) => o.quantity },
+                { header: t.common.due2, cell: (o) => (o.due_date ? formatDate(o.due_date) : "—") },
+                { header: t.common.status, cell: (o) => <StatusBadge value={o.status} /> },
+                { header: t.design.cost, align: "right", cell: (o) => formatMoney(o.cost) },
                 {
                   header: "",
                   className: "text-right",
@@ -882,7 +909,7 @@ export default function DesignJobDetail() {
                             variant="outline"
                             onClick={() => printStatus.mutate({ id: o.id, status: "ready" })}
                           >
-                            Mark ready
+                            {t.design.markReady}
                           </Button>
                         )}
                         {o.status === "ready" && (
@@ -891,7 +918,7 @@ export default function DesignJobDetail() {
                             variant="outline"
                             onClick={() => printStatus.mutate({ id: o.id, status: "delivered" })}
                           >
-                            Mark delivered
+                            {t.design.markDelivered}
                           </Button>
                         )}
                         <Button
@@ -900,7 +927,7 @@ export default function DesignJobDetail() {
                           className="text-[var(--od-bad)] hover:text-[var(--od-bad)]"
                           onClick={() => printStatus.mutate({ id: o.id, status: "cancelled" })}
                         >
-                          Cancel
+                          {t.common.cancel}
                         </Button>
                       </div>
                     ) : null,
@@ -909,26 +936,27 @@ export default function DesignJobDetail() {
             />
           </div>
           <div className="space-y-2.5">
-            <h2 className="od-section-title">Time logged</h2>
+            <h2 className="od-section-title">{t.design.timeLogged}</h2>
             <DataGrid
               rows={job.time}
-              rowKey={(t) => t.started_at}
-              empty="No time logged"
+              rowKey={(item) => item.started_at}
+              empty={t.design.noTimeLogged}
               columns={[
-                { header: "Who", cell: (t) => t.user_name ?? "—" },
-                { header: "Started", cell: (t) => formatDateTime(t.started_at) },
+                { header: t.common.who, cell: (item) => item.user_name ?? "—" },
+                { header: t.design.started, cell: (item) => formatDateTime(item.started_at) },
                 {
-                  header: "Ended",
-                  cell: (t) => (t.ended_at ? formatDateTime(t.ended_at) : "Running"),
+                  header: t.design.ended,
+                  cell: (item) =>
+                    item.ended_at ? formatDateTime(item.ended_at) : t.design.running,
                 },
-                { header: "Minutes", align: "right", cell: (t) => t.minutes ?? "—" },
+                { header: t.design.minutes, align: "right", cell: (item) => item.minutes ?? "—" },
               ]}
             />
           </div>
         </TabsContent>
 
         <TabsContent value="history">
-          <SectionCard title="Record audit log">
+          <SectionCard title={t.common.recordAuditLog}>
             <RecordHistoryTab entityType="design_job" entityId={job.id} />
           </SectionCard>
         </TabsContent>
@@ -937,8 +965,8 @@ export default function DesignJobDetail() {
       <FormDialog
         open={charging}
         onOpenChange={setCharging}
-        title="Add extra revision charge"
-        description="Adds the fee to this job's price and grants additional revisions."
+        title={t.design.addExtraRevisionCharge}
+        description={t.design.addsTheFeeToThis}
         busy={chargeExtra.isPending}
         onSubmit={() =>
           chargeExtra.mutate({
@@ -949,7 +977,7 @@ export default function DesignJobDetail() {
         }
       >
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Extra charge amount *">
+          <Field label={t.design.extraChargeAmount}>
             <Input
               required
               inputMode="decimal"
@@ -958,7 +986,7 @@ export default function DesignJobDetail() {
               onChange={(e) => setExtraCharge({ ...extraCharge, amount: e.target.value })}
             />
           </Field>
-          <Field label="Extra revisions granted">
+          <Field label={t.design.extraRevisionsGranted}>
             <Input
               inputMode="numeric"
               value={extraCharge.extra_revisions}
@@ -966,9 +994,9 @@ export default function DesignJobDetail() {
             />
           </Field>
         </div>
-        <Field label="Note">
+        <Field label={t.common.note}>
           <Input
-            placeholder="Additional concept changes requested by client"
+            placeholder={t.design.additionalConceptChangesRequestedBy}
             value={extraCharge.note}
             onChange={(e) => setExtraCharge({ ...extraCharge, note: e.target.value })}
           />
@@ -998,8 +1026,8 @@ export default function DesignJobDetail() {
       <PaymentDialog
         open={paying}
         onOpenChange={setPaying}
-        title="Add payment"
-        hint="A deposit or the balance for this job. A receipt is issued."
+        title={t.common.addPayment}
+        hint={t.design.aDepositOrTheBalance}
         path={`/design-jobs/${id}/payments`}
         defaultAmount={toNumber(job.balance) > 0 ? job.balance : undefined}
         invalidate={refresh}
