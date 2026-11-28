@@ -7,6 +7,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { useGetPage } from "@/hooks/useApi";
 import { downloadCsv } from "@/lib/csv";
 import { formatDateTime } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
 
 interface Entry {
   id: string;
@@ -34,6 +35,7 @@ function summarize(value: unknown): string {
 }
 
 export default function Audit() {
+  const { t } = useI18n();
   const [action, setAction] = useState("");
   const [entityType, setEntityType] = useState("");
   const [from, setFrom] = useState("");
@@ -54,10 +56,18 @@ export default function Audit() {
 
   function exportCsv() {
     downloadCsv("audit-log.csv", [
-      ["Time", "User", "Action", "Record", "Record ID", "Old value", "New value"],
+      [
+        t.common.time,
+        t.common.user,
+        t.common.action,
+        t.admin.record,
+        t.admin.recordId,
+        t.common.oldValue,
+        t.common.newValue,
+      ],
       ...rows.map((e) => [
         formatDateTime(e.created_at),
-        e.user_name ?? e.user_id ?? "System",
+        e.user_name ?? e.user_id ?? t.common.system,
         e.action,
         e.entity_type,
         e.entity_id ?? "",
@@ -70,23 +80,23 @@ export default function Audit() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Audit log"
-        description="Who did what, and when, with old and new values. Read only."
+        title={t.admin.auditLog}
+        description={t.admin.whoDidWhatAndWhen}
         actions={
           rows.length > 0 && (
             <Button variant="outline" size="sm" onClick={exportCsv}>
-              <Download size={14} /> Export CSV
+              <Download size={14} /> {t.common.exportCsv}
             </Button>
           )
         }
       />
 
       <div className="od-card flex flex-wrap items-end gap-3 p-4">
-        <Field label="Action">
+        <Field label={t.common.action}>
           <Input
-            aria-label="Filter by action"
+            aria-label={t.admin.filterByAction}
             className="w-48"
-            placeholder="e.g. sale.create"
+            placeholder={t.admin.eGSaleCreate}
             value={action}
             onChange={(e) => {
               setAction(e.target.value);
@@ -94,11 +104,11 @@ export default function Audit() {
             }}
           />
         </Field>
-        <Field label="Module / record">
+        <Field label={t.admin.moduleRecord}>
           <Input
-            aria-label="Filter by module"
+            aria-label={t.admin.filterByModule}
             className="w-52"
-            placeholder="e.g. sale, svc_project, user"
+            placeholder={t.admin.eGSaleSvcProject}
             value={entityType}
             onChange={(e) => {
               setEntityType(e.target.value);
@@ -106,7 +116,7 @@ export default function Audit() {
             }}
           />
         </Field>
-        <Field label="From">
+        <Field label={t.common.from}>
           <Input
             type="date"
             value={from}
@@ -116,7 +126,7 @@ export default function Audit() {
             }}
           />
         </Field>
-        <Field label="To">
+        <Field label={t.common.to}>
           <Input
             type="date"
             value={to}
@@ -138,7 +148,7 @@ export default function Audit() {
               setPage(1);
             }}
           >
-            <RotateCcw size={13} /> Clear
+            <RotateCcw size={13} /> {t.common.clear}
           </Button>
         )}
       </div>
@@ -147,10 +157,10 @@ export default function Audit() {
         rows={rows}
         loading={query.isLoading}
         rowKey={(e) => e.id}
-        empty="No activity recorded"
+        empty={t.admin.noActivityRecorded}
         columns={[
           {
-            header: "Time",
+            header: t.common.time,
             cell: (e) => (
               <span className="od-tabular text-xs text-[var(--od-ink-secondary)]">
                 {formatDateTime(e.created_at)}
@@ -158,15 +168,15 @@ export default function Audit() {
             ),
           },
           {
-            header: "User",
+            header: t.common.user,
             cell: (e) => (
               <span className="font-medium text-[var(--od-ink)]">
-                {e.user_name ?? e.user_id?.slice(0, 8) ?? "System"}
+                {e.user_name ?? e.user_id?.slice(0, 8) ?? t.common.system}
               </span>
             ),
           },
           {
-            header: "Action",
+            header: t.common.action,
             cell: (e) => (
               <code className="od-mono rounded-md border border-[var(--od-border)] bg-[var(--od-surface-subtle)] px-1.5 py-0.5 text-xs text-[var(--od-ink)]">
                 {e.action}
@@ -174,7 +184,7 @@ export default function Audit() {
             ),
           },
           {
-            header: "Record",
+            header: t.admin.record,
             cell: (e) => (
               <span className="text-[var(--od-ink)]">
                 {e.entity_type}
@@ -187,12 +197,12 @@ export default function Audit() {
             ),
           },
           {
-            header: "Old value",
+            header: t.common.oldValue,
             cell: (e) => summarize(e.before),
             className: "max-w-xs whitespace-normal text-xs text-[var(--od-ink-muted)]",
           },
           {
-            header: "New value",
+            header: t.common.newValue,
             cell: (e) => summarize(e.after),
             className: "max-w-xs whitespace-normal text-xs text-[var(--od-ink-secondary)]",
           },

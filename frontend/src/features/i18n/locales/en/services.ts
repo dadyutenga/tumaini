@@ -1,4 +1,5 @@
 export default {
+  defaultProjectName: "{name} - client",
   costRecorded: "Cost recorded",
   addACost: "Add a cost",
   governmentFeesMaterialsPrintingAnd:

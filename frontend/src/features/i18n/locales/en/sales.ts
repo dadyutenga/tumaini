@@ -1,4 +1,5 @@
 export default {
+  walkIn: "Walk-in",
   returnRequestedForApproval: "Return requested for approval",
   returnUpdated: "Return updated",
   returnCompleted: "Return completed",

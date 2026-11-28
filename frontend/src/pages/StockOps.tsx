@@ -20,6 +20,7 @@ import { formatDateTime, formatMoney, formatQty, toNumber } from "@/lib/formatte
 import type { Product } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface Branch {
   id: string;
@@ -513,7 +514,7 @@ function MovementsTab() {
           },
           {
             header: t.common.type,
-            cell: (m) => <span className="capitalize">{(m.type ?? "—").replaceAll("_", " ")}</span>,
+            cell: (m) => <span className="capitalize">{statusLabel(t, m.type) || "—"}</span>,
           },
           {
             header: t.common.qty,

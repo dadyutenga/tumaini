@@ -8,7 +8,7 @@ import ts from "typescript";
 
 /** Words that stay in English in every language: codes, product names and units. */
 const KEEP_WORDS =
-  /\b(?:M-Pesa|TIN|IMEI|PDF|WhatsApp|SMS|SMTP|CSV|XLSX|XLS|TZS|USD|SKU|BMS|NIDA|NSSF|PSSSF|PAYE|SDL|WCF|HESLB|VAT|POS|HR|ID|IP|MFA|QR|URL|KB|MB|GB|TB|PNG|JPG|JPEG|WEBP|ZIP|EFD|OK)\b/g;
+  /\b(?:M-Pesa|TIN|IMEI|SN|PDF|WhatsApp|SMS|SMTP|CSV|XLSX|XLS|TZS|USD|SKU|BMS|NIDA|NSSF|PSSSF|PAYE|SDL|WCF|HESLB|VAT|POS|HR|ID|IP|MFA|QR|URL|KB|MB|GB|TB|PNG|JPG|JPEG|WEBP|ZIP|EFD|OK)\b/g;
 
 /** JSX props whose value is shown (or read out) to the user. */
 const TEXT_ATTRIBUTE =
@@ -128,7 +128,7 @@ function looksLikeProse(text) {
   if (/^[\w.-]+\/[\w./+-]+$|^\/|^#|^--|var\(|^\d+px/.test(value)) return false;
   return (
     /\p{L}{2,}[,.!?:]?(?: | [/&·–—+-] )\p{L}{2,}/u.test(value) ||
-    /^\p{Lu}\p{Ll}+[….!?]?$/u.test(value)
+    /^\p{Lu}\p{Ll}+(?:-\p{Ll}+)*[….!?]?$/u.test(value)
   );
 }
 
@@ -212,7 +212,8 @@ export function findVisible(sourceFile, checker) {
   const addLiteral = (node, context) => {
     if (claimed.has(node)) return;
     claimed.add(node);
-    if (hasWords(node.text) && !looksLikeClasses(node.text))
+    // An object property such as `caption` may hold class names; props and JSX text never do.
+    if (hasWords(node.text) && !(context.startsWith("prop:") && looksLikeClasses(node.text)))
       units.push({ kind: "literal", node, text: node.text, parts: [], context });
   };
 
@@ -221,7 +222,8 @@ export function findVisible(sourceFile, checker) {
     claimed.add(node);
     const fixed = [node.head.text, ...node.templateSpans.map((s) => s.literal.text)];
     for (const span of node.templateSpans) collect(span.expression, context);
-    if (!hasWords(fixed.join(" ")) || looksLikeClasses(fixed.join("x"))) return;
+    if (!hasWords(fixed.join(" "))) return;
+    if (!/^(?:attr:|jsx)/.test(context) && looksLikeClasses(fixed.join("x"))) return;
     const used = new Set();
     const parts = [];
     let text = node.head.text;

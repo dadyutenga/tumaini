@@ -19,6 +19,7 @@ import { downloadCsv } from "@/lib/csv";
 import { formatDate, today } from "@/lib/formatters";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface Day {
   id: string;
@@ -275,7 +276,7 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
             >
               {statuses.map((s) => (
                 <option key={s} value={s}>
-                  {s.replace("_", " ")}
+                  {statusLabel(t, s)}
                 </option>
               ))}
             </NativeSelect>
@@ -307,7 +308,7 @@ function History({ overtimeOnly }: { overtimeOnly: boolean }) {
           >
             {statuses.map((s) => (
               <option key={s} value={s}>
-                {s.replace("_", " ")}
+                {statusLabel(t, s)}
               </option>
             ))}
           </NativeSelect>

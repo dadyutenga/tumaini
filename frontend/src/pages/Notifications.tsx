@@ -7,6 +7,7 @@ import { EmptyState, PageLoader } from "@/components/shared/Display";
 import { useGetPage, useWrite } from "@/hooks/useApi";
 import { formatDateTime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
+import { useI18n } from "@/features/i18n/i18n";
 
 interface Notice {
   id: string;
@@ -21,6 +22,7 @@ interface Notice {
 }
 
 export default function Notifications() {
+  const { t } = useI18n();
   const navigate = useNavigate();
   const [unreadOnly, setUnreadOnly] = useState(false);
   const [page, setPage] = useState(1);
@@ -35,7 +37,7 @@ export default function Notifications() {
   });
   const readAll = useWrite("POST", "/notifications/read-all", {
     invalidate: ["/notifications"],
-    success: "All notifications marked as read",
+    success: t.notifications.allNotificationsMarkedAsRead,
   });
 
   const items = query.data?.data ?? [];
@@ -50,8 +52,8 @@ export default function Notifications() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Notifications"
-        description="Alerts for low stock, debts, overdue tasks, renewals, approvals and security."
+        title={t.common.notifications}
+        description={t.notifications.alertsForLowStockDebts}
         actions={
           unreadCount > 0 ? (
             <Button
@@ -60,7 +62,7 @@ export default function Notifications() {
               disabled={readAll.isPending}
               onClick={() => readAll.mutate(undefined)}
             >
-              <CheckCheck size={14} /> Mark all as read
+              <CheckCheck size={14} /> {t.notifications.markAllAsRead}
             </Button>
           ) : undefined
         }
@@ -68,15 +70,15 @@ export default function Notifications() {
 
       <FilterBar>
         <SegmentedChips
-          ariaLabel="Filter notifications"
+          ariaLabel={t.notifications.filterNotifications}
           value={unreadOnly ? "unread" : "all"}
           onChange={(v) => {
             setUnreadOnly(v === "unread");
             setPage(1);
           }}
           options={[
-            { value: "all", label: "All" },
-            { value: "unread", label: "Unread only" },
+            { value: "all", label: t.common.all },
+            { value: "unread", label: t.notifications.unreadOnly },
           ]}
         />
       </FilterBar>
@@ -85,11 +87,13 @@ export default function Notifications() {
         <PageLoader />
       ) : items.length === 0 ? (
         <EmptyState
-          title={unreadOnly ? "No unread notifications" : "You are all caught up"}
+          title={
+            unreadOnly ? t.notifications.noUnreadNotifications : t.notifications.youAreAllCaughtUp
+          }
           description={
             unreadOnly
-              ? "Switch to All to review previously read notifications."
-              : "New alerts for stock, debts, approvals and tasks will appear here."
+              ? t.notifications.switchToAllToReview
+              : t.notifications.newAlertsForStockDebts
           }
         />
       ) : (
@@ -113,7 +117,7 @@ export default function Notifications() {
                     {!read && (
                       <span
                         className="h-2 w-2 shrink-0 rounded-full bg-[var(--od-info-mark)]"
-                        aria-label="Unread"
+                        aria-label={t.notifications.unread}
                       />
                     )}
                     <p
@@ -134,7 +138,7 @@ export default function Notifications() {
                       <>
                         <span>·</span>
                         <span className="inline-flex items-center gap-0.5 text-[var(--od-info)]">
-                          Open <ArrowUpRight size={12} />
+                          {t.common.open} <ArrowUpRight size={12} />
                         </span>
                       </>
                     )}
@@ -142,7 +146,7 @@ export default function Notifications() {
                 </button>
                 {!read && (
                   <Button size="sm" variant="ghost" onClick={() => markRead.mutate({ id: n.id })}>
-                    <Check size={14} /> Mark read
+                    <Check size={14} /> {t.notifications.markRead}
                   </Button>
                 )}
               </li>

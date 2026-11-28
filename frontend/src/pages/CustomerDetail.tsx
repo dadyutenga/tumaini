@@ -21,6 +21,7 @@ import { formatDate, formatMoney, today, toNumber } from "@/lib/formatters";
 import type { Customer, MoneyAccount } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface Line {
   date: string;
@@ -216,7 +217,7 @@ export default function CustomerDetail() {
                 header: t.common.type,
                 cell: (l) => (
                   <span className="capitalize">
-                    {(l.type || l.description || "—").replaceAll("_", " ")}
+                    {statusLabel(t, l.type || l.description) || "—"}
                   </span>
                 ),
               },

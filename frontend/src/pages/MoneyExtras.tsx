@@ -15,6 +15,7 @@ import { useGetPage, useWrite } from "@/hooks/useApi";
 import { formatDate, formatMoney } from "@/lib/formatters";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface Payment {
   id: string;
@@ -85,7 +86,7 @@ export function PaymentsTab() {
           },
           {
             header: t.common.kind,
-            cell: (p) => <span className="capitalize">{p.kind.replaceAll("_", " ")}</span>,
+            cell: (p) => <span className="capitalize">{statusLabel(t, p.kind)}</span>,
           },
           { header: t.finance.party, cell: (p) => p.party_name ?? "—" },
           { header: t.common.account, cell: (p) => p.account_name },

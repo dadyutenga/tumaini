@@ -13,6 +13,9 @@ import {
 } from "@/components/ui/dialog";
 import { NativeSelect } from "@/components/shared/kit";
 import { useGet, useWrite } from "@/hooks/useApi";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import type { Translations } from "@/features/i18n/i18n";
 
 interface PermCatalogItem {
   key: string;
@@ -38,6 +41,10 @@ interface UserPermsRes {
 
 type Mode = "default" | "allow" | "revoke";
 
+/** What a permission allows, in the user's language. */
+const describe = (t: Translations, p: { key: string; description: string }) =>
+  (t.admin.permissions as Record<string, string>)[p.key] ?? p.description;
+
 export function UserPermissionsDialog({
   userId,
   userName,
@@ -49,6 +56,7 @@ export function UserPermissionsDialog({
   open: boolean;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const catalog = useGet<PermCatalogItem[]>("/permissions", undefined, { enabled: open });
   const data = useGet<UserPermsRes>(`/users/${userId}/permissions`, undefined, {
     enabled: open && Boolean(userId),
@@ -76,7 +84,7 @@ export function UserPermissionsDialog({
     () => `/users/${userId}/permissions`,
     {
       invalidate: [`/users/${userId}/permissions`, "/users"],
-      success: "User permission overrides saved",
+      success: t.admin.userPermissionOverridesSaved,
       onSuccess: () => onClose(),
     },
   );
@@ -93,7 +101,7 @@ export function UserPermissionsDialog({
       if (
         q &&
         !p.key.toLowerCase().includes(q) &&
-        !p.description.toLowerCase().includes(q) &&
+        !describe(t, p).toLowerCase().includes(q) &&
         !p.module.toLowerCase().includes(q)
       ) {
         continue;
@@ -103,7 +111,7 @@ export function UserPermissionsDialog({
       map.set(p.module, list);
     }
     return [...map.entries()];
-  }, [catalog.data, search]);
+  }, [catalog.data, search, t]);
 
   function onSave() {
     const overrides: UserPermOverride[] = [];
@@ -126,28 +134,25 @@ export function UserPermissionsDialog({
       <DialogContent className="flex max-h-[90vh] flex-col sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Shield size={17} /> Custom permissions — {userName}
+            <Shield size={17} /> {fmt(t.admin.customPermissions, { userName })}
           </DialogTitle>
-          <DialogDescription>
-            Override individual permissions on top of this user&apos;s role, with an optional reason
-            and expiry date.
-          </DialogDescription>
+          <DialogDescription>{t.admin.overrideIndividualPermissionsOnTop}</DialogDescription>
         </DialogHeader>
 
         {isLocked ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            Admin accounts always hold every permission and cannot be overridden.
+            {t.admin.adminAccountsAlwaysHoldEvery}
           </p>
         ) : (
           <>
             <div className="flex items-center gap-2">
               <Input
-                placeholder="Filter permissions by module or name…"
+                placeholder={t.admin.filterPermissionsByModuleOr}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
               <Button variant="ghost" size="sm" onClick={() => setDraft({})}>
-                Reset all to role default
+                {t.admin.resetAllToRoleDefault}
               </Button>
             </div>
 
@@ -177,10 +182,12 @@ export function UserPermissionsDialog({
                                 variant={hasRole ? "secondary" : "outline"}
                                 className="text-[10px]"
                               >
-                                Role: {hasRole ? "Allow" : "Deny"}
+                                {fmt(t.admin.role2, {
+                                  value: hasRole ? t.admin.allow : t.admin.deny,
+                                })}
                               </Badge>
                             </div>
-                            <p className="text-muted-foreground">{p.description}</p>
+                            <p className="text-muted-foreground">{describe(t, p)}</p>
                           </div>
                           <div className="flex flex-wrap items-center gap-1.5">
                             <NativeSelect
@@ -193,15 +200,15 @@ export function UserPermissionsDialog({
                                 }))
                               }
                             >
-                              <option value="default">Role default</option>
-                              <option value="allow">Allow (override)</option>
-                              <option value="revoke">Revoke (override)</option>
+                              <option value="default">{t.admin.roleDefault}</option>
+                              <option value="allow">{t.admin.allowOverride}</option>
+                              <option value="revoke">{t.admin.revokeOverride}</option>
                             </NativeSelect>
                             {cur.mode !== "default" && (
                               <>
                                 <Input
                                   className="h-7 w-36 text-xs"
-                                  placeholder="Reason"
+                                  placeholder={t.common.reason}
                                   value={cur.reason}
                                   onChange={(e) =>
                                     setDraft((prev) => ({
@@ -212,7 +219,7 @@ export function UserPermissionsDialog({
                                 />
                                 <Input
                                   type="date"
-                                  title="Optional expiry date"
+                                  title={t.admin.optionalExpiryDate}
                                   className="h-7 w-32 text-xs"
                                   value={cur.expires_at}
                                   onChange={(e) =>
@@ -237,11 +244,11 @@ export function UserPermissionsDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>
-            Cancel
+            {t.common.cancel}
           </Button>
           {!isLocked && (
             <Button disabled={save.isPending} onClick={onSave}>
-              {save.isPending ? "Saving…" : "Save overrides"}
+              {save.isPending ? t.common.saving : t.admin.saveOverrides}
             </Button>
           )}
         </DialogFooter>

@@ -15,6 +15,7 @@ import { formatDateTime, formatMoney, formatQty, toNumber } from "@/lib/formatte
 import type { Product } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface ProductDetailPayload {
   product: Product;
@@ -206,7 +207,7 @@ export default function ProductDetail() {
               {
                 header: t.common.type,
                 cell: (m) => (
-                  <span className="font-medium capitalize">{m.type.replaceAll("_", " ")}</span>
+                  <span className="font-medium capitalize">{statusLabel(t, m.type)}</span>
                 ),
               },
               {
@@ -239,7 +240,7 @@ export default function ProductDetail() {
                 cell: (m) =>
                   m.source_type ? (
                     <span className="capitalize text-[var(--od-ink-secondary)]">
-                      {m.source_type.replaceAll("_", " ")}
+                      {statusLabel(t, m.source_type)}
                     </span>
                   ) : (
                     "—"

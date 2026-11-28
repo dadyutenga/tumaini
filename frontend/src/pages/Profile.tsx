@@ -397,7 +397,7 @@ export default function Profile() {
                 <CopyButton text={mfaSetupData.otpauth_url} />
               </div>
             </div>
-            <Field label="6-digit verification code *">
+            <Field label={t.settings.sixDigitVerificationCode}>
               <Input
                 required
                 inputMode="numeric"

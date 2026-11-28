@@ -26,6 +26,7 @@ import type { Branch } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
 import type { Translations } from "@/features/i18n/i18n";
+import { statusLabel } from "@/features/i18n/status";
 
 interface Employee {
   id: string;
@@ -782,9 +783,7 @@ function AttendanceTab() {
               key={k}
               className="inline-flex items-center gap-2 rounded-full border border-[var(--od-border-strong)] bg-[var(--od-surface)] px-3.5 py-1.5 text-xs"
             >
-              <span className="capitalize text-[var(--od-ink-secondary)]">
-                {k.replace("_", " ")}
-              </span>
+              <span className="capitalize text-[var(--od-ink-secondary)]">{statusLabel(t, k)}</span>
               <span className="od-tabular font-semibold text-[var(--od-ink)]">{v}</span>
             </div>
           ))}

@@ -17,6 +17,7 @@ import { formatDateTime, formatMoney, toNumber } from "@/lib/formatters";
 import type { Approval } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import type { Translations } from "@/features/i18n/i18n";
+import { statusLabel } from "@/features/i18n/status";
 
 const APPROVAL_PERMISSION: Record<string, string> = {
   discount: "shop.discount.approve",
@@ -105,7 +106,7 @@ export default function Approvals() {
             header: t.common.kind,
             cell: (a) => (
               <Badge variant="secondary" className="capitalize">
-                {a.kind.replaceAll("_", " ")}
+                {statusLabel(t, a.kind)}
               </Badge>
             ),
           },

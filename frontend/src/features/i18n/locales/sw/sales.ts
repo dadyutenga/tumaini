@@ -1,6 +1,7 @@
 import type { Translations } from "../en";
 
 export default {
+  walkIn: "Mteja wa kawaida",
   returnRequestedForApproval: "Ombi la kurudisha limetumwa kwa idhini",
   returnUpdated: "Marejesho yamebadilishwa",
   returnCompleted: "Marejesho yamekamilika",

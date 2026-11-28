@@ -85,7 +85,9 @@ export function NewProjectDialog({
         <Field label={t.services.projectName}>
           <Input
             placeholder={
-              service ? `${service.name} - client` : t.services.requiredForACustomProject
+              service
+                ? fmt(t.services.defaultProjectName, { name: service.name })
+                : t.services.requiredForACustomProject
             }
             required={!serviceId}
             value={name}

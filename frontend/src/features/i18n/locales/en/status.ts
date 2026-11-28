@@ -1,5 +1,17 @@
 /** Labels for the values the API returns, keyed by the value. Shown capitalised by CSS. */
 export default {
+  return: "return",
+  price_change: "price change",
+  discount: "discount",
+  payroll: "payroll",
+  leave_request: "leave request",
+  overtime: "overtime",
+  weekly: "weekly",
+  monthly: "monthly",
+  daily: "daily",
+  income: "income",
+  receipt: "receipt",
+  purchase_order: "purchase order",
   government_fee: "government fee",
   materials: "materials",
   stock_images: "stock images",

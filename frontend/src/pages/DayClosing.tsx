@@ -18,6 +18,7 @@ import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { formatDate, formatDateTime, formatMoney, today } from "@/lib/formatters";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface ClosingRecord {
   id: string;
@@ -160,7 +161,7 @@ export default function DayClosing() {
                   methods.map(([m, v]) => (
                     <div key={m} className="flex items-center justify-between gap-2">
                       <span className="capitalize text-[var(--od-ink-secondary)]">
-                        {m.replaceAll("_", " ")}
+                        {statusLabel(t, m)}
                       </span>
                       <span className="od-tabular font-medium text-[var(--od-ink)]">
                         {formatMoney(v)}

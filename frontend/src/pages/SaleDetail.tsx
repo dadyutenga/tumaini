@@ -24,6 +24,7 @@ import { formatDate, formatMoney, formatQty, toNumber } from "@/lib/formatters";
 import type { MoneyAccount, Sale, SaleItem } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface ReceiptPreview {
   number?: string;
@@ -408,7 +409,7 @@ export default function SaleDetail() {
               { header: t.common.date, cell: (r) => formatDate(r.created_at) },
               {
                 header: t.sales.resolution,
-                cell: (r) => <span className="capitalize">{r.resolution}</span>,
+                cell: (r) => <span className="capitalize">{statusLabel(t, r.resolution)}</span>,
               },
               { header: t.common.reason, cell: (r) => r.reason || "—" },
               { header: t.sales.refund, align: "right", cell: (r) => formatMoney(r.refund_total) },

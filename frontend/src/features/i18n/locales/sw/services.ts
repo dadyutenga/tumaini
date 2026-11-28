@@ -1,6 +1,7 @@
 import type { Translations } from "../en";
 
 export default {
+  defaultProjectName: "{name} - mteja",
   costRecorded: "Gharama imerekodiwa",
   addACost: "Ongeza gharama",
   governmentFeesMaterialsPrintingAnd:

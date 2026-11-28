@@ -12,6 +12,9 @@ import { useAuth } from "@/features/auth/auth";
 import { errorMessage, useGet } from "@/hooks/useApi";
 import { download } from "@/lib/api";
 import { formatMoney, toNumber } from "@/lib/formatters";
+import { useI18n } from "@/features/i18n/i18n";
+import { fmt } from "@/features/i18n/format";
+import type { Translations } from "@/features/i18n/i18n";
 
 interface Catalogue {
   path: string;
@@ -27,10 +30,10 @@ interface Catalogue {
 const OPS: Catalogue["permission"] = ["reports.operations.view", "reports.business.view"];
 const BIZ: Catalogue["permission"] = ["reports.business.view"];
 
-const catalogue: Catalogue[] = [
+const catalogueFor = (t: Translations): Catalogue[] => [
   {
-    group: "Sales",
-    label: "Sales summary",
+    group: t.common.sales,
+    label: t.reports.salesSummary,
     path: "/reports/sales/summary",
     permission: OPS,
     dated: true,
@@ -38,48 +41,48 @@ const catalogue: Catalogue[] = [
     chartType: "line",
   },
   {
-    group: "Sales",
-    label: "By product",
+    group: t.common.sales,
+    label: t.reports.byProduct,
     path: "/reports/sales/by-product",
     permission: OPS,
     dated: true,
     amountKeys: ["net_sales", "gross_sales", "total", "qty"],
   },
   {
-    group: "Sales",
-    label: "By category",
+    group: t.common.sales,
+    label: t.reports.byCategory,
     path: "/reports/sales/by-category",
     permission: OPS,
     dated: true,
     amountKeys: ["net_sales", "gross_sales", "total"],
   },
   {
-    group: "Sales",
-    label: "By cashier",
+    group: t.common.sales,
+    label: t.reports.byCashier,
     path: "/reports/sales/by-cashier",
     permission: OPS,
     dated: true,
     amountKeys: ["net_sales", "gross_sales", "total"],
   },
   {
-    group: "Sales",
-    label: "By customer",
+    group: t.common.sales,
+    label: t.reports.byCustomer,
     path: "/reports/sales/by-customer",
     permission: OPS,
     dated: true,
     amountKeys: ["net_sales", "gross_sales", "total"],
   },
   {
-    group: "Sales",
-    label: "By payment method",
+    group: t.common.sales,
+    label: t.reports.byPaymentMethod,
     path: "/reports/sales/by-payment-method",
     permission: OPS,
     dated: true,
     amountKeys: ["net", "amount_in"],
   },
   {
-    group: "Profit & Loss",
-    label: "Profit and loss",
+    group: t.reports.groupProfitLoss,
+    label: t.reports.profitAndLoss,
     path: "/reports/profit-loss",
     permission: BIZ,
     dated: true,
@@ -87,8 +90,8 @@ const catalogue: Catalogue[] = [
     labelKey: "name",
   },
   {
-    group: "Cash Flow & Finance",
-    label: "Cash flow",
+    group: t.reports.cashFlowFinance,
+    label: t.reports.cashFlow,
     path: "/reports/cash-flow",
     permission: BIZ,
     dated: true,
@@ -96,16 +99,16 @@ const catalogue: Catalogue[] = [
     chartType: "line",
   },
   {
-    group: "Cash Flow & Finance",
-    label: "Balance sheet",
+    group: t.reports.cashFlowFinance,
+    label: t.reports.balanceSheet,
     path: "/reports/balance-sheet",
     permission: BIZ,
     amountKeys: ["amount"],
     labelKey: "name",
   },
   {
-    group: "Cash Flow & Finance",
-    label: "Tax",
+    group: t.reports.cashFlowFinance,
+    label: t.common.tax,
     path: "/reports/tax",
     permission: BIZ,
     dated: true,
@@ -113,8 +116,8 @@ const catalogue: Catalogue[] = [
     chartType: "line",
   },
   {
-    group: "Projects & Design",
-    label: "Project profit",
+    group: t.reports.groupProjects,
+    label: t.reports.projectProfit,
     path: "/reports/projects",
     permission: OPS,
     dated: true,
@@ -122,8 +125,8 @@ const catalogue: Catalogue[] = [
     labelKey: "client_name",
   },
   {
-    group: "Projects & Design",
-    label: "Design jobs",
+    group: t.reports.groupProjects,
+    label: t.common.designJobs,
     path: "/reports/design-jobs",
     permission: OPS,
     dated: true,
@@ -131,31 +134,31 @@ const catalogue: Catalogue[] = [
     labelKey: "designer",
   },
   {
-    group: "Expenses",
-    label: "Expenses",
+    group: t.common.expenses,
+    label: t.common.expenses,
     path: "/reports/expenses",
     permission: BIZ,
     dated: true,
     amountKeys: ["amount", "paid"],
   },
   {
-    group: "Stock",
-    label: "Stock on hand",
+    group: t.common.stock,
+    label: t.reports.stockOnHand,
     path: "/reports/inventory/on-hand",
     permission: OPS,
     amountKeys: ["value", "qty_on_hand"],
     labelKey: "product",
   },
   {
-    group: "Stock",
-    label: "Stock valuation",
+    group: t.common.stock,
+    label: t.reports.stockValuation,
     path: "/reports/inventory/valuation",
     permission: BIZ,
     amountKeys: ["value", "qty_on_hand"],
   },
   {
-    group: "Stock",
-    label: "Movements",
+    group: t.common.stock,
+    label: t.common.movements,
     path: "/reports/inventory/movements",
     permission: OPS,
     dated: true,
@@ -163,24 +166,24 @@ const catalogue: Catalogue[] = [
     chartType: "line",
   },
   {
-    group: "Stock",
-    label: "Low stock",
+    group: t.common.stock,
+    label: t.common.lowStock,
     path: "/reports/inventory/low-stock",
     permission: OPS,
     amountKeys: ["suggested_qty", "qty_on_hand"],
     labelKey: "product",
   },
   {
-    group: "Stock",
-    label: "Dead stock",
+    group: t.common.stock,
+    label: t.reports.deadStock,
     path: "/reports/inventory/dead-stock",
     permission: OPS,
     amountKeys: ["value", "qty_on_hand"],
     labelKey: "product",
   },
   {
-    group: "Stock",
-    label: "Losses and adjustments",
+    group: t.common.stock,
+    label: t.reports.lossesAndAdjustments,
     path: "/reports/inventory/losses",
     permission: OPS,
     dated: true,
@@ -188,32 +191,32 @@ const catalogue: Catalogue[] = [
     labelKey: "product",
   },
   {
-    group: "Stock",
-    label: "Purchases",
+    group: t.common.stock,
+    label: t.reports.purchases,
     path: "/reports/purchases",
     permission: OPS,
     dated: true,
     amountKeys: ["total", "amount", "qty"],
   },
   {
-    group: "Debts",
-    label: "Customer debts",
+    group: t.common.debts,
+    label: t.reports.customerDebts,
     path: "/reports/customer-debt",
     permission: OPS,
     amountKeys: ["balance", "overdue"],
     labelKey: "customer",
   },
   {
-    group: "Debts",
-    label: "Supplier debts",
+    group: t.common.debts,
+    label: t.reports.supplierDebts,
     path: "/reports/supplier-debt",
     permission: OPS,
     amountKeys: ["balance", "overdue"],
     labelKey: "supplier",
   },
   {
-    group: "Staff & Payroll",
-    label: "Payroll summary",
+    group: t.reports.groupStaff,
+    label: t.reports.payrollSummary,
     path: "/reports/payroll/summary",
     permission: BIZ,
     dated: true,
@@ -221,8 +224,8 @@ const catalogue: Catalogue[] = [
     labelKey: "run",
   },
   {
-    group: "Staff & Payroll",
-    label: "Deductions",
+    group: t.reports.groupStaff,
+    label: t.common.deductions,
     path: "/reports/payroll/deductions",
     permission: BIZ,
     dated: true,
@@ -230,16 +233,16 @@ const catalogue: Catalogue[] = [
     labelKey: "label",
   },
   {
-    group: "Staff & Payroll",
-    label: "Staff advances & loans",
+    group: t.reports.groupStaff,
+    label: t.reports.staffAdvancesLoans,
     path: "/reports/payroll/loans",
     permission: BIZ,
     amountKeys: ["balance", "principal"],
     labelKey: "employee",
   },
   {
-    group: "Staff & Payroll",
-    label: "Staff performance",
+    group: t.reports.groupStaff,
+    label: t.reports.staffPerformance,
     path: "/reports/staff-performance",
     permission: BIZ,
     dated: true,
@@ -247,8 +250,8 @@ const catalogue: Catalogue[] = [
     labelKey: "employee",
   },
   {
-    group: "Staff & Payroll",
-    label: "Location comparison",
+    group: t.reports.groupStaff,
+    label: t.reports.locationComparison,
     path: "/reports/branches",
     permission: BIZ,
     dated: true,
@@ -293,10 +296,14 @@ function cell(key: string, value: unknown) {
 }
 
 export default function Reports() {
+  const { t, locale } = useI18n();
   const { can, canAny } = useAuth();
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const available = useMemo(() => catalogue.filter((r) => canAny(...r.permission)), [canAny]);
+  const available = useMemo(
+    () => catalogueFor(t).filter((r) => canAny(...r.permission)),
+    [canAny, t],
+  );
   const selectedPath = params.get("path") ?? "";
   const current = available.find((r) => r.path === selectedPath) ?? null;
 
@@ -327,7 +334,17 @@ export default function Reports() {
       toast.error(errorMessage(e)),
     );
 
-  const columns = useMemo(() => report.data?.columns ?? [], [report.data?.columns]);
+  // The API names its columns in English; show our wording for the ones we know in other languages.
+  const columns = useMemo(() => {
+    const names = t.reports.columns as Record<string, string>;
+    return (report.data?.columns ?? []).map((c) => ({
+      ...c,
+      label:
+        locale !== "en" && Object.prototype.hasOwnProperty.call(names, c.key)
+          ? names[c.key]
+          : c.label,
+    }));
+  }, [report.data?.columns, t, locale]);
   const rows = useMemo(() => report.data?.rows ?? [], [report.data?.rows]);
 
   const chartConfig = useMemo(() => {
@@ -338,14 +355,14 @@ export default function Reports() {
     if (isPL && report.data.businesses) {
       const b = report.data.businesses;
       const items = [
-        { name: "Shop income", value: toNumber(b.shop.income) },
-        { name: "Services income", value: toNumber(b.services.income) },
-        { name: "Operating exp.", value: toNumber(b.shared.operating_expenses) },
-        { name: "Net profit", value: toNumber(b.total.net_profit) },
+        { name: t.reports.shopIncome, value: toNumber(b.shop.income) },
+        { name: t.reports.servicesIncome, value: toNumber(b.services.income) },
+        { name: t.reports.operatingExp, value: toNumber(b.shared.operating_expenses) },
+        { name: t.common.netProfit, value: toNumber(b.total.net_profit) },
       ];
       if (compare && report.data.previous?.net_profit !== undefined) {
         items.push({
-          name: "Prev net profit",
+          name: t.reports.prevNetProfit,
           value: toNumber(report.data.previous.net_profit),
         });
       }
@@ -355,8 +372,10 @@ export default function Reports() {
         data: hasAny ? items : [],
         subtitle:
           compare && report.data.previous?.net_profit !== undefined
-            ? `Previous net profit: ${formatMoney(report.data.previous.net_profit)}`
-            : "Shop, services, expenses and net profit",
+            ? fmt(t.reports.previousNetProfit, {
+                net_profit: formatMoney(report.data.previous.net_profit),
+              })
+            : t.reports.shopServicesExpensesAndNet,
       };
     }
 
@@ -417,22 +436,22 @@ export default function Reports() {
     return {
       kind: "bar" as const,
       data: top10,
-      subtitle: rows.length > 10 ? `Top 10 by ${amountCol.label}` : `By ${amountCol.label}`,
+      subtitle:
+        rows.length > 10
+          ? fmt(t.reports.top10By, { label: amountCol.label })
+          : fmt(t.reports.by, { label: amountCol.label }),
     };
-  }, [columns, compare, current, isPL, report.data, rows]);
+  }, [columns, compare, current, isPL, report.data, rows, t]);
 
   if (available.length === 0) {
-    return <PageHeader title="Reports" description="You do not have access to any reports." />;
+    return <PageHeader title={t.common.reports} description={t.reports.youDoNotHaveAccess} />;
   }
 
   // SRS Section 10: Reports Home with grouped cards.
   if (!current) {
     return (
       <div className="space-y-6">
-        <PageHeader
-          title="Reports"
-          description="Choose a report category to analyze sales, profit & loss, projects, stock, debts and staff."
-        />
+        <PageHeader title={t.common.reports} description={t.reports.chooseAReportCategoryTo} />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {groups.map((g) => {
             const items = available.filter((r) => r.group === g);
@@ -482,16 +501,14 @@ export default function Reports() {
     <div className="space-y-6">
       <PageHeader
         title={current.label}
-        description={
-          report.data?.subtitle ?? "Filter, review, print or export to CSV, Excel or PDF."
-        }
+        description={report.data?.subtitle ?? t.reports.filterReviewPrintOrExport}
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={closeReport}>
-              <ArrowLeft size={14} /> All reports
+              <ArrowLeft size={14} /> {t.reports.allReports}
             </Button>
             <Button variant="outline" size="sm" onClick={() => window.print()}>
-              <Printer size={14} /> Print
+              <Printer size={14} /> {t.common.print}
             </Button>
             {can("reports.export") &&
               ["csv", "xlsx", "pdf"].map((f) => (
@@ -504,7 +521,7 @@ export default function Reports() {
       />
 
       <div className="od-card flex flex-wrap items-end gap-3 p-4">
-        <Field label="Report" className="min-w-[14rem]">
+        <Field label={t.reports.report} className="min-w-[14rem]">
           <NativeSelect value={current.path} onChange={(e) => openReport(e.target.value)}>
             {groups.map((g) => (
               <optgroup key={g} label={g}>
@@ -521,10 +538,10 @@ export default function Reports() {
         </Field>
         {current.dated && (
           <>
-            <Field label="From">
+            <Field label={t.common.from}>
               <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
             </Field>
-            <Field label="To">
+            <Field label={t.common.to}>
               <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
             </Field>
           </>
@@ -532,15 +549,17 @@ export default function Reports() {
         {isPL && (
           <>
             <div className="flex flex-col gap-1.5">
-              <span className="text-xs font-medium text-[var(--od-ink-secondary)]">Business</span>
+              <span className="text-xs font-medium text-[var(--od-ink-secondary)]">
+                {t.common.business}
+              </span>
               <SegmentedChips
-                ariaLabel="Filter business"
+                ariaLabel={t.reports.filterBusiness}
                 value={business}
                 onChange={(v) => setBusiness(v as typeof business)}
                 options={[
-                  { value: "all", label: "Both" },
-                  { value: "shop", label: "Shop (A)" },
-                  { value: "services", label: "Services (B)" },
+                  { value: "all", label: t.reports.both },
+                  { value: "shop", label: t.reports.shopA },
+                  { value: "services", label: t.reports.servicesB },
                 ]}
               />
             </div>
@@ -550,7 +569,7 @@ export default function Reports() {
                 checked={compare}
                 onChange={(e) => setCompare(e.target.checked)}
               />
-              Compare previous period
+              {t.reports.comparePreviousPeriod}
             </label>
           </>
         )}
@@ -560,30 +579,40 @@ export default function Reports() {
       {isPL && report.data?.businesses && (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
-            label="Shop (Business A)"
+            label={t.reports.shopBusinessA}
             value={formatMoney(report.data.businesses.shop.profit)}
-            trend={`Sales ${formatMoney(report.data.businesses.shop.income)} · COGS ${formatMoney(report.data.businesses.shop.cost_of_goods)}`}
+            trend={fmt(t.reports.salesCogs, {
+              income: formatMoney(report.data.businesses.shop.income),
+              cost_of_goods: formatMoney(report.data.businesses.shop.cost_of_goods),
+            })}
             tone={toNumber(report.data.businesses.shop.profit) >= 0 ? "good" : "bad"}
           />
           <StatCard
-            label="Services (Business B)"
+            label={t.reports.servicesBusinessB}
             value={formatMoney(report.data.businesses.services.profit)}
-            trend={`Income ${formatMoney(report.data.businesses.services.income)} · Costs ${formatMoney(report.data.businesses.services.direct_costs)}`}
+            trend={fmt(t.reports.incomeCosts, {
+              income: formatMoney(report.data.businesses.services.income),
+              direct_costs: formatMoney(report.data.businesses.services.direct_costs),
+            })}
             tone={toNumber(report.data.businesses.services.profit) >= 0 ? "good" : "bad"}
           />
           <StatCard
-            label="Operating expenses"
+            label={t.reports.operatingExpenses}
             value={formatMoney(report.data.businesses.shared.operating_expenses)}
-            trend={`Other income ${formatMoney(report.data.businesses.shared.other_income)}`}
+            trend={fmt(t.reports.otherIncome, {
+              other_income: formatMoney(report.data.businesses.shared.other_income),
+            })}
           />
           <StatCard
-            label="Net profit"
+            label={t.common.netProfit}
             value={formatMoney(report.data.businesses.total.net_profit)}
             trend={
               report.data.previous
-                ? `Previous: ${formatMoney(report.data.previous.net_profit)}${
-                    netPct !== null ? ` (${netPct > 0 ? "+" : ""}${netPct.toFixed(1)}%)` : ""
-                  }`
+                ? fmt(t.reports.previous, {
+                    net_profit: formatMoney(report.data.previous.net_profit),
+                    value:
+                      netPct !== null ? ` (${netPct > 0 ? "+" : ""}${netPct.toFixed(1)}%)` : "",
+                  })
                 : undefined
             }
             tone={
@@ -601,7 +630,10 @@ export default function Reports() {
 
       {!report.isLoading &&
         (chartConfig.data.length > 0 ? (
-          <ChartCard title={`${current.label} chart`} description={chartConfig.subtitle}>
+          <ChartCard
+            title={fmt(t.reports.chart, { label: current.label })}
+            description={chartConfig.subtitle}
+          >
             {chartConfig.kind === "line" ? (
               <LineChartView data={chartConfig.data} label={current.label} />
             ) : (
@@ -610,7 +642,7 @@ export default function Reports() {
           </ChartCard>
         ) : (
           <div className="od-card p-4 text-sm text-[var(--od-ink-muted)]">
-            No amounts to chart for this period.
+            {t.reports.noAmountsToChartFor}
           </div>
         ))}
 
@@ -629,12 +661,13 @@ export default function Reports() {
               }
             : undefined
         }
-        empty="No data for this report and period"
+        empty={t.reports.noDataForThisReport}
         columns={columns.map((c, i) => ({
           header: c.label,
           align: i === 0 ? undefined : ("right" as const),
           cell: (r: Record<string, unknown>) => {
-            const value = i === 0 && r.__total ? (r.label ?? "Total") : cell(c.key, r[c.key]);
+            const value =
+              i === 0 && r.__total ? (r.label ?? t.common.total) : cell(c.key, r[c.key]);
             return r.__total ? (
               <strong className="od-tabular font-semibold text-[var(--od-ink)]">
                 {value as string}

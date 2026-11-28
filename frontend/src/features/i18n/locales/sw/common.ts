@@ -414,4 +414,5 @@ export default {
   defaultLocation: "Eneo la kawaida",
   mainDefault: "Kuu / la kawaida",
   atLeast8Characters: "Herufi 8 au zaidi",
+  tax: "Kodi",
 } satisfies Translations["common"];

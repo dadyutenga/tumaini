@@ -410,4 +410,5 @@ export default {
   defaultLocation: "Default location",
   mainDefault: "Main / default",
   atLeast8Characters: "At least 8 characters",
+  tax: "Tax",
 };

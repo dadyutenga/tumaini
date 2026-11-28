@@ -1,0 +1,12 @@
+[
+  { "file": "src/components/shared/Toolbar.tsx", "text": "Ctrl K", "why": "keyboard shortcut" },
+  { "file": "src/components/shared/kit.tsx", "text": "good", "why": "colour tone name, not shown" },
+  { "file": "src/features/auth/SettingsGroups.tsx", "text": "Thank you for shopping with us! Receipt {{number}}, Total {{total}}.", "why": "default SMS template, sent to customers (out of scope)" },
+  { "file": "src/features/auth/SettingsGroups.tsx", "text": "Friendly reminder: balance {{balance}} is due. Thank you.", "why": "default SMS template (out of scope)" },
+  { "file": "src/features/auth/SettingsGroups.tsx", "text": "Reminder: your {{service}} renews on {{date}}.", "why": "default SMS template (out of scope)" },
+  { "file": "src/features/auth/SettingsGroups.tsx", "text": "Hello {{client}}, update on {{project}}: {{message}}", "why": "default WhatsApp template (out of scope)" },
+  { "file": "src/features/auth/UserPermissionsDialog.tsx", "text": "Set by an administrator", "why": "reason saved to the server, not shown here" },
+  { "file": "src/pages/Dashboard.tsx", "text": "Rejected from dashboard", "why": "note saved to the server" },
+  { "file": "src/pages/Backups.tsx", "text": "deploy/backup.sh", "why": "file name" },
+  { "file": "src/pages/Backups.tsx", "text": "pg_restore", "why": "command name" }
+]

@@ -1,6 +1,18 @@
 import type { Translations } from "../en";
 
 export default {
+  return: "marejesho",
+  price_change: "kubadilisha bei",
+  discount: "punguzo",
+  payroll: "mishahara",
+  leave_request: "ombi la likizo",
+  overtime: "saa za ziada",
+  weekly: "kila wiki",
+  monthly: "kila mwezi",
+  daily: "kila siku",
+  income: "mapato",
+  receipt: "risiti",
+  purchase_order: "oda ya manunuzi",
   government_fee: "ada ya serikali",
   materials: "vifaa",
   stock_images: "picha za kununua",

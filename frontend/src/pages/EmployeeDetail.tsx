@@ -26,6 +26,7 @@ import { formatDate, formatMoney, today } from "@/lib/formatters";
 import { useQueryClient } from "@tanstack/react-query";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface EmployeeDetailData {
   id: string;
@@ -411,9 +412,7 @@ export default function EmployeeDetail() {
                     {
                       label: t.hr.payMethod,
                       value: (
-                        <span className="capitalize">
-                          {(e.pay_method ?? "cash").replaceAll("_", " ")}
-                        </span>
+                        <span className="capitalize">{statusLabel(t, e.pay_method ?? "cash")}</span>
                       ),
                     },
                     { label: t.hr.payoutProvider, value: e.pay_provider || "-" },
@@ -525,7 +524,7 @@ export default function EmployeeDetail() {
                         header: t.common.method,
                         cell: (p) => (
                           <span className="capitalize">
-                            {(p.method ?? "payment").replaceAll("_", " ")}
+                            {statusLabel(t, p.method ?? "payment")}
                             {p.reference ? ` · ${p.reference}` : ""}
                           </span>
                         ),
@@ -726,7 +725,9 @@ export default function EmployeeDetail() {
                   {
                     header: t.common.type,
                     cell: (l) => (
-                      <span className="font-medium capitalize text-[var(--od-ink)]">{l.kind}</span>
+                      <span className="font-medium capitalize text-[var(--od-ink)]">
+                        {statusLabel(t, l.kind)}
+                      </span>
                     ),
                   },
                   {
@@ -803,7 +804,7 @@ export default function EmployeeDetail() {
                 columns={[
                   {
                     header: t.common.type,
-                    cell: (d) => <span className="capitalize">{d.kind.replace("_", " ")}</span>,
+                    cell: (d) => <span className="capitalize">{statusLabel(t, d.kind)}</span>,
                   },
                   {
                     header: t.common.name2,

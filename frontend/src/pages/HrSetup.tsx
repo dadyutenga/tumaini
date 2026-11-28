@@ -20,6 +20,7 @@ import { useGet, useGetPage, useWrite } from "@/hooks/useApi";
 import { formatMoney, today } from "@/lib/formatters";
 import type { MoneyAccount } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
+import { statusLabel } from "@/features/i18n/status";
 
 /** A list with a "new" dialog, shared by the small setup tables. */
 export function SimpleList<Row extends { id: string }, Draft extends object>({
@@ -248,7 +249,7 @@ function Loans() {
             header: t.common.type,
             cell: (l) => (
               <Badge variant="secondary" className="capitalize">
-                {l.kind}
+                {statusLabel(t, l.kind)}
               </Badge>
             ),
           },

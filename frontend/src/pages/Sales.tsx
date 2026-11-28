@@ -24,6 +24,7 @@ import { formatDate, formatMoney, toNumber } from "@/lib/formatters";
 import type { MoneyAccount, SaleRow } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 interface ReturnRow {
   id: string;
@@ -128,7 +129,7 @@ export default function Sales() {
       ...rows.map((s) => [
         s.number,
         formatDate(s.business_date),
-        s.customer_name ?? "Walk-in",
+        s.customer_name ?? t.sales.walkIn,
         s.cashier_name ?? "",
         s.status,
         s.total,
@@ -280,8 +281,8 @@ export default function Sales() {
               },
               {
                 header: t.common.customer,
-                sortValue: (s) => s.customer_name ?? "Walk-in",
-                cell: (s) => s.customer_name ?? "Walk-in",
+                sortValue: (s) => s.customer_name ?? t.sales.walkIn,
+                cell: (s) => s.customer_name ?? t.sales.walkIn,
               },
               {
                 header: t.sales.cashier2,
@@ -343,7 +344,7 @@ export default function Sales() {
               { header: t.common.reason, cell: (r) => r.reason || "—" },
               {
                 header: t.sales.resolution,
-                cell: (r) => <span className="capitalize">{r.resolution}</span>,
+                cell: (r) => <span className="capitalize">{statusLabel(t, r.resolution)}</span>,
               },
               { header: t.common.status, cell: (r) => <StatusBadge value={r.status} /> },
               {

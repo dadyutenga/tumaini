@@ -35,6 +35,7 @@ import type { MoneyAccount } from "@/types";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
 import type { Translations } from "@/features/i18n/i18n";
+import { statusLabel } from "@/features/i18n/status";
 
 interface Txn {
   id: string;
@@ -161,7 +162,7 @@ export default function Money() {
       ...rows.map((item) => [
         item.date,
         item.account,
-        item.type,
+        statusLabel(t, item.type),
         item.description,
         item.in,
         item.out,
@@ -239,7 +240,7 @@ export default function Money() {
                             {a.name}
                           </p>
                           <p className="od-caption capitalize">
-                            {a.type.replaceAll("_", " ")}
+                            {statusLabel(t, a.type)}
                             {a.provider ? ` · ${a.provider}` : ""}
                           </p>
                         </div>

@@ -13,6 +13,7 @@ import { ApiError, download } from "@/lib/api";
 import { formatDate, formatMoney } from "@/lib/formatters";
 import { useI18n } from "@/features/i18n/i18n";
 import { fmt } from "@/features/i18n/format";
+import { statusLabel } from "@/features/i18n/status";
 
 const time = (v: string | null) =>
   v ? new Date(v).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "-";
@@ -198,7 +199,7 @@ function Loans() {
           header: t.common.type,
           cell: (l) => (
             <Badge variant="secondary" className="capitalize">
-              {l.kind}
+              {statusLabel(t, l.kind)}
             </Badge>
           ),
         },
@@ -258,7 +259,7 @@ function Payments() {
             header: t.common.method,
             cell: (p) => (
               <span className="capitalize">
-                {(p.method ?? "payment").replaceAll("_", " ")}
+                {statusLabel(t, p.method ?? "payment")}
                 {p.reference ? ` · ${p.reference}` : ""}
               </span>
             ),
