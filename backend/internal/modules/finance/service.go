@@ -88,8 +88,7 @@ func scanAccount(row pgx.Row, p *auth.Principal) (Account, error) {
 func (s *Service) List(ctx context.Context, p *auth.Principal, typ string, active *bool) ([]Account, error) {
 	out := []Account{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("fa.tenant_id = $1")
+		q := sqlq.New()
 		q.If(typ != "", "fa.kind::text = ?", typ)
 		q.If(active != nil, "(fa.status = 'active') = ?", active)
 		rows, err := tx.Query(ctx, `SELECT `+accountCols+` FROM app.financial_accounts fa`+q.Where()+` ORDER BY fa.name`, q.Args...)
@@ -110,7 +109,7 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, typ string, activ
 }
 
 func (s *Service) account(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (Account, error) {
-	a, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountCols+` FROM app.financial_accounts fa WHERE fa.tenant_id = $1 AND fa.id = $2`, p.TenantID, id), p)
+	a, err := scanAccount(tx.QueryRow(ctx, `SELECT `+accountCols+` FROM app.financial_accounts fa WHERE fa.id = $1`, id), p)
 	if err != nil {
 		return Account{}, httpx.NotFound("not_found", "Money account not found")
 	}
@@ -126,10 +125,10 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 		}
 		var branch *string
 		if a.BranchID != nil {
-			_ = tx.QueryRow(ctx, `SELECT name::text FROM app.locations WHERE tenant_id = $1 AND id = $2`, p.TenantID, *a.BranchID).Scan(&branch)
+			_ = tx.QueryRow(ctx, "SELECT name::text FROM app.locations WHERE id = $1", *a.BranchID).Scan(&branch)
 		}
 		var last *string
-		if err := tx.QueryRow(ctx, `SELECT max(period_end)::text FROM app.petty_cash_reconciliations WHERE tenant_id = $1 AND account_id = $2`, p.TenantID, id).Scan(&last); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT max(period_end)::text FROM app.petty_cash_reconciliations WHERE account_id = $1", id).Scan(&last); err != nil {
 			return err
 		}
 		out = map[string]any{"id": a.ID, "name": a.Name, "type": a.Type, "currency": a.Currency, "branch_id": a.BranchID, "branch_name": branch,
@@ -182,19 +181,17 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in AccountIn) (
 	var out Account
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if branch == nil && (in.Type == "cash" || in.Type == "petty_cash") {
-			if err := tx.QueryRow(ctx, `SELECT id FROM app.locations WHERE tenant_id = $1 AND is_default`, p.TenantID).Scan(&branch); err != nil {
+			if err := tx.QueryRow(ctx, "SELECT id FROM app.locations WHERE is_default").Scan(&branch); err != nil {
 				return httpx.BadRequest("branch_required", "A cash account belongs to a branch")
 			}
 		}
 		var unit *uuid.UUID
 		if branch != nil {
-			_ = tx.QueryRow(ctx, `SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $2`, p.TenantID, *branch).Scan(&unit)
+			_ = tx.QueryRow(ctx, "SELECT business_unit_id FROM app.locations WHERE id = $1", *branch).Scan(&unit)
 		}
 		id := uuid.New()
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.financial_accounts (id, tenant_id, name, kind, currency, provider, account_number_masked, location_id, business_unit_id, allow_negative, show_on_invoices)
-			VALUES ($1,$2,$3,$4::app.account_kind,COALESCE((SELECT currency FROM app.tenant_settings WHERE tenant_id = $2), 'TZS'),NULLIF($5,''),NULLIF($6,''),$7,$8,$9,$10)`,
-			id, p.TenantID, in.Name, in.Type, in.Provider, maskAccountNumber(in.AccountNumber), branch, unit, in.AllowOverdraft, in.ShowOnInvoices); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.financial_accounts (id, name, kind, currency, provider, account_number_masked, location_id, business_unit_id, allow_negative, show_on_invoices)\n\t\t\tVALUES ($1,$2,$3::app.account_kind,COALESCE((SELECT currency FROM app.business_settings WHERE true), 'TZS'),NULLIF($4,''),NULLIF($5,''),$6,$7,$8,$9)",
+			id, in.Name, in.Type, in.Provider, maskAccountNumber(in.AccountNumber), branch, unit, in.AllowOverdraft, in.ShowOnInvoices); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "An account with that name already exists")
 			}
@@ -206,14 +203,11 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in AccountIn) (
 				return err
 			}
 			if branch == nil || unit == nil {
-				if err := tx.QueryRow(ctx, `SELECT id, business_unit_id FROM app.locations WHERE tenant_id = $1 AND is_default`, p.TenantID).Scan(&branch, &unit); err != nil {
+				if err := tx.QueryRow(ctx, "SELECT id, business_unit_id FROM app.locations WHERE is_default").Scan(&branch, &unit); err != nil {
 					return err
 				}
 			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO app.financial_transactions (tenant_id, account_id, direction, amount, txn_type, business_unit_id, location_id, business_date, description)
-				VALUES ($1,$2,'in',$3,'opening_balance',$4,$5,$6::date,'Opening balance')`,
-				p.TenantID, id, money.Money(in.Opening), unit, branch, date); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tINSERT INTO app.financial_transactions (account_id, direction, amount, txn_type, business_unit_id, location_id, business_date, description)\n\t\t\t\tVALUES ($1, 'in', $2, 'opening_balance', $3, $4, $5::date, 'Opening balance')", id, money.Money(in.Opening), unit, branch, date); err != nil {
 				return err
 			}
 		}
@@ -253,13 +247,7 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 		if in.Name != nil {
 			name = strings.TrimSpace(*in.Name)
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.financial_accounts SET name = $3,
-			  provider = CASE WHEN $4::boolean THEN NULLIF($5,'') ELSE provider END,
-			  account_number_masked = CASE WHEN $6::boolean THEN NULLIF($7,'') ELSE account_number_masked END,
-			  allow_negative = coalesce($8, allow_negative), show_on_invoices = coalesce($9, show_on_invoices)
-			WHERE tenant_id = $1 AND id = $2`,
-			p.TenantID, id, name, in.Provider != nil, deref(in.Provider), in.AccountNumber != nil, maskAccountNumber(deref(in.AccountNumber)),
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.financial_accounts SET name = $2,\n\t\t\t  provider = CASE WHEN $3::boolean THEN NULLIF($4,'') ELSE provider END,\n\t\t\t  account_number_masked = CASE WHEN $5::boolean THEN NULLIF($6,'') ELSE account_number_masked END,\n\t\t\t  allow_negative = coalesce($7, allow_negative), show_on_invoices = coalesce($8, show_on_invoices)\n\t\t\tWHERE id = $1", id, name, in.Provider != nil, deref(in.Provider), in.AccountNumber != nil, maskAccountNumber(deref(in.AccountNumber)),
 			in.AllowOverdraft, in.ShowOnInvoices); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "An account with that name already exists")
@@ -288,7 +276,7 @@ func (s *Service) Deactivate(ctx context.Context, p *auth.Principal, id uuid.UUI
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var active bool
 		var bal decimal.Decimal
-		if err := tx.QueryRow(ctx, `SELECT status = 'active', current_balance FROM app.financial_accounts WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&active, &bal); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT status = 'active', current_balance FROM app.financial_accounts WHERE id = $1 FOR UPDATE", id).Scan(&active, &bal); err != nil {
 			return httpx.NotFound("not_found", "Money account not found")
 		}
 		if !active {
@@ -297,7 +285,7 @@ func (s *Service) Deactivate(ctx context.Context, p *auth.Principal, id uuid.UUI
 		if !bal.IsZero() {
 			return httpx.Conflict("balance_not_zero", "Move the balance out of this account before deactivating it")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.financial_accounts SET status = 'inactive' WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.financial_accounts SET status = 'inactive' WHERE id = $1", id); err != nil {
 			return err
 		}
 		var err error
@@ -327,18 +315,10 @@ func (s *Service) Statement(ctx context.Context, p *auth.Principal, id uuid.UUID
 			from = today[:8] + "01"
 		}
 		var opening decimal.Decimal
-		if err := tx.QueryRow(ctx, `
-			SELECT coalesce(sum(CASE direction WHEN 'in' THEN amount ELSE -amount END), 0) FROM app.financial_transactions
-			WHERE tenant_id = $1 AND account_id = $2 AND business_date < $3::date`, p.TenantID, id, from).Scan(&opening); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT coalesce(sum(CASE direction WHEN 'in' THEN amount ELSE -amount END), 0) FROM app.financial_transactions\n\t\t\tWHERE account_id = $1 AND business_date < $2::date", id, from).Scan(&opening); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `
-			SELECT t.id, t.business_date::text, t.description, t.txn_type::text, coalesce(t.payment_received_id, t.payment_made_id, t.expense_id, t.account_transfer_id, t.payroll_line_id, t.id),
-			       CASE t.direction WHEN 'in' THEN t.amount ELSE 0 END, CASE t.direction WHEN 'out' THEN t.amount ELSE 0 END, t.created_at, coalesce(u.full_name::text, '')
-			FROM app.financial_transactions t
-			LEFT JOIN app.memberships m ON m.tenant_id = t.tenant_id AND m.id = t.created_by LEFT JOIN iam.users u ON u.id = m.user_id
-			WHERE t.tenant_id = $1 AND t.account_id = $2 AND t.business_date >= $3::date AND ($4 = '' OR t.business_date <= $4::date)
-			ORDER BY t.business_date, t.occurred_at, t.id LIMIT 10000`, p.TenantID, id, from, to)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT t.id, t.business_date::text, t.description, t.txn_type::text, coalesce(t.payment_received_id, t.payment_made_id, t.expense_id, t.account_transfer_id, t.payroll_line_id, t.id),\n\t\t\t       CASE t.direction WHEN 'in' THEN t.amount ELSE 0 END, CASE t.direction WHEN 'out' THEN t.amount ELSE 0 END, t.created_at, coalesce(u.full_name::text, '')\n\t\t\tFROM app.financial_transactions t\n\t\t\tLEFT JOIN app.memberships m ON m.id = t.created_by LEFT JOIN iam.users u ON u.id = m.user_id\n\t\t\tWHERE t.account_id = $1 AND t.business_date >= $2::date AND ($3 = '' OR t.business_date <= $3::date)\n\t\t\tORDER BY t.business_date, t.occurred_at, t.id LIMIT 10000", id, from, to)
 		if err != nil {
 			return err
 		}
@@ -409,7 +389,7 @@ func (s *Service) Transfer(ctx context.Context, p *auth.Principal, in TransferIn
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -420,16 +400,13 @@ func (s *Service) Transfer(ctx context.Context, p *auth.Principal, in TransferIn
 		if secondID.String() < firstID.String() {
 			firstID, secondID = secondID, firstID
 		}
-		if _, err := tx.Exec(ctx, `SELECT id FROM app.financial_accounts WHERE tenant_id = $1 AND id IN ($2, $3) ORDER BY id FOR UPDATE`, p.TenantID, firstID, secondID); err != nil {
+		if _, err := tx.Exec(ctx, "SELECT id FROM app.financial_accounts WHERE id IN ($1, $2) ORDER BY id FOR UPDATE", firstID, secondID); err != nil {
 			return err
 		}
 		var fromBal decimal.Decimal
 		var allowNeg, fromActive bool
 		var fromLoc *uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			SELECT current_balance, allow_negative, status = 'active', location_id
-			FROM app.financial_accounts WHERE tenant_id = $1 AND id = $2`,
-			p.TenantID, in.FromAccountID).Scan(&fromBal, &allowNeg, &fromActive, &fromLoc); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT current_balance, allow_negative, status = 'active', location_id\n\t\t\tFROM app.financial_accounts WHERE id = $1", in.FromAccountID).Scan(&fromBal, &allowNeg, &fromActive, &fromLoc); err != nil {
 			return httpx.NotFound("not_found", "Money account not found")
 		}
 		if !fromActive {
@@ -441,19 +418,14 @@ func (s *Service) Transfer(ctx context.Context, p *auth.Principal, in TransferIn
 		}
 		var toActive bool
 		var toLoc *uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			SELECT status = 'active', location_id
-			FROM app.financial_accounts WHERE tenant_id = $1 AND id = $2`,
-			p.TenantID, in.ToAccountID).Scan(&toActive, &toLoc); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT status = 'active', location_id\n\t\t\tFROM app.financial_accounts WHERE id = $1", in.ToAccountID).Scan(&toActive, &toLoc); err != nil {
 			return httpx.NotFound("not_found", "Destination money account not found")
 		}
 		if !toActive {
 			return httpx.Conflict("inactive_account", "The destination account is inactive")
 		}
 		var loc *uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			SELECT coalesce($2::uuid, $3::uuid, $4::uuid, (SELECT id FROM app.locations WHERE tenant_id = $1 AND is_default))`,
-			p.TenantID, fromLoc, toLoc, p.BranchID).Scan(&loc); err != nil || loc == nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT coalesce($1::uuid, $2::uuid, $3::uuid, (SELECT id FROM app.locations WHERE is_default))", fromLoc, toLoc, p.BranchID).Scan(&loc); err != nil || loc == nil {
 			return httpx.NotFound("not_found", "Location not found")
 		}
 		date := in.Date
@@ -473,15 +445,15 @@ func (s *Service) Transfer(ctx context.Context, p *auth.Principal, in TransferIn
 		}
 		id := uuid.New()
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.account_transfers (id, tenant_id, transfer_no, from_account_id, to_account_id, amount, location_id, business_date, note)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8::date,NULLIF($9,''))`,
-			id, p.TenantID, number, in.FromAccountID, in.ToAccountID, money.Money(in.Amount), *loc, date, note); err != nil {
+			INSERT INTO app.account_transfers (id, transfer_no, from_account_id, to_account_id, amount, location_id, business_date, note)
+			VALUES ($1,$2,$3,$4,$5,$6,$7::date,NULLIF($8,''))`,
+			id, number, in.FromAccountID, in.ToAccountID, money.Money(in.Amount), *loc, date, note); err != nil {
 			return err
 		}
 		if err := s.Audit.Record(ctx, tx, p, "money_transfer.posted", "account_transfers", id, nil, map[string]any{"number": number, "amount": in.Amount, "from_account_id": in.FromAccountID, "to_account_id": in.ToAccountID}); err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 201, httpx.Data(map[string]any{"id": id, "number": number, "amount": money.Money(in.Amount), "fee": money.Zero, "date": date}))
+		raw, err := idem.Complete(ctx, tx, 201, httpx.Data(map[string]any{"id": id, "number": number, "amount": money.Money(in.Amount), "fee": money.Zero, "date": date}))
 		status, body = 201, raw
 		return err
 	})
@@ -492,15 +464,14 @@ func (s *Service) Transfers(ctx context.Context, p *auth.Principal, account *uui
 	out := []map[string]any{}
 	total := 0
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("t.tenant_id = $1")
+		q := sqlq.New()
 		q.If(account != nil, "(t.from_account_id = ? OR t.to_account_id = ?)", account, account)
 		q.If(from != "", "t.business_date >= ?::date", from)
 		q.If(to != "", "t.business_date <= ?::date", to)
 		base := ` FROM app.account_transfers t
-			JOIN app.financial_accounts fa ON fa.tenant_id = t.tenant_id AND fa.id = t.from_account_id
-			JOIN app.financial_accounts ta ON ta.tenant_id = t.tenant_id AND ta.id = t.to_account_id
-			LEFT JOIN app.memberships m ON m.tenant_id = t.tenant_id AND m.id = t.created_by LEFT JOIN iam.users u ON u.id = m.user_id`
+			JOIN app.financial_accounts fa ON fa.id = t.from_account_id
+			JOIN app.financial_accounts ta ON ta.id = t.to_account_id
+			LEFT JOIN app.memberships m ON m.id = t.created_by LEFT JOIN iam.users u ON u.id = m.user_id`
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+base+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}

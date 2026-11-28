@@ -55,9 +55,9 @@ func (s *Service) bizDate(ctx context.Context, tx pgx.Tx) (string, error) {
 	return d.Format("2006-01-02"), nil
 }
 
-func (s *Service) categoryOK(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) error {
+func (s *Service) categoryOK(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 	var active bool
-	if err := tx.QueryRow(ctx, `SELECT status = 'active' FROM app.expense_categories WHERE tenant_id = $1 AND id = $2`, tenantID, id).Scan(&active); err != nil || !active {
+	if err := tx.QueryRow(ctx, "SELECT status = 'active' FROM app.expense_categories WHERE id = $1", id).Scan(&active); err != nil || !active {
 		return httpx.NotFound("not_found", "Expense category not found")
 	}
 	return nil
@@ -76,13 +76,13 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in Input) (int,
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
 			return err
 		}
-		if err := s.categoryOK(ctx, tx, p.TenantID, in.CategoryID); err != nil {
+		if err := s.categoryOK(ctx, tx, in.CategoryID); err != nil {
 			return err
 		}
 		date := strings.TrimSpace(in.Date)
@@ -98,18 +98,12 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in Input) (int,
 		}
 		amount := money.Money(in.Amount)
 		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.expenses (tenant_id, expense_no, category_id, description, amount, expense_date,
-			                          business_unit_id, location_id, project_id, design_job_id, account_id, receipt_file_id, status)
-			VALUES ($1,$2,$3,$4,$5,$6::date,
-			        (SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $7), $7, $8, $9, $10, $11, 'submitted')
-			RETURNING id`,
-			p.TenantID, number, in.CategoryID, in.Description, amount, date, *p.BranchID,
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.expenses ( expense_no, category_id, description, amount, expense_date,\n\t\t\t                          business_unit_id, location_id, project_id, design_job_id, account_id, receipt_file_id, status)\n\t\t\tVALUES ($1,$2,$3,$4,$5::date,\n\t\t\t        (SELECT business_unit_id FROM app.locations WHERE id = $6), $6, $7, $8, $9, $10, 'submitted')\n\t\t\tRETURNING id", number, in.CategoryID, in.Description, amount, date, *p.BranchID,
 			in.ProjectID, in.DesignJobID, in.MoneyAccountID, in.ReceiptFileID).Scan(&id); err != nil {
 			return err
 		}
 		amtCopy := amount
-		_ = s.Notify.ToApprovers(ctx, tx, p.TenantID, p.BranchID, "finance.expense.approve", &amtCopy, p.UserID, notify.Message{
+		_ = s.Notify.ToApprovers(ctx, tx, p.BranchID, "finance.expense.approve", &amtCopy, p.UserID, notify.Message{
 			Type: "approval_waiting", Title: "Expense awaiting approval",
 			Body: "Expense " + number + ": " + in.Description,
 			Link: "/expenses/" + id.String(), EntityType: "expense", EntityID: &id,
@@ -117,7 +111,7 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in Input) (int,
 		if err := s.Audit.Record(ctx, tx, p, "expense.created", "expense", id, nil, map[string]any{"number": number, "amount": amount, "status": "submitted"}); err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 201, httpx.Data(map[string]any{"id": id, "number": number, "status": "submitted", "amount": amount}))
+		raw, err := idem.Complete(ctx, tx, 201, httpx.Data(map[string]any{"id": id, "number": number, "status": "submitted", "amount": amount}))
 		status, body = 201, raw
 		return err
 	})
@@ -142,7 +136,7 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 		if before["requested_by"] != p.MembershipID && !p.Has("finance.expense.approve") {
 			return httpx.Forbidden("permission_denied", "Only the person who submitted this expense can edit it")
 		}
-		if err := s.categoryOK(ctx, tx, p.TenantID, in.CategoryID); err != nil {
+		if err := s.categoryOK(ctx, tx, in.CategoryID); err != nil {
 			return err
 		}
 		date := strings.TrimSpace(in.Date)
@@ -150,13 +144,7 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 			date = before["expense_date"].(string)
 		}
 		amount := money.Money(in.Amount)
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.expenses
-			SET category_id = $3, amount = $4, description = $5, expense_date = $6::date,
-			    project_id = $7, design_job_id = $8, account_id = COALESCE($9, account_id),
-			    receipt_file_id = COALESCE($10, receipt_file_id)
-			WHERE tenant_id = $1 AND id = $2`,
-			p.TenantID, id, in.CategoryID, amount, in.Description, date,
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.expenses\n\t\t\tSET category_id = $2, amount = $3, description = $4, expense_date = $5::date,\n\t\t\t    project_id = $6, design_job_id = $7, account_id = COALESCE($8, account_id),\n\t\t\t    receipt_file_id = COALESCE($9, receipt_file_id)\n\t\t\tWHERE id = $1", id, in.CategoryID, amount, in.Description, date,
 			in.ProjectID, in.DesignJobID, in.MoneyAccountID, in.ReceiptFileID); err != nil {
 			return err
 		}
@@ -182,9 +170,7 @@ func (s *Service) Decide(ctx context.Context, p *auth.Principal, id uuid.UUID, a
 		var st string
 		var requestedBy uuid.UUID
 		var recurring *uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			SELECT status::text, requested_by, recurring_expense_id
-			FROM app.expenses WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&st, &requestedBy, &recurring); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT status::text, requested_by, recurring_expense_id\n\t\t\tFROM app.expenses WHERE id = $1 FOR UPDATE", id).Scan(&st, &requestedBy, &recurring); err != nil {
 			return httpx.NotFound("not_found", "Expense not found")
 		}
 		if st != "submitted" {
@@ -197,14 +183,12 @@ func (s *Service) Decide(ctx context.Context, p *auth.Principal, id uuid.UUID, a
 		if approve {
 			next = "approved"
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.expenses SET status = $3::app.expense_status, rejection_reason = CASE WHEN $3 = 'rejected' THEN $4 ELSE rejection_reason END
-			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, next, note); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.expenses SET status = $2::app.expense_status, rejection_reason = CASE WHEN $2 = 'rejected' THEN $3 ELSE rejection_reason END\n\t\t\tWHERE id = $1", id, next, note); err != nil {
 			return err
 		}
 		var reqUser uuid.UUID
-		if tx.QueryRow(ctx, `SELECT user_id FROM app.memberships WHERE tenant_id = $1 AND id = $2`, p.TenantID, requestedBy).Scan(&reqUser) == nil {
-			_ = s.Notify.ToUser(ctx, tx, p.TenantID, reqUser, notify.Message{
+		if tx.QueryRow(ctx, "SELECT user_id FROM app.memberships WHERE id = $1", requestedBy).Scan(&reqUser) == nil {
+			_ = s.Notify.ToUser(ctx, tx, reqUser, notify.Message{
 				Type: "approval_decided", Title: "Expense " + next, Body: "Your expense request was " + next,
 				Link: "/expenses/" + id.String(), EntityType: "expense", EntityID: &id,
 			})
@@ -225,7 +209,7 @@ func (s *Service) Cancel(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var st string
 		var requestedBy uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT status::text, requested_by FROM app.expenses WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&st, &requestedBy); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT status::text, requested_by FROM app.expenses WHERE id = $1 FOR UPDATE", id).Scan(&st, &requestedBy); err != nil {
 			return httpx.NotFound("not_found", "Expense not found")
 		}
 		if st != "submitted" && st != "approved" {
@@ -234,7 +218,7 @@ func (s *Service) Cancel(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 		if requestedBy != p.MembershipID && !p.Has("finance.expense.approve") {
 			return httpx.Forbidden("permission_denied", "You cannot cancel another person's expense")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.expenses SET status = 'cancelled' WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.expenses SET status = 'cancelled' WHERE id = $1", id); err != nil {
 			return err
 		}
 		out = map[string]any{"id": id, "status": "cancelled"}
@@ -249,7 +233,7 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, id, accountID uuid
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -257,7 +241,7 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, id, accountID uuid
 		}
 		var amount decimal.Decimal
 		var st string
-		if err := tx.QueryRow(ctx, `SELECT amount, status::text FROM app.expenses WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&amount, &st); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT amount, status::text FROM app.expenses WHERE id = $1 FOR UPDATE", id).Scan(&amount, &st); err != nil {
 			return httpx.NotFound("not_found", "Expense not found")
 		}
 		if st != "approved" {
@@ -274,16 +258,14 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, id, accountID uuid
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.expenses SET status = 'paid', account_id = $3, paid_business_date = $4::date, paid_at = now()
-			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, accountID, date); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.expenses SET status = 'paid', account_id = $2, paid_business_date = $3::date, paid_at = now()\n\t\t\tWHERE id = $1", id, accountID, date); err != nil {
 			return err
 		}
 		out := map[string]any{"id": id, "status": "paid", "money_account_id": accountID, "paid_business_date": date}
 		if err := s.Audit.Record(ctx, tx, p, "expense.paid", "expense", id, map[string]any{"status": "approved"}, out); err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(out))
+		raw, err := idem.Complete(ctx, tx, 200, httpx.Data(out))
 		status, body = 200, raw
 		return err
 	})
@@ -302,9 +284,9 @@ const expenseCols = `e.id, e.expense_no, e.location_id, COALESCE(l.name::text, '
 	e.decided_by, e.decided_at, e.paid_at, e.paid_business_date::text, COALESCE(e.rejection_reason, ''), e.created_at`
 
 const expenseFrom = ` FROM app.expenses e
-	LEFT JOIN app.locations l ON l.tenant_id = e.tenant_id AND l.id = e.location_id
-	JOIN app.expense_categories ec ON ec.tenant_id = e.tenant_id AND ec.id = e.category_id
-	LEFT JOIN app.memberships m ON m.tenant_id = e.tenant_id AND m.id = e.requested_by
+	LEFT JOIN app.locations l ON l.id = e.location_id
+	JOIN app.expense_categories ec ON ec.id = e.category_id
+	LEFT JOIN app.memberships m ON m.id = e.requested_by
 	LEFT JOIN iam.users u ON u.id = m.user_id`
 
 func scanExpense(row pgx.Row) (map[string]any, error) {
@@ -336,7 +318,7 @@ func canViewAllExpenses(p *auth.Principal) bool {
 }
 
 func (s *Service) get(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
-	out, err := scanExpense(tx.QueryRow(ctx, `SELECT `+expenseCols+expenseFrom+` WHERE e.tenant_id = $1 AND e.id = $2`, p.TenantID, id))
+	out, err := scanExpense(tx.QueryRow(ctx, `SELECT `+expenseCols+expenseFrom+` WHERE e.id = $1`, id))
 	if err != nil {
 		return nil, httpx.NotFound("not_found", "Expense not found")
 	}
@@ -374,13 +356,12 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, f ListFilter, pag
 	out := []map[string]any{}
 	total := 0
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("e.tenant_id = $1")
+		q := sqlq.New()
 		if p.BranchID != nil {
 			q.Add("e.location_id = ?", p.BranchID)
 		} else if f.LocationID != nil {
 			var active bool
-			if err := tx.QueryRow(ctx, `SELECT status = 'active' FROM app.locations WHERE tenant_id = $1 AND id = $2`, p.TenantID, *f.LocationID).Scan(&active); err != nil || !active {
+			if err := tx.QueryRow(ctx, "SELECT status = 'active' FROM app.locations WHERE id = $1", *f.LocationID).Scan(&active); err != nil || !active {
 				return httpx.NotFound("not_found", "Branch not found")
 			}
 			q.Add("e.location_id = ?", f.LocationID)

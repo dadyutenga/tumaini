@@ -62,7 +62,7 @@ func (s *Service) employeeFor(ctx context.Context, tx pgx.Tx, p *auth.Principal,
 	if target == nil {
 		return emp{}, "", httpx.Conflict("employee_required", "To clock in or out, your account must be linked to an employee record. Ask an Admin to link it.")
 	}
-	e, err := s.loadEmp(ctx, tx, p.TenantID, *target)
+	e, err := s.loadEmp(ctx, tx, *target)
 	if err != nil {
 		return emp{}, "", err
 	}
@@ -72,9 +72,9 @@ func (s *Service) employeeFor(ctx context.Context, tx pgx.Tx, p *auth.Principal,
 	return e, source, nil
 }
 
-func (s *Service) loadEmp(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (emp, error) {
+func (s *Service) loadEmp(ctx context.Context, tx pgx.Tx, id uuid.UUID) (emp, error) {
 	var e emp
-	err := tx.QueryRow(ctx, `SELECT id, location_id, full_name::text, status::text FROM app.employees WHERE tenant_id = $1 AND id = $2`, tenantID, id).
+	err := tx.QueryRow(ctx, "SELECT id, location_id, full_name::text, status::text FROM app.employees WHERE id = $1", id).
 		Scan(&e.ID, &e.Location, &e.Name, &e.Status)
 	if err != nil {
 		return emp{}, httpx.NotFound("not_found", "Employee not found")
@@ -90,7 +90,7 @@ func (s *Service) ClockIn(ctx context.Context, p *auth.Principal, employeeID *uu
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM app.employees WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, e.ID); err != nil {
+		if _, err := tx.Exec(ctx, "SELECT 1 FROM app.employees WHERE id = $1 FOR UPDATE", e.ID); err != nil {
 			return err
 		}
 		if source == "self" {
@@ -99,18 +99,13 @@ func (s *Service) ClockIn(ctx context.Context, p *auth.Principal, employeeID *uu
 			}
 		}
 		var openID uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			SELECT id FROM app.attendance_records
-			WHERE tenant_id = $1 AND employee_id = $2 AND clock_in_at IS NOT NULL AND clock_out_at IS NULL
-			ORDER BY work_date DESC LIMIT 1`, p.TenantID, e.ID).Scan(&openID); err == nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT id FROM app.attendance_records\n\t\t\tWHERE employee_id = $1 AND clock_in_at IS NOT NULL AND clock_out_at IS NULL\n\t\t\tORDER BY work_date DESC LIMIT 1", e.ID).Scan(&openID); err == nil {
 			return httpx.Conflict("already_clocked_in", "You are already clocked in. Clock out first")
 		}
 		loc := s.loc(ctx, tx)
 		day := now.In(loc).Format(hrkit.DateFmt)
 		var closed bool
-		if err := tx.QueryRow(ctx, `
-			SELECT clock_out_at IS NOT NULL FROM app.attendance_records
-			WHERE tenant_id = $1 AND employee_id = $2 AND work_date = $3::date`, p.TenantID, e.ID, day).Scan(&closed); err == nil && closed {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT clock_out_at IS NOT NULL FROM app.attendance_records\n\t\t\tWHERE employee_id = $1 AND work_date = $2::date", e.ID, day).Scan(&closed); err == nil && closed {
 			return httpx.Conflict("already_clocked_out", "This day already has a clock-out. One attendance record is kept per day")
 		}
 		if err := hrkit.PayrollLocked(ctx, tx, e.ID, day); err != nil {
@@ -130,13 +125,13 @@ func (s *Service) ClockIn(ctx context.Context, p *auth.Principal, employeeID *uu
 		}
 		var id uuid.UUID
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.attendance_records (tenant_id, employee_id, work_date, clock_in_at, status, source, minutes_late, clock_in_ip)
-			VALUES ($1,$2,$3::date,$4,$5::app.attendance_status,$6::app.attendance_source,$7,NULLIF($8,'')::inet)
-			ON CONFLICT (tenant_id, employee_id, work_date) DO UPDATE
+			INSERT INTO app.attendance_records ( employee_id, work_date, clock_in_at, status, source, minutes_late, clock_in_ip)
+			VALUES ($1,$2::date,$3,$4::app.attendance_status,$5::app.attendance_source,$6,NULLIF($7,'')::inet)
+			ON CONFLICT (employee_id, work_date) DO UPDATE
 			SET clock_in_at = COALESCE(app.attendance_records.clock_in_at, EXCLUDED.clock_in_at),
 			    status = EXCLUDED.status, source = EXCLUDED.source, minutes_late = EXCLUDED.minutes_late,
 			    clock_in_ip = COALESCE(app.attendance_records.clock_in_ip, EXCLUDED.clock_in_ip)
-			RETURNING id`, p.TenantID, e.ID, day, now, status, source, late, p.IP).Scan(&id); err != nil {
+			RETURNING id`, e.ID, day, now, status, source, late, p.IP).Scan(&id); err != nil {
 			return err
 		}
 		if err := s.Audit.Record(ctx, tx, p, "attendance.clock_in", "attendance_records", id, nil, map[string]any{"employee_id": e.ID, "at": now, "source": source}); err != nil {
@@ -157,7 +152,7 @@ func (s *Service) ClockOut(ctx context.Context, p *auth.Principal, employeeID *u
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM app.employees WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, e.ID); err != nil {
+		if _, err := tx.Exec(ctx, "SELECT 1 FROM app.employees WHERE id = $1 FOR UPDATE", e.ID); err != nil {
 			return err
 		}
 		if source == "self" {
@@ -169,11 +164,7 @@ func (s *Service) ClockOut(ctx context.Context, p *auth.Principal, employeeID *u
 		var day, st string
 		var clockIn time.Time
 		var late int
-		err = tx.QueryRow(ctx, `
-			SELECT id, work_date::text, status::text, clock_in_at, minutes_late
-			FROM app.attendance_records
-			WHERE tenant_id = $1 AND employee_id = $2 AND clock_in_at IS NOT NULL AND clock_out_at IS NULL
-			ORDER BY work_date DESC LIMIT 1 FOR UPDATE`, p.TenantID, e.ID).Scan(&id, &day, &st, &clockIn, &late)
+		err = tx.QueryRow(ctx, "\n\t\t\tSELECT id, work_date::text, status::text, clock_in_at, minutes_late\n\t\t\tFROM app.attendance_records\n\t\t\tWHERE employee_id = $1 AND clock_in_at IS NOT NULL AND clock_out_at IS NULL\n\t\t\tORDER BY work_date DESC LIMIT 1 FOR UPDATE", e.ID).Scan(&id, &day, &st, &clockIn, &late)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.Conflict("not_clocked_in", "You are not clocked in")
 		}
@@ -193,9 +184,7 @@ func (s *Service) ClockOut(ctx context.Context, p *auth.Principal, employeeID *u
 		if planned > 0 && worked > planned {
 			ot = worked - planned
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.attendance_records SET clock_out_at = $3, overtime_minutes = $4
-			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, now, ot); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.attendance_records SET clock_out_at = $2, overtime_minutes = $3\n\t\t\tWHERE id = $1", id, now, ot); err != nil {
 			return err
 		}
 		if err := s.Audit.Record(ctx, tx, p, "attendance.clock_out", "attendance_records", id, nil, map[string]any{"employee_id": e.ID, "at": now, "source": source}); err != nil {
@@ -217,7 +206,7 @@ const daySQL = `SELECT d.id, d.employee_id, e.full_name::text AS employee_name, 
 	d.minutes_late AS late_minutes, d.overtime_minutes, d.source::text AS source, d.is_corrected,
 	(d.clock_in_at IS NOT NULL AND d.clock_out_at IS NULL) AS needs_review
 	FROM app.attendance_records d
-	JOIN app.employees e ON e.tenant_id = d.tenant_id AND e.id = d.employee_id`
+	JOIN app.employees e ON e.id = d.employee_id`
 
 type DayFilter struct {
 	EmployeeID *uuid.UUID
@@ -249,8 +238,7 @@ func (s *Service) Days(ctx context.Context, p *auth.Principal, f DayFilter, page
 	var out []map[string]any
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("d.tenant_id = $1")
+		q := sqlq.New()
 		if !canViewAll(p) {
 			q.Add("d.employee_id = ?", derefID(p.EmployeeID))
 		}
@@ -274,7 +262,7 @@ func (s *Service) Days(ctx context.Context, p *auth.Principal, f DayFilter, page
 		}
 		q.If(f.LateOnly, "d.minutes_late > 0")
 		q.If(f.OTOnly, "d.overtime_minutes > 0")
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.attendance_records d JOIN app.employees e ON e.tenant_id = d.tenant_id AND e.id = d.employee_id`+q.Where(), q.Args...).Scan(&total); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.attendance_records d JOIN app.employees e ON e.id = d.employee_id`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		var err error
@@ -299,8 +287,8 @@ func (s *Service) Today(ctx context.Context, p *auth.Principal, branch *uuid.UUI
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		day := hrkit.LocalToday(s.Clock.Now(), setting.String(ctx, tx, "system.timezone", "Africa/Dar_es_Salaam")).Format(hrkit.DateFmt)
-		q := sqlq.New(p.TenantID, day)
-		q.Add("e.tenant_id = $1 AND e.status = 'active'")
+		q := sqlq.New(day)
+		q.Add("e.status = 'active'")
 		q.If(branch != nil, "e.location_id = ?", branch)
 		q.If(!canViewAll(p), "e.id = ?", derefID(p.EmployeeID))
 		rows, err := hrkit.All(ctx, tx, `
@@ -312,7 +300,7 @@ func (s *Service) Today(ctx context.Context, p *auth.Principal, branch *uuid.UUI
 			            ELSE d.status::text END AS state,
 			       COALESCE(d.status::text, 'not_in') AS status
 			FROM app.employees e
-			LEFT JOIN app.attendance_records d ON d.tenant_id = e.tenant_id AND d.employee_id = e.id AND d.work_date = $2::date`+
+			LEFT JOIN app.attendance_records d ON d.employee_id = e.id AND d.work_date = $1::date`+
 			q.Where()+` ORDER BY e.full_name`, q.Args...)
 		if err != nil {
 			return err
@@ -342,8 +330,8 @@ func (s *Service) Summary(ctx context.Context, p *auth.Principal, month string, 
 			return httpx.BadRequest("invalid_query", "month must be YYYY-MM")
 		}
 		last := first.AddDate(0, 1, -1)
-		q := sqlq.New(p.TenantID, first.Format(hrkit.DateFmt), last.Format(hrkit.DateFmt))
-		q.Add("e.tenant_id = $1 AND (e.status <> 'terminated' OR e.end_date >= $2::date) AND e.start_date <= $3::date")
+		q := sqlq.New(first.Format(hrkit.DateFmt), last.Format(hrkit.DateFmt))
+		q.Add("(e.status <> 'terminated' OR e.end_date >= $1::date) AND e.start_date <= $2::date")
 		if branch == nil {
 			branch = p.BranchID
 		}
@@ -363,7 +351,7 @@ func (s *Service) Summary(ctx context.Context, p *auth.Principal, month string, 
 			       ROUND(COALESCE(SUM(CASE WHEN d.clock_in_at IS NOT NULL AND d.clock_out_at IS NOT NULL
 			                               THEN GREATEST(0, EXTRACT(EPOCH FROM (d.clock_out_at - d.clock_in_at)) / 60.0) ELSE 0 END), 0) / 60.0, 2) AS worked_hours
 			FROM app.employees e
-			LEFT JOIN app.attendance_records d ON d.tenant_id = e.tenant_id AND d.employee_id = e.id AND d.work_date BETWEEN $2::date AND $3::date`+
+			LEFT JOIN app.attendance_records d ON d.employee_id = e.id AND d.work_date BETWEEN $1::date AND $2::date`+
 			q.Where()+` GROUP BY e.id ORDER BY e.full_name`, q.Args...)
 		if err != nil {
 			return err
@@ -394,9 +382,7 @@ func (s *Service) PutDay(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 		var empID uuid.UUID
 		var workDate, oldStatus string
 		var oldIn, oldOut *time.Time
-		if err := tx.QueryRow(ctx, `
-			SELECT employee_id, work_date::text, status::text, clock_in_at, clock_out_at
-			FROM app.attendance_records WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT employee_id, work_date::text, status::text, clock_in_at, clock_out_at\n\t\t\tFROM app.attendance_records WHERE id = $1 FOR UPDATE", id).
 			Scan(&empID, &workDate, &oldStatus, &oldIn, &oldOut); err != nil {
 			return httpx.NotFound("not_found", "Attendance record not found")
 		}
@@ -431,22 +417,14 @@ func (s *Service) PutDay(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 				ot = worked - planned
 			}
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.attendance_corrections (tenant_id, attendance_id, old_clock_in_at, new_clock_in_at, old_clock_out_at, new_clock_out_at, old_status, new_status, reason)
-			VALUES ($1,$2,$3,$4,$5,$6,$7::app.attendance_status,$8::app.attendance_status,$9)`,
-			p.TenantID, id, oldIn, newIn, oldOut, newOut, oldStatus, newStatus, reason); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.attendance_corrections (attendance_id, old_clock_in_at, new_clock_in_at, old_clock_out_at, new_clock_out_at, old_status, new_status, reason)\n\t\t\tVALUES ($1, $2, $3, $4, $5, $6::app.attendance_status, $7::app.attendance_status, $8)", id, oldIn, newIn, oldOut, newOut, oldStatus, newStatus, reason); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.attendance_records
-			SET status = $3::app.attendance_status, clock_in_at = $4, clock_out_at = $5,
-			    minutes_late = CASE WHEN $3 <> 'late' THEN 0 ELSE minutes_late END,
-			    overtime_minutes = $6, is_corrected = true
-			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, newStatus, newIn, newOut, ot); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.attendance_records\n\t\t\tSET status = $2::app.attendance_status, clock_in_at = $3, clock_out_at = $4,\n\t\t\t    minutes_late = CASE WHEN $2 <> 'late' THEN 0 ELSE minutes_late END,\n\t\t\t    overtime_minutes = $5, is_corrected = true\n\t\t\tWHERE id = $1", id, newStatus, newIn, newOut, ot); err != nil {
 			return err
 		}
 		var err error
-		out, err = hrkit.One(ctx, tx, "Attendance record not found", daySQL+` WHERE d.tenant_id = $1 AND d.id = $2`, p.TenantID, id)
+		out, err = hrkit.One(ctx, tx, "Attendance record not found", daySQL+` WHERE d.id = $1`, id)
 		if err != nil {
 			return err
 		}
@@ -473,7 +451,7 @@ func (s *Service) AddEvent(ctx context.Context, p *auth.Principal, in EventIn) (
 	}
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		e, err := s.loadEmp(ctx, tx, p.TenantID, in.EmployeeID)
+		e, err := s.loadEmp(ctx, tx, in.EmployeeID)
 		if err != nil {
 			return err
 		}
@@ -484,23 +462,15 @@ func (s *Service) AddEvent(ctx context.Context, p *auth.Principal, in EventIn) (
 		var id uuid.UUID
 		var oldStatus string
 		var oldIn, oldOut *time.Time
-		err = tx.QueryRow(ctx, `
-			SELECT id, status::text, clock_in_at, clock_out_at
-			FROM app.attendance_records WHERE tenant_id = $1 AND employee_id = $2 AND work_date = $3::date FOR UPDATE`,
-			p.TenantID, e.ID, day).Scan(&id, &oldStatus, &oldIn, &oldOut)
+		err = tx.QueryRow(ctx, "\n\t\t\tSELECT id, status::text, clock_in_at, clock_out_at\n\t\t\tFROM app.attendance_records WHERE employee_id = $1 AND work_date = $2::date FOR UPDATE", e.ID, day).Scan(&id, &oldStatus, &oldIn, &oldOut)
 		if errors.Is(err, pgx.ErrNoRows) {
 			if in.Type == "out" {
 				return httpx.Conflict("not_clocked_in", "Record a clock-in before adding a clock-out")
 			}
-			if err := tx.QueryRow(ctx, `
-				INSERT INTO app.attendance_records (tenant_id, employee_id, work_date, clock_in_at, status, source, is_corrected)
-				VALUES ($1,$2,$3::date,$4,'present','manager',true) RETURNING id`,
-				p.TenantID, e.ID, day, in.At).Scan(&id); err != nil {
+			if err := tx.QueryRow(ctx, "\n\t\t\t\tINSERT INTO app.attendance_records (employee_id, work_date, clock_in_at, status, source, is_corrected)\n\t\t\t\tVALUES ($1, $2::date, $3, 'present', 'manager', true) RETURNING id", e.ID, day, in.At).Scan(&id); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO app.attendance_corrections (tenant_id, attendance_id, new_clock_in_at, old_status, new_status, reason)
-				VALUES ($1,$2,$3,'absent','present',$4)`, p.TenantID, id, in.At, reason); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tINSERT INTO app.attendance_corrections (attendance_id, new_clock_in_at, old_status, new_status, reason)\n\t\t\t\tVALUES ($1, $2, 'absent', 'present', $3)", id, in.At, reason); err != nil {
 				return err
 			}
 		} else if err != nil {
@@ -532,19 +502,14 @@ func (s *Service) AddEvent(ctx context.Context, p *auth.Principal, in EventIn) (
 					ot = worked - planned
 				}
 			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO app.attendance_corrections (tenant_id, attendance_id, old_clock_in_at, new_clock_in_at, old_clock_out_at, new_clock_out_at, old_status, new_status, reason)
-				VALUES ($1,$2,$3,$4,$5,$6,$7::app.attendance_status,$8::app.attendance_status,$9)`,
-				p.TenantID, id, oldIn, newIn, oldOut, newOut, oldStatus, newStatus, reason); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tINSERT INTO app.attendance_corrections (attendance_id, old_clock_in_at, new_clock_in_at, old_clock_out_at, new_clock_out_at, old_status, new_status, reason)\n\t\t\t\tVALUES ($1, $2, $3, $4, $5, $6::app.attendance_status, $7::app.attendance_status, $8)", id, oldIn, newIn, oldOut, newOut, oldStatus, newStatus, reason); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `
-				UPDATE app.attendance_records SET clock_in_at = $3, clock_out_at = $4, status = $5::app.attendance_status, overtime_minutes = $6, is_corrected = true
-				WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, newIn, newOut, newStatus, ot); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tUPDATE app.attendance_records SET clock_in_at = $2, clock_out_at = $3, status = $4::app.attendance_status, overtime_minutes = $5, is_corrected = true\n\t\t\t\tWHERE id = $1", id, newIn, newOut, newStatus, ot); err != nil {
 				return err
 			}
 		}
-		if out, err = hrkit.One(ctx, tx, "Attendance record not found", daySQL+` WHERE d.tenant_id = $1 AND d.id = $2`, p.TenantID, id); err != nil {
+		if out, err = hrkit.One(ctx, tx, "Attendance record not found", daySQL+` WHERE d.id = $1`, id); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "attendance.manual_event", "attendance_records", id, nil, map[string]any{"employee_id": e.ID, "type": in.Type, "at": in.At, "reason": reason})
@@ -557,7 +522,7 @@ func (s *Service) Mark(ctx context.Context, p *auth.Principal, employee uuid.UUI
 	status = normalizeStatus(strings.TrimSpace(status))
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := s.loadEmp(ctx, tx, p.TenantID, employee); err != nil {
+		if _, err := s.loadEmp(ctx, tx, employee); err != nil {
 			return err
 		}
 		if err := hrkit.PayrollLocked(ctx, tx, employee, day); err != nil {
@@ -570,19 +535,11 @@ func (s *Service) Mark(ctx context.Context, p *auth.Principal, employee uuid.UUI
 			clockIn = &t
 		}
 		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.attendance_records (tenant_id, employee_id, work_date, clock_in_at, status, source)
-			VALUES ($1,$2,$3::date,$4,$5::app.attendance_status,'manager')
-			ON CONFLICT (tenant_id, employee_id, work_date) DO UPDATE
-			SET status = EXCLUDED.status,
-			    clock_in_at = COALESCE(app.attendance_records.clock_in_at, EXCLUDED.clock_in_at),
-			    minutes_late = CASE WHEN EXCLUDED.status = 'late' THEN app.attendance_records.minutes_late ELSE 0 END,
-			    is_corrected = true
-			RETURNING id`, p.TenantID, employee, day, clockIn, status).Scan(&id); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.attendance_records (employee_id, work_date, clock_in_at, status, source)\n\t\t\tVALUES ($1, $2::date, $3, $4::app.attendance_status, 'manager')\n\t\t\tON CONFLICT (employee_id, work_date) DO UPDATE\n\t\t\tSET status = EXCLUDED.status,\n\t\t\t    clock_in_at = COALESCE(app.attendance_records.clock_in_at, EXCLUDED.clock_in_at),\n\t\t\t    minutes_late = CASE WHEN EXCLUDED.status = 'late' THEN app.attendance_records.minutes_late ELSE 0 END,\n\t\t\t    is_corrected = true\n\t\t\tRETURNING id", employee, day, clockIn, status).Scan(&id); err != nil {
 			return err
 		}
 		var err error
-		if out, err = hrkit.One(ctx, tx, "Attendance record not found", daySQL+` WHERE d.tenant_id = $1 AND d.id = $2`, p.TenantID, id); err != nil {
+		if out, err = hrkit.One(ctx, tx, "Attendance record not found", daySQL+` WHERE d.id = $1`, id); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "attendance.marked", "attendance_records", id, nil, map[string]any{"status": status, "note": note})
@@ -597,9 +554,7 @@ func (s *Service) DecideOvertime(ctx context.Context, p *auth.Principal, dayID u
 		var empID uuid.UUID
 		var workDate string
 		var ot int
-		if err := tx.QueryRow(ctx, `
-			SELECT employee_id, work_date::text, overtime_minutes
-			FROM app.attendance_records WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, dayID).
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT employee_id, work_date::text, overtime_minutes\n\t\t\tFROM app.attendance_records WHERE id = $1 FOR UPDATE", dayID).
 			Scan(&empID, &workDate, &ot); err != nil {
 			return httpx.NotFound("not_found", "Attendance record not found")
 		}
@@ -607,12 +562,12 @@ func (s *Service) DecideOvertime(ctx context.Context, p *auth.Principal, dayID u
 			return err
 		}
 		if !approve {
-			if _, err := tx.Exec(ctx, `UPDATE app.attendance_records SET overtime_minutes = 0, is_corrected = true WHERE tenant_id = $1 AND id = $2`, p.TenantID, dayID); err != nil {
+			if _, err := tx.Exec(ctx, "UPDATE app.attendance_records SET overtime_minutes = 0, is_corrected = true WHERE id = $1", dayID); err != nil {
 				return err
 			}
 		}
 		var err error
-		out, err = hrkit.One(ctx, tx, "Attendance record not found", daySQL+` WHERE d.tenant_id = $1 AND d.id = $2`, p.TenantID, dayID)
+		out, err = hrkit.One(ctx, tx, "Attendance record not found", daySQL+` WHERE d.id = $1`, dayID)
 		if err != nil {
 			return err
 		}
@@ -669,12 +624,12 @@ func (s *Service) DeleteHoliday(ctx context.Context, p *auth.Principal, id uuid.
 
 // ---------- day close job ----------
 
-func (s *Service) CloseDay(ctx context.Context, tenantID uuid.UUID, payload json.RawMessage) error {
+func (s *Service) CloseDay(ctx context.Context, payload json.RawMessage) error {
 	var in struct {
 		Date string `json:"date"`
 	}
 	_ = json.Unmarshal(payload, &in)
-	return s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		if in.Date == "" {
 			in.Date = hrkit.LocalToday(s.Clock.Now(), setting.String(ctx, tx, "system.timezone", "Africa/Dar_es_Salaam")).AddDate(0, 0, -1).Format(hrkit.DateFmt)
 		}
@@ -682,24 +637,21 @@ func (s *Service) CloseDay(ctx context.Context, tenantID uuid.UUID, payload json
 		cal, _ := hrkit.LoadCalendar(ctx, tx, nil, uuid.Nil)
 		if cal.IsWorking(day) {
 			if _, err := tx.Exec(ctx, `
-				INSERT INTO app.attendance_records (tenant_id, employee_id, work_date, status, source)
-				SELECT e.tenant_id, e.id, $2::date, 'absent', 'system'
+				INSERT INTO app.attendance_records (employee_id, work_date, status, source)
+				SELECT e.id, $1::date, 'absent', 'system'
 				FROM app.employees e
-				WHERE e.tenant_id = $1 AND e.start_date <= $2::date
-				  AND (e.status = 'active' OR (e.status = 'terminated' AND e.end_date >= $2::date))
-				ON CONFLICT (tenant_id, employee_id, work_date) DO NOTHING`, tenantID, in.Date); err != nil {
+				WHERE e.start_date <= $1::date
+				  AND (e.status = 'active' OR (e.status = 'terminated' AND e.end_date >= $1::date))
+				ON CONFLICT (employee_id, work_date) DO NOTHING`, in.Date); err != nil {
 				return err
 			}
 		}
 		var open int
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM app.attendance_records
-			WHERE tenant_id = $1 AND work_date = $2::date AND clock_in_at IS NOT NULL AND clock_out_at IS NULL`,
-			tenantID, in.Date).Scan(&open); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT count(*) FROM app.attendance_records\n\t\t\tWHERE work_date = $1::date AND clock_in_at IS NOT NULL AND clock_out_at IS NULL", in.Date).Scan(&open); err != nil {
 			return err
 		}
 		if open > 0 {
-			return s.Notify.ToPermission(ctx, tx, tenantID, nil, "hr.attendance.manage", notify.Message{
+			return s.Notify.ToPermission(ctx, tx, nil, "hr.attendance.manage", notify.Message{
 				Type: "system_alert", Title: "Attendance needs review",
 				Body: itoa(open) + " attendance records for " + in.Date + " are missing a clock-out",
 				Link: "/attendance?needs_review=true&from=" + in.Date + "&to=" + in.Date,

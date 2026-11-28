@@ -58,7 +58,7 @@ func (s *Service) UnifiedDebts(ctx context.Context, p *auth.Principal) (map[stri
 			       COALESCE(SUM(s.balance_due) FILTER (WHERE ($1::date - COALESCE(s.due_date, s.business_date)) BETWEEN 31 AND 60), 0),
 			       COALESCE(SUM(s.balance_due) FILTER (WHERE ($1::date - COALESCE(s.due_date, s.business_date)) > 60), 0),
 			       COALESCE(SUM(s.balance_due), 0)
-			FROM app.sales s JOIN app.customers c ON c.tenant_id = s.tenant_id AND c.id = s.customer_id
+			FROM app.sales s JOIN app.customers c ON c.id = s.customer_id
 			WHERE s.status = 'completed' AND s.balance_due > 0
 			GROUP BY c.id, c.full_name, c.phone
 			ORDER BY 7 DESC`); err != nil {
@@ -72,7 +72,7 @@ func (s *Service) UnifiedDebts(ctx context.Context, p *auth.Principal) (map[stri
 			       COALESCE(SUM(i.balance_due) FILTER (WHERE ($1::date - i.due_date) BETWEEN 31 AND 60), 0),
 			       COALESCE(SUM(i.balance_due) FILTER (WHERE ($1::date - i.due_date) > 60), 0),
 			       COALESCE(SUM(i.balance_due), 0)
-			FROM app.invoices i JOIN app.customers c ON c.tenant_id = i.tenant_id AND c.id = i.customer_id
+			FROM app.invoices i JOIN app.customers c ON c.id = i.customer_id
 			WHERE i.status IN ('issued','partially_paid') AND i.balance_due > 0
 			GROUP BY c.id, c.full_name, c.phone
 			ORDER BY 7 DESC`); err != nil {
@@ -86,7 +86,7 @@ func (s *Service) UnifiedDebts(ctx context.Context, p *auth.Principal) (map[stri
 			       COALESCE(SUM(i.balance_due) FILTER (WHERE ($1::date - COALESCE(i.due_date, i.order_date)) BETWEEN 31 AND 60), 0),
 			       COALESCE(SUM(i.balance_due) FILTER (WHERE ($1::date - COALESCE(i.due_date, i.order_date)) > 60), 0),
 			       COALESCE(SUM(i.balance_due), 0)
-			FROM app.purchases i JOIN app.suppliers sp ON sp.tenant_id = i.tenant_id AND sp.id = i.supplier_id
+			FROM app.purchases i JOIN app.suppliers sp ON sp.id = i.supplier_id
 			WHERE i.status IN ('partially_received','received') AND i.balance_due > 0
 			GROUP BY sp.id, sp.name, sp.phone
 			ORDER BY 7 DESC`); err != nil {
@@ -100,7 +100,7 @@ func (s *Service) UnifiedDebts(ctx context.Context, p *auth.Principal) (map[stri
 			       COALESCE(SUM(k.balance_due) FILTER (WHERE ($1::date - k.bill_date) BETWEEN 31 AND 60), 0),
 			       COALESCE(SUM(k.balance_due) FILTER (WHERE ($1::date - k.bill_date) > 60), 0),
 			       COALESCE(SUM(k.balance_due), 0)
-			FROM app.contractor_bills k JOIN app.contractors ct ON ct.tenant_id = k.tenant_id AND ct.id = k.contractor_id
+			FROM app.contractor_bills k JOIN app.contractors ct ON ct.id = k.contractor_id
 			WHERE k.status IN ('open','partially_paid') AND k.balance_due > 0
 			GROUP BY ct.id, ct.name, ct.phone
 			ORDER BY 7 DESC`); err != nil {

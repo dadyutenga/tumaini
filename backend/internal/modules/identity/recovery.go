@@ -72,7 +72,7 @@ func (r *Recovery) Forgot(ctx context.Context, identifier, ip string) error {
 		return err
 	}
 	// Users with no active seat (e.g., suspended/terminated everywhere) cannot recover access.
-	if _, _, merr := r.Svc.pickMembership(ctx, u.ID, nil); merr != nil {
+	if _, merr := r.Svc.pickMembership(ctx, u.ID); merr != nil {
 		return nil
 	}
 	code, err := sixDigits()
@@ -105,7 +105,7 @@ func (r *Recovery) Forgot(ctx context.Context, identifier, ip string) error {
 	if err != nil || !send {
 		return err
 	}
-	r.Svc.event(ctx, "password_reset_requested", &u.ID, nil, identifier, nil, ip, "", "")
+	r.Svc.event(ctx, "password_reset_requested", &u.ID, identifier, nil, ip, "", "")
 	msg := sender.Message{To: identifier, Subject: "Your password reset code", Body: "Your Tumaini password reset code is " + code + ". It expires in 15 minutes. If you did not ask for it, ignore this message."}
 	if err := channel.Send(ctx, msg); err != nil {
 		// Do not reveal delivery failures for a real account; log them for support.
@@ -128,7 +128,7 @@ func (r *Recovery) Reset(ctx context.Context, identifier, code, password, ip str
 	if err != nil {
 		return err
 	}
-	if _, _, merr := r.Svc.pickMembership(ctx, u.ID, nil); merr != nil {
+	if _, merr := r.Svc.pickMembership(ctx, u.ID); merr != nil {
 		return errInvalidCode
 	}
 	now := r.Svc.Clock.Now()
@@ -180,7 +180,7 @@ func (r *Recovery) Reset(ctx context.Context, identifier, code, password, ip str
 	if !matched {
 		return errInvalidCode
 	}
-	r.Svc.event(ctx, "password_reset_completed", &u.ID, nil, identifier, nil, ip, "", "")
+	r.Svc.event(ctx, "password_reset_completed", &u.ID, identifier, nil, ip, "", "")
 	return nil
 }
 

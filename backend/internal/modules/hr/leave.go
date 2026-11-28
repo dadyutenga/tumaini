@@ -27,8 +27,8 @@ const leaveSQL = `SELECT lr.id, lr.employee_id, e.full_name::text AS employee_na
 	lr.leave_type_id, lt.name::text AS leave_type, lt.is_paid, lr.start_date, lr.end_date, lr.days,
 	lr.reason, lr.status::text AS status, lr.decided_by, lr.decided_at, lr.decision_note, lr.created_by, lr.created_at
 	FROM app.leave_requests lr
-	JOIN app.employees e ON e.tenant_id = lr.tenant_id AND e.id = lr.employee_id
-	JOIN app.leave_types lt ON lt.tenant_id = lr.tenant_id AND lt.id = lr.leave_type_id`
+	JOIN app.employees e ON e.id = lr.employee_id
+	JOIN app.leave_types lt ON lt.id = lr.leave_type_id`
 
 type LeaveFilter struct {
 	EmployeeID *uuid.UUID
@@ -47,8 +47,7 @@ func (s *Service) LeaveRequests(ctx context.Context, p *auth.Principal, f LeaveF
 	var out []map[string]any
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("lr.tenant_id = $1")
+		q := sqlq.New()
 		q.If(p.BranchID != nil, "e.location_id = ?", p.BranchID)
 		q.If(f.EmployeeID != nil, "lr.employee_id = ?", f.EmployeeID)
 		if st := normalizeLeaveStatus(f.Status); st != "" {
@@ -58,7 +57,7 @@ func (s *Service) LeaveRequests(ctx context.Context, p *auth.Principal, f LeaveF
 		q.If(f.To != "", "lr.start_date <= ?::date", f.To)
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM app.leave_requests lr
-			JOIN app.employees e ON e.tenant_id = lr.tenant_id AND e.id = lr.employee_id`+q.Where(), q.Args...).Scan(&total); err != nil {
+			JOIN app.employees e ON e.id = lr.employee_id`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		var err error
@@ -95,7 +94,7 @@ func (s *Service) RequestLeave(ctx context.Context, p *auth.Principal, in LeaveI
 		}
 		var allowed *decimal.Decimal
 		var active bool
-		if err := tx.QueryRow(ctx, `SELECT annual_days, status = 'active' FROM app.leave_types WHERE tenant_id = $1 AND id = $2`, p.TenantID, in.LeaveTypeID).Scan(&allowed, &active); err != nil || !active {
+		if err := tx.QueryRow(ctx, "SELECT annual_days, status = 'active' FROM app.leave_types WHERE id = $1", in.LeaveTypeID).Scan(&allowed, &active); err != nil || !active {
 			return httpx.BadRequest("invalid_body", "Leave type not found")
 		}
 		cal, _ := hrkit.LoadCalendar(ctx, tx, emp, uuid.Nil)
@@ -109,11 +108,7 @@ func (s *Service) RequestLeave(ctx context.Context, p *auth.Principal, in LeaveI
 			return httpx.BadRequest("invalid_body", "There are no working days in those dates")
 		}
 		var overlap int
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM app.leave_requests
-			WHERE tenant_id = $1 AND employee_id = $2 AND status IN ('requested','approved')
-			  AND start_date <= $4::date AND end_date >= $3::date`,
-			p.TenantID, *emp, in.StartDate, in.EndDate).Scan(&overlap); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT count(*) FROM app.leave_requests\n\t\t\tWHERE employee_id = $1 AND status IN ('requested','approved')\n\t\t\t  AND start_date <= $3::date AND end_date >= $2::date", *emp, in.StartDate, in.EndDate).Scan(&overlap); err != nil {
 			return err
 		}
 		if overlap > 0 {
@@ -121,11 +116,7 @@ func (s *Service) RequestLeave(ctx context.Context, p *auth.Principal, in LeaveI
 		}
 		if allowed != nil && allowed.IsPositive() {
 			var used decimal.Decimal
-			if err := tx.QueryRow(ctx, `
-				SELECT COALESCE(SUM(days), 0) FROM app.leave_requests
-				WHERE tenant_id = $1 AND employee_id = $2 AND leave_type_id = $3
-				  AND status IN ('requested','approved') AND EXTRACT(YEAR FROM start_date) = $4`,
-				p.TenantID, *emp, in.LeaveTypeID, start.Year()).Scan(&used); err != nil {
+			if err := tx.QueryRow(ctx, "\n\t\t\t\tSELECT COALESCE(SUM(days), 0) FROM app.leave_requests\n\t\t\t\tWHERE employee_id = $1 AND leave_type_id = $2\n\t\t\t\t  AND status IN ('requested','approved') AND EXTRACT(YEAR FROM start_date) = $3", *emp, in.LeaveTypeID, start.Year()).Scan(&used); err != nil {
 				return err
 			}
 			if used.Add(decimal.NewFromInt(int64(days))).GreaterThan(*allowed) {
@@ -134,17 +125,16 @@ func (s *Service) RequestLeave(ctx context.Context, p *auth.Principal, in LeaveI
 		}
 		var id uuid.UUID
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.leave_requests (tenant_id, employee_id, leave_type_id, start_date, end_date, days, reason, status)
-			VALUES ($1,$2,$3,$4::date,$5::date,$6,NULLIF($7,''),'requested') RETURNING id`,
-			p.TenantID, *emp, in.LeaveTypeID, in.StartDate, in.EndDate, days, strings.TrimSpace(in.Reason)).Scan(&id); err != nil {
+			INSERT INTO app.leave_requests ( employee_id, leave_type_id, start_date, end_date, days, reason, status)
+			VALUES ($1,$2,$3::date,$4::date,$5,NULLIF($6,''),'requested') RETURNING id`, *emp, in.LeaveTypeID, in.StartDate, in.EndDate, days, strings.TrimSpace(in.Reason)).Scan(&id); err != nil {
 			return err
 		}
-		_ = s.Notify.ToApprovers(ctx, tx, p.TenantID, p.BranchID, "hr.leave.approve", nil, p.UserID, notify.Message{
+		_ = s.Notify.ToApprovers(ctx, tx, p.BranchID, "hr.leave.approve", nil, p.UserID, notify.Message{
 			Type: "approval_waiting", Title: "Leave request awaiting approval",
 			Body: "Leave for " + asString(e["name"]) + " from " + in.StartDate + " to " + in.EndDate,
 			Link: "/leave/" + id.String(), EntityType: "leave_request", EntityID: &id,
 		})
-		if out, err = hrkit.One(ctx, tx, "Leave request not found", leaveSQL+` WHERE lr.tenant_id = $1 AND lr.id = $2`, p.TenantID, id); err != nil {
+		if out, err = hrkit.One(ctx, tx, "Leave request not found", leaveSQL+` WHERE lr.id = $1`, id); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "leave.requested", "leave_requests", id, nil, out)
@@ -157,7 +147,7 @@ func (s *Service) RequestLeave(ctx context.Context, p *auth.Principal, in LeaveI
 func (s *Service) DecideLeave(ctx context.Context, p *auth.Principal, id uuid.UUID, approve bool, note string) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		lr, err := s.lockLeave(ctx, tx, p.TenantID, id)
+		lr, err := s.lockLeave(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -168,17 +158,15 @@ func (s *Service) DecideLeave(ctx context.Context, p *auth.Principal, id uuid.UU
 		if approve {
 			status = "approved"
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.leave_requests SET status = $3::app.leave_status, decision_note = NULLIF($4,'')
-			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, status, strings.TrimSpace(note)); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.leave_requests SET status = $2::app.leave_status, decision_note = NULLIF($3,'')\n\t\t\tWHERE id = $1", id, status, strings.TrimSpace(note)); err != nil {
 			return err
 		}
 		if approve {
-			if err := s.markLeaveDays(ctx, tx, p.TenantID, lr); err != nil {
+			if err := s.markLeaveDays(ctx, tx, lr); err != nil {
 				return err
 			}
 		}
-		if out, err = hrkit.One(ctx, tx, "Leave request not found", leaveSQL+` WHERE lr.tenant_id = $1 AND lr.id = $2`, p.TenantID, id); err != nil {
+		if out, err = hrkit.One(ctx, tx, "Leave request not found", leaveSQL+` WHERE lr.id = $1`, id); err != nil {
 			return err
 		}
 		if err := s.Audit.Record(ctx, tx, p, "leave."+status, "leave_requests", id, map[string]any{"status": "requested"}, map[string]any{"status": status, "note": note}); err != nil {
@@ -195,10 +183,7 @@ func (s *Service) notifyLeaveRequester(ctx context.Context, tx pgx.Tx, p *auth.P
 		return nil
 	}
 	var userID uuid.UUID
-	if err := tx.QueryRow(ctx, `
-		SELECT m.user_id FROM app.employees e
-		JOIN app.memberships m ON m.tenant_id = e.tenant_id AND m.id = e.membership_id
-		WHERE e.tenant_id = $1 AND e.id = $2`, p.TenantID, empID).Scan(&userID); err != nil || userID == p.UserID {
+	if err := tx.QueryRow(ctx, "\n\t\tSELECT m.user_id FROM app.employees e\n\t\tJOIN app.memberships m ON m.id = e.membership_id\n\t\tWHERE e.id = $1", empID).Scan(&userID); err != nil || userID == p.UserID {
 		return nil
 	}
 	id, _ := uuid.Parse(asString(lr["id"]))
@@ -206,19 +191,19 @@ func (s *Service) notifyLeaveRequester(ctx context.Context, tx pgx.Tx, p *auth.P
 	if note != "" {
 		body += ". " + note
 	}
-	return s.Notify.ToUser(ctx, tx, p.TenantID, userID, notify.Message{
+	return s.Notify.ToUser(ctx, tx, userID, notify.Message{
 		Type: "approval_decided", Title: title, Body: body, Link: "/leave/" + id.String(), EntityType: "leave_request", EntityID: &id,
 	})
 }
 
-func (s *Service) lockLeave(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (map[string]any, error) {
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM app.leave_requests WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, tenantID, id); err != nil {
+func (s *Service) lockLeave(ctx context.Context, tx pgx.Tx, id uuid.UUID) (map[string]any, error) {
+	if _, err := tx.Exec(ctx, "SELECT 1 FROM app.leave_requests WHERE id = $1 FOR UPDATE", id); err != nil {
 		return nil, err
 	}
-	return hrkit.One(ctx, tx, "Leave request not found", leaveSQL+` WHERE lr.tenant_id = $1 AND lr.id = $2`, tenantID, id)
+	return hrkit.One(ctx, tx, "Leave request not found", leaveSQL+` WHERE lr.id = $1`, id)
 }
 
-func (s *Service) markLeaveDays(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, lr map[string]any) error {
+func (s *Service) markLeaveDays(ctx context.Context, tx pgx.Tx, lr map[string]any) error {
 	emp, _ := uuid.Parse(asString(lr["employee_id"]))
 	cal, _ := hrkit.LoadCalendar(ctx, tx, &emp, uuid.Nil)
 	start := hrkit.MustDate(asString(lr["start_date"]))
@@ -231,11 +216,7 @@ func (s *Service) markLeaveDays(ctx context.Context, tx pgx.Tx, tenantID uuid.UU
 		if err := hrkit.PayrollLocked(ctx, tx, emp, day); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.attendance_records (tenant_id, employee_id, work_date, status, source)
-			VALUES ($1,$2,$3::date,'on_leave','system')
-			ON CONFLICT (tenant_id, employee_id, work_date) DO UPDATE SET status = 'on_leave'`,
-			tenantID, emp, day); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.attendance_records (employee_id, work_date, status, source)\n\t\t\tVALUES ($1, $2::date, 'on_leave', 'system')\n\t\t\tON CONFLICT (employee_id, work_date) DO UPDATE SET status = 'on_leave'", emp, day); err != nil {
 			return err
 		}
 	}
@@ -246,7 +227,7 @@ func (s *Service) markLeaveDays(ctx context.Context, tx pgx.Tx, tenantID uuid.UU
 func (s *Service) CancelLeave(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		lr, err := s.lockLeave(ctx, tx, p.TenantID, id)
+		lr, err := s.lockLeave(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -261,20 +242,16 @@ func (s *Service) CancelLeave(ctx context.Context, p *auth.Principal, id uuid.UU
 				return httpx.Conflict("invalid_status", "Leave that has started cannot be cancelled. Correct the attendance days instead")
 			}
 			emp, _ := uuid.Parse(asString(lr["employee_id"]))
-			if _, err := tx.Exec(ctx, `
-				DELETE FROM app.attendance_records
-				WHERE tenant_id = $1 AND employee_id = $2 AND work_date BETWEEN $3::date AND $4::date
-				  AND status = 'on_leave' AND clock_in_at IS NULL`,
-				p.TenantID, emp, lr["start_date"], lr["end_date"]); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tDELETE FROM app.attendance_records\n\t\t\t\tWHERE employee_id = $1 AND work_date BETWEEN $2::date AND $3::date\n\t\t\t\t  AND status = 'on_leave' AND clock_in_at IS NULL", emp, lr["start_date"], lr["end_date"]); err != nil {
 				return err
 			}
 		default:
 			return httpx.Conflict("invalid_status", "This leave request is already decided")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.leave_requests SET status = 'cancelled' WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.leave_requests SET status = 'cancelled' WHERE id = $1", id); err != nil {
 			return err
 		}
-		if out, err = hrkit.One(ctx, tx, "Leave request not found", leaveSQL+` WHERE lr.tenant_id = $1 AND lr.id = $2`, p.TenantID, id); err != nil {
+		if out, err = hrkit.One(ctx, tx, "Leave request not found", leaveSQL+` WHERE lr.id = $1`, id); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "leave.cancelled", "leave_requests", id, map[string]any{"status": lr["status"]}, map[string]any{"status": "cancelled"})

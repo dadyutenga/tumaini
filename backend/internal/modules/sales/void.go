@@ -28,7 +28,7 @@ func (s *Service) Void(ctx context.Context, p *auth.Principal, id uuid.UUID, rea
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -55,14 +55,14 @@ func (s *Service) Void(ctx context.Context, p *auth.Principal, id uuid.UUID, rea
 			if err := s.Audit.Record(ctx, tx, p, "sale.void_requested", "sale", id, nil, map[string]any{"reason": reason}); err != nil {
 				return err
 			}
-			raw, err := idem.Complete(ctx, tx, p.UserID, 202, httpx.Data(map[string]any{"approval_request_id": reqID, "status": "pending_approval", "id": id}))
+			raw, err := idem.Complete(ctx, tx, 202, httpx.Data(map[string]any{"approval_request_id": reqID, "status": "pending_approval", "id": id}))
 			status, body = 202, raw
 			return err
 		}
 		if err := s.applyVoid(ctx, tx, p, id, v, reason); err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "number": v.number, "status": "voided", "void_reason": reason}))
+		raw, err := idem.Complete(ctx, tx, 200, httpx.Data(map[string]any{"id": id, "number": v.number, "status": "voided", "void_reason": reason}))
 		status, body = 200, raw
 		return err
 	})
@@ -78,26 +78,21 @@ type voidable struct {
 func (s *Service) lockForVoid(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (voidable, error) {
 	var v voidable
 	var st string
-	if err := tx.QueryRow(ctx, `
-		SELECT location_id, COALESCE(receipt_no, ''), total, status::text
-		FROM app.sales WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&v.branch, &v.number, &v.total, &st); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tSELECT location_id, COALESCE(receipt_no, ''), total, status::text\n\t\tFROM app.sales WHERE id = $1 FOR UPDATE", id).Scan(&v.branch, &v.number, &v.total, &st); err != nil {
 		return v, httpx.NotFound("not_found", "Sale not found")
 	}
 	if st != "completed" {
 		return v, httpx.Conflict("invalid_status", "Only a completed sale can be voided")
 	}
 	var returns int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.sale_returns WHERE tenant_id = $1 AND sale_id = $2 AND status = 'completed'`, p.TenantID, id).Scan(&returns); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT count(*) FROM app.sale_returns WHERE sale_id = $1 AND status = 'completed'", id).Scan(&returns); err != nil {
 		return v, err
 	}
 	if returns > 0 {
 		return v, httpx.Conflict("invalid_status", "This sale has completed returns and cannot be voided")
 	}
 	var later int
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*) FROM app.payment_allocations pa
-		JOIN app.payments_received pr ON pr.tenant_id = pa.tenant_id AND pr.id = pa.payment_received_id
-		WHERE pa.tenant_id = $1 AND pa.sale_id = $2 AND pr.purpose <> 'sale' AND pr.status = 'posted'`, p.TenantID, id).Scan(&later); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tSELECT count(*) FROM app.payment_allocations pa\n\t\tJOIN app.payments_received pr ON pr.id = pa.payment_received_id\n\t\tWHERE pa.sale_id = $1 AND pr.purpose <> 'sale' AND pr.status = 'posted'", id).Scan(&later); err != nil {
 		return v, err
 	}
 	if later > 0 {
@@ -109,17 +104,10 @@ func (s *Service) lockForVoid(ctx context.Context, tx pgx.Tx, p *auth.Principal,
 func (s *Service) applyVoid(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID, v voidable, reason string) error {
 	// Void the POS sale payments first so tg_payment_received_post reverses the money ledger and
 	// brings sales.amount_paid to 0 (required by tg_sales_guard before voiding the sale).
-	if _, err := tx.Exec(ctx, `
-		UPDATE app.payments_received
-		SET status = 'voided', voided_at = now(), voided_by = $3, void_reason = $4
-		WHERE tenant_id = $1 AND status = 'posted' AND purpose = 'sale'
-		  AND id IN (SELECT payment_received_id FROM app.payment_allocations WHERE tenant_id = $1 AND sale_id = $2)`,
-		p.TenantID, id, p.MembershipID, reason); err != nil {
+	if _, err := tx.Exec(ctx, "\n\t\tUPDATE app.payments_received\n\t\tSET status = 'voided', voided_at = now(), voided_by = $2, void_reason = $3\n\t\tWHERE status = 'posted' AND purpose = 'sale'\n\t\t  AND id IN (SELECT payment_received_id FROM app.payment_allocations WHERE sale_id = $1)", id, p.MembershipID, reason); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `
-		UPDATE app.sales SET status = 'voided', voided_at = now(), voided_by = $3, void_reason = $4
-		WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, p.MembershipID, reason); err != nil {
+	if _, err := tx.Exec(ctx, "\n\t\tUPDATE app.sales SET status = 'voided', voided_at = now(), voided_by = $2, void_reason = $3\n\t\tWHERE id = $1", id, p.MembershipID, reason); err != nil {
 		return err
 	}
 	return s.Audit.Record(ctx, tx, p, "sale.voided", "sale", id, map[string]any{"status": "completed"}, map[string]any{"status": "voided", "reason": reason})
@@ -156,7 +144,7 @@ func (s *Service) ReceivePayment(ctx context.Context, p *auth.Principal, saleID 
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -166,9 +154,7 @@ func (s *Service) ReceivePayment(ctx context.Context, p *auth.Principal, saleID 
 		var cust *uuid.UUID
 		var bal decimal.Decimal
 		var st, number string
-		if err := tx.QueryRow(ctx, `
-			SELECT location_id, customer_id, balance_due, status::text, COALESCE(receipt_no, '')
-			FROM app.sales WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, saleID).Scan(&branch, &cust, &bal, &st, &number); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT location_id, customer_id, balance_due, status::text, COALESCE(receipt_no, '')\n\t\t\tFROM app.sales WHERE id = $1 FOR UPDATE", saleID).Scan(&branch, &cust, &bal, &st, &number); err != nil {
 			return httpx.NotFound("not_found", "Sale not found")
 		}
 		if st != "completed" {
@@ -190,7 +176,8 @@ func (s *Service) ReceivePayment(ctx context.Context, p *auth.Principal, saleID 
 			purpose = "sale"
 		}
 		res, err := payments.Receive(ctx, tx, payments.ReceiveInput{
-			TenantID: p.TenantID, LocationID: branch, AccountID: in.MoneyAccountID, CustomerID: cust,
+			LocationID: branch,
+			AccountID:  in.MoneyAccountID, CustomerID: cust,
 			Purpose: purpose, Method: payments.Method(in.Method), Amount: amount, Reference: strings.TrimSpace(in.Reference),
 			BusinessDate: date, Notes: "Payment for sale " + number,
 			Allocations: []payments.Alloc{{SaleID: &saleID, Amount: amount}},
@@ -203,7 +190,7 @@ func (s *Service) ReceivePayment(ctx context.Context, p *auth.Principal, saleID 
 		if err := s.Audit.Record(ctx, tx, p, "sale.payment", "sale", saleID, nil, out); err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 201, httpx.Data(out))
+		raw, err := idem.Complete(ctx, tx, 201, httpx.Data(out))
 		status, body = 201, raw
 		return err
 	})

@@ -98,10 +98,6 @@ func TestCatalogProductsLookupFiltersAndCost(t *testing.T) {
 	require.Equal(t, 200, o.call(t, http.MethodPost, "/api/v1/products/"+str(sugar.data["id"])+"/activate", nil, "").code)
 	require.Equal(t, 404, o.call(t, http.MethodPost, "/api/v1/products/"+key()+"/deactivate", nil, "").code)
 
-	// Another business sees none of it.
-	other := newEnv(t, defaultNow)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/products/"+str(rice.data["id"]), nil, "").code)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/products/lookup?barcode=6001", nil, "").code)
 }
 
 func TestCatalogBranchPricesCategoriesAndUnits(t *testing.T) {

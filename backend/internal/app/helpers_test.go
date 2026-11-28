@@ -3,7 +3,6 @@ package app_test
 import (
 	"context"
 	"net/http"
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -18,11 +17,10 @@ import (
 
 // env is one registered business on a fresh app instance, for flow tests.
 type env struct {
-	app      *app.App
-	owner    *client
-	tenantID uuid.UUID
-	branch   string
-	phone    string
+	app    *app.App
+	owner  *client
+	branch string
+	phone  string
 }
 
 // defaultNow is a Monday morning in Dar es Salaam (05:20 UTC is 08:20 local).
@@ -55,12 +53,7 @@ func newEnv(t *testing.T, now time.Time) *env {
 // newEnvWithClock is newEnv with any clock, for tests that move time.
 func newEnvWithClock(t *testing.T, clk clock.Clock) *env {
 	t.Helper()
-	if os.Getenv("DATABASE_URL") == "" {
-		t.Setenv("DATABASE_URL", "postgres://bms_api:bms_api_dev@127.0.0.1:5433/bms?sslmode=disable")
-	}
-	if os.Getenv("JOBS_DATABASE_URL") == "" {
-		t.Setenv("JOBS_DATABASE_URL", "postgres://bms_jobs:bms_jobs_dev@127.0.0.1:5433/bms?sslmode=disable")
-	}
+	freshDatabase(t)
 	t.Setenv("JWT_SECRET", "0123456789abcdef0123456789abcdef")
 	t.Setenv("RATE_LIMIT_SCOPE", uuid.NewString()) // each test business has its own shared budget
 	t.Setenv("ARGON_MEMORY", "8192")
@@ -81,7 +74,7 @@ func newEnvWithClock(t *testing.T, clk clock.Clock) *env {
 	}, "")
 	require.Equal(t, 201, reg.code, reg.raw)
 	c.token, c.branch = str(reg.data["access_token"]), str(reg.data["branch_id"])
-	return &env{app: a, owner: c, tenantID: uuid.Nil, branch: c.branch, phone: phone}
+	return &env{app: a, owner: c, branch: c.branch, phone: phone}
 }
 
 // roleID returns the id of a role by slug: owner, manager or staff.
@@ -137,7 +130,7 @@ func (e *env) product(t *testing.T, name, price, qty, cost string) string {
 // runJobs processes every queued background job synchronously.
 func (e *env) runJobs(t *testing.T) {
 	t.Helper()
-	require.NoError(t, e.app.Jobs.RunPendingForTenant(context.Background(), e.tenantID))
+	require.NoError(t, e.app.Jobs.RunPending(context.Background()))
 }
 
 // key returns a fresh idempotency key.

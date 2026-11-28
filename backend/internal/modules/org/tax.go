@@ -50,12 +50,12 @@ func (s *Service) SaveTax(ctx context.Context, p *auth.Principal, id *uuid.UUID,
 			outID = uuid.New()
 			wantDefault := in.IsDefault != nil && *in.IsDefault
 			if wantDefault {
-				if _, err := tx.Exec(ctx, `UPDATE app.tax_rates SET is_default=false WHERE tenant_id=$1 AND is_default`, p.TenantID); err != nil {
+				if _, err := tx.Exec(ctx, "UPDATE app.tax_rates SET is_default=false WHERE is_default"); err != nil {
 					return err
 				}
 			}
-			if _, err := tx.Exec(ctx, `INSERT INTO app.tax_rates (id, tenant_id, name, rate_pct, is_default) VALUES ($1,$2,$3,$4,$5)`,
-				outID, p.TenantID, name, *in.Rate, wantDefault); err != nil {
+			if _, err := tx.Exec(ctx, "INSERT INTO app.tax_rates (id, name, rate_pct, is_default) VALUES ($1, $2, $3, $4)",
+				outID, name, *in.Rate, wantDefault); err != nil {
 				if db.IsUnique(err) {
 					return httpx.Conflict("duplicate", "A tax rate with that name already exists")
 				}
@@ -85,7 +85,7 @@ func (s *Service) SaveTax(ctx context.Context, p *auth.Principal, id *uuid.UUID,
 			return httpx.Conflict("invalid_status", "The default tax rate must stay active")
 		}
 		if isDefault && !wasDefault {
-			if _, err := tx.Exec(ctx, `UPDATE app.tax_rates SET is_default=false WHERE tenant_id=$1 AND is_default`, p.TenantID); err != nil {
+			if _, err := tx.Exec(ctx, "UPDATE app.tax_rates SET is_default=false WHERE is_default"); err != nil {
 				return err
 			}
 		}
@@ -227,6 +227,6 @@ func (s *Service) UpdatePaymentMethods(ctx context.Context, p *auth.Principal, b
 		if err := s.writeSetting(ctx, tx, p, "payment.methods", json.RawMessage(out)); err != nil {
 			return err
 		}
-		return s.Audit.Record(ctx, tx, p, "payment_methods.updated", "settings", p.TenantID, json.RawMessage(before), json.RawMessage(out))
+		return s.Audit.Record(ctx, tx, p, "payment_methods.updated", "settings", json.RawMessage(before), json.RawMessage(out))
 	})
 }

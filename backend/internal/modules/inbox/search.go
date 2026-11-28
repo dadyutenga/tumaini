@@ -88,7 +88,7 @@ func (s *Service) GlobalSearch(ctx context.Context, p *auth.Principal, q string)
 				  AND (c.full_name ILIKE $1 OR c.phone::text ILIKE $1 OR c.email::text ILIKE $1)`
 			clientArgs := []any{pat}
 			if !p.Has("services.client.view_all") {
-				clientSQL += ` AND (c.registered_by = $2 OR c.assigned_to = $2 OR EXISTS (SELECT 1 FROM app.projects pr WHERE pr.tenant_id = c.tenant_id AND pr.customer_id = c.id AND (pr.owner_id = $2 OR EXISTS (SELECT 1 FROM app.project_stages st WHERE st.tenant_id = pr.tenant_id AND st.project_id = pr.id AND st.owner_id = $2))))`
+				clientSQL += ` AND (c.registered_by = $2 OR c.assigned_to = $2 OR EXISTS (SELECT 1 FROM app.projects pr WHERE pr.customer_id = c.id AND (pr.owner_id = $2 OR EXISTS (SELECT 1 FROM app.project_stages st WHERE st.project_id = pr.id AND st.owner_id = $2))))`
 				clientArgs = append(clientArgs, p.MembershipID)
 			}
 			clientSQL += ` ORDER BY c.full_name LIMIT 6`
@@ -99,11 +99,11 @@ func (s *Service) GlobalSearch(ctx context.Context, p *auth.Principal, q string)
 		if canAny("services.project.view_all", "services.project.manage") {
 			projSQL := `
 				SELECT pr.id, pr.project_no || ' · ' || pr.title::text, c.full_name::text
-				FROM app.projects pr JOIN app.customers c ON c.tenant_id = pr.tenant_id AND c.id = pr.customer_id
+				FROM app.projects pr JOIN app.customers c ON c.id = pr.customer_id
 				WHERE (pr.project_no ILIKE $1 OR pr.title ILIKE $1 OR c.full_name ILIKE $1)`
 			projArgs := []any{pat}
 			if !p.Has("services.project.view_all") {
-				projSQL += ` AND (pr.owner_id = $2 OR pr.created_by = $2 OR EXISTS (SELECT 1 FROM app.project_stages st WHERE st.tenant_id = pr.tenant_id AND st.project_id = pr.id AND st.owner_id = $2))`
+				projSQL += ` AND (pr.owner_id = $2 OR pr.created_by = $2 OR EXISTS (SELECT 1 FROM app.project_stages st WHERE st.project_id = pr.id AND st.owner_id = $2))`
 				projArgs = append(projArgs, p.MembershipID)
 			}
 			projSQL += ` ORDER BY pr.created_at DESC LIMIT 6`
@@ -114,7 +114,7 @@ func (s *Service) GlobalSearch(ctx context.Context, p *auth.Principal, q string)
 		if canAny("services.design.view_all", "services.design.manage") {
 			designSQL := `
 				SELECT j.id, j.job_no || ' · ' || j.title::text, c.full_name::text
-				FROM app.design_jobs j JOIN app.customers c ON c.tenant_id = j.tenant_id AND c.id = j.customer_id
+				FROM app.design_jobs j JOIN app.customers c ON c.id = j.customer_id
 				WHERE (j.job_no ILIKE $1 OR j.title ILIKE $1 OR c.full_name ILIKE $1)`
 			designArgs := []any{pat}
 			if !p.Has("services.design.view_all") {
@@ -129,7 +129,7 @@ func (s *Service) GlobalSearch(ctx context.Context, p *auth.Principal, q string)
 		if canAny("shop.sale.view_all", "shop.sale.create") {
 			saleSQL := `
 				SELECT s.id, s.receipt_no, COALESCE(c.full_name::text, 'Walk-in') || ' · ' || s.total::text
-				FROM app.sales s LEFT JOIN app.customers c ON c.tenant_id = s.tenant_id AND c.id = s.customer_id
+				FROM app.sales s LEFT JOIN app.customers c ON c.id = s.customer_id
 				WHERE (s.receipt_no ILIKE $1 OR COALESCE(c.full_name::text,'') ILIKE $1)`
 			saleArgs := []any{pat}
 			if !p.Has("shop.sale.view_all") {
@@ -152,7 +152,7 @@ func (s *Service) GlobalSearch(ctx context.Context, p *auth.Principal, q string)
 		if canAny("services.invoice.manage", "services.invoice.draft") {
 			invSQL := `
 				SELECT i.id, i.invoice_no, c.full_name::text || ' · ' || i.total::text
-				FROM app.invoices i JOIN app.customers c ON c.tenant_id = i.tenant_id AND c.id = i.customer_id
+				FROM app.invoices i JOIN app.customers c ON c.id = i.customer_id
 				WHERE (i.invoice_no ILIKE $1 OR c.full_name ILIKE $1)`
 			invArgs := []any{pat}
 			if !p.Has("services.invoice.manage") {

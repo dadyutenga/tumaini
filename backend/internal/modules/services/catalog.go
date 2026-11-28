@@ -54,16 +54,13 @@ func mapServiceCategory(cat string) string {
 	}
 }
 
-func upsertDocumentType(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, name string) (uuid.UUID, error) {
+func upsertDocumentType(ctx context.Context, tx pgx.Tx, name string) (uuid.UUID, error) {
 	var id uuid.UUID
-	err := tx.QueryRow(ctx, `
-		INSERT INTO app.document_types (tenant_id, name) VALUES ($1, $2)
-		ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
-		RETURNING id`, tenantID, clean(name)).Scan(&id)
+	err := tx.QueryRow(ctx, "\n\t\tINSERT INTO app.document_types (name) VALUES ($1)\n\t\tON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name\n\t\tRETURNING id", clean(name)).Scan(&id)
 	return id, err
 }
 
-func (s *Service) nextServiceCode(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, requested, name string) (string, error) {
+func (s *Service) nextServiceCode(ctx context.Context, tx pgx.Tx, requested, name string) (string, error) {
 	base := clean(requested)
 	if base != "" {
 		base = serviceCodeFromName(base)
@@ -73,7 +70,7 @@ func (s *Service) nextServiceCode(ctx context.Context, tx pgx.Tx, tenantID uuid.
 	code := base
 	for i := 0; i < 100; i++ {
 		var taken bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.services WHERE tenant_id = $1 AND code = $2)`, tenantID, code).Scan(&taken); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM app.services WHERE code = $1)", code).Scan(&taken); err != nil {
 			return "", err
 		}
 		if !taken {
@@ -93,8 +90,7 @@ func (s *Service) ListCatalog(ctx context.Context, p *auth.Principal, q0, catego
 	var out []map[string]any
 	total := 0
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("c.tenant_id = $1")
+		q := sqlq.New()
 		if t := clean(q0); t != "" {
 			q.Add("(c.name ILIKE '%' || ? || '%' OR c.description ILIKE '%' || ? || '%' OR c.code ILIKE '%' || ? || '%')", t, t, t)
 		}
@@ -111,8 +107,8 @@ func (s *Service) ListCatalog(ctx context.Context, p *auth.Principal, q0, catego
 			       CASE WHEN c.category = 'business_registration' THEN 'business' ELSE c.category::text END AS category,
 			       c.description, c.standard_price, c.government_fee AS government_fees,
 			       c.revisions_included AS included_revisions, c.is_package, (c.status = 'active') AS is_active,
-			       (SELECT count(*) FROM app.service_stages st WHERE st.tenant_id = c.tenant_id AND st.service_id = c.id) AS stage_count,
-			       (SELECT count(*) FROM app.service_package_items pi WHERE pi.tenant_id = c.tenant_id AND pi.package_service_id = c.id) AS service_count
+			       (SELECT count(*) FROM app.service_stages st WHERE st.service_id = c.id) AS stage_count,
+			       (SELECT count(*) FROM app.service_package_items pi WHERE pi.package_service_id = c.id) AS service_count
 			FROM app.services c`+q.Where()+` ORDER BY c.category, c.name`+q.Page(page.PerPage, page.Offset), q.Args...)
 		return err
 	})
@@ -122,41 +118,41 @@ func (s *Service) ListCatalog(ctx context.Context, p *auth.Principal, q0, catego
 func (s *Service) GetCatalog(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		return s.loadCatalog(ctx, tx, p.TenantID, id, &out)
+		return s.loadCatalog(ctx, tx, id, &out)
 	})
 	return out, err
 }
 
-func (s *Service) loadCatalog(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, out *map[string]any) error {
+func (s *Service) loadCatalog(ctx context.Context, tx pgx.Tx, id uuid.UUID, out *map[string]any) error {
 	c, err := one(ctx, tx, "Service", `
 		SELECT id, code, name::text AS name,
 		       CASE WHEN category = 'business_registration' THEN 'business' ELSE category::text END AS category,
 		       description, standard_price, government_fee AS government_fees,
 		       revisions_included AS included_revisions, is_package, (status = 'active') AS is_active, created_at
-		FROM app.services WHERE tenant_id = $1 AND id = $2`, tenantID, id)
+		FROM app.services WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
 	if c["stages"], err = rows(ctx, tx, `
 		SELECT seq AS position, name::text AS name, estimated_days AS est_days, is_branding_stage
-		FROM app.service_stages WHERE tenant_id = $1 AND service_id = $2 ORDER BY seq`, tenantID, id); err != nil {
+		FROM app.service_stages WHERE service_id = $1 ORDER BY seq`, id); err != nil {
 		return err
 	}
 	if c["documents"], err = rows(ctx, tx, `
 		SELECT dt.id, dt.name::text AS name, st.seq AS stage_position
 		FROM app.service_stage_documents sd
-		JOIN app.service_stages st ON st.tenant_id = sd.tenant_id AND st.id = sd.service_stage_id
-		JOIN app.document_types dt ON dt.tenant_id = sd.tenant_id AND dt.id = sd.document_type_id
-		WHERE sd.tenant_id = $1 AND st.service_id = $2
-		ORDER BY st.seq, dt.name`, tenantID, id); err != nil {
+		JOIN app.service_stages st ON st.id = sd.service_stage_id
+		JOIN app.document_types dt ON dt.id = sd.document_type_id
+		WHERE st.service_id = $1
+		ORDER BY st.seq, dt.name`, id); err != nil {
 		return err
 	}
 	if c["package_services"], err = rows(ctx, tx, `
 		SELECT s.id, s.name::text AS name, s.standard_price
 		FROM app.service_package_items pi
-		JOIN app.services s ON s.tenant_id = pi.tenant_id AND s.id = pi.component_service_id
-		WHERE pi.tenant_id = $1 AND pi.package_service_id = $2
-		ORDER BY pi.seq, s.name`, tenantID, id); err != nil {
+		JOIN app.services s ON s.id = pi.component_service_id
+		WHERE pi.package_service_id = $1
+		ORDER BY pi.seq, s.name`, id); err != nil {
 		return err
 	}
 	*out = c
@@ -164,20 +160,18 @@ func (s *Service) loadCatalog(ctx context.Context, tx pgx.Tx, tenantID, id uuid.
 }
 
 func (s *Service) saveCatalogParts(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID, in CatalogIn) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM app.service_stages WHERE tenant_id = $1 AND service_id = $2`, p.TenantID, id); err != nil {
+	if _, err := tx.Exec(ctx, "DELETE FROM app.service_stages WHERE service_id = $1", id); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM app.service_package_items WHERE tenant_id = $1 AND package_service_id = $2`, p.TenantID, id); err != nil {
+	if _, err := tx.Exec(ctx, "DELETE FROM app.service_package_items WHERE package_service_id = $1", id); err != nil {
 		return err
 	}
 	stageIDs := make([]uuid.UUID, 0, len(in.Stages))
 	for i, st := range in.Stages {
 		sid := ids.New()
 		isBranding := st.IsBrandingStage || strings.Contains(strings.ToLower(st.Name), "brand")
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.service_stages (id, tenant_id, service_id, seq, name, estimated_days, is_branding_stage)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-			sid, p.TenantID, id, i+1, clean(st.Name), st.EstDays, isBranding); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.service_stages (id, service_id, seq, name, estimated_days, is_branding_stage)\n\t\t\tVALUES ($1, $2, $3, $4, $5, $6)",
+			sid, id, i+1, clean(st.Name), st.EstDays, isBranding); err != nil {
 			return err
 		}
 		stageIDs = append(stageIDs, sid)
@@ -193,14 +187,11 @@ func (s *Service) saveCatalogParts(ctx context.Context, tx pgx.Tx, p *auth.Princ
 		if pos < 1 || pos > len(stageIDs) {
 			return httpx.BadRequest("invalid_body", "A required document points at a stage that does not exist")
 		}
-		dtID, err := upsertDocumentType(ctx, tx, p.TenantID, d.Name)
+		dtID, err := upsertDocumentType(ctx, tx, d.Name)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.service_stage_documents (tenant_id, service_stage_id, document_type_id, is_mandatory)
-			VALUES ($1,$2,$3,true) ON CONFLICT DO NOTHING`,
-			p.TenantID, stageIDs[pos-1], dtID); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.service_stage_documents (service_stage_id, document_type_id, is_mandatory)\n\t\t\tVALUES ($1, $2, true) ON CONFLICT DO NOTHING", stageIDs[pos-1], dtID); err != nil {
 			return err
 		}
 	}
@@ -213,16 +204,14 @@ func (s *Service) saveCatalogParts(ctx context.Context, tx pgx.Tx, p *auth.Princ
 			}
 			seen[sid] = true
 			var pkg bool
-			if err := tx.QueryRow(ctx, `SELECT is_package FROM app.services WHERE tenant_id = $1 AND id = $2`, p.TenantID, sid).Scan(&pkg); err != nil {
+			if err := tx.QueryRow(ctx, "SELECT is_package FROM app.services WHERE id = $1", sid).Scan(&pkg); err != nil {
 				return httpx.NotFound("not_found", "A service in the package was not found")
 			}
 			if pkg {
 				return httpx.BadRequest("invalid_body", "A package cannot contain another package")
 			}
 			seq++
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO app.service_package_items (tenant_id, package_service_id, component_service_id, seq)
-				VALUES ($1,$2,$3,$4)`, p.TenantID, id, sid, seq); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tINSERT INTO app.service_package_items (package_service_id, component_service_id, seq)\n\t\t\t\tVALUES ($1, $2, $3)", id, sid, seq); err != nil {
 				return err
 			}
 		}
@@ -241,20 +230,18 @@ func (s *Service) CreateCatalog(ctx context.Context, p *auth.Principal, in Catal
 	id := ids.New()
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		var dupName bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.services WHERE tenant_id = $1 AND lower(name::text) = lower($2))`, p.TenantID, clean(in.Name)).Scan(&dupName); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM app.services WHERE lower(name::text) = lower($1))", clean(in.Name)).Scan(&dupName); err != nil {
 			return err
 		}
 		if dupName {
 			return httpx.Conflict("duplicate", "A service with that name already exists")
 		}
-		code, err := s.nextServiceCode(ctx, tx, p.TenantID, in.Code, in.Name)
+		code, err := s.nextServiceCode(ctx, tx, in.Code, in.Name)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.services (id, tenant_id, code, name, category, description, standard_price, government_fee, revisions_included, is_package)
-			VALUES ($1,$2,$3,$4,$5::app.service_category,$6,$7,$8,$9,$10)`,
-			id, p.TenantID, code, clean(in.Name), cat, nz(in.Description), money.Money(in.StandardPrice), money.Money(in.GovernmentFees), in.IncludedRevisions, in.IsPackage); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.services (id, code, name, category, description, standard_price, government_fee, revisions_included, is_package)\n\t\t\tVALUES ($1, $2, $3, $4::app.service_category, $5, $6, $7, $8, $9)",
+			id, code, clean(in.Name), cat, nz(in.Description), money.Money(in.StandardPrice), money.Money(in.GovernmentFees), in.IncludedRevisions, in.IsPackage); err != nil {
 			if isDup(err) {
 				return httpx.Conflict("duplicate", "A service with that code or name already exists")
 			}
@@ -275,7 +262,7 @@ func (s *Service) CreateCatalog(ctx context.Context, p *auth.Principal, in Catal
 func (s *Service) UpdateCatalog(ctx context.Context, p *auth.Principal, id uuid.UUID, in CatalogIn, replaceParts bool) (map[string]any, error) {
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		var isPkg bool
-		if err := tx.QueryRow(ctx, `SELECT is_package FROM app.services WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&isPkg); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT is_package FROM app.services WHERE id = $1 FOR UPDATE", id).Scan(&isPkg); err != nil {
 			return httpx.NotFound("not_found", "Service not found")
 		}
 		in.IsPackage = isPkg
@@ -285,23 +272,14 @@ func (s *Service) UpdateCatalog(ctx context.Context, p *auth.Principal, id uuid.
 		}
 		if clean(in.Name) != "" {
 			var dupName bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.services WHERE tenant_id = $1 AND id <> $2 AND lower(name::text) = lower($3))`, p.TenantID, id, clean(in.Name)).Scan(&dupName); err != nil {
+			if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM app.services WHERE id <> $1 AND lower(name::text) = lower($2))", id, clean(in.Name)).Scan(&dupName); err != nil {
 				return err
 			}
 			if dupName {
 				return httpx.Conflict("duplicate", "A service with that name already exists")
 			}
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.services SET
-			  name = COALESCE(NULLIF($3,''), name),
-			  category = COALESCE($4::app.service_category, category),
-			  description = COALESCE(NULLIF($5,''), description),
-			  standard_price = $6,
-			  government_fee = $7,
-			  revisions_included = $8
-			WHERE tenant_id = $1 AND id = $2`,
-			p.TenantID, id, clean(in.Name), cat, clean(in.Description), money.Money(in.StandardPrice), money.Money(in.GovernmentFees), in.IncludedRevisions); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.services SET\n\t\t\t  name = COALESCE(NULLIF($2,''), name),\n\t\t\t  category = COALESCE($3::app.service_category, category),\n\t\t\t  description = COALESCE(NULLIF($4,''), description),\n\t\t\t  standard_price = $5,\n\t\t\t  government_fee = $6,\n\t\t\t  revisions_included = $7\n\t\t\tWHERE id = $1", id, clean(in.Name), cat, clean(in.Description), money.Money(in.StandardPrice), money.Money(in.GovernmentFees), in.IncludedRevisions); err != nil {
 			if isDup(err) {
 				return httpx.Conflict("duplicate", "A service with that code already exists")
 			}
@@ -326,7 +304,7 @@ func (s *Service) SetCatalogActive(ctx context.Context, p *auth.Principal, id uu
 		status = "active"
 	}
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `UPDATE app.services SET status = $3::app.record_status WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, status)
+		tag, err := tx.Exec(ctx, "UPDATE app.services SET status = $2::app.record_status WHERE id = $1", id, status)
 		if err != nil {
 			return err
 		}

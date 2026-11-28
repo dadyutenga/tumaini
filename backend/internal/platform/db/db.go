@@ -16,7 +16,7 @@ type DB struct {
 	// Pool connects as the API role (bms_api, member of bms_app): row-level security always applies.
 	Pool *pgxpool.Pool
 	// Jobs connects as the worker role (bms_jobs, member of bms_worker). It is used only for the few
-	// operations the schema reserves for workers, such as app.provision_tenant. Nil means "use Pool".
+	// operations the schema reserves for workers. Nil means "use Pool".
 	Jobs *pgxpool.Pool
 }
 
@@ -75,7 +75,6 @@ type Querier interface {
 // Actor is the request context the schema's row-level security and triggers read.
 // Every field is optional; a zero value is simply not set.
 type Actor struct {
-	TenantID     uuid.UUID
 	UserID       uuid.UUID
 	MembershipID uuid.UUID
 	RequestID    string
@@ -89,7 +88,7 @@ func nilIfZero(id uuid.UUID) string {
 	return id.String()
 }
 
-// setContext writes the five app.* settings for this transaction only (set_config with is_local),
+// setContext writes the app.* settings for this transaction only (set_config with is_local),
 // which is what keeps them from leaking between requests on a pooled connection.
 func setContext(ctx context.Context, tx pgx.Tx, a Actor) error {
 	ip := a.ClientIP
@@ -137,19 +136,7 @@ func (d *DB) InActorReadTx(ctx context.Context, a Actor, fn func(ctx context.Con
 	}, a, fn)
 }
 
-// InTx runs fn in a transaction limited to one tenant. Prefer InActorTx where an actor is known.
-func (d *DB) InTx(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context, tx pgx.Tx) error) error {
-	return inTx(ctx, d.Pool, Actor{TenantID: tenantID}, fn)
-}
-
-// InUserTx runs fn with only the user set, before a tenant is chosen: it can see the user's own
-// memberships and the tenants they belong to (the tenant picker), and nothing else.
-func (d *DB) InUserTx(ctx context.Context, userID uuid.UUID, fn func(ctx context.Context, tx pgx.Tx) error) error {
-	return inTx(ctx, d.Pool, Actor{UserID: userID}, fn)
-}
-
-// InGlobalTx runs fn with no tenant: for the iam schema (users, credentials, sessions, auth events),
-// which is not tenant-scoped.
+// InGlobalTx runs fn with no actor: for global identity and setup operations.
 func (d *DB) InGlobalTx(ctx context.Context, fn func(ctx context.Context, tx pgx.Tx) error) error {
 	return inTx(ctx, d.Pool, Actor{}, fn)
 }

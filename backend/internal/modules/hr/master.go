@@ -68,7 +68,7 @@ func (s *Service) LeaveTypes(ctx context.Context, p *auth.Principal) ([]map[stri
 	var out []map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		out, err = hrkit.All(ctx, tx, ltSQL+` WHERE tenant_id = $1 ORDER BY name`, p.TenantID)
+		out, err = hrkit.All(ctx, tx, ltSQL+` ORDER BY name`)
 		return err
 	})
 	return out, err
@@ -91,15 +91,13 @@ func (s *Service) SaveLeaveType(ctx context.Context, p *auth.Principal, id *uuid
 			if in.IsPaid != nil {
 				paid = *in.IsPaid
 			}
-			if err := tx.QueryRow(ctx, `
-				INSERT INTO app.leave_types (tenant_id, name, annual_days, is_paid)
-				VALUES ($1,$2,$3,$4) RETURNING id`, p.TenantID, name, in.DaysPerYear, paid).Scan(&rid); err != nil {
+			if err := tx.QueryRow(ctx, "\n\t\t\t\tINSERT INTO app.leave_types (name, annual_days, is_paid)\n\t\t\t\tVALUES ($1, $2, $3) RETURNING id", name, in.DaysPerYear, paid).Scan(&rid); err != nil {
 				return dupe(err, "A leave type with that name already exists")
 			}
 		} else {
 			rid = *id
 			var err error
-			if before, err = hrkit.One(ctx, tx, "Leave type not found", ltSQL+` WHERE tenant_id = $1 AND id = $2`, p.TenantID, rid); err != nil {
+			if before, err = hrkit.One(ctx, tx, "Leave type not found", ltSQL+` WHERE id = $1`, rid); err != nil {
 				return err
 			}
 			var st *string
@@ -110,16 +108,12 @@ func (s *Service) SaveLeaveType(ctx context.Context, p *auth.Principal, id *uuid
 				}
 				st = &v
 			}
-			if _, err := tx.Exec(ctx, `
-				UPDATE app.leave_types
-				SET name = COALESCE(NULLIF($3,''), name), annual_days = COALESCE($4, annual_days),
-				    is_paid = COALESCE($5, is_paid), status = COALESCE($6::app.record_status, status)
-				WHERE tenant_id = $1 AND id = $2`, p.TenantID, rid, name, in.DaysPerYear, in.IsPaid, st); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tUPDATE app.leave_types\n\t\t\t\tSET name = COALESCE(NULLIF($2,''), name), annual_days = COALESCE($3, annual_days),\n\t\t\t\t    is_paid = COALESCE($4, is_paid), status = COALESCE($5::app.record_status, status)\n\t\t\t\tWHERE id = $1", rid, name, in.DaysPerYear, in.IsPaid, st); err != nil {
 				return dupe(err, "A leave type with that name already exists")
 			}
 		}
 		var err error
-		if out, err = hrkit.One(ctx, tx, "Leave type not found", ltSQL+` WHERE tenant_id = $1 AND id = $2`, p.TenantID, rid); err != nil {
+		if out, err = hrkit.One(ctx, tx, "Leave type not found", ltSQL+` WHERE id = $1`, rid); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, auditVerb("leave_type", id), "leave_types", rid, before, out)
@@ -148,13 +142,13 @@ const crSQL = `SELECT c.id, c.name::text AS name, c.basis::text AS basis, c.perc
 	c.product_category_id, c.service_id, c.employee_id, e.full_name::text AS employee_name,
 	c.effective_from, c.effective_to, c.active AS is_active
 	FROM app.commission_rules c
-	LEFT JOIN app.employees e ON e.tenant_id = c.tenant_id AND e.id = c.employee_id`
+	LEFT JOIN app.employees e ON e.id = c.employee_id`
 
 func (s *Service) CommissionRules(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	var out []map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		out, err = hrkit.All(ctx, tx, crSQL+` WHERE c.tenant_id = $1 ORDER BY c.effective_from DESC, c.name`, p.TenantID)
+		out, err = hrkit.All(ctx, tx, crSQL+` ORDER BY c.effective_from DESC, c.name`)
 		return err
 	})
 	return out, err
@@ -210,29 +204,23 @@ func (s *Service) SaveCommissionRule(ctx context.Context, p *auth.Principal, id 
 			}
 			if err := tx.QueryRow(ctx, `
 				INSERT INTO app.commission_rules
-					(tenant_id, name, basis, percent, fixed_amount, product_category_id, service_id, employee_id, effective_from, effective_to)
-				VALUES ($1,$2,$3::app.commission_basis,$4,$5,$6,$7,$8,$9::date,NULLIF($10,'')::date)
-				RETURNING id`,
-				p.TenantID, name, basis, pct, fixed, in.ProductCategoryID, in.ServiceID, in.EmployeeID, effFrom, strings.TrimSpace(in.EffectiveTo)).Scan(&rid); err != nil {
+					( name, basis, percent, fixed_amount, product_category_id, service_id, employee_id, effective_from, effective_to)
+				VALUES ($1,$2::app.commission_basis,$3,$4,$5,$6,$7,$8::date,NULLIF($9,'')::date)
+				RETURNING id`, name, basis, pct, fixed, in.ProductCategoryID, in.ServiceID, in.EmployeeID, effFrom, strings.TrimSpace(in.EffectiveTo)).Scan(&rid); err != nil {
 				return err
 			}
 		} else {
 			rid = *id
 			var err error
-			if before, err = hrkit.One(ctx, tx, "Commission rule not found", crSQL+` WHERE c.tenant_id = $1 AND c.id = $2`, p.TenantID, rid); err != nil {
+			if before, err = hrkit.One(ctx, tx, "Commission rule not found", crSQL+` WHERE c.id = $1`, rid); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `
-				UPDATE app.commission_rules
-				SET name = COALESCE(NULLIF($3,''), name), percent = COALESCE($4, percent), fixed_amount = COALESCE($5, fixed_amount),
-				    effective_to = COALESCE(NULLIF($6,'')::date, effective_to), active = COALESCE($7, active)
-				WHERE tenant_id = $1 AND id = $2`,
-				p.TenantID, rid, strings.TrimSpace(in.Name), pct, fixed, strings.TrimSpace(in.EffectiveTo), in.IsActive); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tUPDATE app.commission_rules\n\t\t\t\tSET name = COALESCE(NULLIF($2,''), name), percent = COALESCE($3, percent), fixed_amount = COALESCE($4, fixed_amount),\n\t\t\t\t    effective_to = COALESCE(NULLIF($5,'')::date, effective_to), active = COALESCE($6, active)\n\t\t\t\tWHERE id = $1", rid, strings.TrimSpace(in.Name), pct, fixed, strings.TrimSpace(in.EffectiveTo), in.IsActive); err != nil {
 				return err
 			}
 		}
 		var err error
-		if out, err = hrkit.One(ctx, tx, "Commission rule not found", crSQL+` WHERE c.tenant_id = $1 AND c.id = $2`, p.TenantID, rid); err != nil {
+		if out, err = hrkit.One(ctx, tx, "Commission rule not found", crSQL+` WHERE c.id = $1`, rid); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, auditVerb("commission_rule", id), "commission_rules", rid, before, out)
@@ -269,19 +257,18 @@ func (a AdjustmentIn) yearMonth() (int, int, error) {
 const adjSQL = `SELECT a.id, a.employee_id, e.full_name::text AS employee_name, a.period_year, a.period_month,
 	make_date(a.period_year, a.period_month, 1) AS period, a.kind::text AS kind, a.amount, a.reason, a.payroll_line_id, a.created_by, a.created_at
 	FROM app.employee_pay_adjustments a
-	JOIN app.employees e ON e.tenant_id = a.tenant_id AND e.id = a.employee_id`
+	JOIN app.employees e ON e.id = a.employee_id`
 
 func (s *Service) Adjustments(ctx context.Context, p *auth.Principal, employee *uuid.UUID, from, to string, page httpx.Page) ([]map[string]any, int, error) {
 	var out []map[string]any
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("a.tenant_id = $1")
+		q := sqlq.New()
 		q.If(p.BranchID != nil, "e.location_id = ?", p.BranchID)
 		q.If(employee != nil, "a.employee_id = ?", employee)
 		q.If(from != "", "make_date(a.period_year, a.period_month, 1) >= date_trunc('month', ?::date)::date", from)
 		q.If(to != "", "make_date(a.period_year, a.period_month, 1) <= date_trunc('month', ?::date)::date", to)
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.employee_pay_adjustments a JOIN app.employees e ON e.tenant_id = a.tenant_id AND e.id = a.employee_id`+q.Where(), q.Args...).Scan(&total); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.employee_pay_adjustments a JOIN app.employees e ON e.id = a.employee_id`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		var err error
@@ -310,13 +297,10 @@ func (s *Service) CreateAdjustment(ctx context.Context, p *auth.Principal, in Ad
 			return err
 		}
 		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.employee_pay_adjustments (tenant_id, employee_id, kind, amount, reason, period_year, period_month)
-			VALUES ($1,$2,$3::app.pay_adjustment_kind,$4,$5,$6,$7) RETURNING id`,
-			p.TenantID, in.EmployeeID, in.Kind, money.Money(in.Amount), reason, yr, mo).Scan(&id); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.employee_pay_adjustments (employee_id, kind, amount, reason, period_year, period_month)\n\t\t\tVALUES ($1, $2::app.pay_adjustment_kind, $3, $4, $5, $6) RETURNING id", in.EmployeeID, in.Kind, money.Money(in.Amount), reason, yr, mo).Scan(&id); err != nil {
 			return err
 		}
-		if out, err = hrkit.One(ctx, tx, "Adjustment not found", adjSQL+` WHERE a.tenant_id = $1 AND a.id = $2`, p.TenantID, id); err != nil {
+		if out, err = hrkit.One(ctx, tx, "Adjustment not found", adjSQL+` WHERE a.id = $1`, id); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "pay_adjustment.created", "employee_pay_adjustments", id, nil, out)
@@ -326,21 +310,18 @@ func (s *Service) CreateAdjustment(ctx context.Context, p *auth.Principal, in Ad
 
 func (s *Service) DeleteAdjustment(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
 	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		before, err := hrkit.One(ctx, tx, "Adjustment not found", adjSQL+` WHERE a.tenant_id = $1 AND a.id = $2`, p.TenantID, id)
+		before, err := hrkit.One(ctx, tx, "Adjustment not found", adjSQL+` WHERE a.id = $1`, id)
 		if err != nil {
 			return err
 		}
 		if before["payroll_line_id"] != nil {
 			var st string
-			_ = tx.QueryRow(ctx, `
-				SELECT r.status::text FROM app.payroll_lines pl
-				JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id
-				WHERE pl.tenant_id = $1 AND pl.id = $2`, p.TenantID, before["payroll_line_id"]).Scan(&st)
+			_ = tx.QueryRow(ctx, "\n\t\t\t\tSELECT r.status::text FROM app.payroll_lines pl\n\t\t\t\tJOIN app.payroll_runs r ON r.id = pl.payroll_run_id\n\t\t\t\tWHERE pl.id = $1", before["payroll_line_id"]).Scan(&st)
 			if st != "draft" && st != "cancelled" {
 				return httpx.Conflict("invalid_status", "This adjustment is already on an approved payroll")
 			}
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM app.employee_pay_adjustments WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+		if _, err := tx.Exec(ctx, "DELETE FROM app.employee_pay_adjustments WHERE id = $1", id); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "pay_adjustment.deleted", "employee_pay_adjustments", id, before, nil)

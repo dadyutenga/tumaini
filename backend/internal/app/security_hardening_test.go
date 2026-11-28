@@ -22,10 +22,10 @@ import (
 // ownerActor is the database request context a compromised API process would set to act as the Owner.
 func (e *env) ownerActor(t *testing.T) db.Actor {
 	t.Helper()
-	a := db.Actor{TenantID: e.tenantID}
-	require.NoError(t, e.app.DB.InTx(context.Background(), e.tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	a := db.Actor{}
+	require.NoError(t, e.app.DB.InGlobalTx(context.Background(), func(ctx context.Context, tx pgx.Tx) error {
 		// Registration creates the Owner's membership first.
-		return tx.QueryRow(ctx, `SELECT user_id, id FROM app.memberships WHERE tenant_id = $1 ORDER BY created_at LIMIT 1`, e.tenantID).Scan(&a.UserID, &a.MembershipID)
+		return tx.QueryRow(ctx, `SELECT user_id, id FROM app.memberships ORDER BY created_at LIMIT 1`).Scan(&a.UserID, &a.MembershipID)
 	}))
 	return a
 }
@@ -72,12 +72,10 @@ func TestCompromisedAppRole_CannotRewriteFinalRecords(t *testing.T) {
 	require.Equal(t, 201, loan.code, loan.raw)
 
 	a := e.ownerActor(t)
-	tid := e.tenantID
-
 	// Internal posting helpers are not callable, so the ledger cannot be reversed behind a payment's back.
-	e.mustRefuse(t, a, "call reverse_ledger", `SELECT app.reverse_ledger($1, 'account_id', $2, current_date, 'x')`, tid, uuid.MustParse(till))
-	e.mustRefuse(t, a, "call accrue_sale_commissions", `SELECT app.accrue_sale_commissions($1, $1)`, tid)
-	e.mustRefuse(t, a, "call reverse_return_commissions", `SELECT app.reverse_return_commissions($1, $1)`, tid)
+	e.mustRefuse(t, a, "call reverse_ledger", `SELECT app.reverse_ledger(NULL, 'account_id', $1, current_date, 'x')`, uuid.MustParse(till))
+	e.mustRefuse(t, a, "call accrue_sale_commissions", `SELECT app.accrue_sale_commissions($1, $1)`, uuid.Nil)
+	e.mustRefuse(t, a, "call reverse_return_commissions", `SELECT app.reverse_return_commissions($1, $1)`, uuid.Nil)
 
 	for _, c := range []struct{ name, txnType, direction string }{
 		{"siphon with other_payment", "other_payment", "out"},
@@ -85,20 +83,20 @@ func TestCompromisedAppRole_CannotRewriteFinalRecords(t *testing.T) {
 		{"opening balance outflow", "opening_balance", "out"},
 	} {
 		e.mustRefuse(t, a, c.name, `
-			INSERT INTO app.financial_transactions (tenant_id, account_id, direction, amount, txn_type, business_unit_id, location_id, business_date, description)
-			SELECT tenant_id, account_id, $3::app.txn_direction, 1, $4::app.txn_type, business_unit_id, location_id, '2026-11-17', 'forged'
-			FROM app.financial_transactions WHERE tenant_id = $1 AND account_id = $2 LIMIT 1`, tid, uuid.MustParse(till), c.direction, c.txnType)
+			INSERT INTO app.financial_transactions (account_id, direction, amount, txn_type, business_unit_id, location_id, business_date, description)
+			SELECT account_id, $2::app.txn_direction, 1, $3::app.txn_type, business_unit_id, location_id, '2026-11-17', 'forged'
+			FROM app.financial_transactions WHERE account_id = $1 LIMIT 1`, uuid.MustParse(till), c.direction, c.txnType)
 	}
 
-	e.mustRefuse(t, a, "reassign who took the money", `UPDATE app.payments_received SET received_by = NULL WHERE tenant_id = $1`, tid)
-	e.mustRefuse(t, a, "renumber a receipt", `UPDATE app.payments_received SET receipt_no = receipt_no || 'X' WHERE tenant_id = $1`, tid)
-	e.mustRefuse(t, a, "re-date a payment", `UPDATE app.payments_received SET received_at = received_at - interval '1 year' WHERE tenant_id = $1`, tid)
-	e.mustRefuse(t, a, "re-date a sale", `UPDATE app.sales SET completed_at = completed_at - interval '1 year' WHERE tenant_id = $1`, tid)
-	e.mustRefuse(t, a, "change closed cash count", `UPDATE app.day_closings SET counted_cash = 1 WHERE tenant_id = $1`, tid)
-	e.mustRefuse(t, a, "delete closed day lines", `DELETE FROM app.day_closing_lines WHERE tenant_id = $1`, tid)
-	e.mustRefuse(t, a, "shrink a loan", `UPDATE app.employee_advances SET principal = 1, monthly_deduction = 1 WHERE tenant_id = $1`, tid)
-	e.mustRefuse(t, a, "write off a loan", `UPDATE app.employee_advances SET status = 'written_off' WHERE tenant_id = $1`, tid)
-	e.mustRefuse(t, a, "archive a debtor", `UPDATE app.customers SET archived_at = now() WHERE tenant_id = $1 AND id = $2`, tid, uuid.MustParse(custID))
+	e.mustRefuse(t, a, "reassign who took the money", `UPDATE app.payments_received SET received_by = NULL WHERE true`)
+	e.mustRefuse(t, a, "renumber a receipt", `UPDATE app.payments_received SET receipt_no = receipt_no || 'X' WHERE true`)
+	e.mustRefuse(t, a, "re-date a payment", `UPDATE app.payments_received SET received_at = received_at - interval '1 year' WHERE true`)
+	e.mustRefuse(t, a, "re-date a sale", `UPDATE app.sales SET completed_at = completed_at - interval '1 year' WHERE true`)
+	e.mustRefuse(t, a, "change closed cash count", `UPDATE app.day_closings SET counted_cash = 1 WHERE true`)
+	e.mustRefuse(t, a, "delete closed day lines", `DELETE FROM app.day_closing_lines WHERE true`)
+	e.mustRefuse(t, a, "shrink a loan", `UPDATE app.employee_advances SET principal = 1, monthly_deduction = 1 WHERE true`)
+	e.mustRefuse(t, a, "write off a loan", `UPDATE app.employee_advances SET status = 'written_off' WHERE true`)
+	e.mustRefuse(t, a, "archive a debtor", `UPDATE app.customers SET archived_at = now() WHERE id = $1`, uuid.MustParse(custID))
 
 	// Every SECURITY DEFINER function the API role can execute runs with the owner's rights, so the
 	// list is closed: a new one must be reviewed and added here.
@@ -158,7 +156,7 @@ func TestNationalIDEncryptedAndKeptOutOfAudit(t *testing.T) {
 	require.Equal(t, 409, dup.code, dup.raw)
 
 	read := func() (cipher []byte, keyID string) {
-		require.NoError(t, e.app.DB.InTx(context.Background(), e.tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		require.NoError(t, e.app.DB.InGlobalTx(context.Background(), func(ctx context.Context, tx pgx.Tx) error {
 			return tx.QueryRow(ctx, `SELECT national_id_ciphertext, national_id_key_id FROM app.customers WHERE id = $1`, id).Scan(&cipher, &keyID)
 		}))
 		return
@@ -169,20 +167,18 @@ func TestNationalIDEncryptedAndKeptOutOfAudit(t *testing.T) {
 
 	var leaked int
 	require.NoError(t, e.app.DB.InActorTx(context.Background(), e.ownerActor(t), func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT count(*) FROM audit.audit_log WHERE tenant_id = $1
-			AND (coalesce(new_values::text,'') LIKE '%' || $2 || '%' OR coalesce(old_values::text,'') LIKE '%' || $2 || '%')`,
-			e.tenantID, nida).Scan(&leaked)
+		return tx.QueryRow(ctx, "SELECT count(*) FROM audit.audit_log WHERE (coalesce(new_values::text,'') LIKE '%' || $1 || '%' OR coalesce(old_values::text,'') LIKE '%' || $1 || '%')", nida).Scan(&leaked)
 	}))
 	require.Zero(t, leaked)
 
 	// Rows written in clear text by earlier releases are re-encrypted by the daily job.
-	require.NoError(t, e.app.DB.InTx(context.Background(), e.tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	require.NoError(t, e.app.DB.InGlobalTx(context.Background(), func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE app.customers SET national_id_ciphertext = convert_to($2, 'UTF8'), national_id_key_id = 'local-v1',
 			national_id_hmac = sha256(convert_to(upper($2), 'UTF8')) WHERE id = $1`, id, nida)
 		return err
 	}))
-	require.NoError(t, e.app.Jobs.Enqueue(context.Background(), e.tenantID, jobs.ProtectNationalIDs, map[string]any{}))
-	require.NoError(t, e.app.Jobs.RunPendingForTenant(context.Background(), e.tenantID))
+	require.NoError(t, e.app.Jobs.Enqueue(context.Background(), jobs.ProtectNationalIDs, map[string]any{}))
+	require.NoError(t, e.app.Jobs.RunPending(context.Background()))
 	cipher, keyID = read()
 	require.False(t, bytes.Contains(cipher, []byte(nida)))
 	require.NotEqual(t, "local-v1", keyID)

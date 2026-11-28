@@ -32,28 +32,27 @@ type DocFilter struct {
 	Unpaid     bool
 }
 
-func poWhere(tenantID uuid.UUID, f POFilter, branch *uuid.UUID) *sqlq.Q {
-	q := sqlq.New(tenantID)
-	q.Add("po.tenant_id = $1")
+func poWhere(f POFilter, branch *uuid.UUID) *sqlq.Q {
+	q := sqlq.New()
 	q.If(branch != nil, "po.location_id = ?", branch)
 	q.If(f.Status != "", "po.status = ?::app.purchase_status", f.Status)
 	q.If(f.SupplierID != nil, "po.supplier_id = ?", f.SupplierID)
-	q.If(f.ProductID != nil, "EXISTS (SELECT 1 FROM app.purchase_lines i WHERE i.tenant_id = po.tenant_id AND i.purchase_id = po.id AND i.product_id = ?)", f.ProductID)
+	q.If(f.ProductID != nil, "EXISTS (SELECT 1 FROM app.purchase_lines i WHERE i.purchase_id = po.id AND i.product_id = ?)", f.ProductID)
 	q.If(f.From != "", "po.order_date >= ?::date", f.From)
 	q.If(f.To != "", "po.order_date <= ?::date", f.To)
 	q.If(f.Q != "", "(po.purchase_no ILIKE '%' || ? || '%' OR po.supplier_invoice_ref ILIKE '%' || ? || '%')", f.Q, f.Q)
 	return q
 }
 
-func (s *Service) poRows(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, f POFilter, branch *uuid.UUID, limit, offset int) ([]map[string]any, error) {
-	q := poWhere(tenantID, f, branch)
+func (s *Service) poRows(ctx context.Context, tx pgx.Tx, f POFilter, branch *uuid.UUID, limit, offset int) ([]map[string]any, error) {
+	q := poWhere(f, branch)
 	rows, err := tx.Query(ctx, `
 		SELECT po.id, po.purchase_no, po.location_id, po.supplier_id, s.name::text, po.status::text,
 		       po.order_date::text, po.expected_date::text, po.due_date::text, po.supplier_invoice_ref,
 		       po.total, po.amount_paid, po.balance_due, po.created_at,
-		       COALESCE((SELECT SUM(quantity_ordered) FROM app.purchase_lines i WHERE i.tenant_id = po.tenant_id AND i.purchase_id = po.id), 0),
-		       COALESCE((SELECT SUM(quantity_received) FROM app.purchase_lines i WHERE i.tenant_id = po.tenant_id AND i.purchase_id = po.id), 0)
-		FROM app.purchases po JOIN app.suppliers s ON s.tenant_id = po.tenant_id AND s.id = po.supplier_id`+q.Where()+
+		       COALESCE((SELECT SUM(quantity_ordered) FROM app.purchase_lines i WHERE i.purchase_id = po.id), 0),
+		       COALESCE((SELECT SUM(quantity_received) FROM app.purchase_lines i WHERE i.purchase_id = po.id), 0)
+		FROM app.purchases po JOIN app.suppliers s ON s.id = po.supplier_id`+q.Where()+
 		` ORDER BY po.order_date DESC, po.created_at DESC`+q.Page(limit, offset), q.Args...)
 	if err != nil {
 		return nil, err
@@ -80,12 +79,12 @@ func (s *Service) ListPOs(ctx context.Context, p *auth.Principal, f POFilter, pa
 	var out []map[string]any
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := poWhere(p.TenantID, f, p.BranchID)
+		q := poWhere(f, p.BranchID)
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.purchases po`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		var err error
-		out, err = s.poRows(ctx, tx, p.TenantID, f, p.BranchID, page.PerPage, page.Offset)
+		out, err = s.poRows(ctx, tx, f, p.BranchID, page.PerPage, page.Offset)
 		return err
 	})
 	return orEmpty(out), total, err
@@ -101,20 +100,12 @@ func (s *Service) GetPO(ctx context.Context, p *auth.Principal, id uuid.UUID) (m
 		var expected, due, invRef, note *string
 		var sub, disc, tax, total, paid, bal decimal.Decimal
 		var at time.Time
-		err := tx.QueryRow(ctx, `
-			SELECT po.purchase_no, po.status::text, po.location_id, po.supplier_id, s.name::text,
-			       po.order_date::text, po.expected_date::text, po.due_date::text, po.supplier_invoice_ref, po.notes,
-			       po.subtotal, po.discount_amount, po.tax_amount, po.total, po.amount_paid, po.balance_due, po.created_by, po.created_at
-			FROM app.purchases po JOIN app.suppliers s ON s.tenant_id = po.tenant_id AND s.id = po.supplier_id
-			WHERE po.tenant_id = $1 AND po.id = $2`, p.TenantID, id).
+		err := tx.QueryRow(ctx, "\n\t\t\tSELECT po.purchase_no, po.status::text, po.location_id, po.supplier_id, s.name::text,\n\t\t\t       po.order_date::text, po.expected_date::text, po.due_date::text, po.supplier_invoice_ref, po.notes,\n\t\t\t       po.subtotal, po.discount_amount, po.tax_amount, po.total, po.amount_paid, po.balance_due, po.created_by, po.created_at\n\t\t\tFROM app.purchases po JOIN app.suppliers s ON s.id = po.supplier_id\n\t\t\tWHERE po.id = $1", id).
 			Scan(&number, &status, &branch, &sup, &sname, &date, &expected, &due, &invRef, &note, &sub, &disc, &tax, &total, &paid, &bal, &by, &at)
 		if err != nil {
 			return httpx.NotFound("not_found", "Purchase order not found")
 		}
-		rows, err := tx.Query(ctx, `
-			SELECT i.id, i.product_id, p.name::text, COALESCE(p.sku, ''), i.quantity_ordered, i.quantity_received, i.unit_cost, i.line_total
-			FROM app.purchase_lines i JOIN app.products p ON p.tenant_id = i.tenant_id AND p.id = i.product_id
-			WHERE i.tenant_id = $1 AND i.purchase_id = $2 ORDER BY i.line_no`, p.TenantID, id)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT i.id, i.product_id, p.name::text, COALESCE(p.sku, ''), i.quantity_ordered, i.quantity_received, i.unit_cost, i.line_total\n\t\t\tFROM app.purchase_lines i JOIN app.products p ON p.id = i.product_id\n\t\t\tWHERE i.purchase_id = $1 ORDER BY i.line_no", id)
 		if err != nil {
 			return err
 		}
@@ -138,16 +129,12 @@ func (s *Service) GetPO(ctx context.Context, p *auth.Principal, id uuid.UUID) (m
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		receipts, err := s.grnRows(ctx, tx, p.TenantID, DocFilter{POID: &id}, nil, 100, 0)
+		receipts, err := s.grnRows(ctx, tx, DocFilter{POID: &id}, nil, 100, 0)
 		if err != nil {
 			return err
 		}
 		pays := []map[string]any{}
-		pr, err := tx.Query(ctx, `
-			SELECT pm.id, pm.payment_no, pm.business_date::text, pm.method::text, pm.status::text, a.amount, pm.reference
-			FROM app.payment_made_allocations a
-			JOIN app.payments_made pm ON pm.tenant_id = a.tenant_id AND pm.id = a.payment_made_id
-			WHERE a.tenant_id = $1 AND a.purchase_id = $2 ORDER BY pm.business_date, pm.created_at`, p.TenantID, id)
+		pr, err := tx.Query(ctx, "\n\t\t\tSELECT pm.id, pm.payment_no, pm.business_date::text, pm.method::text, pm.status::text, a.amount, pm.reference\n\t\t\tFROM app.payment_made_allocations a\n\t\t\tJOIN app.payments_made pm ON pm.id = a.payment_made_id\n\t\t\tWHERE a.purchase_id = $1 ORDER BY pm.business_date, pm.created_at", id)
 		if err != nil {
 			return err
 		}
@@ -180,7 +167,7 @@ func (s *Service) POPDF(ctx context.Context, p *auth.Principal, id uuid.UUID) (s
 	}
 	var bizName string
 	_ = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT business_name::text FROM app.tenant_settings WHERE tenant_id = $1`, p.TenantID).Scan(&bizName)
+		return tx.QueryRow(ctx, "SELECT business_name::text FROM app.business_settings WHERE true").Scan(&bizName)
 	})
 	d := pdf.New()
 	d.Heading(bizName, 16)
@@ -217,27 +204,11 @@ func (s *Service) Suggest(ctx context.Context, p *auth.Principal, supplier *uuid
 	var out []map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if supplier != nil {
-			if _, err := supplierRow(ctx, tx, p.TenantID, *supplier); err != nil {
+			if _, err := supplierRow(ctx, tx, *supplier); err != nil {
 				return err
 			}
 		}
-		rows, err := tx.Query(ctx, `
-			SELECT p.id, p.name::text, COALESCE(p.sku, ''), COALESCE(sb.quantity_on_hand, 0),
-			       COALESCE(p.min_stock_level, ts.low_stock_default), p.average_cost,
-			       (SELECT grl.unit_cost
-			        FROM app.goods_receipt_lines grl
-			        JOIN app.goods_receipts gr ON gr.tenant_id = grl.tenant_id AND gr.id = grl.goods_receipt_id
-			        JOIN app.purchase_lines pl ON pl.tenant_id = grl.tenant_id AND pl.id = grl.purchase_line_id
-			        JOIN app.purchases po ON po.tenant_id = pl.tenant_id AND po.id = pl.purchase_id
-			        WHERE grl.tenant_id = p.tenant_id AND pl.product_id = p.id AND ($3::uuid IS NULL OR po.supplier_id = $3)
-			        ORDER BY gr.received_at DESC LIMIT 1)
-			FROM app.products p
-			JOIN app.tenant_settings ts ON ts.tenant_id = p.tenant_id
-			LEFT JOIN app.stock_balances sb ON sb.tenant_id = p.tenant_id AND sb.product_id = p.id AND sb.location_id = $2
-			WHERE p.tenant_id = $1 AND p.status = 'active'
-			  AND COALESCE(p.min_stock_level, ts.low_stock_default) > 0
-			  AND COALESCE(sb.quantity_on_hand, 0) <= COALESCE(p.min_stock_level, ts.low_stock_default)
-			ORDER BY p.name`, p.TenantID, *p.BranchID, supplier)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT p.id, p.name::text, COALESCE(p.sku, ''), COALESCE(sb.quantity_on_hand, 0),\n\t\t\t       COALESCE(p.min_stock_level, ts.low_stock_default), p.average_cost,\n\t\t\t       (SELECT grl.unit_cost\n\t\t\t        FROM app.goods_receipt_lines grl\n\t\t\t        JOIN app.goods_receipts gr ON gr.id = grl.goods_receipt_id\n\t\t\t        JOIN app.purchase_lines pl ON pl.id = grl.purchase_line_id\n\t\t\t        JOIN app.purchases po ON po.id = pl.purchase_id\n\t\t\t        WHERE pl.product_id = p.id AND ($2::uuid IS NULL OR po.supplier_id = $2)\n\t\t\t        ORDER BY gr.received_at DESC LIMIT 1)\n\t\t\tFROM app.products p\n\t\t\t		CROSS JOIN app.business_settings ts\n\t\t\tLEFT JOIN app.stock_balances sb ON sb.product_id = p.id AND sb.location_id = $1\n\t\t\tWHERE p.status = 'active'\n\t\t\t  AND COALESCE(p.min_stock_level, ts.low_stock_default) > 0\n\t\t\t  AND COALESCE(sb.quantity_on_hand, 0) <= COALESCE(p.min_stock_level, ts.low_stock_default)\n\t\t\tORDER BY p.name", *p.BranchID, supplier)
 		if err != nil {
 			return err
 		}
@@ -265,9 +236,8 @@ func (s *Service) Suggest(ctx context.Context, p *auth.Principal, supplier *uuid
 	return orEmpty(out), err
 }
 
-func grnWhere(tenantID uuid.UUID, f DocFilter, branch *uuid.UUID) *sqlq.Q {
-	q := sqlq.New(tenantID)
-	q.Add("g.tenant_id = $1")
+func grnWhere(f DocFilter, branch *uuid.UUID) *sqlq.Q {
+	q := sqlq.New()
 	q.If(branch != nil, "g.location_id = ?", branch)
 	q.If(f.SupplierID != nil, "po.supplier_id = ?", f.SupplierID)
 	q.If(f.POID != nil, "g.purchase_id = ?", f.POID)
@@ -276,16 +246,16 @@ func grnWhere(tenantID uuid.UUID, f DocFilter, branch *uuid.UUID) *sqlq.Q {
 	return q
 }
 
-func (s *Service) grnRows(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, f DocFilter, branch *uuid.UUID, limit, offset int) ([]map[string]any, error) {
-	q := grnWhere(tenantID, f, branch)
+func (s *Service) grnRows(ctx context.Context, tx pgx.Tx, f DocFilter, branch *uuid.UUID, limit, offset int) ([]map[string]any, error) {
+	q := grnWhere(f, branch)
 	rows, err := tx.Query(ctx, `
 		SELECT g.id, g.receipt_no, g.location_id, g.purchase_id, po.purchase_no, po.supplier_id, s.name::text,
 		       g.business_date::text, g.notes,
-		       COALESCE((SELECT SUM(round(l.quantity * l.unit_cost, 2)) FROM app.goods_receipt_lines l WHERE l.tenant_id = g.tenant_id AND l.goods_receipt_id = g.id), 0),
+		       COALESCE((SELECT SUM(round(l.quantity * l.unit_cost, 2)) FROM app.goods_receipt_lines l WHERE l.goods_receipt_id = g.id), 0),
 		       g.created_by, g.created_at
 		FROM app.goods_receipts g
-		JOIN app.purchases po ON po.tenant_id = g.tenant_id AND po.id = g.purchase_id
-		JOIN app.suppliers s ON s.tenant_id = po.tenant_id AND s.id = po.supplier_id`+q.Where()+
+		JOIN app.purchases po ON po.id = g.purchase_id
+		JOIN app.suppliers s ON s.id = po.supplier_id`+q.Where()+
 		` ORDER BY g.business_date DESC, g.created_at DESC`+q.Page(limit, offset), q.Args...)
 	if err != nil {
 		return nil, err
@@ -313,14 +283,14 @@ func (s *Service) ListGRNs(ctx context.Context, p *auth.Principal, f DocFilter, 
 	var out []map[string]any
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := grnWhere(p.TenantID, f, p.BranchID)
+		q := grnWhere(f, p.BranchID)
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM app.goods_receipts g
-			JOIN app.purchases po ON po.tenant_id = g.tenant_id AND po.id = g.purchase_id`+q.Where(), q.Args...).Scan(&total); err != nil {
+			JOIN app.purchases po ON po.id = g.purchase_id`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
 		var err error
-		out, err = s.grnRows(ctx, tx, p.TenantID, f, p.BranchID, page.PerPage, page.Offset)
+		out, err = s.grnRows(ctx, tx, f, p.BranchID, page.PerPage, page.Offset)
 		return err
 	})
 	return orEmpty(out), total, err
@@ -335,25 +305,12 @@ func (s *Service) GetGRN(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 		var note *string
 		var value decimal.Decimal
 		var at time.Time
-		err := tx.QueryRow(ctx, `
-			SELECT g.receipt_no, g.location_id, g.purchase_id, po.purchase_no, po.supplier_id, s.name::text,
-			       g.business_date::text, g.notes,
-			       COALESCE((SELECT SUM(round(l.quantity * l.unit_cost, 2)) FROM app.goods_receipt_lines l WHERE l.tenant_id = g.tenant_id AND l.goods_receipt_id = g.id), 0),
-			       g.created_by, g.created_at
-			FROM app.goods_receipts g
-			JOIN app.purchases po ON po.tenant_id = g.tenant_id AND po.id = g.purchase_id
-			JOIN app.suppliers s ON s.tenant_id = po.tenant_id AND s.id = po.supplier_id
-			WHERE g.tenant_id = $1 AND g.id = $2`, p.TenantID, id).
+		err := tx.QueryRow(ctx, "\n\t\t\tSELECT g.receipt_no, g.location_id, g.purchase_id, po.purchase_no, po.supplier_id, s.name::text,\n\t\t\t       g.business_date::text, g.notes,\n\t\t\t       COALESCE((SELECT SUM(round(l.quantity * l.unit_cost, 2)) FROM app.goods_receipt_lines l WHERE l.goods_receipt_id = g.id), 0),\n\t\t\t       g.created_by, g.created_at\n\t\t\tFROM app.goods_receipts g\n\t\t\tJOIN app.purchases po ON po.id = g.purchase_id\n\t\t\tJOIN app.suppliers s ON s.id = po.supplier_id\n\t\t\tWHERE g.id = $1", id).
 			Scan(&number, &loc, &poID, &poNum, &sup, &sname, &date, &note, &value, &by, &at)
 		if err != nil {
 			return httpx.NotFound("not_found", "Goods receipt not found")
 		}
-		items, err := tx.Query(ctx, `
-			SELECT gl.id, pl.product_id, pr.name::text, COALESCE(pr.sku, ''), gl.quantity, gl.unit_cost, round(gl.quantity * gl.unit_cost, 2)
-			FROM app.goods_receipt_lines gl
-			JOIN app.purchase_lines pl ON pl.tenant_id = gl.tenant_id AND pl.id = gl.purchase_line_id
-			JOIN app.products pr ON pr.tenant_id = pl.tenant_id AND pr.id = pl.product_id
-			WHERE gl.tenant_id = $1 AND gl.goods_receipt_id = $2 ORDER BY pl.line_no`, p.TenantID, id)
+		items, err := tx.Query(ctx, "\n\t\t\tSELECT gl.id, pl.product_id, pr.name::text, COALESCE(pr.sku, ''), gl.quantity, gl.unit_cost, round(gl.quantity * gl.unit_cost, 2)\n\t\t\tFROM app.goods_receipt_lines gl\n\t\t\tJOIN app.purchase_lines pl ON pl.id = gl.purchase_line_id\n\t\t\tJOIN app.products pr ON pr.id = pl.product_id\n\t\t\tWHERE gl.goods_receipt_id = $1 ORDER BY pl.line_no", id)
 		if err != nil {
 			return err
 		}

@@ -3,7 +3,6 @@ package reports
 import (
 	"context"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"bms/internal/platform/auth"
@@ -12,8 +11,8 @@ import (
 )
 
 // runFilter limits payroll runs to the range and location scope. Cancelled runs are excluded.
-func runFilter(q *sqlq.Q, tenantID uuid.UUID, f Filter) {
-	q.Add("r.tenant_id = ? AND r.status <> 'cancelled'", tenantID)
+func runFilter(q *sqlq.Q, f Filter) {
+	q.Add("r.status <> 'cancelled'")
 	q.If(f.From != "", "(make_date(r.period_year, r.period_month, 1) + interval '1 month' - interval '1 day')::date >= ?::date", f.From)
 	q.If(f.To != "", "make_date(r.period_year, r.period_month, 1) <= ?::date", f.To)
 	if f.Branches != nil {
@@ -26,7 +25,7 @@ func (s *Service) PayrollSummary(ctx context.Context, p *auth.Principal, f Filte
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
-		runFilter(q, p.TenantID, f)
+		runFilter(q, f)
 		var err error
 		list, err = rows(ctx, tx, `
 			SELECT r.id,
@@ -34,14 +33,14 @@ func (s *Service) PayrollSummary(ctx context.Context, p *auth.Principal, f Filte
 			       make_date(r.period_year, r.period_month, 1) AS period_start,
 			       (make_date(r.period_year, r.period_month, 1) + interval '1 month' - interval '1 day')::date AS period_end,
 			       r.status::text AS status, COALESCE(b.name::text, 'All branches') AS branch,
-			       (SELECT count(*) FROM app.payroll_lines pl WHERE pl.tenant_id = r.tenant_id AND pl.payroll_run_id = r.id) AS employees,
-			       COALESCE((SELECT SUM(pl.gross_pay) FROM app.payroll_lines pl WHERE pl.tenant_id = r.tenant_id AND pl.payroll_run_id = r.id), 0) AS gross,
-			       COALESCE((SELECT SUM(pl.deductions + pl.advance_repayment + pl.statutory_deductions) FROM app.payroll_lines pl WHERE pl.tenant_id = r.tenant_id AND pl.payroll_run_id = r.id), 0) AS deductions,
-			       COALESCE((SELECT SUM(pl.net_pay) FROM app.payroll_lines pl WHERE pl.tenant_id = r.tenant_id AND pl.payroll_run_id = r.id), 0) AS net,
-			       COALESCE((SELECT SUM(psi.employer_amount) FROM app.payroll_statutory_items psi JOIN app.payroll_lines pl ON pl.tenant_id = psi.tenant_id AND pl.id = psi.payroll_line_id WHERE pl.tenant_id = r.tenant_id AND pl.payroll_run_id = r.id), 0) AS employer,
-			       COALESCE((SELECT SUM(pl.net_pay) FROM app.payroll_lines pl WHERE pl.tenant_id = r.tenant_id AND pl.payroll_run_id = r.id AND (r.status = 'paid' OR pl.paid_at IS NOT NULL)), 0) AS paid
+			       (SELECT count(*) FROM app.payroll_lines pl WHERE pl.payroll_run_id = r.id) AS employees,
+			       COALESCE((SELECT SUM(pl.gross_pay) FROM app.payroll_lines pl WHERE pl.payroll_run_id = r.id), 0) AS gross,
+			       COALESCE((SELECT SUM(pl.deductions + pl.advance_repayment + pl.statutory_deductions) FROM app.payroll_lines pl WHERE pl.payroll_run_id = r.id), 0) AS deductions,
+			       COALESCE((SELECT SUM(pl.net_pay) FROM app.payroll_lines pl WHERE pl.payroll_run_id = r.id), 0) AS net,
+			       COALESCE((SELECT SUM(psi.employer_amount) FROM app.payroll_statutory_items psi JOIN app.payroll_lines pl ON pl.id = psi.payroll_line_id WHERE pl.payroll_run_id = r.id), 0) AS employer,
+			       COALESCE((SELECT SUM(pl.net_pay) FROM app.payroll_lines pl WHERE pl.payroll_run_id = r.id AND (r.status = 'paid' OR pl.paid_at IS NOT NULL)), 0) AS paid
 			FROM app.payroll_runs r
-			LEFT JOIN app.locations b ON b.tenant_id = r.tenant_id AND b.id = r.location_id`+q.Where()+`
+			LEFT JOIN app.locations b ON b.id = r.location_id`+q.Where()+`
 			ORDER BY r.period_year DESC, r.period_month DESC`, q.Args...)
 		return err
 	})
@@ -54,7 +53,7 @@ func (s *Service) PayrollByDepartment(ctx context.Context, p *auth.Principal, f 
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
-		runFilter(q, p.TenantID, f)
+		runFilter(q, f)
 		var err error
 		list, err = rows(ctx, tx, `
 			SELECT COALESCE(NULLIF(e.position::text, ''), 'Unassigned') AS department,
@@ -63,8 +62,8 @@ func (s *Service) PayrollByDepartment(ctx context.Context, p *auth.Principal, f 
 			       SUM(pl.deductions + pl.advance_repayment + pl.statutory_deductions) AS deductions,
 			       SUM(pl.net_pay) AS net
 			FROM app.payroll_lines pl
-			JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id
-			JOIN app.employees e ON e.tenant_id = pl.tenant_id AND e.id = pl.employee_id`+q.Where()+`
+			JOIN app.payroll_runs r ON r.id = pl.payroll_run_id
+			JOIN app.employees e ON e.id = pl.employee_id`+q.Where()+`
 			GROUP BY e.position ORDER BY gross DESC`, q.Args...)
 		return err
 	})
@@ -77,31 +76,31 @@ func (s *Service) PayrollDeductions(ctx context.Context, p *auth.Principal, f Fi
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
-		runFilter(q, p.TenantID, f)
+		runFilter(q, f)
 		w := q.Where()
 		var err error
 		list, err = rows(ctx, tx, `
 			SELECT kind, label, employees, amount FROM (
 				SELECT 'statutory'::text AS kind, psi.code AS label, count(DISTINCT pl.employee_id) AS employees, SUM(psi.employee_amount) AS amount
 				FROM app.payroll_statutory_items psi
-				JOIN app.payroll_lines pl ON pl.tenant_id = psi.tenant_id AND pl.id = psi.payroll_line_id
-				JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id`+w+`
+				JOIN app.payroll_lines pl ON pl.id = psi.payroll_line_id
+				JOIN app.payroll_runs r ON r.id = pl.payroll_run_id`+w+`
 				GROUP BY psi.code HAVING SUM(psi.employee_amount) > 0
 				UNION ALL
 				SELECT 'employer_contribution'::text, psi.code || ' (Employer)', count(DISTINCT pl.employee_id), SUM(psi.employer_amount)
 				FROM app.payroll_statutory_items psi
-				JOIN app.payroll_lines pl ON pl.tenant_id = psi.tenant_id AND pl.id = psi.payroll_line_id
-				JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id`+w+`
+				JOIN app.payroll_lines pl ON pl.id = psi.payroll_line_id
+				JOIN app.payroll_runs r ON r.id = pl.payroll_run_id`+w+`
 				GROUP BY psi.code HAVING SUM(psi.employer_amount) > 0
 				UNION ALL
 				SELECT 'loan'::text, 'Advance / loan repayment', count(DISTINCT pl.employee_id), SUM(pl.advance_repayment)
 				FROM app.payroll_lines pl
-				JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id`+w+`
+				JOIN app.payroll_runs r ON r.id = pl.payroll_run_id`+w+`
 				HAVING COALESCE(SUM(pl.advance_repayment), 0) > 0
 				UNION ALL
 				SELECT 'deduction'::text, 'Other deductions', count(DISTINCT pl.employee_id), SUM(pl.deductions)
 				FROM app.payroll_lines pl
-				JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id`+w+`
+				JOIN app.payroll_runs r ON r.id = pl.payroll_run_id`+w+`
 				HAVING COALESCE(SUM(pl.deductions), 0) > 0
 			) x ORDER BY kind, amount DESC`, q.Args...)
 		return err
@@ -114,8 +113,7 @@ func (s *Service) PayrollDeductions(ctx context.Context, p *auth.Principal, f Fi
 func (s *Service) PayrollLoans(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("l.tenant_id = $1")
+		q := sqlq.New()
 		status := f.Q("status")
 		switch status {
 		case "", "approved", "disbursed":
@@ -130,7 +128,7 @@ func (s *Service) PayrollLoans(ctx context.Context, p *auth.Principal, f Filter)
 			       l.status::text AS status, l.principal, l.amount_repaid AS repaid, l.balance,
 			       l.monthly_deduction, to_char(l.issued_on, 'YYYY-MM') AS start_period
 			FROM app.employee_advances l
-			JOIN app.employees e ON e.tenant_id = l.tenant_id AND e.id = l.employee_id`+q.Where()+`
+			JOIN app.employees e ON e.id = l.employee_id`+q.Where()+`
 			ORDER BY l.balance DESC, e.full_name`, q.Args...)
 		return err
 	})
@@ -142,23 +140,23 @@ func (s *Service) PayrollLoans(ctx context.Context, p *auth.Principal, f Filter)
 func (s *Service) StaffPerformance(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		src := linesSQL(q, p.TenantID, f)
-		aq := " AND ad.tenant_id = $1"
+		q := sqlq.New()
+		src := linesSQL(q, f)
+		aq := " "
 		if f.From != "" {
 			aq += " AND ad.work_date >= " + q.Arg(f.From) + "::date"
 		}
 		if f.To != "" {
 			aq += " AND ad.work_date <= " + q.Arg(f.To) + "::date"
 		}
-		cq := " AND ce.tenant_id = $1 AND ce.status <> 'reversed'"
+		cq := "  AND ce.status <> 'reversed'"
 		if f.From != "" {
 			cq += " AND ce.earned_on >= " + q.Arg(f.From) + "::date"
 		}
 		if f.To != "" {
 			cq += " AND ce.earned_on <= " + q.Arg(f.To) + "::date"
 		}
-		ew := " WHERE e.tenant_id = $1 AND e.status <> 'terminated'"
+		ew := " WHERE e.status <> 'terminated'"
 		if f.Branches != nil {
 			ew += " AND e.location_id = ANY(" + q.Arg(f.Branches) + ")"
 		}
@@ -172,10 +170,10 @@ func (s *Service) StaffPerformance(ctx context.Context, p *auth.Principal, f Fil
 			            ELSE ROUND(a.present::numeric * 100 / (a.present + a.absent), 2) END AS attendance_rate,
 			       COALESCE(cm.commission, 0) AS commission
 			FROM app.employees e
-			LEFT JOIN app.locations b ON b.tenant_id = e.tenant_id AND b.id = e.location_id
+			LEFT JOIN app.locations b ON b.id = e.location_id
 			LEFT JOIN (
 				SELECT e2.id AS emp, COUNT(DISTINCT l.sale_id) FILTER (WHERE l.ret = 0) AS sales_count, ROUND(SUM(l.net), 2) AS net_sales
-				FROM `+src+` JOIN app.employees e2 ON e2.tenant_id = $1 AND e2.membership_id = l.sold_by
+				FROM `+src+` JOIN app.employees e2 ON e2.membership_id = l.sold_by
 				GROUP BY e2.id
 			) sl ON sl.emp = e.id
 			LEFT JOIN (
@@ -204,16 +202,16 @@ func (s *Service) StaffPerformance(ctx context.Context, p *auth.Principal, f Fil
 func (s *Service) Branches(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		src := linesSQL(q, p.TenantID, f)
-		eq := " AND e.tenant_id = $1 AND e.status IN ('approved','paid')"
+		q := sqlq.New()
+		src := linesSQL(q, f)
+		eq := "  AND e.status IN ('approved','paid')"
 		if f.From != "" {
 			eq += " AND e.expense_date >= " + q.Arg(f.From) + "::date"
 		}
 		if f.To != "" {
 			eq += " AND e.expense_date <= " + q.Arg(f.To) + "::date"
 		}
-		bw := " WHERE b.tenant_id = $1 AND b.status = 'active'"
+		bw := " WHERE b.status = 'active'"
 		if f.Branches != nil {
 			bw += " AND b.id = ANY(" + q.Arg(f.Branches) + ")"
 		}
@@ -240,8 +238,8 @@ func (s *Service) Branches(ctx context.Context, p *auth.Principal, f Filter) (ex
 			) ex ON ex.location_id = b.id
 			LEFT JOIN (
 				SELECT sb.location_id, ROUND(SUM(sb.quantity_on_hand * pr.average_cost), 2) AS value
-				FROM app.stock_balances sb JOIN app.products pr ON pr.tenant_id = sb.tenant_id AND pr.id = sb.product_id
-				WHERE sb.tenant_id = $1 GROUP BY sb.location_id
+				FROM app.stock_balances sb JOIN app.products pr ON pr.id = sb.product_id
+				GROUP BY sb.location_id
 			) st ON st.location_id = b.id`+bw+`
 			ORDER BY net_sales DESC, b.name`, q.Args...)
 		return err

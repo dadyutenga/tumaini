@@ -23,8 +23,7 @@ func optUUID(f Filter, key string) *uuid.UUID {
 func (s *Service) OnHand(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("sl.tenant_id = $1")
+		q := sqlq.New()
 		f.branch(q, "sl.location_id")
 		if c := optUUID(f, "category_id"); c != nil {
 			q.Add("pr.category_id = ?", *c)
@@ -37,10 +36,10 @@ func (s *Service) OnHand(ctx context.Context, p *auth.Principal, f Filter) (expo
 			       COALESCE(pr.min_stock_level, ts.low_stock_default) AS reorder_level,
 			       ROUND(pr.average_cost, 4) AS avg_cost, ROUND(sl.quantity_on_hand * pr.average_cost, 2) AS value
 			FROM app.stock_balances sl
-			JOIN app.products pr ON pr.tenant_id = sl.tenant_id AND pr.id = sl.product_id
-			JOIN app.locations b ON b.tenant_id = sl.tenant_id AND b.id = sl.location_id
-			JOIN app.tenant_settings ts ON ts.tenant_id = sl.tenant_id
-			LEFT JOIN app.product_categories c ON c.tenant_id = pr.tenant_id AND c.id = pr.category_id`+q.Where()+`
+			JOIN app.products pr ON pr.id = sl.product_id
+			JOIN app.locations b ON b.id = sl.location_id
+			CROSS JOIN app.business_settings ts
+			LEFT JOIN app.product_categories c ON c.id = pr.category_id`+q.Where()+`
 			ORDER BY pr.name, b.name`, q.Args...)
 		return err
 	})
@@ -70,23 +69,23 @@ func (s *Service) Valuation(ctx context.Context, p *auth.Principal, f Filter) (e
 	asOf := f.Q("as_of")
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
+		q := sqlq.New()
 		var src string
 		if asOf == "" {
-			src = `(SELECT sl.location_id AS branch_id, sl.product_id, sl.quantity_on_hand AS qty FROM app.stock_balances sl WHERE sl.tenant_id = $1` + branchAnd(q, f, "sl.location_id") + `)`
+			src = `(SELECT sl.location_id AS branch_id, sl.product_id, sl.quantity_on_hand AS qty FROM app.stock_balances sl WHERE true` + branchAnd(q, f, "sl.location_id") + `)`
 		} else {
 			day := q.Arg(asOf)
 			src = `(SELECT m.location_id AS branch_id, m.product_id, SUM(m.quantity_delta) AS qty
-				FROM app.stock_movements m WHERE m.tenant_id = $1 AND m.business_date <= ` + day + `::date` + branchAnd(q, f, "m.location_id") + `
+				FROM app.stock_movements m WHERE m.business_date <= ` + day + `::date` + branchAnd(q, f, "m.location_id") + `
 				GROUP BY m.location_id, m.product_id)`
 		}
 		var err error
 		list, err = rows(ctx, tx, `
 			SELECT `+g.sel+`, ROUND(SUM(v.qty * pr.average_cost), 2) AS value
 			FROM `+src+` v
-			JOIN app.products pr ON pr.tenant_id = $1 AND pr.id = v.product_id
-			JOIN app.locations b ON b.tenant_id = $1 AND b.id = v.branch_id
-			LEFT JOIN app.product_categories c ON c.tenant_id = pr.tenant_id AND c.id = pr.category_id
+			JOIN app.products pr ON pr.id = v.product_id
+			JOIN app.locations b ON b.id = v.branch_id
+			LEFT JOIN app.product_categories c ON c.id = pr.category_id
 			GROUP BY `+g.group+`
 			HAVING SUM(v.qty) <> 0 OR SUM(v.qty * pr.average_cost) <> 0
 			ORDER BY value DESC`, q.Args...)
@@ -141,8 +140,7 @@ func (s *Service) Movements(ctx context.Context, p *auth.Principal, f Filter) (e
 	var list []map[string]any
 	var total int64
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("m.tenant_id = $1")
+		q := sqlq.New()
 		f.dates(q, "m.business_date")
 		f.branch(q, "m.location_id")
 		q.If(mappedTyp != "", "m.movement_type = ?::app.stock_movement_type", mappedTyp)
@@ -166,9 +164,9 @@ func (s *Service) Movements(ctx context.Context, p *auth.Principal, f Filter) (e
 			            ELSE 'stock_transfer' END AS source,
 			       COALESCE(m.sale_line_id, m.sale_return_line_id, m.goods_receipt_line_id, m.stock_adjustment_line_id, m.stock_transfer_line_id) AS source_id
 			FROM app.stock_movements m
-			JOIN app.products pr ON pr.tenant_id = m.tenant_id AND pr.id = m.product_id
-			JOIN app.locations b ON b.tenant_id = m.tenant_id AND b.id = m.location_id
-			LEFT JOIN app.stock_balances sb ON sb.tenant_id = m.tenant_id AND sb.location_id = m.location_id AND sb.product_id = m.product_id`+q.Where()+`
+			JOIN app.products pr ON pr.id = m.product_id
+			JOIN app.locations b ON b.id = m.location_id
+			LEFT JOIN app.stock_balances sb ON sb.location_id = m.location_id AND sb.product_id = m.product_id`+q.Where()+`
 			ORDER BY m.occurred_at DESC, m.id`+q.Page(per, (page-1)*per), q.Args...)
 		return err
 	})
@@ -184,8 +182,8 @@ func (s *Service) Movements(ctx context.Context, p *auth.Principal, f Filter) (e
 func (s *Service) LowStock(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("sl.tenant_id = $1 AND pr.status = 'active' AND COALESCE(pr.min_stock_level, ts.low_stock_default) > 0 AND sl.quantity_on_hand <= COALESCE(pr.min_stock_level, ts.low_stock_default)")
+		q := sqlq.New()
+		q.Add("pr.status = 'active' AND COALESCE(pr.min_stock_level, ts.low_stock_default) > 0 AND sl.quantity_on_hand <= COALESCE(pr.min_stock_level, ts.low_stock_default)")
 		f.branch(q, "sl.location_id")
 		var err error
 		list, err = rows(ctx, tx, `
@@ -193,9 +191,9 @@ func (s *Service) LowStock(ctx context.Context, p *auth.Principal, f Filter) (ex
 			       sl.quantity_on_hand AS qty_on_hand, COALESCE(pr.min_stock_level, ts.low_stock_default) AS reorder_level,
 			       GREATEST(COALESCE(pr.min_stock_level, ts.low_stock_default) * 2 - sl.quantity_on_hand, 0) AS suggested_qty
 			FROM app.stock_balances sl
-			JOIN app.products pr ON pr.tenant_id = sl.tenant_id AND pr.id = sl.product_id
-			JOIN app.locations b ON b.tenant_id = sl.tenant_id AND b.id = sl.location_id
-			JOIN app.tenant_settings ts ON ts.tenant_id = sl.tenant_id`+q.Where()+`
+			JOIN app.products pr ON pr.id = sl.product_id
+			JOIN app.locations b ON b.id = sl.location_id
+			CROSS JOIN app.business_settings ts`+q.Where()+`
 			ORDER BY sl.quantity_on_hand - COALESCE(pr.min_stock_level, ts.low_stock_default), pr.name`, q.Args...)
 		return err
 	})
@@ -211,10 +209,10 @@ func (s *Service) DeadStock(ctx context.Context, p *auth.Principal, f Filter) (e
 		if ref == "" {
 			ref = f.today
 		}
-		q := sqlq.New(p.TenantID)
+		q := sqlq.New()
 		r := q.Arg(ref)
 		d := q.Arg(days)
-		q.Add("sl.tenant_id = $1 AND sl.quantity_on_hand > 0")
+		q.Add("sl.quantity_on_hand > 0")
 		f.branch(q, "sl.location_id")
 		var err error
 		list, err = rows(ctx, tx, `
@@ -223,13 +221,13 @@ func (s *Service) DeadStock(ctx context.Context, p *auth.Principal, f Filter) (e
 				       sl.quantity_on_hand AS qty_on_hand, ROUND(sl.quantity_on_hand * pr.average_cost, 2) AS value,
 				       ls.last_sold, (`+r+`::date - COALESCE(ls.last_sold, pr.created_at::date)) AS days_idle
 				FROM app.stock_balances sl
-				JOIN app.products pr ON pr.tenant_id = sl.tenant_id AND pr.id = sl.product_id
-				JOIN app.locations b ON b.tenant_id = sl.tenant_id AND b.id = sl.location_id
+				JOIN app.products pr ON pr.id = sl.product_id
+				JOIN app.locations b ON b.id = sl.location_id
 				LEFT JOIN LATERAL (
 					SELECT max(s.business_date) AS last_sold
 					FROM app.sale_lines si
-					JOIN app.sales s ON s.tenant_id = si.tenant_id AND s.id = si.sale_id
-					WHERE si.tenant_id = sl.tenant_id AND si.product_id = sl.product_id AND s.location_id = sl.location_id AND s.status = 'completed'
+					JOIN app.sales s ON s.id = si.sale_id
+					WHERE si.product_id = sl.product_id AND s.location_id = sl.location_id AND s.status = 'completed'
 				) ls ON true`+q.Where()+`
 			) x WHERE x.days_idle >= `+d+` ORDER BY x.days_idle DESC, x.product`, q.Args...)
 		return err
@@ -256,8 +254,8 @@ func (s *Service) Expiring(_ context.Context, _ *auth.Principal, f Filter) (expo
 func (s *Service) Losses(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("m.tenant_id = $1 AND m.movement_type = 'adjustment' AND m.quantity_delta < 0")
+		q := sqlq.New()
+		q.Add("m.movement_type = 'adjustment' AND m.quantity_delta < 0")
 		f.dates(q, "m.business_date")
 		f.branch(q, "m.location_id")
 		var err error
@@ -266,10 +264,10 @@ func (s *Service) Losses(ctx context.Context, p *auth.Principal, f Filter) (expo
 			       pr.name::text AS product, pr.sku, b.name::text AS branch,
 			       -m.quantity_delta AS qty, ROUND(-m.quantity_delta * COALESCE(m.unit_cost, pr.average_cost), 2) AS value
 			FROM app.stock_movements m
-			JOIN app.products pr ON pr.tenant_id = m.tenant_id AND pr.id = m.product_id
-			JOIN app.locations b ON b.tenant_id = m.tenant_id AND b.id = m.location_id
-			LEFT JOIN app.stock_adjustment_lines sal ON sal.tenant_id = m.tenant_id AND sal.id = m.stock_adjustment_line_id
-			LEFT JOIN app.stock_adjustments sa ON sa.tenant_id = sal.tenant_id AND sa.id = sal.stock_adjustment_id`+q.Where()+`
+			JOIN app.products pr ON pr.id = m.product_id
+			JOIN app.locations b ON b.id = m.location_id
+			LEFT JOIN app.stock_adjustment_lines sal ON sal.id = m.stock_adjustment_line_id
+			LEFT JOIN app.stock_adjustments sa ON sa.id = sal.stock_adjustment_id`+q.Where()+`
 			ORDER BY m.business_date DESC, pr.name`, q.Args...)
 		return err
 	})
@@ -288,7 +286,7 @@ func (s *Service) Purchases(ctx context.Context, p *auth.Principal, f Filter) (e
 	}
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
+		q := sqlq.New()
 		cond := func(dateCol, branchCol string) string {
 			c := ""
 			if f.From != "" {
@@ -306,21 +304,21 @@ func (s *Service) Purchases(ctx context.Context, p *auth.Principal, f Filter) (e
 			SELECT po.supplier_id, pl.product_id, date_trunc('month', po.order_date)::date AS month,
 			       pl.quantity_ordered AS oq, pl.line_total AS ov, 0::numeric AS rq, 0::numeric AS rv, 0::numeric AS iv
 			FROM app.purchase_lines pl
-			JOIN app.purchases po ON po.tenant_id = pl.tenant_id AND po.id = pl.purchase_id
-			WHERE po.tenant_id = $1 AND po.status NOT IN ('draft','cancelled')` + cond("po.order_date", "po.location_id") + `
+			JOIN app.purchases po ON po.id = pl.purchase_id
+			WHERE po.status NOT IN ('draft','cancelled')` + cond("po.order_date", "po.location_id") + `
 			UNION ALL
 			SELECT po.supplier_id, pl.product_id, date_trunc('month', gr.business_date)::date, 0, 0, grl.quantity, grl.quantity * grl.unit_cost, 0
 			FROM app.goods_receipt_lines grl
-			JOIN app.goods_receipts gr ON gr.tenant_id = grl.tenant_id AND gr.id = grl.goods_receipt_id
-			JOIN app.purchase_lines pl ON pl.tenant_id = grl.tenant_id AND pl.id = grl.purchase_line_id
-			JOIN app.purchases po ON po.tenant_id = gr.tenant_id AND po.id = gr.purchase_id
-			WHERE gr.tenant_id = $1` + cond("gr.business_date", "gr.location_id")
+			JOIN app.goods_receipts gr ON gr.id = grl.goods_receipt_id
+			JOIN app.purchase_lines pl ON pl.id = grl.purchase_line_id
+			JOIN app.purchases po ON po.id = gr.purchase_id
+			WHERE true` + cond("gr.business_date", "gr.location_id")
 		if group != "product" {
 			src += `
 			UNION ALL
 			SELECT po.supplier_id, NULL::uuid, date_trunc('month', po.order_date)::date, 0, 0, 0, 0, po.total
 			FROM app.purchases po
-			WHERE po.tenant_id = $1 AND po.status IN ('ordered','partially_received','received')` + cond("po.order_date", "po.location_id")
+			WHERE po.status IN ('ordered','partially_received','received')` + cond("po.order_date", "po.location_id")
 		}
 		sel := map[string]string{
 			"supplier": "sp.name::text AS supplier",
@@ -328,8 +326,8 @@ func (s *Service) Purchases(ctx context.Context, p *auth.Principal, f Filter) (e
 			"month":    "x.month",
 		}[group]
 		join := map[string]string{
-			"supplier": "JOIN app.suppliers sp ON sp.tenant_id = $1 AND sp.id = x.supplier_id",
-			"product":  "JOIN app.products pr ON pr.tenant_id = $1 AND pr.id = x.product_id",
+			"supplier": "JOIN app.suppliers sp ON sp.id = x.supplier_id",
+			"product":  "JOIN app.products pr ON pr.id = x.product_id",
 			"month":    "",
 		}[group]
 		gb := map[string]string{"supplier": "sp.id, sp.name", "product": "pr.id, pr.name, pr.sku", "month": "x.month"}[group]
@@ -359,9 +357,9 @@ func (s *Service) CustomerDebt(ctx context.Context, p *auth.Principal, f Filter)
 		if asOf == "" {
 			asOf = f.today
 		}
-		q := sqlq.New(p.TenantID)
+		q := sqlq.New()
 		d := q.Arg(asOf)
-		sc := "s.tenant_id = $1 AND s.balance_due > 0 AND s.status = 'completed'"
+		sc := "s.balance_due > 0 AND s.status = 'completed'"
 		if f.Branches != nil {
 			sc += " AND s.location_id = ANY(" + q.Arg(f.Branches) + ")"
 		}
@@ -370,13 +368,13 @@ func (s *Service) CustomerDebt(ctx context.Context, p *auth.Principal, f Filter)
 			SELECT c.id, c.full_name::text AS customer, c.phone::text AS phone, COALESCE(c.credit_limit, 0) AS credit_limit,
 			       `+d+`::date - COALESCE(s.due_date, s.business_date) AS age,
 			       `+d+`::date > COALESCE(s.due_date, s.business_date) AS is_overdue, s.balance_due AS amt
-			FROM app.sales s JOIN app.customers c ON c.tenant_id = s.tenant_id AND c.id = s.customer_id
+			FROM app.sales s JOIN app.customers c ON c.id = s.customer_id
 			WHERE `+sc+`
 			UNION ALL
 			SELECT c.id, c.full_name::text, c.phone::text, COALESCE(c.credit_limit, 0),
 			       `+d+`::date - i.due_date, `+d+`::date > i.due_date, i.balance_due
-			FROM app.invoices i JOIN app.customers c ON c.tenant_id = i.tenant_id AND c.id = i.customer_id
-			WHERE i.tenant_id = $1 AND i.balance_due > 0 AND i.status IN ('issued','partially_paid')`,
+			FROM app.invoices i JOIN app.customers c ON c.id = i.customer_id
+			WHERE i.balance_due > 0 AND i.status IN ('issued','partially_paid')`,
 			"id, customer, phone, credit_limit", "customer"), q.Args...)
 		return err
 	})
@@ -393,16 +391,16 @@ func (s *Service) SupplierDebt(ctx context.Context, p *auth.Principal, f Filter)
 		if asOf == "" {
 			asOf = f.today
 		}
-		q := sqlq.New(p.TenantID)
+		q := sqlq.New()
 		d := q.Arg(asOf)
-		q.Add("pu.tenant_id = $1 AND pu.balance_due > 0 AND pu.status <> 'cancelled'")
+		q.Add("pu.balance_due > 0 AND pu.status <> 'cancelled'")
 		f.branch(q, "pu.location_id")
 		var err error
 		list, err = rows(ctx, tx, aged(`
 			SELECT sp.id, sp.name::text AS supplier, sp.phone::text AS phone,
 			       `+d+`::date - pu.order_date AS age,
 			       `+d+`::date > COALESCE(pu.due_date, pu.order_date) AS is_overdue, pu.balance_due AS amt
-			FROM app.purchases pu JOIN app.suppliers sp ON sp.tenant_id = pu.tenant_id AND sp.id = pu.supplier_id`+q.Where(), "id, supplier, phone", "supplier"), q.Args...)
+			FROM app.purchases pu JOIN app.suppliers sp ON sp.id = pu.supplier_id`+q.Where(), "id, supplier, phone", "supplier"), q.Args...)
 		return err
 	})
 	return export.Table{Title: "Supplier debt", Subtitle: "As of " + asOf, Columns: cols("supplier", "phone", "invoices", "current", "d31_60", "d61_90", "over_90", "overdue", "balance"),

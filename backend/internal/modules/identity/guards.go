@@ -27,14 +27,10 @@ var limitCodeFor = map[string]string{
 }
 
 // guardTarget refuses a change to an account that outranks the caller, and returns 404 when the
-// person is not a member of this tenant.
+// person is not a member of this business.
 func (s *Service) guardTarget(ctx context.Context, tx pgx.Tx, p *auth.Principal, userID uuid.UUID) error {
 	var rank int
-	if err := tx.QueryRow(ctx, `
-		SELECT coalesce(r.rank, 0) FROM app.memberships m
-		LEFT JOIN app.membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.membership_id = m.id
-		LEFT JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id
-		WHERE m.tenant_id = $1 AND m.user_id = $2`, p.TenantID, userID).Scan(&rank); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tSELECT coalesce(r.rank, 0) FROM app.memberships m\n\t\tLEFT JOIN app.membership_roles mr ON mr.membership_id = m.id\n\t\tLEFT JOIN app.roles r ON r.id = mr.role_id\n\t\tWHERE m.user_id = $1", userID).Scan(&rank); err != nil {
 		return httpx.NotFound("not_found", "User not found")
 	}
 	if !p.IsOwner && (rank > p.RoleRank || (rank == p.RoleRank && p.UserID != userID)) {
@@ -84,7 +80,7 @@ func (s *Service) guardAssignRole(ctx context.Context, tx pgx.Tx, p *auth.Princi
 		return nil
 	}
 	var rank int
-	if err := tx.QueryRow(ctx, `SELECT rank FROM app.roles WHERE id = $1 AND tenant_id = $2 AND status = 'active'`, roleID, p.TenantID).Scan(&rank); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT rank FROM app.roles WHERE id = $1  AND status = 'active'", roleID).Scan(&rank); err != nil {
 		return httpx.BadRequest("invalid_body", "Role not found")
 	}
 	if rank > p.RoleRank {

@@ -35,8 +35,8 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, f ListFilter, pag
 	out := []map[string]any{}
 	total := 0
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("s.tenant_id = $1").Add("s.status <> 'held'")
+		q := sqlq.New()
+		q.Add("s.status <> 'held'")
 		q.If(p.BranchID != nil, "s.location_id = ?", p.BranchID)
 		q.If(!p.Has("shop.sale.view_all"), "s.sold_by = ?", p.MembershipID)
 		q.If(f.From != "", "s.business_date >= ?::date", f.From)
@@ -48,14 +48,14 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, f ListFilter, pag
 			if m == "" {
 				return nil
 			}
-			q.Add("EXISTS (SELECT 1 FROM app.payment_allocations pa JOIN app.payments_received pr ON pr.tenant_id = pa.tenant_id AND pr.id = pa.payment_received_id WHERE pa.tenant_id = s.tenant_id AND pa.sale_id = s.id AND pr.method = ?::app.payment_method AND pr.status = 'posted')", m)
+			q.Add("EXISTS (SELECT 1 FROM app.payment_allocations pa JOIN app.payments_received pr ON pr.id = pa.payment_received_id WHERE pa.sale_id = s.id AND pr.method = ?::app.payment_method AND pr.status = 'posted')", m)
 		}
 		if qq := strings.TrimSpace(f.Q); qq != "" {
 			q.Add("(s.receipt_no ILIKE '%' || ? || '%' OR c.full_name ILIKE '%' || ? || '%' OR c.phone ILIKE '%' || ? || '%')", qq, qq, qq)
 		}
 		from := ` FROM app.sales s
-			LEFT JOIN app.customers c ON c.tenant_id = s.tenant_id AND c.id = s.customer_id
-			LEFT JOIN app.memberships m ON m.tenant_id = s.tenant_id AND m.id = s.sold_by
+			LEFT JOIN app.customers c ON c.id = s.customer_id
+			LEFT JOIN app.memberships m ON m.id = s.sold_by
 			LEFT JOIN iam.users u ON u.id = m.user_id`
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
@@ -97,11 +97,7 @@ func (s *Service) loadSale(ctx context.Context, tx pgx.Tx, p *auth.Principal, id
 	var sub, disc, tax, total, paid, bal decimal.Decimal
 	var note, dueDate, voidReason *string
 	var created, completed, voidedAt any
-	err := tx.QueryRow(ctx, `
-		SELECT COALESCE(receipt_no, ''), status::text, location_id, customer_id, sold_by, business_date::text,
-		       subtotal, discount_amount, tax_amount, total, amount_paid, balance_due, notes, due_date::text,
-		       created_at, completed_at, voided_by, voided_at, void_reason
-		FROM app.sales WHERE tenant_id = $1 AND id = $2`, p.TenantID, id).
+	err := tx.QueryRow(ctx, "\n\t\tSELECT COALESCE(receipt_no, ''), status::text, location_id, customer_id, sold_by, business_date::text,\n\t\t       subtotal, discount_amount, tax_amount, total, amount_paid, balance_due, notes, due_date::text,\n\t\t       created_at, completed_at, voided_by, voided_at, void_reason\n\t\tFROM app.sales WHERE id = $1", id).
 		Scan(&number, &status, &branch, &customer, &soldBy, &date, &sub, &disc, &tax, &total, &paid, &bal,
 			&note, &dueDate, &created, &completed, &voidedBy, &voidedAt, &voidReason)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -115,14 +111,7 @@ func (s *Service) loadSale(ctx context.Context, tx pgx.Tx, p *auth.Principal, id
 	}
 	var cashierUser uuid.UUID
 	var custName, custPhone, cashierName, branchName, footer *string
-	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE((SELECT user_id FROM app.memberships WHERE tenant_id = $1 AND id = $3), $3),
-		       (SELECT full_name::text FROM app.customers WHERE tenant_id = $1 AND id = $2),
-		       (SELECT phone::text FROM app.customers WHERE tenant_id = $1 AND id = $2),
-		       (SELECT u.full_name::text FROM app.memberships m JOIN iam.users u ON u.id = m.user_id WHERE m.tenant_id = $1 AND m.id = $3),
-		       (SELECT name::text FROM app.locations WHERE tenant_id = $1 AND id = $4),
-		       (SELECT receipt_footer FROM app.tenant_settings WHERE tenant_id = $1)`,
-		p.TenantID, customer, soldBy, branch).Scan(&cashierUser, &custName, &custPhone, &cashierName, &branchName, &footer); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tSELECT COALESCE((SELECT user_id FROM app.memberships WHERE id = $2), $2),\n\t\t       (SELECT full_name::text FROM app.customers WHERE id = $1),\n\t\t       (SELECT phone::text FROM app.customers WHERE id = $1),\n\t\t       (SELECT u.full_name::text FROM app.memberships m JOIN iam.users u ON u.id = m.user_id WHERE m.id = $2),\n\t\t       (SELECT name::text FROM app.locations WHERE id = $3),\n\t\t       (SELECT receipt_footer FROM app.business_settings WHERE true)", customer, soldBy, branch).Scan(&cashierUser, &custName, &custPhone, &cashierName, &branchName, &footer); err != nil {
 		return nil, err
 	}
 	items, costTotal, err := s.items(ctx, tx, p, id)
@@ -146,16 +135,7 @@ func (s *Service) loadSale(ctx context.Context, tx pgx.Tx, p *auth.Principal, id
 }
 
 func (s *Service) items(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) ([]map[string]any, decimal.Decimal, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT sl.id, sl.product_id, sl.product_name::text, sl.quantity, sl.unit_price, COALESCE(sl.unit_cost, 0),
-		       sl.line_discount, sl.tax_rate_pct, sl.tax_amount, sl.line_total, sl.returned_quantity, sl.warranty_months,
-		       COALESCE((SELECT string_agg(pu.serial_no, ', ' ORDER BY pu.serial_no)
-		                 FROM app.sale_line_units slu
-		                 JOIN app.product_units pu ON pu.tenant_id = slu.tenant_id AND pu.id = slu.product_unit_id
-		                 WHERE slu.tenant_id = sl.tenant_id AND slu.sale_line_id = sl.id), '')
-		FROM app.sale_lines sl
-		WHERE sl.tenant_id = $1 AND sl.sale_id = $2
-		ORDER BY sl.line_no`, p.TenantID, id)
+	rows, err := tx.Query(ctx, "\n\t\tSELECT sl.id, sl.product_id, sl.product_name::text, sl.quantity, sl.unit_price, COALESCE(sl.unit_cost, 0),\n\t\t       sl.line_discount, sl.tax_rate_pct, sl.tax_amount, sl.line_total, sl.returned_quantity, sl.warranty_months,\n\t\t       COALESCE((SELECT string_agg(pu.serial_no, ', ' ORDER BY pu.serial_no)\n\t\t                 FROM app.sale_line_units slu\n\t\t                 JOIN app.product_units pu ON pu.id = slu.product_unit_id\n\t\t                 WHERE slu.sale_line_id = sl.id), '')\n\t\tFROM app.sale_lines sl\n\t\tWHERE sl.sale_id = $1\n\t\tORDER BY sl.line_no", id)
 	if err != nil {
 		return nil, decimal.Zero, err
 	}
@@ -196,15 +176,11 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 		if err != nil {
 			return err
 		}
-		if m["payments"], err = salePayments(ctx, tx, p.TenantID, id); err != nil {
+		if m["payments"], err = salePayments(ctx, tx, id); err != nil {
 			return err
 		}
 		returns := []map[string]any{}
-		rows, err := tx.Query(ctx, `
-			SELECT r.id, r.return_no, r.sale_id, COALESCE(s.receipt_no, ''), r.status::text, r.resolution::text,
-			       r.reason, r.refund_amount, r.requested_by, r.decided_by, r.created_at, r.completed_at, r.location_id
-			FROM app.sale_returns r JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id
-			WHERE r.tenant_id = $1 AND r.sale_id = $2 ORDER BY r.created_at`, p.TenantID, id)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT r.id, r.return_no, r.sale_id, COALESCE(s.receipt_no, ''), r.status::text, r.resolution::text,\n\t\t\t       r.reason, r.refund_amount, r.requested_by, r.decided_by, r.created_at, r.completed_at, r.location_id\n\t\t\tFROM app.sale_returns r JOIN app.sales s ON s.id = r.sale_id\n\t\t\tWHERE r.sale_id = $1 ORDER BY r.created_at", id)
 		if err != nil {
 			return err
 		}
@@ -220,12 +196,7 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 		m["returns"] = returns
 
 		approvals := []map[string]any{}
-		rows, err = tx.Query(ctx, `
-			SELECT a.id, a.approval_type::text, a.status::text, a.requested_by, a.decided_by, u.full_name::text, a.decided_at, a.decision_note, a.created_at
-			FROM app.approval_requests a
-			LEFT JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.decided_by
-			LEFT JOIN iam.users u ON u.id = m.user_id
-			WHERE a.tenant_id = $1 AND a.sale_id = $2 ORDER BY a.created_at`, p.TenantID, id)
+		rows, err = tx.Query(ctx, "\n\t\t\tSELECT a.id, a.approval_type::text, a.status::text, a.requested_by, a.decided_by, u.full_name::text, a.decided_at, a.decision_note, a.created_at\n\t\t\tFROM app.approval_requests a\n\t\t\tLEFT JOIN app.memberships m ON m.id = a.decided_by\n\t\t\tLEFT JOIN iam.users u ON u.id = m.user_id\n\t\t\tWHERE a.sale_id = $1 ORDER BY a.created_at", id)
 		if err != nil {
 			return err
 		}
@@ -246,14 +217,7 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 		m["approvals"] = approvals
 
 		trail := []map[string]any{}
-		rows, err = tx.Query(ctx, `
-			SELECT a.action, a.actor_user_id, u.full_name::text, a.occurred_at
-			FROM audit.audit_log a LEFT JOIN iam.users u ON u.id = a.actor_user_id
-			WHERE a.tenant_id = $1 AND (
-			      (a.entity_table IN ('sale', 'app.sales') AND a.entity_id = $2)
-			   OR (a.entity_table IN ('sale_return', 'app.sale_returns') AND a.entity_id IN (SELECT id FROM app.sale_returns WHERE tenant_id = $1 AND sale_id = $2))
-			)
-			ORDER BY a.occurred_at, a.seq`, p.TenantID, id)
+		rows, err = tx.Query(ctx, "\n\t\t\tSELECT a.action, a.actor_user_id, u.full_name::text, a.occurred_at\n\t\t\tFROM audit.audit_log a LEFT JOIN iam.users u ON u.id = a.actor_user_id\n\t\t\tWHERE (\n\t\t\t      (a.entity_table IN ('sale', 'app.sales') AND a.entity_id = $1)\n\t\t\t   OR (a.entity_table IN ('sale_return', 'app.sale_returns') AND a.entity_id IN (SELECT id FROM app.sale_returns WHERE sale_id = $1))\n\t\t\t)\n\t\t\tORDER BY a.occurred_at, a.seq", id)
 		if err != nil {
 			return err
 		}
@@ -275,15 +239,8 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 	return out, err
 }
 
-func salePayments(ctx context.Context, tx pgx.Tx, tenantID, saleID uuid.UUID) ([]map[string]any, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT pr.id, pr.receipt_no, pr.purpose::text, pr.method::text, pa.amount, pr.reference,
-		       pr.business_date::text, pr.status::text, pr.account_id, fa.name::text
-		FROM app.payment_allocations pa
-		JOIN app.payments_received pr ON pr.tenant_id = pa.tenant_id AND pr.id = pa.payment_received_id
-		JOIN app.financial_accounts fa ON fa.tenant_id = pr.tenant_id AND fa.id = pr.account_id
-		WHERE pa.tenant_id = $1 AND pa.sale_id = $2
-		ORDER BY pr.created_at, pr.id`, tenantID, saleID)
+func salePayments(ctx context.Context, tx pgx.Tx, saleID uuid.UUID) ([]map[string]any, error) {
+	rows, err := tx.Query(ctx, "\n\t\tSELECT pr.id, pr.receipt_no, pr.purpose::text, pr.method::text, pa.amount, pr.reference,\n\t\t       pr.business_date::text, pr.status::text, pr.account_id, fa.name::text\n\t\tFROM app.payment_allocations pa\n\t\tJOIN app.payments_received pr ON pr.id = pa.payment_received_id\n\t\tJOIN app.financial_accounts fa ON fa.id = pr.account_id\n\t\tWHERE pa.sale_id = $1\n\t\tORDER BY pr.created_at, pr.id", saleID)
 	if err != nil {
 		return nil, err
 	}

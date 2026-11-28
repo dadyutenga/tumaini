@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
 	"bms/internal/platform/jobs"
@@ -152,10 +151,6 @@ func TestExpensesFlow(t *testing.T) {
 	require.Equal(t, "Kariakoo Shop", str(b2Rows[0]["location_name"]))
 	e.owner.as(t, e.branch)
 
-	// Another business cannot see the expense.
-	other := newEnv(t, defaultNow)
-	hidden := other.owner.call(t, http.MethodGet, "/api/v1/expenses/"+expID, nil, "")
-	require.Equal(t, 404, hidden.code, hidden.raw)
 }
 
 func TestExpensesRecurringJob(t *testing.T) {
@@ -181,9 +176,7 @@ func TestExpensesRecurringJob(t *testing.T) {
 	require.Equal(t, 2, count())
 
 	// Running the job again for the same date creates nothing new.
-	biz := e.owner.call(t, http.MethodGet, "/api/v1/business", nil, "")
-	bizID := uuid.MustParse(str(biz.data["id"]))
-	require.NoError(t, e.app.Jobs.Enqueue(context.Background(), bizID, jobs.RecurringExpenses, map[string]any{"date": "2026-11-16"}))
+	require.NoError(t, e.app.Jobs.Enqueue(context.Background(), jobs.RecurringExpenses, map[string]any{"date": "2026-11-16"}))
 	e.runJobs(t)
 	require.Equal(t, 2, count())
 

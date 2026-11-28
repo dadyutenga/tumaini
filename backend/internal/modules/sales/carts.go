@@ -29,7 +29,7 @@ func (s *Service) Hold(ctx context.Context, p *auth.Principal, in CreateIn) (map
 		if err != nil {
 			return err
 		}
-		cust, err := s.resolveCustomer(ctx, tx, p.TenantID, in.CustomerID, money.Zero)
+		cust, err := s.resolveCustomer(ctx, tx, in.CustomerID, money.Zero)
 		if err != nil {
 			return err
 		}
@@ -42,20 +42,14 @@ func (s *Service) Hold(ctx context.Context, p *auth.Principal, in CreateIn) (map
 			label = label[:60]
 		}
 		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.sales (tenant_id, business_unit_id, location_id, status, customer_id, sold_by, business_date,
-			                       subtotal, discount_type, discount_value, discount_amount, tax_amount, total, held_label, notes)
-			VALUES ($1, (SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $2), $2, 'draft', $3, $4, $5::date,
-			        $6, $7::app.discount_type, $8, $9, $10, $11, NULLIF($12,''), NULLIF($13,''))
-			RETURNING id`,
-			p.TenantID, *p.BranchID, cust, p.MembershipID, date,
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.sales ( business_unit_id, location_id, status, customer_id, sold_by, business_date,\n\t\t\t                       subtotal, discount_type, discount_value, discount_amount, tax_amount, total, held_label, notes)\n\t\t\tVALUES ( (SELECT business_unit_id FROM app.locations WHERE id = $1), $1, 'draft', $2, $3, $4::date,\n\t\t\t        $5, $6::app.discount_type, $7, $8, $9, $10, NULLIF($11,''), NULLIF($12,''))\n\t\t\tRETURNING id", *p.BranchID, cust, p.MembershipID, date,
 			tot.Subtotal, tot.DiscountType, tot.DiscountValue, tot.Discount, tot.Tax, tot.Total, label, strings.TrimSpace(in.Note)).Scan(&id); err != nil {
 			return err
 		}
-		if err := insertLines(ctx, tx, p.TenantID, id, lines); err != nil {
+		if err := insertLines(ctx, tx, id, lines); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.sales SET status = 'held', held_at = now() WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.sales SET status = 'held', held_at = now() WHERE id = $1", id); err != nil {
 			return err
 		}
 		if err := s.Audit.Record(ctx, tx, p, "sale.held", "sale", id, nil, map[string]any{"total": tot.Total}); err != nil {
@@ -74,13 +68,13 @@ func (s *Service) Hold(ctx context.Context, p *auth.Principal, in CreateIn) (map
 func (s *Service) Held(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	out := []map[string]any{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("s.tenant_id = $1").Add("s.status = 'held'").Add("s.sold_by = ?", p.MembershipID)
+		q := sqlq.New()
+		q.Add("s.status = 'held'").Add("s.sold_by = ?", p.MembershipID)
 		q.If(p.BranchID != nil, "s.location_id = ?", p.BranchID)
 		rows, err := tx.Query(ctx, `
 			SELECT s.id, s.held_label, s.notes, s.customer_id, c.full_name::text, s.total, s.discount_type::text, s.discount_value,
-			       s.created_at, s.location_id, (SELECT count(*) FROM app.sale_lines sl WHERE sl.tenant_id = s.tenant_id AND sl.sale_id = s.id)
-			FROM app.sales s LEFT JOIN app.customers c ON c.tenant_id = s.tenant_id AND c.id = s.customer_id`+q.Where()+
+			       s.created_at, s.location_id, (SELECT count(*) FROM app.sale_lines sl WHERE sl.sale_id = s.id)
+			FROM app.sales s LEFT JOIN app.customers c ON c.id = s.customer_id`+q.Where()+
 			` ORDER BY s.created_at DESC LIMIT 100`, q.Args...)
 		if err != nil {
 			return err
@@ -110,9 +104,7 @@ func (s *Service) Held(ctx context.Context, p *auth.Principal) ([]map[string]any
 			return err
 		}
 		for _, h := range list {
-			lrows, err := tx.Query(ctx, `
-				SELECT product_id, quantity, line_discount FROM app.sale_lines
-				WHERE tenant_id = $1 AND sale_id = $2 ORDER BY line_no`, p.TenantID, h.id)
+			lrows, err := tx.Query(ctx, "\n\t\t\t\tSELECT product_id, quantity, line_discount FROM app.sale_lines\n\t\t\t\tWHERE sale_id = $1 ORDER BY line_no", h.id)
 			if err != nil {
 				return err
 			}
@@ -150,7 +142,7 @@ func (s *Service) Held(ctx context.Context, p *auth.Principal) ([]map[string]any
 
 func (s *Service) DiscardHeld(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
 	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		tag, err := tx.Exec(ctx, `DELETE FROM app.sales WHERE tenant_id = $1 AND id = $2 AND status = 'held' AND sold_by = $3`, p.TenantID, id, p.MembershipID)
+		tag, err := tx.Exec(ctx, "DELETE FROM app.sales WHERE id = $1 AND status = 'held' AND sold_by = $2", id, p.MembershipID)
 		if err != nil {
 			return err
 		}

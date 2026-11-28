@@ -27,7 +27,6 @@ import (
 
 type Request struct {
 	ID       uuid.UUID
-	TenantID uuid.UUID
 	BranchID *uuid.UUID
 	// Kind is the app.approval_type value.
 	Kind        string
@@ -130,16 +129,16 @@ func (s *Service) Request(ctx context.Context, tx pgx.Tx, p *auth.Principal, in 
 	}
 	// col comes from the fixed column map above, never from the request.
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO app.approval_requests (id, tenant_id, approval_type, reason, requested_amount, requested_percent, current_amount, `+col+`)
-		VALUES ($1,$2,$3::app.approval_type,$4,$5,$6,$7,$8)`,
-		id, p.TenantID, kind, reason, amount, percent, current, in.SubjectID); err != nil {
+			INSERT INTO app.approval_requests (id, approval_type, reason, requested_amount, requested_percent, current_amount, `+col+`)
+			VALUES ($1,$2::app.approval_type,$3,$4,$5,$6,$7)`,
+		id, kind, reason, amount, percent, current, in.SubjectID); err != nil {
 		return uuid.Nil, err
 	}
 	var amt *decimal.Decimal
 	if in.Amount.Valid {
 		amt = &in.Amount.Decimal
 	}
-	_ = s.notify.ToApprovers(ctx, tx, p.TenantID, in.BranchID, KindPermission[kind], amt, p.UserID, notify.Message{
+	_ = s.notify.ToApprovers(ctx, tx, in.BranchID, KindPermission[kind], amt, p.UserID, notify.Message{
 		Type: "approval_waiting", Title: "Approval needed", Body: reason, Link: "/approvals/" + id.String(),
 		EntityType: in.SubjectType, EntityID: &in.SubjectID,
 	})
@@ -180,7 +179,7 @@ func (s *Service) Decide(ctx context.Context, tx pgx.Tx, p *auth.Principal, id u
 			return err
 		}
 	}
-	return s.notify.ToUser(ctx, tx, p.TenantID, req.RequestedBy, notify.Message{
+	return s.notify.ToUser(ctx, tx, req.RequestedBy, notify.Message{
 		Type: "approval_decided", Title: "Request " + status, Body: req.Summary, Link: "/approvals/" + id.String(),
 		EntityType: req.SubjectType, EntityID: &req.SubjectID,
 	})
@@ -241,11 +240,11 @@ func (s *Service) read(ctx context.Context, tx pgx.Tx, id uuid.UUID, suffix stri
 	var r Request
 	var sale, project, job, txn, pr, pm, day, product *uuid.UUID
 	err := tx.QueryRow(ctx, `
-		SELECT a.id, a.tenant_id, a.approval_type::text, a.requested_amount, a.requested_percent, a.reason, a.status::text,
+		SELECT a.id, a.approval_type::text, a.requested_amount, a.requested_percent, a.reason, a.status::text,
 		       a.requested_by, m.user_id, a.sale_id, a.project_id, a.design_job_id, a.financial_transaction_id,
 		       a.payment_received_id, a.payment_made_id, a.day_closing_id, a.product_id
-		FROM app.approval_requests a JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.requested_by
-		WHERE a.id = $1`+suffix, id).Scan(&r.ID, &r.TenantID, &r.Kind, &r.Amount, &r.Percent, &r.Summary, &r.Status,
+		FROM app.approval_requests a JOIN app.memberships m ON m.id = a.requested_by
+		WHERE a.id = $1`+suffix, id).Scan(&r.ID, &r.Kind, &r.Amount, &r.Percent, &r.Summary, &r.Status,
 		&r.RequestedByMembership, &r.RequestedBy, &sale, &project, &job, &txn, &pr, &pm, &day, &product)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Request{}, httpx.NotFound("not_found", "Approval request not found")

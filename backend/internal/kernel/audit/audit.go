@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/google/uuid"
@@ -18,8 +19,19 @@ func New() *Service { return &Service{} }
 // Record writes an explicit business event through audit.log_event. Row-level changes are captured
 // by the database itself (audit.tg_capture triggers); Record is for events that are not a row change
 // or that need a name, such as "user.password_reset". The transaction must have been opened with
-// db.InActorTx so tenant, user, membership, request id and client address are attributed.
-func (s *Service) Record(ctx context.Context, tx pgx.Tx, p *auth.Principal, action, entityType string, entityID uuid.UUID, before, after any) error {
+// db.InActorTx so user, membership, request id and client address are attributed.
+func (s *Service) Record(ctx context.Context, tx pgx.Tx, p *auth.Principal, action, entityType string, values ...any) error {
+	var entityID uuid.UUID
+	var before, after any
+	switch len(values) {
+	case 2:
+		before, after = values[0], values[1]
+	case 3:
+		entityID, _ = values[0].(uuid.UUID)
+		before, after = values[1], values[2]
+	default:
+		return fmt.Errorf("audit record: expected before/after values")
+	}
 	details := map[string]any{}
 	if before != nil {
 		details["before"] = redact(before)

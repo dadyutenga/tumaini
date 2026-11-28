@@ -67,7 +67,7 @@ func (s *Service) SalesSummary(ctx context.Context, p *auth.Principal, f Filter)
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
 		g := q.Arg(group)
-		src := linesSQL(q, p.TenantID, f)
+		src := linesSQL(q, f)
 		var err error
 		list, err = rows(ctx, tx, `SELECT date_trunc(`+g+`, l.d)::date AS period,`+saleAgg+` FROM `+src+` GROUP BY 1 ORDER BY 1`, q.Args...)
 		return err
@@ -106,7 +106,7 @@ func (s *Service) Breakdown(ctx context.Context, p *auth.Principal, f Filter, by
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
-		src := linesSQL(q, p.TenantID, f)
+		src := linesSQL(q, f)
 		where := ""
 		if by == "category" {
 			if id := f.Q("category_id"); id != "" {
@@ -148,9 +148,8 @@ func (s *Service) ByPaymentMethod(ctx context.Context, p *auth.Principal, f Filt
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		q := sqlq.New()
-		t := q.Arg(p.TenantID)
-		rc := "pr.tenant_id = " + t + " AND pr.status = 'posted'"
-		mc := "pm.tenant_id = " + t + " AND pm.status = 'posted' AND pm.customer_id IS NOT NULL"
+		rc := "pr.status = 'posted'"
+		mc := "pm.status = 'posted' AND pm.customer_id IS NOT NULL"
 		if f.From != "" {
 			a := q.Arg(f.From)
 			rc += " AND pr.business_date >= " + a + "::date"

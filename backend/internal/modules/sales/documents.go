@@ -18,12 +18,10 @@ import (
 	"bms/internal/platform/setting"
 )
 
-func businessHeader(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (map[string]any, error) {
+func businessHeader(ctx context.Context, tx pgx.Tx) (map[string]any, error) {
 	var name, currency string
 	var taxNo, regNo, phone, email, address *string
-	if err := tx.QueryRow(ctx, `
-		SELECT business_name::text, tin, registration_no, phone::text, email::text, address, currency::text
-		FROM app.tenant_settings WHERE tenant_id = $1`, tenantID).
+	if err := tx.QueryRow(ctx, "\n\t\tSELECT business_name::text, tin, registration_no, phone::text, email::text, address, currency::text\n\t\tFROM app.business_settings WHERE true").
 		Scan(&name, &taxNo, &regNo, &phone, &email, &address, &currency); err != nil {
 		return nil, err
 	}
@@ -50,10 +48,7 @@ func (s *Service) Receipt(ctx context.Context, p *auth.Principal, id uuid.UUID, 
 			}
 		}
 		var prints int
-		_ = tx.QueryRow(ctx, `
-			SELECT count(*) FROM audit.audit_log
-			WHERE tenant_id = $1 AND entity_table = 'sale' AND entity_id = $2 AND action = 'sale.receipt_printed'`,
-			p.TenantID, id).Scan(&prints)
+		_ = tx.QueryRow(ctx, "\n\t\t\tSELECT count(*) FROM audit.audit_log\n\t\t\tWHERE entity_table = 'sale' AND entity_id = $1 AND action = 'sale.receipt_printed'", id).Scan(&prints)
 		if recordPrint {
 			if prints < 1 {
 				prints = 1
@@ -64,10 +59,10 @@ func (s *Service) Receipt(ctx context.Context, p *auth.Principal, id uuid.UUID, 
 			m["receipt_prints"] = prints
 			m["copy"] = prints >= 1
 		}
-		if m["payments"], err = salePayments(ctx, tx, p.TenantID, id); err != nil {
+		if m["payments"], err = salePayments(ctx, tx, id); err != nil {
 			return err
 		}
-		if m["business"], err = businessHeader(ctx, tx, p.TenantID); err != nil {
+		if m["business"], err = businessHeader(ctx, tx); err != nil {
 			return err
 		}
 		m["settings"] = map[string]any{
@@ -98,10 +93,7 @@ func (s *Service) RecordReceiptPrint(ctx context.Context, p *auth.Principal, id 
 			return err
 		}
 		var prints int
-		_ = tx.QueryRow(ctx, `
-			SELECT count(*) FROM audit.audit_log
-			WHERE tenant_id = $1 AND entity_table = 'sale' AND entity_id = $2 AND action = 'sale.receipt_printed'`,
-			p.TenantID, id).Scan(&prints)
+		_ = tx.QueryRow(ctx, "\n\t\t\tSELECT count(*) FROM audit.audit_log\n\t\t\tWHERE entity_table = 'sale' AND entity_id = $1 AND action = 'sale.receipt_printed'", id).Scan(&prints)
 		if prints < 1 {
 			prints = 1
 		}
@@ -124,15 +116,15 @@ func (s *Service) Invoice(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 		}
 		// Shop sales carry a single immutable receipt_no; services invoices live in app.invoices.
 		m["invoice_number"] = m["number"]
-		if m["business"], err = businessHeader(ctx, tx, p.TenantID); err != nil {
+		if m["business"], err = businessHeader(ctx, tx); err != nil {
 			return err
 		}
-		if m["payments"], err = salePayments(ctx, tx, p.TenantID, id); err != nil {
+		if m["payments"], err = salePayments(ctx, tx, id); err != nil {
 			return err
 		}
 		var addr, email *string
 		if cid, ok := m["customer_id"].(*uuid.UUID); ok && cid != nil {
-			if err := tx.QueryRow(ctx, `SELECT address, email::text FROM app.customers WHERE tenant_id = $1 AND id = $2`, p.TenantID, *cid).Scan(&addr, &email); err != nil && err != pgx.ErrNoRows {
+			if err := tx.QueryRow(ctx, "SELECT address, email::text FROM app.customers WHERE id = $1", *cid).Scan(&addr, &email); err != nil && err != pgx.ErrNoRows {
 				return err
 			}
 		}
@@ -355,7 +347,7 @@ func (s *Service) SendReceipt(ctx context.Context, p *auth.Principal, id uuid.UU
 			return httpx.BadRequest("no_recipient", "Walk-in sale has no customer phone or email")
 		}
 		var phone, email *string
-		if err := tx.QueryRow(ctx, `SELECT phone::text, email::text FROM app.customers WHERE tenant_id = $1 AND id = $2`, p.TenantID, *cid).Scan(&phone, &email); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT phone::text, email::text FROM app.customers WHERE id = $1", *cid).Scan(&phone, &email); err != nil {
 			return err
 		}
 		recipient := ""
@@ -387,7 +379,7 @@ func (s *Service) SendReceipt(ctx context.Context, p *auth.Principal, id uuid.UU
 			suffix = ids.New().String()
 		}
 		key := fmt.Sprintf("receipt:%s:%s:%s", id.String(), ch, suffix)
-		row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+		row, err := s.Outbound.Enqueue(ctx, tx, outbound.Message{
 			Channel:        ch,
 			Recipient:      recipient,
 			Subject:        "Receipt " + str(m["number"]),

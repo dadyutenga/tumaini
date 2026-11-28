@@ -73,9 +73,6 @@ func TestFileUploadsAreCheckedByContent(t *testing.T) {
 	code, raw = upload(t, app, o, "/api/v1/business/logo", "logo.png", "image/png", pngBytes)
 	require.Equal(t, 200, code, raw)
 
-	// A file in one business cannot be read from another.
-	other := newEnv(t, defaultNow)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/files/"+id, nil, "").code)
 	// Too large.
 	big := append([]byte("%PDF-1.4\n"), bytes.Repeat([]byte("a"), 11<<20)...)
 	// The server body limit (10 MB) rejects it before the handler; the test transport
@@ -127,9 +124,6 @@ func TestAttachmentsFlow(t *testing.T) {
 	list := e.owner.call(t, http.MethodGet, "/api/v1/attachments?entity_type=customer&entity_id="+custID, nil, "")
 	require.Equal(t, 200, list.code, list.raw)
 	require.Len(t, asList(list.body["data"]), 1)
-
-	other := newEnv(t, defaultNow)
-	require.Equal(t, 404, other.owner.call(t, http.MethodDelete, "/api/v1/attachments/"+attID, nil, "").code)
 
 	del := e.owner.call(t, http.MethodDelete, "/api/v1/attachments/"+attID, nil, "")
 	require.Equal(t, 200, del.code, del.raw)

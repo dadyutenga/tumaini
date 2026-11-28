@@ -76,11 +76,6 @@ func TestEmployeeDocuments(t *testing.T) {
 	otherLogin := e.employeeLogin(t, other, "staff")
 	require.Equal(t, 404, get(otherLogin), "nor can a colleague with a login")
 
-	// Another business cannot see or read it.
-	foreign := newEnv(t, defaultNow)
-	require.Equal(t, 404, foreign.owner.call(t, http.MethodGet, "/api/v1/employees/"+emp+"/documents", nil, "").code)
-	require.Equal(t, 404, foreign.owner.call(t, http.MethodGet, url, nil, "").code)
-
 	// Removal deletes the record and the stored file; it is audited.
 	require.Equal(t, 404, o.call(t, http.MethodDelete, "/api/v1/employees/"+other+"/documents/"+docID, nil, "").code, "a document belongs to one employee")
 	require.Equal(t, 403, staff.call(t, http.MethodDelete, "/api/v1/employees/"+emp+"/documents/"+docID, nil, "").code)

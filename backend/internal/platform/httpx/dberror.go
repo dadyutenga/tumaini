@@ -20,7 +20,6 @@ var businessRules = map[string]struct {
 	"BM003": {fiber.StatusConflict, "insufficient_stock"},
 	"BM004": {fiber.StatusConflict, "immutable_record"},
 	"BM005": {fiber.StatusUnprocessableEntity, "amount_not_allowed"},
-	"BM006": {fiber.StatusForbidden, "tenant_context"},
 	"BM007": {fiber.StatusForbidden, "approval_required"},
 	"BM008": {fiber.StatusConflict, "document_integrity"},
 }

@@ -68,8 +68,7 @@ func TestSalesIntegrity_ReceiptsBlockedOnUncompletedAndVoidedSales(t *testing.T)
 }
 
 // TestSalesIntegrity_InvoiceAndQuotationIsolation verifies that draft-only staff cannot
-// view, download PDFs for, or edit invoices or quotations created by other users/clients,
-// and another tenant cannot access them either.
+// view, download PDFs for, or edit invoices or quotations created by other users/clients.
 func TestSalesIntegrity_InvoiceAndQuotationIsolation(t *testing.T) {
 	e := newEnv(t, defaultNow)
 	clientA := e.owner.call(t, http.MethodPost, "/api/v1/clients", map[string]any{"name": "Client Alpha"}, "")
@@ -120,10 +119,6 @@ func TestSalesIntegrity_InvoiceAndQuotationIsolation(t *testing.T) {
 	// Owner (holds services.invoice.manage) CAN view, issue, and manage all invoices.
 	require.Equal(t, 200, e.owner.call(t, http.MethodGet, "/api/v1/service-invoices/"+invAID, nil, "").code)
 
-	// Cross-tenant isolation.
-	other := newEnv(t, defaultNow)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/service-invoices/"+invAID, nil, "").code)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/service-quotations/"+qAID, nil, "").code)
 }
 
 // TestSalesIntegrity_HistoricalPriceAndTaxPreservedAfterPriceChange directly tests the challenge:
@@ -249,13 +244,13 @@ func TestSalesIntegrity_InvoiceStatusAndPaymentConsistency(t *testing.T) {
 	}, "").code)
 
 	// Direct DB attempt to duplicate invoice_no or contradict invoice status & amount_paid must fail.
-	dupErr := e.app.DB.InActorTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+	dupErr := e.app.DB.InActorTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE app.invoices SET invoice_no = $2 WHERE id = $1`, uuid.MustParse(str(inv2.data["id"])), inv1No)
 		return err
 	})
 	require.Error(t, dupErr, "duplicate invoice_no must be rejected by UNIQUE constraint")
 
-	badPaidErr := e.app.DB.InActorTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+	badPaidErr := e.app.DB.InActorTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE app.invoices SET status = 'paid' WHERE id = $1`, inv1ID)
 		return err
 	})
@@ -278,7 +273,7 @@ func TestSalesIntegrity_InvoiceStatusAndPaymentConsistency(t *testing.T) {
 }
 
 // TestInventoryIntegrity_ConcurrentOversellNegativeStockAndReturns verifies:
-//   - Stock cannot go negative unless explicitly enabled by tenant settings
+//   - Stock cannot go negative unless explicitly enabled by business settings
 //   - Stock deductions happen atomically with sales (failed sales leave stock untouched)
 //   - Concurrent sales against the last unit cannot oversell inventory
 //   - Stock returns link to the original sale and damaged returns are never restocked
@@ -559,21 +554,21 @@ func TestInventoryIntegrity_AdjustmentsTransfersPOReconciliationValuationAndImmu
 	saleID := str(sale.data["id"])
 
 	for name, tc := range map[string]struct {
-		sql string
-		arg uuid.UUID
+		sql  string
+		args []any
 	}{
-		"update stock_movements":         {`UPDATE app.stock_movements SET quantity_delta = 999 WHERE tenant_id = $1`, e.tenantID},
-		"delete stock_movements":         {`DELETE FROM app.stock_movements WHERE tenant_id = $1`, e.tenantID},
-		"update posted stock_adj":        {`UPDATE app.stock_adjustments SET reason = 'theft' WHERE id = $1`, uuid.MustParse(adjID)},
-		"delete posted stock_adj":        {`DELETE FROM app.stock_adjustments WHERE id = $1`, uuid.MustParse(adjID)},
-		"update received transfer":       {`UPDATE app.stock_transfers SET note = 'Tampered' WHERE id = $1`, uuid.MustParse(trID)},
-		"delete received transfer":       {`DELETE FROM app.stock_transfers WHERE id = $1`, uuid.MustParse(trID)},
-		"update goods_receipts":          {`UPDATE app.goods_receipts SET notes = 'Tampered' WHERE id = $1`, uuid.MustParse(gr1ID)},
-		"delete goods_receipts":          {`DELETE FROM app.goods_receipts WHERE id = $1`, uuid.MustParse(gr1ID)},
-		"hard delete historical product": {`DELETE FROM app.products WHERE id = $1`, uuid.MustParse(prodID)},
+		"update stock_movements":         {`UPDATE app.stock_movements SET quantity_delta = 999 WHERE true`, nil},
+		"delete stock_movements":         {`DELETE FROM app.stock_movements WHERE true`, nil},
+		"update posted stock_adj":        {`UPDATE app.stock_adjustments SET reason = 'theft' WHERE id = $1`, []any{uuid.MustParse(adjID)}},
+		"delete posted stock_adj":        {`DELETE FROM app.stock_adjustments WHERE id = $1`, []any{uuid.MustParse(adjID)}},
+		"update received transfer":       {`UPDATE app.stock_transfers SET note = 'Tampered' WHERE id = $1`, []any{uuid.MustParse(trID)}},
+		"delete received transfer":       {`DELETE FROM app.stock_transfers WHERE id = $1`, []any{uuid.MustParse(trID)}},
+		"update goods_receipts":          {`UPDATE app.goods_receipts SET notes = 'Tampered' WHERE id = $1`, []any{uuid.MustParse(gr1ID)}},
+		"delete goods_receipts":          {`DELETE FROM app.goods_receipts WHERE id = $1`, []any{uuid.MustParse(gr1ID)}},
+		"hard delete historical product": {`DELETE FROM app.products WHERE id = $1`, []any{uuid.MustParse(prodID)}},
 	} {
-		err := e.app.DB.InActorTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
-			_, qErr := tx.Exec(ctx, tc.sql, tc.arg)
+		err := e.app.DB.InActorTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
+			_, qErr := tx.Exec(ctx, tc.sql, tc.args...)
 			return qErr
 		})
 		require.Error(t, err, "DB immutability guard must block %s", name)
@@ -665,13 +660,13 @@ func TestInventoryIntegrity_DirectStockIncreaseBlocked(t *testing.T) {
 	pUUID := uuid.MustParse(prodID)
 	bUUID := uuid.MustParse(e.branch)
 	for name, sqlStmt := range map[string]string{
-		"direct insert stock_balances": `INSERT INTO app.stock_balances (tenant_id, location_id, product_id, quantity_on_hand) VALUES ($1,$2,$3,500)`,
-		"direct update stock_balances": `UPDATE app.stock_balances SET quantity_on_hand = 500 WHERE tenant_id = $1 AND location_id = $2 AND product_id = $3`,
-		"direct insert stock_movements": `INSERT INTO app.stock_movements (tenant_id, location_id, product_id, movement_type, quantity_delta, unit_cost, business_date)
-		                                  VALUES ($1,$2,$3,'adjustment',500,10000,'2026-11-27')`,
+		"direct insert stock_balances": `INSERT INTO app.stock_balances (location_id, product_id, quantity_on_hand) VALUES ($1,$2,500)`,
+		"direct update stock_balances": `UPDATE app.stock_balances SET quantity_on_hand = 500 WHERE location_id = $1 AND product_id = $2`,
+		"direct insert stock_movements": `INSERT INTO app.stock_movements (location_id, product_id, movement_type, quantity_delta, unit_cost, business_date)
+		                                  VALUES ($1,$2,'adjustment',500,10000,'2026-11-27')`,
 	} {
-		err := e.app.DB.InActorTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
-			_, qErr := tx.Exec(ctx, sqlStmt, e.tenantID, bUUID, pUUID)
+		err := e.app.DB.InActorTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
+			_, qErr := tx.Exec(ctx, sqlStmt, bUUID, pUUID)
 			return qErr
 		})
 		require.Error(t, err, "bms_app must be denied %s", name)

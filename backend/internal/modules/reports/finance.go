@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/shopspring/decimal"
 
@@ -21,13 +20,13 @@ type plResult struct {
 
 // pl builds the accrual-basis Profit & Loss from completed sales, returns, issued invoices,
 // approved/paid expenses, contractor bills, and approved/paid payroll runs.
-func (s *Service) pl(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, f Filter) (plResult, error) {
+func (s *Service) pl(ctx context.Context, tx pgx.Tx, f Filter) (plResult, error) {
 	biz := f.Q("business")
 	r := plResult{Lines: []map[string]any{}, ExpensesByCat: []map[string]any{}}
 
 	if biz != "services" {
 		q := sqlq.New()
-		src := linesSQL(q, tenantID, f)
+		src := linesSQL(q, f)
 		st, err := one(ctx, tx, `SELECT ROUND(COALESCE(SUM(l.net), 0), 2) AS net_sales, ROUND(COALESCE(SUM(l.cost), 0), 2) AS cost FROM `+src, q.Args...)
 		if err != nil {
 			return r, err
@@ -43,8 +42,8 @@ func (s *Service) pl(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, f Filte
 	}
 
 	if biz != "shop" {
-		iq := sqlq.New(tenantID)
-		iq.Add("i.tenant_id = $1 AND i.status IN ('issued','partially_paid','paid')")
+		iq := sqlq.New()
+		iq.Add("i.status IN ('issued','partially_paid','paid')")
 		f.dates(iq, "i.issue_date")
 		iv, err := one(ctx, tx, `SELECT COALESCE(SUM(i.total - i.tax_amount), 0) AS amt FROM app.invoices i`+iq.Where(), iq.Args...)
 		if err != nil {
@@ -55,15 +54,15 @@ func (s *Service) pl(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, f Filte
 			r.Lines = append(r.Lines, map[string]any{"code": "4300", "name": "Service income", "type": "income", "amount": r.ServiceIncome})
 		}
 
-		cbq := sqlq.New(tenantID)
-		cbq.Add("b.tenant_id = $1 AND b.status <> 'void'")
+		cbq := sqlq.New()
+		cbq.Add("b.status <> 'void'")
 		f.dates(cbq, "b.bill_date")
 		cb, err := one(ctx, tx, `SELECT COALESCE(SUM(b.amount), 0) AS amt FROM app.contractor_bills b`+cbq.Where(), cbq.Args...)
 		if err != nil {
 			return r, err
 		}
-		peq := sqlq.New(tenantID)
-		peq.Add("e.tenant_id = $1 AND e.status IN ('approved','paid') AND (e.project_id IS NOT NULL OR e.design_job_id IS NOT NULL)")
+		peq := sqlq.New()
+		peq.Add("e.status IN ('approved','paid') AND (e.project_id IS NOT NULL OR e.design_job_id IS NOT NULL)")
 		f.dates(peq, "e.expense_date")
 		f.branch(peq, "e.location_id")
 		pe, err := one(ctx, tx, `SELECT COALESCE(SUM(e.amount), 0) AS amt FROM app.expenses e`+peq.Where(), peq.Args...)
@@ -77,14 +76,14 @@ func (s *Service) pl(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, f Filte
 	}
 
 	if biz != "services" {
-		eq := sqlq.New(tenantID)
-		eq.Add("e.tenant_id = $1 AND e.status IN ('approved','paid') AND e.project_id IS NULL AND e.design_job_id IS NULL")
+		eq := sqlq.New()
+		eq.Add("e.status IN ('approved','paid') AND e.project_id IS NULL AND e.design_job_id IS NULL")
 		f.dates(eq, "e.expense_date")
 		f.branch(eq, "e.location_id")
 		expCats, err := rows(ctx, tx, `
 			SELECT c.name::text AS name, COALESCE(SUM(e.amount), 0) AS amount
 			FROM app.expenses e
-			JOIN app.expense_categories c ON c.tenant_id = e.tenant_id AND c.id = e.category_id`+eq.Where()+`
+			JOIN app.expense_categories c ON c.id = e.category_id`+eq.Where()+`
 			GROUP BY c.id, c.name HAVING SUM(e.amount) <> 0 ORDER BY amount DESC`, eq.Args...)
 		if err != nil {
 			return r, err
@@ -97,8 +96,8 @@ func (s *Service) pl(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, f Filte
 		}
 
 		// Include approved/paid payroll runs in operating expenses.
-		pq := sqlq.New(tenantID)
-		pq.Add("pr.tenant_id = $1 AND pr.status IN ('approved','paid')")
+		pq := sqlq.New()
+		pq.Add("pr.status IN ('approved','paid')")
 		if f.From != "" {
 			pq.Add("make_date(pr.period_year, pr.period_month, 1) >= date_trunc('month', ?::date)::date", f.From)
 		}
@@ -109,12 +108,12 @@ func (s *Service) pl(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, f Filte
 		payRow, err := one(ctx, tx, `
 			SELECT COALESCE(SUM(pl.gross_pay), 0) + COALESCE(SUM(si.employer_total), 0) AS amt
 			FROM app.payroll_runs pr
-			JOIN app.payroll_lines pl ON pl.tenant_id = pr.tenant_id AND pl.payroll_run_id = pr.id
+			JOIN app.payroll_lines pl ON pl.payroll_run_id = pr.id
 			LEFT JOIN (
-				SELECT tenant_id, payroll_line_id, SUM(employer_amount) AS employer_total
+				SELECT payroll_line_id, SUM(employer_amount) AS employer_total
 				FROM app.payroll_statutory_items
-				GROUP BY tenant_id, payroll_line_id
-			) si ON si.tenant_id = pl.tenant_id AND si.payroll_line_id = pl.id`+pq.Where(), pq.Args...)
+				GROUP BY payroll_line_id
+			) si ON si.payroll_line_id = pl.id`+pq.Where(), pq.Args...)
 		if err != nil {
 			return r, err
 		}
@@ -137,7 +136,7 @@ func (s *Service) ProfitLoss(ctx context.Context, p *auth.Principal, f Filter) (
 	var prevRange map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		if cur, err = s.pl(ctx, tx, p.TenantID, f); err != nil {
+		if cur, err = s.pl(ctx, tx, f); err != nil {
 			return err
 		}
 		if f.Q("compare") == "previous" {
@@ -146,7 +145,7 @@ func (s *Service) ProfitLoss(ctx context.Context, p *auth.Principal, f Filter) (
 			}
 			pf := f
 			pf.From, pf.To = previousRange(f.From, f.To)
-			if prev, err = s.pl(ctx, tx, p.TenantID, pf); err != nil {
+			if prev, err = s.pl(ctx, tx, pf); err != nil {
 				return err
 			}
 			prevRange = map[string]any{"from": pf.From, "to": pf.To}
@@ -197,8 +196,8 @@ func previousRange(from, to string) (string, string) {
 }
 
 var expenseGroups = map[string]struct{ key, label, join string }{
-	"category": {"e.category_id", "c.name::text AS category", "JOIN app.expense_categories c ON c.tenant_id = e.tenant_id AND c.id = e.category_id"},
-	"branch":   {"e.location_id", "b.name::text AS branch", "JOIN app.locations b ON b.tenant_id = e.tenant_id AND b.id = e.location_id"},
+	"category": {"e.category_id", "c.name::text AS category", "JOIN app.expense_categories c ON c.id = e.category_id"},
+	"branch":   {"e.location_id", "b.name::text AS branch", "JOIN app.locations b ON b.id = e.location_id"},
 	"payee":    {"COALESCE(NULLIF(e.description::text, ''), '-')", "COALESCE(NULLIF(e.description::text, ''), '-') AS payee", ""},
 	"month":    {"date_trunc('month', e.expense_date)::date", "date_trunc('month', e.expense_date)::date AS month", ""},
 }
@@ -215,8 +214,8 @@ func (s *Service) Expenses(ctx context.Context, p *auth.Principal, f Filter) (ex
 	}
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("e.tenant_id = $1 AND e.status IN ('approved','paid')")
+		q := sqlq.New()
+		q.Add("e.status IN ('approved','paid')")
 		f.dates(q, "e.expense_date")
 		f.branch(q, "e.location_id")
 		gb := g.key
@@ -240,9 +239,9 @@ func (s *Service) Expenses(ctx context.Context, p *auth.Principal, f Filter) (ex
 func (s *Service) CashFlow(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list, byKind []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
+		q := sqlq.New()
 		from, to := q.Arg(nullDate(f.From)), q.Arg(nullDate(f.To))
-		acc := " AND ma.tenant_id = $1"
+		acc := " "
 		if f.Branches != nil {
 			acc += " AND (ma.location_id IS NULL OR ma.location_id = ANY(" + q.Arg(f.Branches) + "))"
 		}
@@ -257,14 +256,13 @@ func (s *Service) CashFlow(ctx context.Context, p *auth.Principal, f Filter) (ex
 			       COALESCE(SUM(t.amount) FILTER (WHERE t.direction = 'out' AND (`+from+`::date IS NULL OR t.business_date >= `+from+`::date) AND (`+to+`::date IS NULL OR t.business_date <= `+to+`::date)), 0) AS money_out,
 			       COALESCE(SUM(CASE WHEN t.direction = 'in' THEN t.amount ELSE -t.amount END) FILTER (WHERE `+to+`::date IS NULL OR t.business_date <= `+to+`::date), 0) AS closing
 			FROM app.financial_accounts ma
-			LEFT JOIN app.financial_transactions t ON t.tenant_id = ma.tenant_id AND t.account_id = ma.id
+			LEFT JOIN app.financial_transactions t ON t.account_id = ma.id
 			WHERE true`+acc+`
 			GROUP BY ma.id, ma.name, ma.kind ORDER BY ma.kind, ma.name`, q.Args...)
 		if err != nil {
 			return err
 		}
-		k := sqlq.New(p.TenantID)
-		k.Add("t.tenant_id = $1")
+		k := sqlq.New()
 		f.dates(k, "t.business_date")
 		if f.Branches != nil {
 			k.Add("(ma.location_id IS NULL OR ma.location_id = ANY(?))", f.Branches)
@@ -278,7 +276,7 @@ func (s *Service) CashFlow(ctx context.Context, p *auth.Principal, f Filter) (ex
 			       COALESCE(SUM(t.amount) FILTER (WHERE t.direction = 'out'), 0) AS money_out,
 			       COALESCE(SUM(CASE WHEN t.direction = 'in' THEN t.amount ELSE -t.amount END), 0) AS net
 			FROM app.financial_transactions t
-			JOIN app.financial_accounts ma ON ma.tenant_id = t.tenant_id AND ma.id = t.account_id`+k.Where()+`
+			JOIN app.financial_accounts ma ON ma.id = t.account_id`+k.Where()+`
 			GROUP BY t.txn_type ORDER BY t.txn_type`, k.Args...)
 		return err
 	})
@@ -306,11 +304,10 @@ func (s *Service) BalanceSheet(ctx context.Context, p *auth.Principal, f Filter)
 			SELECT ma.kind::text AS kind, ma.name::text AS name,
 			       COALESCE(SUM(CASE WHEN t.direction = 'in' THEN t.amount ELSE -t.amount END), 0) AS amount
 			FROM app.financial_accounts ma
-			LEFT JOIN app.financial_transactions t ON t.tenant_id = ma.tenant_id AND t.account_id = ma.id AND t.business_date <= $2::date
-			WHERE ma.tenant_id = $1
+			LEFT JOIN app.financial_transactions t ON t.account_id = ma.id AND t.business_date <= $1::date
 			GROUP BY ma.id, ma.kind, ma.name
 			HAVING COALESCE(SUM(CASE WHEN t.direction = 'in' THEN t.amount ELSE -t.amount END), 0) <> 0
-			ORDER BY ma.kind, ma.name`, p.TenantID, asOf)
+			ORDER BY ma.kind, ma.name`, asOf)
 		if err != nil {
 			return err
 		}
@@ -322,9 +319,9 @@ func (s *Service) BalanceSheet(ctx context.Context, p *auth.Principal, f Filter)
 
 		// Receivables (credit sales + invoices).
 		arRow, err := one(ctx, tx, `
-			SELECT COALESCE((SELECT SUM(balance_due) FROM app.sales WHERE tenant_id = $1 AND status = 'completed' AND business_date <= $2::date AND balance_due > 0), 0)
-			     + COALESCE((SELECT SUM(balance_due) FROM app.invoices WHERE tenant_id = $1 AND status IN ('issued','partially_paid') AND issue_date <= $2::date AND balance_due > 0), 0) AS amt`,
-			p.TenantID, asOf)
+			SELECT COALESCE((SELECT SUM(balance_due) FROM app.sales WHERE status = 'completed' AND business_date <= $1::date AND balance_due > 0), 0)
+			     + COALESCE((SELECT SUM(balance_due) FROM app.invoices WHERE status IN ('issued','partially_paid') AND issue_date <= $1::date AND balance_due > 0), 0) AS amt`,
+			asOf)
 		if err != nil {
 			return err
 		}
@@ -338,10 +335,10 @@ func (s *Service) BalanceSheet(ctx context.Context, p *auth.Principal, f Filter)
 			SELECT COALESCE(ROUND(SUM(q.qty * pr.average_cost), 2), 0) AS amt
 			FROM (
 				SELECT product_id, SUM(quantity_delta) AS qty
-				FROM app.stock_movements WHERE tenant_id = $1 AND business_date <= $2::date
+				FROM app.stock_movements WHERE business_date <= $1::date
 				GROUP BY product_id
 			) q
-			JOIN app.products pr ON pr.tenant_id = $1 AND pr.id = q.product_id`, p.TenantID, asOf)
+			JOIN app.products pr ON pr.id = q.product_id`, asOf)
 		if err != nil {
 			return err
 		}
@@ -352,9 +349,9 @@ func (s *Service) BalanceSheet(ctx context.Context, p *auth.Principal, f Filter)
 
 		// Payables (suppliers + contractors).
 		apRow, err := one(ctx, tx, `
-			SELECT COALESCE((SELECT SUM(balance_due) FROM app.purchases WHERE tenant_id = $1 AND status <> 'cancelled' AND order_date <= $2::date AND balance_due > 0), 0)
-			     + COALESCE((SELECT SUM(balance_due) FROM app.contractor_bills WHERE tenant_id = $1 AND status IN ('open','partially_paid') AND bill_date <= $2::date AND balance_due > 0), 0) AS amt`,
-			p.TenantID, asOf)
+			SELECT COALESCE((SELECT SUM(balance_due) FROM app.purchases WHERE status <> 'cancelled' AND order_date <= $1::date AND balance_due > 0), 0)
+			     + COALESCE((SELECT SUM(balance_due) FROM app.contractor_bills WHERE status IN ('open','partially_paid') AND bill_date <= $1::date AND balance_due > 0), 0) AS amt`,
+			asOf)
 		if err != nil {
 			return err
 		}
@@ -367,8 +364,8 @@ func (s *Service) BalanceSheet(ctx context.Context, p *auth.Principal, f Filter)
 		prRow, err := one(ctx, tx, `
 			SELECT COALESCE(SUM(pl.net_pay), 0) AS amt
 			FROM app.payroll_lines pl
-			JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id
-			WHERE r.tenant_id = $1 AND r.status = 'approved' AND make_date(r.period_year, r.period_month, 1) <= $2::date`, p.TenantID, asOf)
+			JOIN app.payroll_runs r ON r.id = pl.payroll_run_id
+			WHERE r.status = 'approved' AND make_date(r.period_year, r.period_month, 1) <= $1::date`, asOf)
 		if err != nil {
 			return err
 		}
@@ -378,7 +375,7 @@ func (s *Service) BalanceSheet(ctx context.Context, p *auth.Principal, f Filter)
 		}
 
 		// Current earnings (cumulative P&L up to asOf) & owner capital balancing line.
-		plRes, err := s.pl(ctx, tx, p.TenantID, Filter{To: asOf, Query: map[string]string{}})
+		plRes, err := s.pl(ctx, tx, Filter{To: asOf, Query: map[string]string{}})
 		if err != nil {
 			return err
 		}
@@ -403,11 +400,11 @@ func (s *Service) BalanceSheet(ctx context.Context, p *auth.Principal, f Filter)
 func (s *Service) Tax(ctx context.Context, p *auth.Principal, f Filter) (export.Table, map[string]any, error) {
 	var list []map[string]any
 	err := s.tx(ctx, p, &f, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		sc := "s.tenant_id = $1 AND s.status = 'completed'"
-		rc := "r.tenant_id = $1 AND r.status = 'completed'"
-		ic := "i.tenant_id = $1 AND i.status IN ('issued','partially_paid','paid')"
-		pc := "pu.tenant_id = $1 AND pu.status <> 'cancelled'"
+		q := sqlq.New()
+		sc := "s.status = 'completed'"
+		rc := "r.status = 'completed'"
+		ic := "i.status IN ('issued','partially_paid','paid')"
+		pc := "pu.status <> 'cancelled'"
 		if f.From != "" {
 			a := q.Arg(f.From)
 			sc += " AND s.business_date >= " + a + "::date"
@@ -444,9 +441,9 @@ func (s *Service) Tax(ctx context.Context, p *auth.Principal, f Filter) (export.
 				       - ROUND(sl.tax_amount * (CASE WHEN s.subtotal > 0 THEN s.total / s.subtotal ELSE 1 END) * rl.quantity / sl.quantity, 2)),
 				       -ROUND(sl.tax_amount * (CASE WHEN s.subtotal > 0 THEN s.total / s.subtotal ELSE 1 END) * rl.quantity / sl.quantity, 2), 0
 				FROM app.sale_returns r
-				JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id
-				JOIN app.sale_return_lines rl ON rl.tenant_id = r.tenant_id AND rl.sale_return_id = r.id
-				JOIN app.sale_lines sl ON sl.tenant_id = rl.tenant_id AND sl.id = rl.sale_line_id
+				JOIN app.sales s ON s.id = r.sale_id
+				JOIN app.sale_return_lines rl ON rl.sale_return_id = r.id
+				JOIN app.sale_lines sl ON sl.id = rl.sale_line_id
 				WHERE `+rc+`
 				UNION ALL
 				SELECT date_trunc('month', i.issue_date)::date, (i.total - i.tax_amount), i.tax_amount, 0

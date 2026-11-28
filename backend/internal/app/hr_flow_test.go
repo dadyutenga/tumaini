@@ -179,7 +179,7 @@ func TestHRFlow(t *testing.T) {
 	dID := employee(t, o, "Daudi", "200000", nil)
 	ev = mgr.call(t, http.MethodPost, "/api/v1/attendance/events", map[string]any{"employee_id": dID, "type": "in", "at": "2026-11-14T05:00:00Z", "reason": "Shared device"}, "")
 	require.Equal(t, 201, ev.code, ev.raw)
-	require.NoError(t, e.app.Jobs.Enqueue(context.Background(), e.tenantID, "attendance_close", map[string]any{"date": "2026-11-14"}))
+	require.NoError(t, e.app.Jobs.Enqueue(context.Background(), "attendance_close", map[string]any{"date": "2026-11-14"}))
 	e.runJobs(t)
 	cDay := asList(o.call(t, http.MethodGet, "/api/v1/attendance/days?employee_id="+cID+"&from=2026-11-14&to=2026-11-14", nil, "").body["data"])
 	require.Len(t, cDay, 1)

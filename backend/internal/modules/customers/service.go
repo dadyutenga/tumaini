@@ -82,9 +82,9 @@ type Input struct {
 // custCols: balance is what the customer owes on completed sales; credit is money received from them
 // that is not yet applied to any sale or invoice.
 const custCols = `c.id, c.full_name::text, c.business_name, c.phone::text, c.email::text, c.address, c.credit_limit, c.notes, c.created_at, c.archived_at IS NULL,
-	COALESCE((SELECT SUM(s.balance_due) FROM app.sales s WHERE s.tenant_id=c.tenant_id AND s.customer_id=c.id AND s.status='completed'),0),
-	COALESCE((SELECT SUM(pr.amount - COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.tenant_id=pr.tenant_id AND a.payment_received_id=pr.id),0))
-	          FROM app.payments_received pr WHERE pr.tenant_id=c.tenant_id AND pr.customer_id=c.id AND pr.status='posted'),0)`
+	COALESCE((SELECT SUM(s.balance_due) FROM app.sales s WHERE s.customer_id=c.id AND s.status='completed'),0),
+	COALESCE((SELECT SUM(pr.amount - COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.payment_received_id=pr.id),0))
+	          FROM app.payments_received pr WHERE pr.customer_id=c.id AND pr.status='posted'),0)`
 
 func scanCustomer(row pgx.Row, c *Customer) error {
 	var limit *decimal.Decimal
@@ -105,15 +105,15 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, f Filter, page ht
 	out := []Customer{}
 	total := 0
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("c.tenant_id = $1 AND c.is_shop_customer")
+		q := sqlq.New()
+		q.Add("c.is_shop_customer")
 		// Without "view all customers" a person sees only the customers they registered.
 		q.If(!p.Has("shop.customer.view_all"), "c.registered_by = ?", p.MembershipID)
 		if qq := strings.TrimSpace(f.Q); qq != "" {
 			q.Add("(c.full_name ILIKE '%' || ? || '%' OR c.phone ILIKE '%' || ? || '%' OR c.email::text ILIKE '%' || ? || '%')", qq, qq, qq)
 		}
 		q.If(f.Active != nil, "(c.archived_at IS NULL) = ?", f.Active)
-		q.If(f.HasBalance, "EXISTS (SELECT 1 FROM app.sales s WHERE s.tenant_id=c.tenant_id AND s.customer_id=c.id AND s.balance_due > 0 AND s.status='completed')")
+		q.If(f.HasBalance, "EXISTS (SELECT 1 FROM app.sales s WHERE s.customer_id=c.id AND s.balance_due > 0 AND s.status='completed')")
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.customers c`+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
@@ -150,9 +150,9 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in Input) (Cust
 			limit = money.Money(in.CreditLimit)
 		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO app.customers (id, tenant_id, full_name, business_name, phone, email, address, is_shop_customer, credit_limit, notes)
-			VALUES ($1,$2,$3,NULLIF($4,''),NULLIF($5,'')::app.phone_e164,NULLIF($6,'')::app.email,NULLIF($7,''),true,$8,NULLIF($9,''))`,
-			id, p.TenantID, strings.TrimSpace(in.Name), strings.TrimSpace(in.BusinessName), ph, strings.ToLower(strings.TrimSpace(in.Email)), in.Address, limit, in.Notes)
+			INSERT INTO app.customers (id, full_name, business_name, phone, email, address, is_shop_customer, credit_limit, notes)
+			VALUES ($1,$2,NULLIF($3,''),NULLIF($4,'')::app.phone_e164,NULLIF($5,'')::app.email,NULLIF($6,''),true,$7,NULLIF($8,''))`,
+			id, strings.TrimSpace(in.Name), strings.TrimSpace(in.BusinessName), ph, strings.ToLower(strings.TrimSpace(in.Email)), in.Address, limit, in.Notes)
 		if db.IsUnique(err) {
 			return httpx.Conflict("duplicate", "A customer with that phone already exists")
 		}
@@ -172,26 +172,20 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (Cus
 	var c Customer
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var err error
-		c, err = s.load(ctx, tx, p.TenantID, id)
+		c, err = s.load(ctx, tx, id)
 		if err != nil {
 			return err
 		}
 		if !p.Has("shop.customer.view_all") {
 			var mine bool
-			if err := tx.QueryRow(ctx, `SELECT registered_by = $3 FROM app.customers WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, p.MembershipID).Scan(&mine); err != nil || !mine {
+			if err := tx.QueryRow(ctx, "SELECT registered_by = $2 FROM app.customers WHERE id = $1", id, p.MembershipID).Scan(&mine); err != nil || !mine {
 				return httpx.NotFound("not_found", "Customer not found")
 			}
 		}
 		var purchases, paid decimal.Decimal
 		var n int
 		var last *time.Time
-		if err := tx.QueryRow(ctx, `
-			SELECT COALESCE((SELECT SUM(s.total) FROM app.sales s WHERE s.tenant_id=$1 AND s.customer_id=$2 AND s.status='completed'),0),
-			       COALESCE((SELECT SUM(pr.amount) FROM app.payments_received pr WHERE pr.tenant_id=$1 AND pr.customer_id=$2 AND pr.status='posted'),0),
-			       (SELECT count(*) FROM app.sales WHERE tenant_id=$1 AND customer_id=$2 AND status='completed'),
-			       GREATEST((SELECT max(created_at) FROM app.sales WHERE tenant_id=$1 AND customer_id=$2 AND status NOT IN ('held','draft')),
-			                (SELECT max(created_at) FROM app.payments_received WHERE tenant_id=$1 AND customer_id=$2))
-		`, p.TenantID, id).Scan(&purchases, &paid, &n, &last); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT COALESCE((SELECT SUM(s.total) FROM app.sales s WHERE s.customer_id=$1 AND s.status='completed'),0),\n\t\t\t       COALESCE((SELECT SUM(pr.amount) FROM app.payments_received pr WHERE pr.customer_id=$1 AND pr.status='posted'),0),\n\t\t\t       (SELECT count(*) FROM app.sales WHERE customer_id=$1 AND status='completed'),\n\t\t\t       GREATEST((SELECT max(created_at) FROM app.sales WHERE customer_id=$1 AND status NOT IN ('held','draft')),\n\t\t\t                (SELECT max(created_at) FROM app.payments_received WHERE customer_id=$1))\n\t\t", id).Scan(&purchases, &paid, &n, &last); err != nil {
 			return err
 		}
 		avail := c.CreditLimit.Sub(c.Balance)
@@ -204,9 +198,9 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (Cus
 	return c, err
 }
 
-func (s *Service) load(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (Customer, error) {
+func (s *Service) load(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Customer, error) {
 	var c Customer
-	err := scanCustomer(tx.QueryRow(ctx, `SELECT `+custCols+` FROM app.customers c WHERE c.tenant_id=$1 AND c.id=$2 AND c.is_shop_customer`, tenantID, id), &c)
+	err := scanCustomer(tx.QueryRow(ctx, `SELECT `+custCols+` FROM app.customers c WHERE c.id=$1 AND c.is_shop_customer`, id), &c)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, httpx.NotFound("not_found", "Customer not found")
 	}
@@ -219,16 +213,11 @@ func (s *Service) Update(ctx context.Context, p *auth.Principal, id uuid.UUID, i
 		return Customer{}, httpx.BadRequest("invalid_phone", err.Error())
 	}
 	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		before, err := s.load(ctx, tx, p.TenantID, id)
+		before, err := s.load(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		_, err = tx.Exec(ctx, `
-			UPDATE app.customers SET full_name=COALESCE(NULLIF($2,''), full_name), business_name=COALESCE(NULLIF($3,''), business_name),
-			phone=COALESCE(NULLIF($4,'')::app.phone_e164, phone), email=COALESCE(NULLIF($5,'')::app.email, email),
-			address=COALESCE(NULLIF($6,''), address), notes=COALESCE(NULLIF($7,''), notes)
-			WHERE tenant_id=$1 AND id=$8`,
-			p.TenantID, strings.TrimSpace(in.Name), strings.TrimSpace(in.BusinessName), ph, strings.ToLower(strings.TrimSpace(in.Email)), in.Address, in.Notes, id)
+		_, err = tx.Exec(ctx, "\n\t\t\tUPDATE app.customers SET full_name=COALESCE(NULLIF($1,''), full_name), business_name=COALESCE(NULLIF($2,''), business_name),\n\t\t\tphone=COALESCE(NULLIF($3,'')::app.phone_e164, phone), email=COALESCE(NULLIF($4,'')::app.email, email),\n\t\t\taddress=COALESCE(NULLIF($5,''), address), notes=COALESCE(NULLIF($6,''), notes)\n\t\t\tWHERE id=$7", strings.TrimSpace(in.Name), strings.TrimSpace(in.BusinessName), ph, strings.ToLower(strings.TrimSpace(in.Email)), in.Address, in.Notes, id)
 		if db.IsUnique(err) {
 			return httpx.Conflict("duplicate", "A customer with that phone already exists")
 		}
@@ -250,11 +239,11 @@ func (s *Service) CreditLimit(ctx context.Context, p *auth.Principal, id uuid.UU
 		return httpx.BadRequest("invalid_body", "Credit limit cannot be negative and terms must be 0 to 365 days")
 	}
 	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		before, err := s.load(ctx, tx, p.TenantID, id)
+		before, err := s.load(ctx, tx, id)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.customers SET credit_limit=$3 WHERE tenant_id=$1 AND id=$2`, p.TenantID, id, money.Money(limit)); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.customers SET credit_limit=$2 WHERE id=$1", id, money.Money(limit)); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "customer.credit_limit", "customers", id,
@@ -265,14 +254,14 @@ func (s *Service) CreditLimit(ctx context.Context, p *auth.Principal, id uuid.UU
 // Deactivate archives a customer so they are hidden from new sales. A customer who still owes cannot be archived.
 func (s *Service) Deactivate(ctx context.Context, p *auth.Principal, id uuid.UUID) (Customer, error) {
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		c, err := s.load(ctx, tx, p.TenantID, id)
+		c, err := s.load(ctx, tx, id)
 		if err != nil {
 			return err
 		}
 		if c.Balance.IsPositive() {
 			return httpx.Conflict("has_balance", "This customer still owes "+c.Balance.StringFixed(2)+". Collect the debt first")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.customers SET archived_at=now() WHERE tenant_id=$1 AND id=$2`, p.TenantID, id); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.customers SET archived_at=now() WHERE id=$1", id); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "customer.deactivated", "customers", id, map[string]any{"is_active": c.IsActive}, map[string]any{"is_active": false})
@@ -318,13 +307,13 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, customerID uui
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
 			return err
 		}
-		if _, err := s.load(ctx, tx, p.TenantID, customerID); err != nil {
+		if _, err := s.load(ctx, tx, customerID); err != nil {
 			return err
 		}
 		date := in.Date
@@ -347,7 +336,7 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, customerID uui
 				}
 				seen[a.SaleID] = true
 				var bal decimal.Decimal
-				if err := tx.QueryRow(ctx, `SELECT balance_due FROM app.sales WHERE tenant_id=$1 AND id=$2 AND customer_id=$3 AND status='completed' FOR UPDATE`, p.TenantID, a.SaleID, customerID).Scan(&bal); err != nil {
+				if err := tx.QueryRow(ctx, "SELECT balance_due FROM app.sales WHERE id=$1 AND customer_id=$2 AND status='completed' FOR UPDATE", a.SaleID, customerID).Scan(&bal); err != nil {
 					return httpx.NotFound("not_found", "One of the sales was not found for this customer")
 				}
 				amt := money.Money(a.Amount)
@@ -362,9 +351,7 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, customerID uui
 				return httpx.BadRequest("invalid_body", "Allocations are more than the amount received")
 			}
 		} else {
-			rows, err := tx.Query(ctx, `
-				SELECT id, balance_due FROM app.sales WHERE tenant_id=$1 AND customer_id=$2 AND status='completed' AND balance_due > 0
-				ORDER BY business_date, created_at FOR UPDATE`, p.TenantID, customerID)
+			rows, err := tx.Query(ctx, "\n\t\t\t\tSELECT id, balance_due FROM app.sales WHERE customer_id=$1 AND status='completed' AND balance_due > 0\n\t\t\t\tORDER BY business_date, created_at FOR UPDATE", customerID)
 			if err != nil {
 				return err
 			}
@@ -398,7 +385,8 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, customerID uui
 		}
 		cust := customerID
 		rec, err := payments.Receive(ctx, tx, payments.ReceiveInput{
-			TenantID: p.TenantID, LocationID: *p.BranchID, AccountID: in.MoneyAccountID, CustomerID: &cust, Purpose: purpose,
+			LocationID: *p.BranchID,
+			AccountID:  in.MoneyAccountID, CustomerID: &cust, Purpose: purpose,
 			Method: method, Amount: in.Amount, Reference: ref, BusinessDate: date, Allocations: targets,
 		})
 		if err != nil {
@@ -408,7 +396,7 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, customerID uui
 		if err := s.Audit.Record(ctx, tx, p, "customer.payment_received", "payments_received", rec.ID, nil, map[string]any{"number": rec.Number, "amount": in.Amount, "allocated": allocated, "credit": credit}); err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 201, httpx.Data(map[string]any{"id": rec.ID, "number": rec.Number, "amount": in.Amount, "allocated": allocated, "credit_added": credit}))
+		raw, err := idem.Complete(ctx, tx, 201, httpx.Data(map[string]any{"id": rec.ID, "number": rec.Number, "amount": in.Amount, "allocated": allocated, "credit_added": credit}))
 		status, body = 201, raw
 		return err
 	})
@@ -419,18 +407,14 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, customerID uui
 func (s *Service) Unpaid(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := s.load(ctx, tx, p.TenantID, id); err != nil {
+		if _, err := s.load(ctx, tx, id); err != nil {
 			return err
 		}
 		today, err := s.bizDate(ctx, tx)
 		if err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `
-			SELECT s.id, coalesce(s.receipt_no,''), s.location_id, s.business_date::text, s.due_date::text, s.total, s.amount_paid, s.balance_due,
-			       ($3::date - s.business_date), CASE WHEN s.due_date IS NOT NULL AND s.due_date < $3::date THEN ($3::date - s.due_date) ELSE 0 END
-			FROM app.sales s WHERE s.tenant_id=$1 AND s.customer_id=$2 AND s.status='completed' AND s.balance_due > 0
-			ORDER BY s.business_date, s.created_at`, p.TenantID, id, today)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT s.id, coalesce(s.receipt_no,''), s.location_id, s.business_date::text, s.due_date::text, s.total, s.amount_paid, s.balance_due,\n\t\t\t       ($2::date - s.business_date), CASE WHEN s.due_date IS NOT NULL AND s.due_date < $2::date THEN ($2::date - s.due_date) ELSE 0 END\n\t\t\tFROM app.sales s WHERE s.customer_id=$1 AND s.status='completed' AND s.balance_due > 0\n\t\t\tORDER BY s.business_date, s.created_at", id, today)
 		if err != nil {
 			return err
 		}
@@ -461,7 +445,7 @@ func (s *Service) Unpaid(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 func (s *Service) Statement(ctx context.Context, p *auth.Principal, id uuid.UUID, from, to string) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		c, err := s.load(ctx, tx, p.TenantID, id)
+		c, err := s.load(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -470,20 +454,20 @@ func (s *Service) Statement(ctx context.Context, p *auth.Principal, id uuid.UUID
 		}
 		const union = `(
 			SELECT s.business_date AS d, s.created_at AS at, 'sale' AS type, coalesce(s.receipt_no,'') AS number, 'Sale' AS description, s.total AS debit, 0::numeric AS credit
-			  FROM app.sales s WHERE s.tenant_id = $1 AND s.customer_id = $2 AND s.status = 'completed'
+			  FROM app.sales s WHERE s.customer_id = $1 AND s.status = 'completed'
 			UNION ALL
 			SELECT pr.business_date, pr.created_at, 'payment', pr.receipt_no, 'Payment received', 0, pr.amount
-			  FROM app.payments_received pr WHERE pr.tenant_id = $1 AND pr.customer_id = $2 AND pr.status = 'posted'
+			  FROM app.payments_received pr WHERE pr.customer_id = $1 AND pr.status = 'posted'
 			UNION ALL
 			SELECT pm.business_date, pm.created_at, 'refund', pm.payment_no, 'Refund paid', pm.amount, 0
-			  FROM app.payments_made pm WHERE pm.tenant_id = $1 AND pm.customer_id = $2 AND pm.status = 'posted'
+			  FROM app.payments_made pm WHERE pm.customer_id = $1 AND pm.status = 'posted'
 		) x`
 		var opening decimal.Decimal
-		if err := tx.QueryRow(ctx, `SELECT coalesce(sum(debit - credit), 0) FROM `+union+` WHERE d < $3::date`, p.TenantID, id, from).Scan(&opening); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT coalesce(sum(debit - credit), 0) FROM `+union+` WHERE d < $2::date`, id, from).Scan(&opening); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT d::text, at, type, number, description, debit, credit FROM `+union+`
-			WHERE d >= $3::date AND ($4 = '' OR d <= $4::date) ORDER BY d, at`, p.TenantID, id, from, to)
+			WHERE d >= $2::date AND ($3 = '' OR d <= $3::date) ORDER BY d, at`, id, from, to)
 		if err != nil {
 			return err
 		}
@@ -516,14 +500,13 @@ func (s *Service) Debts(ctx context.Context, p *auth.Principal, key string) ([]m
 		}
 		rows, err := tx.Query(ctx, `
 			SELECT c.id, c.full_name::text, c.phone::text, coalesce(c.credit_limit, 0), COALESCE(SUM(s.balance_due),0),
-			  COALESCE(SUM(s.balance_due) FILTER (WHERE $2::date - s.business_date <= 30),0),
-			  COALESCE(SUM(s.balance_due) FILTER (WHERE $2::date - s.business_date BETWEEN 31 AND 60),0),
-			  COALESCE(SUM(s.balance_due) FILTER (WHERE $2::date - s.business_date BETWEEN 61 AND 90),0),
-			  COALESCE(SUM(s.balance_due) FILTER (WHERE $2::date - s.business_date > 90),0),
+			  COALESCE(SUM(s.balance_due) FILTER (WHERE $1::date - s.business_date <= 30),0),
+			  COALESCE(SUM(s.balance_due) FILTER (WHERE $1::date - s.business_date BETWEEN 31 AND 60),0),
+			  COALESCE(SUM(s.balance_due) FILTER (WHERE $1::date - s.business_date BETWEEN 61 AND 90),0),
+			  COALESCE(SUM(s.balance_due) FILTER (WHERE $1::date - s.business_date > 90),0),
 			  min(s.business_date)::text, count(*)
-			FROM app.customers c JOIN app.sales s ON s.tenant_id = c.tenant_id AND s.customer_id = c.id AND s.balance_due > 0 AND s.status = 'completed'
-			WHERE c.tenant_id = $1
-			GROUP BY c.id ORDER BY 5 DESC, c.full_name`, p.TenantID, today)
+			FROM app.customers c JOIN app.sales s ON s.customer_id = c.id AND s.balance_due > 0 AND s.status = 'completed'
+			GROUP BY c.id ORDER BY 5 DESC, c.full_name`, today)
 		if err != nil {
 			return err
 		}
@@ -605,7 +588,7 @@ func (s *Service) SendStatement(ctx context.Context, p *auth.Principal, id uuid.
 	key := fmt.Sprintf("cust-stmt:%s:%s:%s:%s:%s", id.String(), ch, from, to, suffix)
 	var out map[string]any
 	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+		row, err := s.Outbound.Enqueue(ctx, tx, outbound.Message{
 			Channel:        ch,
 			Recipient:      recipient,
 			Subject:        "Account statement",
@@ -633,7 +616,7 @@ func (s *Service) SendDebtReminder(ctx context.Context, p *auth.Principal, id uu
 	}
 	var out map[string]any
 	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		c, err := s.load(ctx, tx, p.TenantID, id)
+		c, err := s.load(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -663,7 +646,7 @@ func (s *Service) SendDebtReminder(ctx context.Context, p *auth.Principal, id uu
 			},
 		)
 		key := fmt.Sprintf("debt-reminder:shop:%s:%s:%s", id.String(), ch, today)
-		row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+		row, err := s.Outbound.Enqueue(ctx, tx, outbound.Message{
 			Channel:        ch,
 			Recipient:      recipient,
 			Subject:        "Payment reminder",

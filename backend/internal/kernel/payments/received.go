@@ -29,7 +29,7 @@ type FinAccount struct {
 	Balance       decimal.Decimal
 }
 
-// LoadFin reads a financial account of the caller's tenant. A missing account is 404.
+// LoadFin reads a financial account by id. A missing account is 404.
 func LoadFin(ctx context.Context, tx pgx.Tx, id uuid.UUID) (FinAccount, error) {
 	var a FinAccount
 	err := tx.QueryRow(ctx, `
@@ -113,7 +113,6 @@ type Alloc struct {
 }
 
 type ReceiveInput struct {
-	TenantID     uuid.UUID
 	LocationID   uuid.UUID
 	AccountID    uuid.UUID
 	CustomerID   *uuid.UUID
@@ -148,19 +147,11 @@ func Receive(ctx context.Context, tx pgx.Tx, in ReceiveInput) (Receipt, error) {
 	}
 	var r Receipt
 	r.Number = number
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO app.payments_received (tenant_id, receipt_no, customer_id, business_unit_id, location_id, account_id, method, purpose,
-		                                   amount, reference, business_date, client_ref, notes)
-		VALUES ($1,$2,$3,(SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $4),$4,$5,$6::app.payment_method,$7::app.payment_purpose,
-		        $8,NULLIF($9,''),$10::date,$11,NULLIF($12,''))
-		RETURNING id`,
-		in.TenantID, number, in.CustomerID, in.LocationID, in.AccountID, method, in.Purpose, in.Amount, in.Reference, in.BusinessDate, in.ClientRef, in.Notes).Scan(&r.ID); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tINSERT INTO app.payments_received ( receipt_no, customer_id, business_unit_id, location_id, account_id, method, purpose,\n\t\t                                   amount, reference, business_date, client_ref, notes)\n\t\tVALUES ($1,$2,(SELECT business_unit_id FROM app.locations WHERE id = $3),$3,$4,$5::app.payment_method,$6::app.payment_purpose,\n\t\t        $7,NULLIF($8,''),$9::date,$10,NULLIF($11,''))\n\t\tRETURNING id", number, in.CustomerID, in.LocationID, in.AccountID, method, in.Purpose, in.Amount, in.Reference, in.BusinessDate, in.ClientRef, in.Notes).Scan(&r.ID); err != nil {
 		return Receipt{}, err
 	}
 	for _, a := range in.Allocations {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.payment_allocations (tenant_id, payment_received_id, sale_id, invoice_id, amount) VALUES ($1,$2,$3,$4,$5)`,
-			in.TenantID, r.ID, a.SaleID, a.InvoiceID, a.Amount); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.payment_allocations (payment_received_id, sale_id, invoice_id, amount) VALUES ($1, $2, $3, $4)", r.ID, a.SaleID, a.InvoiceID, a.Amount); err != nil {
 			return Receipt{}, err
 		}
 	}
@@ -168,7 +159,6 @@ func Receive(ctx context.Context, tx pgx.Tx, in ReceiveInput) (Receipt, error) {
 }
 
 type PayInput struct {
-	TenantID     uuid.UUID
 	LocationID   uuid.UUID
 	AccountID    uuid.UUID
 	SupplierID   *uuid.UUID
@@ -203,20 +193,12 @@ func Pay(ctx context.Context, tx pgx.Tx, in PayInput) (Receipt, error) {
 		return Receipt{}, err
 	}
 	r := Receipt{Number: number}
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO app.payments_made (tenant_id, payment_no, business_unit_id, location_id, account_id, method, amount, reference, business_date,
-		                               supplier_id, contractor_id, employee_id, customer_id, other_payee_name, client_ref, notes)
-		VALUES ($1,$2,(SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $3),$3,$4,$5::app.payment_method,$6,NULLIF($7,''),$8::date,
-		        $9,$10,$11,$12,NULLIF($13,''),$14,NULLIF($15,''))
-		RETURNING id`,
-		in.TenantID, number, in.LocationID, in.AccountID, method, in.Amount, in.Reference, in.BusinessDate,
+	if err := tx.QueryRow(ctx, "\n\t\tINSERT INTO app.payments_made ( payment_no, business_unit_id, location_id, account_id, method, amount, reference, business_date,\n\t\t                               supplier_id, contractor_id, employee_id, customer_id, other_payee_name, client_ref, notes)\n\t\tVALUES ($1,(SELECT business_unit_id FROM app.locations WHERE id = $2),$2,$3,$4::app.payment_method,$5,NULLIF($6,''),$7::date,\n\t\t        $8,$9,$10,$11,NULLIF($12,''),$13,NULLIF($14,''))\n\t\tRETURNING id", number, in.LocationID, in.AccountID, method, in.Amount, in.Reference, in.BusinessDate,
 		in.SupplierID, in.ContractorID, in.EmployeeID, in.CustomerID, in.OtherPayee, in.ClientRef, in.Notes).Scan(&r.ID); err != nil {
 		return Receipt{}, err
 	}
 	for _, a := range in.Allocations {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.payment_made_allocations (tenant_id, payment_made_id, purchase_id, contractor_bill_id, sale_return_id, amount) VALUES ($1,$2,$3,$4,$5,$6)`,
-			in.TenantID, r.ID, a.PurchaseID, a.BillID, a.SaleReturnID, a.Amount); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.payment_made_allocations (payment_made_id, purchase_id, contractor_bill_id, sale_return_id, amount) VALUES ($1, $2, $3, $4, $5)", r.ID, a.PurchaseID, a.BillID, a.SaleReturnID, a.Amount); err != nil {
 			return Receipt{}, err
 		}
 	}

@@ -28,13 +28,7 @@ func locationFilter(p *auth.Principal) *uuid.UUID { return p.BranchID }
 func (s *Service) Levels(ctx context.Context, p *auth.Principal, showCost bool) ([]map[string]any, error) {
 	out := []map[string]any{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT p.id, p.name::text, coalesce(p.sku, ''), coalesce(sum(b.quantity_on_hand), 0), p.average_cost,
-			       coalesce(p.min_stock_level, ts.low_stock_default)
-			FROM app.products p JOIN app.tenant_settings ts ON ts.tenant_id = p.tenant_id
-			LEFT JOIN app.stock_balances b ON b.tenant_id = p.tenant_id AND b.product_id = p.id AND ($1::uuid IS NULL OR b.location_id = $1)
-			WHERE p.tenant_id = $2 AND p.status = 'active'
-			GROUP BY p.id, ts.low_stock_default ORDER BY p.name`, locationFilter(p), p.TenantID)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT p.id, p.name::text, coalesce(p.sku, ''), coalesce(sum(b.quantity_on_hand), 0), p.average_cost,\n\t\t\t       coalesce(p.min_stock_level, ts.low_stock_default)\n\t\t\t		FROM app.products p CROSS JOIN app.business_settings ts\n\t\t\tLEFT JOIN app.stock_balances b ON b.product_id = p.id AND ($1::uuid IS NULL OR b.location_id = $1)\n\t\t\tWHERE p.status = 'active'\n\t\t\tGROUP BY p.id, ts.low_stock_default ORDER BY p.name", locationFilter(p))
 		if err != nil {
 			return err
 		}
@@ -61,14 +55,7 @@ func (s *Service) Levels(ctx context.Context, p *auth.Principal, showCost bool) 
 func (s *Service) Low(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	out := []map[string]any{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT p.id, p.name::text, coalesce(p.sku, ''), coalesce(sum(b.quantity_on_hand), 0), coalesce(p.min_stock_level, ts.low_stock_default)
-			FROM app.products p JOIN app.tenant_settings ts ON ts.tenant_id = p.tenant_id
-			LEFT JOIN app.stock_balances b ON b.tenant_id = p.tenant_id AND b.product_id = p.id AND ($1::uuid IS NULL OR b.location_id = $1)
-			WHERE p.tenant_id = $2 AND p.status = 'active'
-			GROUP BY p.id, ts.low_stock_default, p.min_stock_level
-			HAVING coalesce(sum(b.quantity_on_hand), 0) <= coalesce(p.min_stock_level, ts.low_stock_default)
-			ORDER BY p.name`, locationFilter(p), p.TenantID)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT p.id, p.name::text, coalesce(p.sku, ''), coalesce(sum(b.quantity_on_hand), 0), coalesce(p.min_stock_level, ts.low_stock_default)\n\t\t\t		FROM app.products p CROSS JOIN app.business_settings ts\n\t\t\tLEFT JOIN app.stock_balances b ON b.product_id = p.id AND ($1::uuid IS NULL OR b.location_id = $1)\n\t\t\tWHERE p.status = 'active'\n\t\t\tGROUP BY p.id, ts.low_stock_default, p.min_stock_level\n\t\t\tHAVING coalesce(sum(b.quantity_on_hand), 0) <= coalesce(p.min_stock_level, ts.low_stock_default)\n\t\t\tORDER BY p.name", locationFilter(p))
 		if err != nil {
 			return err
 		}
@@ -94,11 +81,11 @@ func (s *Service) Low(ctx context.Context, p *auth.Principal) ([]map[string]any,
 // sourceJoins resolves which document a stock movement came from. Each movement row points at exactly
 // one line (the table has a one-of constraint), so exactly one of these joins matches.
 const sourceJoins = `
-	LEFT JOIN app.sale_lines sl ON sl.tenant_id = m.tenant_id AND sl.id = m.sale_line_id
-	LEFT JOIN app.sale_return_lines srl ON srl.tenant_id = m.tenant_id AND srl.id = m.sale_return_line_id
-	LEFT JOIN app.goods_receipt_lines grl ON grl.tenant_id = m.tenant_id AND grl.id = m.goods_receipt_line_id
-	LEFT JOIN app.stock_adjustment_lines sal ON sal.tenant_id = m.tenant_id AND sal.id = m.stock_adjustment_line_id
-	LEFT JOIN app.stock_transfer_lines stl ON stl.tenant_id = m.tenant_id AND stl.id = m.stock_transfer_line_id`
+	LEFT JOIN app.sale_lines sl ON sl.id = m.sale_line_id
+	LEFT JOIN app.sale_return_lines srl ON srl.id = m.sale_return_line_id
+	LEFT JOIN app.goods_receipt_lines grl ON grl.id = m.goods_receipt_line_id
+	LEFT JOIN app.stock_adjustment_lines sal ON sal.id = m.stock_adjustment_line_id
+	LEFT JOIN app.stock_transfer_lines stl ON stl.id = m.stock_transfer_line_id`
 
 const sourceID = `coalesce(sl.sale_id, srl.sale_return_id, grl.goods_receipt_id, sal.stock_adjustment_id, stl.stock_transfer_id)`
 const sourceType = `CASE WHEN sl.id IS NOT NULL THEN 'sale' WHEN srl.id IS NOT NULL THEN 'sale_return' WHEN grl.id IS NOT NULL THEN 'goods_receipt'
@@ -111,23 +98,20 @@ func (s *Service) StockCard(ctx context.Context, p *auth.Principal, productID uu
 	var name string
 	opening := money.Zero
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT name::text FROM app.products WHERE tenant_id = $1 AND id = $2`, p.TenantID, productID).Scan(&name); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT name::text FROM app.products WHERE id = $1", productID).Scan(&name); err != nil {
 			return httpx.NotFound("not_found", "Product not found")
 		}
 		if from != "" {
-			if err := tx.QueryRow(ctx, `
-				SELECT coalesce(sum(quantity_delta), 0) FROM app.stock_movements
-				WHERE tenant_id = $1 AND product_id = $2 AND ($3::uuid IS NULL OR location_id = $3)
-				  AND occurred_at < $4::date`, p.TenantID, productID, locationFilter(p), from).Scan(&opening); err != nil {
+			if err := tx.QueryRow(ctx, "\n\t\t\t\tSELECT coalesce(sum(quantity_delta), 0) FROM app.stock_movements\n\t\t\t\tWHERE product_id = $1 AND ($2::uuid IS NULL OR location_id = $2)\n\t\t\t\t  AND occurred_at < $3::date", productID, locationFilter(p), from).Scan(&opening); err != nil {
 				return err
 			}
 		}
 		rows, err := tx.Query(ctx, `
 			SELECT m.id, m.movement_type::text, m.quantity_delta, coalesce(m.unit_cost, 0), `+sourceType+`, `+sourceID+`, m.occurred_at
 			FROM app.stock_movements m`+sourceJoins+`
-			WHERE m.tenant_id = $1 AND m.product_id = $2 AND ($3::uuid IS NULL OR m.location_id = $3)
-			  AND ($4 = '' OR m.occurred_at >= $4::date) AND ($5 = '' OR m.occurred_at < $5::date + 1)
-			ORDER BY m.occurred_at, m.id`, p.TenantID, productID, locationFilter(p), from, to)
+			WHERE m.product_id = $1 AND ($2::uuid IS NULL OR m.location_id = $2)
+			  AND ($3 = '' OR m.occurred_at >= $3::date) AND ($4 = '' OR m.occurred_at < $4::date + 1)
+			ORDER BY m.occurred_at, m.id`, productID, locationFilter(p), from, to)
 		if err != nil {
 			return err
 		}
@@ -163,12 +147,12 @@ func (s *Service) Valuation(ctx context.Context, p *auth.Principal, asOf string)
 		rows, err := tx.Query(ctx, `
 			SELECT x.location_id, l.name::text, pr.id, pr.name::text, c.name::text, x.qty, pr.average_cost
 			FROM (SELECT m.location_id, m.product_id, sum(m.quantity_delta) AS qty FROM app.stock_movements m
-			      WHERE m.tenant_id = $1 AND ($2::uuid IS NULL OR m.location_id = $2) AND ($3 = '' OR m.occurred_at < $3::date + 1)
+			      WHERE ($1::uuid IS NULL OR m.location_id = $1) AND ($2 = '' OR m.occurred_at < $2::date + 1)
 			      GROUP BY m.location_id, m.product_id) x
-			JOIN app.products pr ON pr.tenant_id = $1 AND pr.id = x.product_id
-			JOIN app.locations l ON l.tenant_id = $1 AND l.id = x.location_id
-			LEFT JOIN app.product_categories c ON c.tenant_id = $1 AND c.id = pr.category_id
-			WHERE x.qty <> 0 ORDER BY l.name, pr.name`, p.TenantID, locationFilter(p), asOf)
+			JOIN app.products pr ON pr.id = x.product_id
+			JOIN app.locations l ON l.id = x.location_id
+			LEFT JOIN app.product_categories c ON c.id = pr.category_id
+			WHERE x.qty <> 0 ORDER BY l.name, pr.name`, locationFilter(p), asOf)
 		if err != nil {
 			return err
 		}
@@ -224,19 +208,19 @@ func (s *Service) Movements(ctx context.Context, p *auth.Principal, f MovementFi
 		return out, 0, nil
 	}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		const where = ` WHERE m.tenant_id = $1 AND ($2::uuid IS NULL OR m.location_id = $2) AND ($3::uuid IS NULL OR m.product_id = $3)
-			AND ($4 = '' OR m.movement_type = $4::app.stock_movement_type)
-			AND ($5 = '' OR m.occurred_at >= $5::date) AND ($6 = '' OR m.occurred_at < $6::date + 1)`
-		args := []any{p.TenantID, locationFilter(p), f.ProductID, typ, f.From, f.To}
+		const where = ` WHERE ($1::uuid IS NULL OR m.location_id = $1) AND ($2::uuid IS NULL OR m.product_id = $2)
+			AND ($3 = '' OR m.movement_type = $3::app.stock_movement_type)
+			AND ($4 = '' OR m.occurred_at >= $4::date) AND ($5 = '' OR m.occurred_at < $5::date + 1)`
+		args := []any{locationFilter(p), f.ProductID, typ, f.From, f.To}
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.stock_movements m`+where, args...).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
 			SELECT m.id, m.location_id, m.product_id, p.name::text, m.movement_type::text, m.quantity_delta, coalesce(m.unit_cost, 0),
 			       `+sourceType+`, `+sourceID+`, mb.user_id, m.occurred_at
-			FROM app.stock_movements m JOIN app.products p ON p.tenant_id = m.tenant_id AND p.id = m.product_id`+sourceJoins+`
-			LEFT JOIN app.memberships mb ON mb.tenant_id = m.tenant_id AND mb.id = m.created_by`+where+`
-			ORDER BY m.occurred_at DESC, m.id DESC LIMIT $7 OFFSET $8`, append(args, page.PerPage, page.Offset)...)
+			FROM app.stock_movements m JOIN app.products p ON p.id = m.product_id`+sourceJoins+`
+			LEFT JOIN app.memberships mb ON mb.id = m.created_by`+where+`
+			ORDER BY m.occurred_at DESC, m.id DESC LIMIT $6 OFFSET $7`, append(args, page.PerPage, page.Offset)...)
 		if err != nil {
 			return err
 		}
@@ -268,24 +252,24 @@ func (s *Service) Entries(ctx context.Context, p *auth.Principal, f DocFilter, p
 	out := []map[string]any{}
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		const where = ` WHERE a.tenant_id = $1 AND a.reason <> 'count_correction' AND a.status = 'posted'
-			AND ($2::uuid IS NULL OR a.location_id = $2)
-			AND ($3 = '' OR (CASE WHEN v.net >= 0 THEN 'in' ELSE 'out' END) = $3)
-			AND ($4 = '' OR a.reason::text = $4)
-			AND ($5 = '' OR a.created_at >= $5::date) AND ($6 = '' OR a.created_at < $6::date + 1)`
+		const where = ` WHERE a.reason <> 'count_correction' AND a.status = 'posted'
+			AND ($1::uuid IS NULL OR a.location_id = $1)
+			AND ($2 = '' OR (CASE WHEN v.net >= 0 THEN 'in' ELSE 'out' END) = $2)
+			AND ($3 = '' OR a.reason::text = $3)
+			AND ($4 = '' OR a.created_at >= $4::date) AND ($5 = '' OR a.created_at < $5::date + 1)`
 		const from = ` FROM app.stock_adjustments a
 			JOIN LATERAL (SELECT coalesce(sum(l.quantity_delta), 0) AS net, count(*) AS n,
 			                     coalesce(sum(abs(l.quantity_delta) * coalesce(l.unit_cost, pr.average_cost)), 0) AS value
-			                FROM app.stock_adjustment_lines l JOIN app.products pr ON pr.tenant_id = l.tenant_id AND pr.id = l.product_id
-			               WHERE l.tenant_id = a.tenant_id AND l.stock_adjustment_id = a.id) v ON true
-			LEFT JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.created_by`
-		args := []any{p.TenantID, locationFilter(p), f.Direction, f.Reason, f.From, f.To}
+			                FROM app.stock_adjustment_lines l JOIN app.products pr ON pr.id = l.product_id
+			               WHERE l.stock_adjustment_id = a.id) v ON true
+			LEFT JOIN app.memberships m ON m.id = a.created_by`
+		args := []any{locationFilter(p), f.Direction, f.Reason, f.From, f.To}
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+where, args...).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
 			SELECT a.id, a.adjustment_no, a.location_id, CASE WHEN v.net >= 0 THEN 'in' ELSE 'out' END, a.reason::text, a.note, v.value, m.user_id, a.created_at, v.n`+from+where+`
-			ORDER BY a.created_at DESC LIMIT $7 OFFSET $8`, append(args, page.PerPage, page.Offset)...)
+			ORDER BY a.created_at DESC LIMIT $6 OFFSET $7`, append(args, page.PerPage, page.Offset)...)
 		if err != nil {
 			return err
 		}
@@ -317,16 +301,13 @@ func (s *Service) GetEntry(ctx context.Context, p *auth.Principal, id uuid.UUID)
 		var number, reason string
 		var note *string
 		var at time.Time
-		if err := tx.QueryRow(ctx, `
-			SELECT a.adjustment_no, a.location_id, a.reason::text, a.note, m.user_id, a.created_at
-			FROM app.stock_adjustments a LEFT JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.created_by
-			WHERE a.tenant_id = $1 AND a.id = $2 AND a.reason <> 'count_correction'`, p.TenantID, id).Scan(&number, &branch, &reason, &note, &by, &at); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT a.adjustment_no, a.location_id, a.reason::text, a.note, m.user_id, a.created_at\n\t\t\tFROM app.stock_adjustments a LEFT JOIN app.memberships m ON m.id = a.created_by\n\t\t\tWHERE a.id = $1 AND a.reason <> 'count_correction'", id).Scan(&number, &branch, &reason, &note, &by, &at); err != nil {
 			return httpx.NotFound("not_found", "Stock entry not found")
 		}
 		items, err := itemRows(ctx, tx, `
 			SELECT l.product_id, pr.name::text, coalesce(pr.sku, ''), abs(l.quantity_delta), coalesce(l.unit_cost, pr.average_cost),
 			       round(abs(l.quantity_delta) * coalesce(l.unit_cost, pr.average_cost), 2)
-			FROM app.stock_adjustment_lines l JOIN app.products pr ON pr.tenant_id = l.tenant_id AND pr.id = l.product_id
+			FROM app.stock_adjustment_lines l JOIN app.products pr ON pr.id = l.product_id
 			WHERE l.stock_adjustment_id = $1 ORDER BY pr.name`, id, []string{"product_id", "product_name", "sku", "qty", "unit_cost", "value"})
 		if err != nil {
 			return err
@@ -401,20 +382,20 @@ func (s *Service) Adjustments(ctx context.Context, p *auth.Principal, f DocFilte
 	out := []map[string]any{}
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		const where = ` WHERE a.tenant_id = $1 AND a.reason = 'count_correction' AND ($2::uuid IS NULL OR a.location_id = $2)
-			AND ($3 = '' OR a.status::text = $3) AND ($4 = '' OR a.created_at >= $4::date) AND ($5 = '' OR a.created_at < $5::date + 1)`
-		args := []any{p.TenantID, locationFilter(p), f.Status, f.From, f.To}
+		const where = ` WHERE a.reason = 'count_correction' AND ($1::uuid IS NULL OR a.location_id = $1)
+			AND ($2 = '' OR a.status::text = $2) AND ($3 = '' OR a.created_at >= $3::date) AND ($4 = '' OR a.created_at < $4::date + 1)`
+		args := []any{locationFilter(p), f.Status, f.From, f.To}
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.stock_adjustments a`+where, args...).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
 			SELECT a.id, a.adjustment_no, a.location_id, coalesce(a.note, ''), a.status::text, m.user_id, a.created_at, a.posted_at,
 			       (SELECT coalesce(sum(round(cl.counted_qty * pr.average_cost - coalesce(cl.system_qty, 0) * pr.average_cost, 2)), 0)
-			          FROM app.stock_counts c JOIN app.stock_count_lines cl ON cl.tenant_id = c.tenant_id AND cl.stock_count_id = c.id
-			          JOIN app.products pr ON pr.tenant_id = cl.tenant_id AND pr.id = cl.product_id
-			         WHERE c.tenant_id = a.tenant_id AND c.stock_adjustment_id = a.id)
-			FROM app.stock_adjustments a LEFT JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.created_by`+where+`
-			ORDER BY a.created_at DESC LIMIT $6 OFFSET $7`, append(args, page.PerPage, page.Offset)...)
+			          FROM app.stock_counts c JOIN app.stock_count_lines cl ON cl.stock_count_id = c.id
+			          JOIN app.products pr ON pr.id = cl.product_id
+			         WHERE c.stock_adjustment_id = a.id)
+			FROM app.stock_adjustments a LEFT JOIN app.memberships m ON m.id = a.created_by`+where+`
+			ORDER BY a.created_at DESC LIMIT $5 OFFSET $6`, append(args, page.PerPage, page.Offset)...)
 		if err != nil {
 			return err
 		}
@@ -446,18 +427,13 @@ func (s *Service) GetAdjustment(ctx context.Context, p *auth.Principal, id uuid.
 		var number, st string
 		var note *string
 		var at time.Time
-		if err := tx.QueryRow(ctx, `
-			SELECT a.adjustment_no, a.location_id, a.note, a.status::text, m.user_id, a.created_at, coalesce(c.id, '00000000-0000-0000-0000-000000000000'::uuid)
-			FROM app.stock_adjustments a
-			LEFT JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.created_by
-			LEFT JOIN app.stock_counts c ON c.tenant_id = a.tenant_id AND c.stock_adjustment_id = a.id
-			WHERE a.tenant_id = $1 AND a.id = $2 AND a.reason = 'count_correction'`, p.TenantID, id).Scan(&number, &branch, &note, &st, &by, &at, &count); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT a.adjustment_no, a.location_id, a.note, a.status::text, m.user_id, a.created_at, coalesce(c.id, '00000000-0000-0000-0000-000000000000'::uuid)\n\t\t\tFROM app.stock_adjustments a\n\t\t\tLEFT JOIN app.memberships m ON m.id = a.created_by\n\t\t\tLEFT JOIN app.stock_counts c ON c.stock_adjustment_id = a.id\n\t\t\tWHERE a.id = $1 AND a.reason = 'count_correction'", id).Scan(&number, &branch, &note, &st, &by, &at, &count); err != nil {
 			return httpx.NotFound("not_found", "Adjustment not found")
 		}
 		items, err := itemRows(ctx, tx, `
 			SELECT cl.product_id, pr.name::text, coalesce(pr.sku, ''), cl.system_qty, cl.counted_qty, cl.counted_qty - cl.system_qty, pr.average_cost,
 			       round((cl.counted_qty - cl.system_qty) * pr.average_cost, 2)
-			FROM app.stock_count_lines cl JOIN app.products pr ON pr.tenant_id = cl.tenant_id AND pr.id = cl.product_id
+			FROM app.stock_count_lines cl JOIN app.products pr ON pr.id = cl.product_id
 			WHERE cl.stock_count_id = $1 ORDER BY pr.name`, count,
 			[]string{"product_id", "product_name", "sku", "qty_system", "qty_counted", "difference", "unit_cost", "value"})
 		if err != nil {
@@ -487,22 +463,21 @@ func (s *Service) Transfers(ctx context.Context, p *auth.Principal, direction st
 		return out, 0, httpx.BadRequest("branch_required", "Choose a branch to see transfers "+direction)
 	}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		const where = ` WHERE t.tenant_id = $1
-			AND (CASE $2 WHEN 'in' THEN t.to_location_id = $3 WHEN 'out' THEN t.from_location_id = $3
-			             ELSE ($3::uuid IS NULL OR t.from_location_id = $3 OR t.to_location_id = $3) END)
-			AND ($4 = '' OR t.status::text = $4) AND ($5 = '' OR t.created_at >= $5::date) AND ($6 = '' OR t.created_at < $6::date + 1)`
-		args := []any{p.TenantID, direction, p.BranchID, f.Status, f.From, f.To}
+		const where = ` WHERE (CASE $1 WHEN 'in' THEN t.to_location_id = $2 WHEN 'out' THEN t.from_location_id = $2
+			             ELSE ($2::uuid IS NULL OR t.from_location_id = $2 OR t.to_location_id = $2) END)
+			AND ($3 = '' OR t.status::text = $3) AND ($4 = '' OR t.created_at >= $4::date) AND ($5 = '' OR t.created_at < $5::date + 1)`
+		args := []any{direction, p.BranchID, f.Status, f.From, f.To}
 		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.stock_transfers t`+where, args...).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
 			SELECT t.id, t.transfer_no, t.from_location_id, fb.name::text, t.to_location_id, tb.name::text, t.status::text, t.note, t.created_at, t.dispatched_at, t.received_at,
 			       (SELECT coalesce(sum(round(l.quantity * pr.average_cost, 2)), 0) FROM app.stock_transfer_lines l
-			         JOIN app.products pr ON pr.tenant_id = l.tenant_id AND pr.id = l.product_id WHERE l.stock_transfer_id = t.id)
+			         JOIN app.products pr ON pr.id = l.product_id WHERE l.stock_transfer_id = t.id)
 			FROM app.stock_transfers t
-			JOIN app.locations fb ON fb.tenant_id = t.tenant_id AND fb.id = t.from_location_id
-			JOIN app.locations tb ON tb.tenant_id = t.tenant_id AND tb.id = t.to_location_id`+where+`
-			ORDER BY t.created_at DESC LIMIT $7 OFFSET $8`, append(args, page.PerPage, page.Offset)...)
+			JOIN app.locations fb ON fb.id = t.from_location_id
+			JOIN app.locations tb ON tb.id = t.to_location_id`+where+`
+			ORDER BY t.created_at DESC LIMIT $6 OFFSET $7`, append(args, page.PerPage, page.Offset)...)
 		if err != nil {
 			return err
 		}
@@ -534,19 +509,13 @@ func (s *Service) GetTransfer(ctx context.Context, p *auth.Principal, id uuid.UU
 		var note *string
 		var at time.Time
 		var disp, recv *time.Time
-		if err := tx.QueryRow(ctx, `
-			SELECT t.transfer_no, t.from_location_id, fb.name::text, t.to_location_id, tb.name::text, t.status::text, t.note, m.user_id, t.created_at, t.dispatched_at, t.received_at
-			FROM app.stock_transfers t
-			JOIN app.locations fb ON fb.tenant_id = t.tenant_id AND fb.id = t.from_location_id
-			JOIN app.locations tb ON tb.tenant_id = t.tenant_id AND tb.id = t.to_location_id
-			LEFT JOIN app.memberships m ON m.tenant_id = t.tenant_id AND m.id = t.created_by
-			WHERE t.tenant_id = $1 AND t.id = $2`, p.TenantID, id).Scan(&number, &from, &fname, &to, &tname, &st, &note, &by, &at, &disp, &recv); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT t.transfer_no, t.from_location_id, fb.name::text, t.to_location_id, tb.name::text, t.status::text, t.note, m.user_id, t.created_at, t.dispatched_at, t.received_at\n\t\t\tFROM app.stock_transfers t\n\t\t\tJOIN app.locations fb ON fb.id = t.from_location_id\n\t\t\tJOIN app.locations tb ON tb.id = t.to_location_id\n\t\t\tLEFT JOIN app.memberships m ON m.id = t.created_by\n\t\t\tWHERE t.id = $1", id).Scan(&number, &from, &fname, &to, &tname, &st, &note, &by, &at, &disp, &recv); err != nil {
 			return httpx.NotFound("not_found", "Transfer not found")
 		}
 		items, err := itemRows(ctx, tx, `
 			SELECT l.product_id, pr.name::text, coalesce(pr.sku, ''), l.quantity,
-			       CASE WHEN (SELECT t.status FROM app.stock_transfers t WHERE t.tenant_id = l.tenant_id AND t.id = l.stock_transfer_id) = 'received' THEN l.quantity END, 0::numeric, pr.average_cost
-			FROM app.stock_transfer_lines l JOIN app.products pr ON pr.tenant_id = l.tenant_id AND pr.id = l.product_id
+			       CASE WHEN (SELECT t.status FROM app.stock_transfers t WHERE t.id = l.stock_transfer_id) = 'received' THEN l.quantity END, 0::numeric, pr.average_cost
+			FROM app.stock_transfer_lines l JOIN app.products pr ON pr.id = l.product_id
 			WHERE l.stock_transfer_id = $1 ORDER BY pr.name`, id,
 			[]string{"product_id", "product_name", "sku", "qty_sent", "qty_received", "qty_difference", "unit_cost"})
 		if err != nil {

@@ -50,14 +50,14 @@ func (s *Service) bizDate(ctx context.Context, tx pgx.Tx) (string, error) {
 	return d.Format("2006-01-02"), nil
 }
 
-// tx runs fn in an actor-attributed tenant transaction.
+// tx runs fn in an actor-attributed transaction.
 func (s *Service) tx(ctx context.Context, p *auth.Principal, fn func(ctx context.Context, tx pgx.Tx) error) error {
 	return s.DB.InActorTx(ctx, p.Actor(), fn)
 }
 
-// tenantTx runs fn in a tenant-scoped transaction with no signed-in actor (public links, background jobs).
-func (s *Service) tenantTx(ctx context.Context, tenantID uuid.UUID, fn func(ctx context.Context, tx pgx.Tx) error) error {
-	return s.DB.InTx(ctx, tenantID, fn)
+// globalTx runs fn in a transaction with no signed-in actor (public links, background jobs).
+func (s *Service) globalTx(ctx context.Context, fn func(ctx context.Context, tx pgx.Tx) error) error {
+	return s.DB.InGlobalTx(ctx, fn)
 }
 
 func needBranch(p *auth.Principal) error {
@@ -67,30 +67,23 @@ func needBranch(p *auth.Principal) error {
 	return nil
 }
 
-// servicesBU returns the tenant's professional_services business unit, falling back to any active BU.
-func (s *Service) servicesBU(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (uuid.UUID, error) {
+// servicesBU returns the business's professional_services business unit, falling back to any active BU.
+func (s *Service) servicesBU(ctx context.Context, tx pgx.Tx) (uuid.UUID, error) {
 	var id uuid.UUID
-	err := tx.QueryRow(ctx, `
-		SELECT id FROM app.business_units
-		WHERE tenant_id = $1 AND status = 'active'
-		ORDER BY (kind = 'professional_services') DESC, created_at
-		LIMIT 1`, tenantID).Scan(&id)
+	err := tx.QueryRow(ctx, "\n\t\tSELECT id FROM app.business_units\n\t\tWHERE status = 'active'\n\t\tORDER BY (kind = 'professional_services') DESC, created_at\n\t\tLIMIT 1").Scan(&id)
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("services business unit: %w", err)
 	}
 	return id, nil
 }
 
-// resolveMembership resolves an API user or membership UUID to a tenant membership UUID.
-func (s *Service) resolveMembership(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, id *uuid.UUID) (*uuid.UUID, error) {
+// resolveMembership resolves an API user or membership UUID to a membership UUID.
+func (s *Service) resolveMembership(ctx context.Context, tx pgx.Tx, id *uuid.UUID) (*uuid.UUID, error) {
 	if id == nil {
 		return nil, nil
 	}
 	var mid uuid.UUID
-	err := tx.QueryRow(ctx, `
-		SELECT id FROM app.memberships
-		WHERE tenant_id = $1 AND (id = $2 OR user_id = $2)
-		ORDER BY (id = $2) DESC LIMIT 1`, tenantID, *id).Scan(&mid)
+	err := tx.QueryRow(ctx, "\n\t\tSELECT id FROM app.memberships\n\t\tWHERE (id = $1 OR user_id = $1)\n\t\tORDER BY (id = $1) DESC LIMIT 1", *id).Scan(&mid)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, httpx.NotFound("not_found", "Team member not found")
 	}
@@ -101,27 +94,23 @@ func (s *Service) resolveMembership(ctx context.Context, tx pgx.Tx, tenantID uui
 }
 
 // membershipUserID returns the iam.users.id for a membership, or uuid.Nil if not found.
-func (s *Service) membershipUserID(ctx context.Context, tx pgx.Tx, tenantID, membershipID uuid.UUID) uuid.UUID {
+func (s *Service) membershipUserID(ctx context.Context, tx pgx.Tx, membershipID uuid.UUID) uuid.UUID {
 	var uid uuid.UUID
-	_ = tx.QueryRow(ctx, `SELECT user_id FROM app.memberships WHERE tenant_id = $1 AND id = $2`, tenantID, membershipID).Scan(&uid)
+	_ = tx.QueryRow(ctx, "SELECT user_id FROM app.memberships WHERE id = $1", membershipID).Scan(&uid)
 	return uid
 }
 
 // defaultCustomService returns (or lazily creates) a fallback "CUSTOM" service for rows where
 // the approved schema requires service_id NOT NULL (projects, quotation_lines) and the caller omitted it.
-func (s *Service) defaultCustomService(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) (uuid.UUID, error) {
+func (s *Service) defaultCustomService(ctx context.Context, tx pgx.Tx) (uuid.UUID, error) {
 	var id uuid.UUID
-	err := tx.QueryRow(ctx, `
-		INSERT INTO app.services (tenant_id, code, name, category, standard_price, status)
-		VALUES ($1, 'CUSTOM', 'Custom Service', 'other', 0, 'active')
-		ON CONFLICT (tenant_id, code) DO UPDATE SET code = app.services.code
-		RETURNING id`, tenantID).Scan(&id)
+	err := tx.QueryRow(ctx, "\n\t\tINSERT INTO app.services (code, name, category, standard_price, status)\n\t\tVALUES ('CUSTOM', 'Custom Service', 'other', 0, 'active')\n\t\tON CONFLICT (code) DO UPDATE SET code = app.services.code\n\t\tRETURNING id").Scan(&id)
 	return id, err
 }
 
-func (s *Service) businessName(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID) string {
+func (s *Service) businessName(ctx context.Context, tx pgx.Tx) string {
 	var name string
-	_ = tx.QueryRow(ctx, `SELECT COALESCE(NULLIF(s.business_name::text,''), t.legal_name::text) FROM app.tenants t LEFT JOIN app.tenant_settings s ON s.tenant_id = t.id WHERE t.id = $1`, tenantID).Scan(&name)
+	_ = tx.QueryRow(ctx, `SELECT COALESCE(NULLIF(s.business_name::text,''), b.name::text) FROM app.business_profile b CROSS JOIN app.business_settings s`).Scan(&name)
 	return name
 }
 
@@ -199,16 +188,16 @@ func num(m map[string]any, k string) decimal.Decimal {
 	return money.Zero
 }
 
-// exists reports whether a row of table with id exists in this tenant.
-func exists(ctx context.Context, tx pgx.Tx, table string, tenantID, id uuid.UUID) (bool, error) {
+// exists reports whether a row of table with id exists.
+func exists(ctx context.Context, tx pgx.Tx, table string, id uuid.UUID) (bool, error) {
 	var ok bool
-	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+table+` WHERE tenant_id = $1 AND id = $2)`, tenantID, id).Scan(&ok)
+	err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+table+` WHERE id = $1)`, id).Scan(&ok)
 	return ok, err
 }
 
 // require404 returns a not-found error when the row is missing.
-func require404(ctx context.Context, tx pgx.Tx, table, what string, tenantID, id uuid.UUID) error {
-	ok, err := exists(ctx, tx, table, tenantID, id)
+func require404(ctx context.Context, tx pgx.Tx, table, what string, id uuid.UUID) error {
+	ok, err := exists(ctx, tx, table, id)
 	if err != nil {
 		return err
 	}

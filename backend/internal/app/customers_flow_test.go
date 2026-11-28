@@ -125,10 +125,4 @@ func TestCustomersAccountsAgedDebtAndWriteOff(t *testing.T) {
 	blocked := o.call(t, http.MethodPost, "/api/v1/sales", map[string]any{"customer_id": str(s1.data["id"]), "items": []map[string]any{{"product_id": product, "qty": "1"}}, "payments": []map[string]any{}}, key())
 	require.GreaterOrEqual(t, blocked.code, 400)
 	require.Less(t, blocked.code, 500)
-
-	// Another business sees none of these customers or debts.
-	other := newEnv(t, defaultNow)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/customers/"+aID, nil, "").code)
-	require.Empty(t, asList(other.owner.call(t, http.MethodGet, "/api/v1/customers/debts", nil, "").body["data"]))
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/customers/"+aID+"/statement", nil, "").code)
 }

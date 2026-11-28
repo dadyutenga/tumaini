@@ -36,8 +36,8 @@ type AttachmentIn struct {
 }
 
 // attachmentColumn is the app.attachments column each entity type points through. The table has one
-// typed foreign key per owner (exactly one is set), so a file can only be attached to a real record of
-// the same tenant. Values are fixed identifiers, never request input.
+// typed foreign key per owner (exactly one is set), so a file can only be attached to a real record.
+// Values are fixed identifiers, never request input.
 var attachmentColumn = map[string]string{
 	"sale": "sale_id", "customer": "customer_id", "client": "customer_id", "purchase_order": "purchase_id",
 	"purchase": "purchase_id", "supplier": "supplier_id", "expense": "expense_id", "employee": "employee_id",
@@ -78,8 +78,7 @@ func authorizeAttachmentEntity(ctx context.Context, tx pgx.Tx, p *auth.Principal
 			return nil
 		}
 		var ok bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.sales WHERE tenant_id = $1 AND id = $2 AND sold_by = $3)`,
-			p.TenantID, entityID, p.MembershipID).Scan(&ok); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM app.sales WHERE id = $1 AND sold_by = $2)", entityID, p.MembershipID).Scan(&ok); err != nil {
 			return err
 		}
 		if !ok {
@@ -111,16 +110,7 @@ func authorizeAttachmentEntity(ctx context.Context, tx pgx.Tx, p *auth.Principal
 			return nil
 		}
 		var ok bool
-		if err := tx.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1 FROM app.customers c
-				WHERE c.tenant_id = $1 AND c.id = $2
-				  AND (c.registered_by = $3 OR c.assigned_to = $3 OR EXISTS (
-				    SELECT 1 FROM app.projects pr
-				    WHERE pr.tenant_id = c.tenant_id AND pr.customer_id = c.id
-				      AND (pr.owner_id = $3 OR EXISTS (SELECT 1 FROM app.project_stages st WHERE st.tenant_id = pr.tenant_id AND st.project_id = pr.id AND st.owner_id = $3))
-				  ))
-			)`, p.TenantID, entityID, p.MembershipID).Scan(&ok); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT EXISTS (\n\t\t\t\tSELECT 1 FROM app.customers c\n\t\t\t\tWHERE c.id = $1\n\t\t\t\t  AND (c.registered_by = $2 OR c.assigned_to = $2 OR EXISTS (\n\t\t\t\t    SELECT 1 FROM app.projects pr\n\t\t\t\t    WHERE pr.customer_id = c.id\n\t\t\t\t      AND (pr.owner_id = $2 OR EXISTS (SELECT 1 FROM app.project_stages st WHERE st.project_id = pr.id AND st.owner_id = $2))\n\t\t\t\t  ))\n\t\t\t)", entityID, p.MembershipID).Scan(&ok); err != nil {
 			return err
 		}
 		if !ok {
@@ -158,8 +148,7 @@ func authorizeAttachmentEntity(ctx context.Context, tx pgx.Tx, p *auth.Principal
 			return nil
 		}
 		var ok bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.expenses WHERE tenant_id = $1 AND id = $2 AND requested_by = $3)`,
-			p.TenantID, entityID, p.MembershipID).Scan(&ok); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM app.expenses WHERE id = $1 AND requested_by = $2)", entityID, p.MembershipID).Scan(&ok); err != nil {
 			return err
 		}
 		if !ok {
@@ -194,14 +183,7 @@ func authorizeAttachmentEntity(ctx context.Context, tx pgx.Tx, p *auth.Principal
 			return nil
 		}
 		var ok bool
-		if err := tx.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1 FROM app.projects pr
-				WHERE pr.tenant_id = $1 AND pr.id = $2
-				  AND (pr.owner_id = $3 OR pr.created_by = $3 OR EXISTS (
-				    SELECT 1 FROM app.project_stages st WHERE st.tenant_id = pr.tenant_id AND st.project_id = pr.id AND st.owner_id = $3
-				  ))
-			)`, p.TenantID, entityID, p.MembershipID).Scan(&ok); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT EXISTS (\n\t\t\t\tSELECT 1 FROM app.projects pr\n\t\t\t\tWHERE pr.id = $1\n\t\t\t\t  AND (pr.owner_id = $2 OR pr.created_by = $2 OR EXISTS (\n\t\t\t\t    SELECT 1 FROM app.project_stages st WHERE st.project_id = pr.id AND st.owner_id = $2\n\t\t\t\t  ))\n\t\t\t)", entityID, p.MembershipID).Scan(&ok); err != nil {
 			return err
 		}
 		if !ok {
@@ -221,11 +203,7 @@ func authorizeAttachmentEntity(ctx context.Context, tx pgx.Tx, p *auth.Principal
 			return nil
 		}
 		var ok bool
-		if err := tx.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1 FROM app.design_jobs j
-				WHERE j.tenant_id = $1 AND j.id = $2 AND (j.designer_id = $3 OR j.created_by = $3)
-			)`, p.TenantID, entityID, p.MembershipID).Scan(&ok); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT EXISTS (\n\t\t\t\tSELECT 1 FROM app.design_jobs j\n\t\t\t\tWHERE j.id = $1 AND (j.designer_id = $2 OR j.created_by = $2)\n\t\t\t)", entityID, p.MembershipID).Scan(&ok); err != nil {
 			return err
 		}
 		if !ok {
@@ -287,11 +265,7 @@ func authorizeAttachmentEntity(ctx context.Context, tx pgx.Tx, p *auth.Principal
 			return nil
 		}
 		var ok bool
-		if err := tx.QueryRow(ctx, `
-			SELECT EXISTS (
-				SELECT 1 FROM app.tasks t
-				WHERE t.tenant_id = $1 AND t.id = $2 AND (t.assignee_id = $3 OR t.created_by = $3)
-			)`, p.TenantID, entityID, p.MembershipID).Scan(&ok); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT EXISTS (\n\t\t\t\tSELECT 1 FROM app.tasks t\n\t\t\t\tWHERE t.id = $1 AND (t.assignee_id = $2 OR t.created_by = $2)\n\t\t\t)", entityID, p.MembershipID).Scan(&ok); err != nil {
 			return err
 		}
 		if !ok {
@@ -381,11 +355,11 @@ func (s *Service) ListAttachments(ctx context.Context, p *auth.Principal, entity
 		rows, err := tx.Query(ctx, `
 			SELECT a.id, a.file_id, f.original_name, f.mime_type, f.size_bytes, a.caption, m.user_id, u.full_name::text, a.created_at
 			FROM app.attachments a
-			JOIN app.files f ON f.tenant_id = a.tenant_id AND f.id = a.file_id
-			LEFT JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.created_by
+			JOIN app.files f ON f.id = a.file_id
+			LEFT JOIN app.memberships m ON m.id = a.created_by
 			LEFT JOIN iam.users u ON u.id = m.user_id
-			WHERE a.tenant_id = $1 AND a.`+col+` = $2
-			ORDER BY a.created_at DESC`, p.TenantID, entityID)
+			WHERE a.`+col+` = $1
+			ORDER BY a.created_at DESC`, entityID)
 		if err != nil {
 			return err
 		}
@@ -434,8 +408,7 @@ func (s *Service) CreateAttachment(ctx context.Context, p *auth.Principal, in At
 		var id uuid.UUID
 		var created time.Time
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.attachments (tenant_id, file_id, caption, `+col+`) VALUES ($1,$2,$3,$4) RETURNING id, created_at`,
-			p.TenantID, in.FileID, lblPtr, in.EntityID).Scan(&id, &created); err != nil {
+			INSERT INTO app.attachments (file_id, caption, `+col+`) VALUES ($1,$2,$3) RETURNING id, created_at`, in.FileID, lblPtr, in.EntityID).Scan(&id, &created); err != nil {
 			if db.PgCode(err) == "23503" {
 				return httpx.NotFound("not_found", "The record to attach to was not found")
 			}
@@ -454,14 +427,7 @@ func (s *Service) CreateAttachment(ctx context.Context, p *auth.Principal, in At
 
 func (s *Service) DeleteAttachment(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
 	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		target, err := scanAttachmentTarget(tx.QueryRow(ctx, `
-			SELECT created_by,
-			       sale_id, purchase_id, expense_id, payment_received_id, payment_made_id, customer_id,
-			       supplier_id, contractor_id, project_id, design_job_id, task_id, employee_id,
-			       contractor_bill_id, stock_adjustment_id
-			FROM app.attachments
-			WHERE tenant_id = $1 AND id = $2
-			FOR UPDATE`, p.TenantID, id))
+		target, err := scanAttachmentTarget(tx.QueryRow(ctx, "\n\t\t\tSELECT created_by,\n\t\t\t       sale_id, purchase_id, expense_id, payment_received_id, payment_made_id, customer_id,\n\t\t\t       supplier_id, contractor_id, project_id, design_job_id, task_id, employee_id,\n\t\t\t       contractor_bill_id, stock_adjustment_id\n\t\t\tFROM app.attachments\n\t\t\tWHERE id = $1\n\t\t\tFOR UPDATE", id))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFound("not_found", "Attachment not found")
 		}
@@ -475,7 +441,7 @@ func (s *Service) DeleteAttachment(ctx context.Context, p *auth.Principal, id uu
 				return err
 			}
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM app.attachments WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+		if _, err := tx.Exec(ctx, "DELETE FROM app.attachments WHERE id = $1", id); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "attachment.deleted", "attachments", id, map[string]any{"attachment_id": id, "entity_type": target.entityType, "entity_id": target.entityID}, nil)

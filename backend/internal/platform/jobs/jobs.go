@@ -34,7 +34,7 @@ const (
 	ProtectNationalIDs = "protect_national_ids"
 )
 
-type Handler func(ctx context.Context, businessID uuid.UUID, payload json.RawMessage) error
+type Handler func(ctx context.Context, payload json.RawMessage) error
 
 type Client struct {
 	pool     *pgxpool.Pool
@@ -43,7 +43,7 @@ type Client struct {
 	now      func() time.Time
 }
 
-// daily is a job enqueued once per business per local date, at or after a local time.
+// daily is a job enqueued once per local date, at or after a local time.
 type daily struct {
 	kind string
 	at   string // HH:MM in the business timezone; "end" means at the next business day start
@@ -62,12 +62,12 @@ func (c *Client) Register(kind string, h Handler) { c.handlers[kind] = h }
 func (c *Client) Daily(kind, at string) { c.daily = append(c.daily, daily{kind: kind, at: at}) }
 
 // Enqueue adds a job outside any transaction.
-func (c *Client) Enqueue(ctx context.Context, businessID uuid.UUID, kind string, payload any) error {
+func (c *Client) Enqueue(ctx context.Context, kind string, payload any) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
-	_, err = c.pool.Exec(ctx, `INSERT INTO app.job_queue (id, tenant_id, kind, payload, run_at) VALUES ($1,$2,$3,$4, now())`, ids.New(), businessID, kind, raw)
+	_, err = c.pool.Exec(ctx, `INSERT INTO app.job_queue (id, kind, payload, run_at) VALUES ($1,$2,$3, now())`, ids.New(), kind, raw)
 	return err
 }
 
@@ -79,20 +79,19 @@ func (c *Client) Schedule(ctx context.Context) error {
 		return nil
 	}
 	rows, err := c.pool.Query(ctx, `
-		SELECT t.id, t.timezone,
-		       coalesce((SELECT v.value #>> '{}' FROM app.tenant_setting_values v WHERE v.tenant_id = t.id AND v.key = 'system.business_day_start'), '00:00')
-		FROM app.tenants t WHERE t.status = 'active'`)
+		SELECT timezone,
+		       coalesce((SELECT v.value #>> '{}' FROM app.setting_values v WHERE v.key = 'system.business_day_start'), '00:00')
+		FROM app.business_profile WHERE status = 'active'`)
 	if err != nil {
 		return err
 	}
 	type biz struct {
-		id       uuid.UUID
 		tz, day0 string
 	}
 	var list []biz
 	for rows.Next() {
 		var b biz
-		if err := rows.Scan(&b.id, &b.tz, &b.day0); err != nil {
+		if err := rows.Scan(&b.tz, &b.day0); err != nil {
 			rows.Close()
 			return err
 		}
@@ -127,17 +126,14 @@ func (c *Client) Schedule(ctx context.Context) error {
 			if d.at == "end" {
 				runDate = local.AddDate(0, 0, -1).Format("2006-01-02")
 			}
-			tag, err := c.pool.Exec(ctx, `
-				INSERT INTO app.scheduled_job_marks (tenant_id, kind, run_date) VALUES ($1,$2,$3)
-				ON CONFLICT DO NOTHING
-			`, b.id, d.kind, runDate)
+			tag, err := c.pool.Exec(ctx, "\n\t\t\t\tINSERT INTO app.scheduled_job_marks (kind, run_date) VALUES ($1, $2)\n\t\t\t\tON CONFLICT DO NOTHING\n\t\t\t", d.kind, runDate)
 			if err != nil {
 				return err
 			}
 			if tag.RowsAffected() == 0 {
 				continue
 			}
-			if err := c.Enqueue(ctx, b.id, d.kind, map[string]any{"date": runDate}); err != nil {
+			if err := c.Enqueue(ctx, d.kind, map[string]any{"date": runDate}); err != nil {
 				return err
 			}
 		}
@@ -145,11 +141,10 @@ func (c *Client) Schedule(ctx context.Context) error {
 	return nil
 }
 
-// RunPending processes queued jobs until none are ready. Tests use it to run
-// jobs synchronously.
+// RunPending processes queued jobs until none are ready.
 func (c *Client) RunPending(ctx context.Context) error {
 	for i := 0; i < 1000; i++ {
-		ok, err := c.one(ctx, nil)
+		ok, err := c.one(ctx)
 		if err != nil {
 			return err
 		}
@@ -160,29 +155,15 @@ func (c *Client) RunPending(ctx context.Context) error {
 	return nil
 }
 
-// RunPendingForTenant processes queued jobs for one tenant until none are ready.
-func (c *Client) RunPendingForTenant(ctx context.Context, tenantID uuid.UUID) error {
-	for i := 0; i < 1000; i++ {
-		ok, err := c.one(ctx, &tenantID)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return nil
-		}
-	}
-	return nil
-}
-
-func EnqueueTx(ctx context.Context, tx pgx.Tx, businessID uuid.UUID, kind string, payload any) error {
+func EnqueueTx(ctx context.Context, tx pgx.Tx, kind string, payload any) error {
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO app.job_queue (id, tenant_id, kind, payload, run_at)
-		VALUES ($1, $2, $3, $4, now())
-	`, ids.New(), businessID, kind, raw)
+		INSERT INTO app.job_queue (id, kind, payload, run_at)
+		VALUES ($1, $2, $3, now())
+	`, ids.New(), kind, raw)
 	return err
 }
 
@@ -210,7 +191,7 @@ func (c *Client) Run(ctx context.Context) {
 
 func (c *Client) drain(ctx context.Context) {
 	for i := 0; i < 20; i++ {
-		ok, err := c.one(ctx, nil)
+		ok, err := c.one(ctx)
 		if err != nil {
 			slog.Error("job", "err", err)
 			return
@@ -221,24 +202,24 @@ func (c *Client) drain(ctx context.Context) {
 	}
 }
 
-func (c *Client) one(ctx context.Context, tenantID *uuid.UUID) (bool, error) {
+func (c *Client) one(ctx context.Context) (bool, error) {
 	tx, err := c.pool.Begin(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var id, businessID uuid.UUID
+	var id uuid.UUID
 	var kind string
 	var payload []byte
 	var attempts, maxAttempts int
 	err = tx.QueryRow(ctx, `
-		SELECT id, tenant_id, kind, payload, attempts, max_attempts
+		SELECT id, kind, payload, attempts, max_attempts
 		FROM app.job_queue
-		WHERE status = 'queued' AND run_at <= now() AND ($1::uuid IS NULL OR tenant_id = $1)
+		WHERE status = 'queued' AND run_at <= now()
 		ORDER BY run_at
 		FOR UPDATE SKIP LOCKED
 		LIMIT 1
-	`, tenantID).Scan(&id, &businessID, &kind, &payload, &attempts, &maxAttempts)
+	`).Scan(&id, &kind, &payload, &attempts, &maxAttempts)
 	if err != nil {
 		return false, nil
 	}
@@ -254,7 +235,7 @@ func (c *Client) one(ctx context.Context, tenantID *uuid.UUID) (bool, error) {
 		runErr = errUnknown(kind)
 	} else {
 		runCtx, cancel := context.WithTimeout(ctx, 2*time.Minute)
-		runErr = safeRun(runCtx, h, businessID, payload)
+		runErr = safeRun(runCtx, h, payload)
 		cancel()
 	}
 	status := "done"
@@ -273,13 +254,13 @@ func (c *Client) one(ctx context.Context, tenantID *uuid.UUID) (bool, error) {
 }
 
 // safeRun turns a handler panic into an error so one bad job cannot stop the worker.
-func safeRun(ctx context.Context, h Handler, businessID uuid.UUID, payload json.RawMessage) (err error) {
+func safeRun(ctx context.Context, h Handler, payload json.RawMessage) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("job panicked: %v", r)
 		}
 	}()
-	return h(ctx, businessID, payload)
+	return h(ctx, payload)
 }
 
 type unknownJob string

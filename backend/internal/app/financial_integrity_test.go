@@ -39,13 +39,11 @@ func createIssuedInvoice(t *testing.T, e *env, amount string) (string, string) {
 
 func accountLedgerBalance(t *testing.T, e *env, accountID string) (current, ledgerSum decimal.Decimal) {
 	t.Helper()
-	err := e.app.DB.InJobsTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT current_balance FROM app.financial_accounts WHERE tenant_id = $1 AND id = $2`, e.tenantID, accountID).Scan(&current); err != nil {
+	err := e.app.DB.InJobsTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, "SELECT current_balance FROM app.financial_accounts WHERE id = $1", accountID).Scan(&current); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `
-			SELECT COALESCE(SUM(CASE direction WHEN 'in' THEN amount ELSE -amount END), 0)
-			FROM app.financial_transactions WHERE tenant_id = $1 AND account_id = $2`, e.tenantID, accountID).Scan(&ledgerSum)
+		return tx.QueryRow(ctx, "\n\t\t\tSELECT COALESCE(SUM(CASE direction WHEN 'in' THEN amount ELSE -amount END), 0)\n\t\t\tFROM app.financial_transactions WHERE account_id = $1", accountID).Scan(&ledgerSum)
 	})
 	require.NoError(t, err)
 	return current, ledgerSum
@@ -237,37 +235,30 @@ func TestFinancialIntegrity_TransactionAtomicityRollback(t *testing.T) {
 	// Attempt to insert a payment_received + over-allocated payment_allocation inside a single transaction.
 	// The allocation trigger / CHECK constraint must abort and roll back the payment & ledger too.
 	var actor db.Actor
-	err := e.app.DB.InJobsTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT tenant_id, user_id, id FROM app.memberships WHERE tenant_id = $1 LIMIT 1`, e.tenantID).
-			Scan(&actor.TenantID, &actor.UserID, &actor.MembershipID)
+	err := e.app.DB.InJobsTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT user_id, id FROM app.memberships LIMIT 1`).
+			Scan(&actor.UserID, &actor.MembershipID)
 	})
 	require.NoError(t, err)
 
 	txErr := e.app.DB.InActorTx(context.Background(), actor, func(ctx context.Context, tx pgx.Tx) error {
 		var payID uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.payments_received (tenant_id, receipt_no, customer_id, business_unit_id, location_id, account_id, method, purpose, amount, business_date)
-			VALUES ($1, 'RCP-ATOMIC-1', $2,
-			        (SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $3),
-			        $3, $4, 'cash', 'final', 60000, '2026-11-16')
-			RETURNING id`, e.tenantID, clientID, e.branch, till).Scan(&payID); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.payments_received ( receipt_no, customer_id, business_unit_id, location_id, account_id, method, purpose, amount, business_date)\n\t\t\tVALUES ( 'RCP-ATOMIC-1', $1,\n\t\t\t        (SELECT business_unit_id FROM app.locations WHERE id = $2),\n\t\t\t        $2, $3, 'cash', 'final', 60000, '2026-11-16')\n\t\t\tRETURNING id", clientID, e.branch, till).Scan(&payID); err != nil {
 			return err
 		}
 		// This allocation exceeds invoice total (50,000) and MUST fail, rolling back the payment & ledger.
-		_, err := tx.Exec(ctx, `
-			INSERT INTO app.payment_allocations (tenant_id, payment_received_id, invoice_id, amount)
-			VALUES ($1, $2, $3, 60000)`, e.tenantID, payID, invID)
+		_, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.payment_allocations (payment_received_id, invoice_id, amount)\n\t\t\tVALUES ($1, $2, 60000)", payID, invID)
 		return err
 	})
 	require.Error(t, txErr)
 
 	// Verify ZERO orphan payments_received, ZERO ledger rows, and ZERO balance change.
 	var payCount, txnCount int
-	err = e.app.DB.InJobsTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.payments_received WHERE tenant_id = $1 AND receipt_no = 'RCP-ATOMIC-1'`, e.tenantID).Scan(&payCount); err != nil {
+	err = e.app.DB.InJobsTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM app.payments_received WHERE receipt_no = 'RCP-ATOMIC-1'").Scan(&payCount); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `SELECT count(*) FROM app.financial_transactions WHERE tenant_id = $1 AND account_id = $2`, e.tenantID, till).Scan(&txnCount)
+		return tx.QueryRow(ctx, "SELECT count(*) FROM app.financial_transactions WHERE account_id = $1", till).Scan(&txnCount)
 	})
 	require.NoError(t, err)
 	require.Equal(t, 0, payCount, "failed transaction must not leave orphan payment")
@@ -302,9 +293,9 @@ func TestFinancialIntegrity_ImmutabilityAndVoidPreservation(t *testing.T) {
 
 	// Fetch owner's actor to test direct SQL tampering via the app DB role (bms_app).
 	var actor db.Actor
-	err := e.app.DB.InJobsTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `SELECT tenant_id, user_id, id FROM app.memberships WHERE tenant_id = $1 LIMIT 1`, e.tenantID).
-			Scan(&actor.TenantID, &actor.UserID, &actor.MembershipID)
+	err := e.app.DB.InJobsTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT user_id, id FROM app.memberships LIMIT 1`).
+			Scan(&actor.UserID, &actor.MembershipID)
 	})
 	require.NoError(t, err)
 
@@ -317,16 +308,16 @@ func TestFinancialIntegrity_ImmutabilityAndVoidPreservation(t *testing.T) {
 		require.Error(t, err, "tampering must be blocked: %s", name)
 	}
 
-	tamper("edit completed sale total", `UPDATE app.sales SET subtotal = 1, total = 1 WHERE tenant_id = $1 AND id = $2`, e.tenantID, saleID)
-	tamper("delete completed sale", `DELETE FROM app.sales WHERE tenant_id = $1 AND id = $2`, e.tenantID, saleID)
-	tamper("edit completed sale line", `UPDATE app.sale_lines SET unit_price = 1, line_total = 1 WHERE tenant_id = $1 AND sale_id = $2`, e.tenantID, saleID)
-	tamper("edit issued invoice total", `UPDATE app.invoices SET subtotal = 1, total = 1 WHERE tenant_id = $1 AND id = $2`, e.tenantID, invID)
-	tamper("delete issued invoice", `DELETE FROM app.invoices WHERE tenant_id = $1 AND id = $2`, e.tenantID, invID)
-	tamper("delete issued invoice lines", `DELETE FROM app.invoice_lines WHERE tenant_id = $1 AND invoice_id = $2`, e.tenantID, invID)
-	tamper("edit posted payment amount", `UPDATE app.payments_received SET amount = 1 WHERE tenant_id = $1 AND id = $2`, e.tenantID, payID)
-	tamper("delete posted payment", `DELETE FROM app.payments_received WHERE tenant_id = $1 AND id = $2`, e.tenantID, payID)
-	tamper("edit financial_transactions", `UPDATE app.financial_transactions SET amount = 1 WHERE tenant_id = $1`, e.tenantID)
-	tamper("delete financial_transactions", `DELETE FROM app.financial_transactions WHERE tenant_id = $1`, e.tenantID)
+	tamper("edit completed sale total", `UPDATE app.sales SET subtotal = 1, total = 1 WHERE id = $1`, saleID)
+	tamper("delete completed sale", `DELETE FROM app.sales WHERE id = $1`, saleID)
+	tamper("edit completed sale line", `UPDATE app.sale_lines SET unit_price = 1, line_total = 1 WHERE sale_id = $1`, saleID)
+	tamper("edit issued invoice total", `UPDATE app.invoices SET subtotal = 1, total = 1 WHERE id = $1`, invID)
+	tamper("delete issued invoice", `DELETE FROM app.invoices WHERE id = $1`, invID)
+	tamper("delete issued invoice lines", `DELETE FROM app.invoice_lines WHERE invoice_id = $1`, invID)
+	tamper("edit posted payment amount", `UPDATE app.payments_received SET amount = 1 WHERE id = $1`, payID)
+	tamper("delete posted payment", `DELETE FROM app.payments_received WHERE id = $1`, payID)
+	tamper("edit financial_transactions", `UPDATE app.financial_transactions SET amount = 1 WHERE true`)
+	tamper("delete financial_transactions", `DELETE FROM app.financial_transactions WHERE true`)
 
 	// Voiding the invoice payment via API preserves the original record and posts a compensating reversal row.
 	voidRes := e.owner.call(t, http.MethodPost, "/api/v1/payments/"+payID+"/void", map[string]any{
@@ -336,17 +327,14 @@ func TestFinancialIntegrity_ImmutabilityAndVoidPreservation(t *testing.T) {
 
 	var pStatus, voidReason string
 	var origCount, revCount int
-	err = e.app.DB.InJobsTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT status::text, COALESCE(void_reason,'') FROM app.payments_received WHERE tenant_id = $1 AND id = $2`, e.tenantID, payID).Scan(&pStatus, &voidReason); err != nil {
+	err = e.app.DB.InJobsTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, "SELECT status::text, COALESCE(void_reason,'') FROM app.payments_received WHERE id = $1", payID).Scan(&pStatus, &voidReason); err != nil {
 			return err
 		}
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.financial_transactions WHERE tenant_id = $1 AND payment_received_id = $2 AND direction = 'in'`, e.tenantID, payID).Scan(&origCount); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM app.financial_transactions WHERE payment_received_id = $1 AND direction = 'in'", payID).Scan(&origCount); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `
-			SELECT count(*) FROM app.financial_transactions r
-			JOIN app.financial_transactions o ON o.tenant_id = r.tenant_id AND o.id = r.reverses_transaction_id
-			WHERE r.tenant_id = $1 AND o.payment_received_id = $2 AND r.txn_type = 'reversal' AND r.direction = 'out'`, e.tenantID, payID).Scan(&revCount)
+		return tx.QueryRow(ctx, "\n\t\t\tSELECT count(*) FROM app.financial_transactions r\n\t\t\tJOIN app.financial_transactions o ON o.id = r.reverses_transaction_id\n\t\t\tWHERE o.payment_received_id = $1 AND r.txn_type = 'reversal' AND r.direction = 'out'", payID).Scan(&revCount)
 	})
 	require.NoError(t, err)
 	require.Equal(t, "voided", pStatus)
@@ -981,7 +969,7 @@ func TestFinancialIntegrity_SnapshotIsolationNoTornReads(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		readErr = e.app.DB.InActorReadTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+		readErr = e.app.DB.InActorReadTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
 			if err := tx.QueryRow(ctx, `SELECT current_balance FROM app.financial_accounts WHERE id = $1`, srcID).Scan(&firstRead); err != nil {
 				return err
 			}
@@ -1006,7 +994,7 @@ func TestFinancialIntegrity_SnapshotIsolationNoTornReads(t *testing.T) {
 
 	// Fresh read after Transaction A committed must see 400,000.
 	var afterCommit decimal.Decimal
-	err := e.app.DB.InActorReadTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+	err := e.app.DB.InActorReadTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `SELECT current_balance FROM app.financial_accounts WHERE id = $1`, srcID).Scan(&afterCommit)
 	})
 	require.NoError(t, err)

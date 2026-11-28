@@ -132,12 +132,11 @@ func HashToken(raw string) ([]byte, error) {
 	return sum[:], nil
 }
 
-// Claims is what the access token proves: who, in which tenant, as which member, in which session.
+// Claims is what the access token proves: who, as which member, in which session.
 // Permissions are not in the token; they are loaded on every request so a revoked permission or a
 // disabled user takes effect immediately.
 type Claims struct {
 	jwt.RegisteredClaims
-	TenantID     uuid.UUID `json:"tid"`
 	MembershipID uuid.UUID `json:"mid"`
 	SessionID    uuid.UUID `json:"sid"`
 	Purpose      string    `json:"pur,omitempty"`
@@ -151,14 +150,13 @@ type Tokens struct {
 	Now func() time.Time
 }
 
-func (t Tokens) Sign(userID, tenantID, membershipID, sessionID uuid.UUID, now time.Time) (string, error) {
+func (t Tokens) Sign(userID, membershipID, sessionID uuid.UUID, now time.Time) (string, error) {
 	claims := Claims{
 		RegisteredClaims: jwt.RegisteredClaims{
 			Subject:   userID.String(),
 			IssuedAt:  jwt.NewNumericDate(now),
 			ExpiresAt: jwt.NewNumericDate(now.Add(t.Access)),
 		},
-		TenantID:     tenantID,
 		MembershipID: membershipID,
 		SessionID:    sessionID,
 	}
@@ -199,7 +197,6 @@ type Grant struct {
 
 type Principal struct {
 	UserID       uuid.UUID
-	TenantID     uuid.UUID
 	MembershipID uuid.UUID
 	RoleID       uuid.UUID
 	// RoleRank is the rank of the caller's role (app.roles.rank, 100 = Admin). A delegated administrator
@@ -225,11 +222,11 @@ type Principal struct {
 
 // Actor is the database request context for this caller.
 func (p *Principal) Actor() db.Actor {
-	return db.Actor{TenantID: p.TenantID, UserID: p.UserID, MembershipID: p.MembershipID, RequestID: p.RequestID, ClientIP: p.IP}
+	return db.Actor{UserID: p.UserID, MembershipID: p.MembershipID, RequestID: p.RequestID, ClientIP: p.IP}
 }
 
 // Has reports whether the caller holds a permission code.
-// The tenant owner/admin always holds every permission.
+// The business owner/admin always holds every permission.
 func (p *Principal) Has(code string) bool {
 	if p.IsOwner {
 		return true

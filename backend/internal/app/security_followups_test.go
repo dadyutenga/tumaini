@@ -52,8 +52,8 @@ func TestRateLimitIsSharedAcrossInstances(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, attempt(second), "a new instance must see the spent budget")
 
 	// Old windows are cleared by the daily cleanup without disturbing current ones.
-	require.NoError(t, e.app.Jobs.Enqueue(context.Background(), e.tenantID, jobs.SessionCleanup, map[string]any{}))
-	require.NoError(t, e.app.Jobs.RunPendingForTenant(context.Background(), e.tenantID))
+	require.NoError(t, e.app.Jobs.Enqueue(context.Background(), jobs.SessionCleanup, map[string]any{}))
+	require.NoError(t, e.app.Jobs.RunPending(context.Background()))
 	require.Equal(t, http.StatusTooManyRequests, attempt(second))
 }
 
@@ -80,25 +80,23 @@ func TestLedgerCorrectionUsesItsOwnApprovalOnce(t *testing.T) {
 	owner := e.ownerActor(t)
 
 	const correction = `
-		INSERT INTO app.financial_transactions (tenant_id, account_id, direction, amount, txn_type, business_unit_id, location_id,
+		INSERT INTO app.financial_transactions (account_id, direction, amount, txn_type, business_unit_id, location_id,
 		       business_date, description, reverses_transaction_id, approval_request_id)
-		SELECT tenant_id, account_id, 'out', 1, 'correction', business_unit_id, location_id, business_date, 'Correction', id, $3
-		FROM app.financial_transactions WHERE tenant_id = $1 AND id = $2`
+		SELECT account_id, 'out', 1, 'correction', business_unit_id, location_id, business_date, 'Correction', id, $2
+		FROM app.financial_transactions WHERE id = $1`
 	errRollback := errors.New("rollback")
 	err := e.app.DB.InActorTx(context.Background(), owner, func(ctx context.Context, tx pgx.Tx) error {
 		var entry, requester, approval uuid.UUID
-		require.NoError(t, tx.QueryRow(ctx, `SELECT id FROM app.financial_transactions WHERE tenant_id = $1 AND txn_type = 'customer_receipt'`, e.tenantID).Scan(&entry))
-		require.NoError(t, tx.QueryRow(ctx, `SELECT id FROM app.memberships WHERE tenant_id = $1 AND user_id = $2`, e.tenantID, managerUser).Scan(&requester))
-		require.NoError(t, tx.QueryRow(ctx, `
-			INSERT INTO app.approval_requests (tenant_id, approval_type, reason, requested_by, financial_transaction_id, requested_amount)
-			VALUES ($1, 'transaction_correction', 'Wrong amount', $2, $3, 1) RETURNING id`, e.tenantID, requester, entry).Scan(&approval))
+		require.NoError(t, tx.QueryRow(ctx, "SELECT id FROM app.financial_transactions WHERE txn_type = 'customer_receipt'").Scan(&entry))
+		require.NoError(t, tx.QueryRow(ctx, "SELECT id FROM app.memberships WHERE user_id = $1", managerUser).Scan(&requester))
+		require.NoError(t, tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.approval_requests (approval_type, reason, requested_by, financial_transaction_id, requested_amount)\n\t\t\tVALUES ('transaction_correction', 'Wrong amount', $1, $2, 1) RETURNING id", requester, entry).Scan(&approval))
 		_, err := tx.Exec(ctx, `UPDATE app.approval_requests SET status = 'approved', decision_note = 'Checked' WHERE id = $1`, approval)
 		require.NoError(t, err)
 
 		attempt := func(with uuid.UUID) string {
 			sp, err := tx.Begin(ctx)
 			require.NoError(t, err)
-			_, err = sp.Exec(ctx, correction, e.tenantID, entry, with)
+			_, err = sp.Exec(ctx, correction, entry, with)
 			if err == nil {
 				require.NoError(t, sp.Commit(ctx))
 				return ""
@@ -127,10 +125,7 @@ func TestIdentityChangesAreAudited(t *testing.T) {
 		if _, err := tx.Exec(ctx, `UPDATE iam.user_credentials SET password_hash = password_hash || 'x' WHERE user_id = $1`, a.UserID); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `
-			SELECT count(*), coalesce(bool_or(coalesce(new_values::text, '') || coalesce(old_values::text, '') LIKE '%argon2%'), false)
-			FROM audit.audit_log WHERE tenant_id = $1 AND entity_table = 'user_credentials' AND entity_id = $2
-			  AND 'password_hash' = ANY (changed_columns)`, e.tenantID, a.UserID).Scan(&rows, &leaked)
+		return tx.QueryRow(ctx, "\n\t\t\tSELECT count(*), coalesce(bool_or(coalesce(new_values::text, '') || coalesce(old_values::text, '') LIKE '%argon2%'), false)\n\t\t\tFROM audit.audit_log WHERE entity_table = 'user_credentials' AND entity_id = $1\n\t\t\t  AND 'password_hash' = ANY (changed_columns)", a.UserID).Scan(&rows, &leaked)
 	}))
 	require.Equal(t, 1, rows)
 	require.False(t, leaked)
@@ -141,7 +136,7 @@ func TestFailedSignInIsNotAnIdentityChange(t *testing.T) {
 	e := newEnv(t, defaultNow)
 	count := func() (n int) {
 		require.NoError(t, e.app.DB.InActorTx(context.Background(), e.ownerActor(t), func(ctx context.Context, tx pgx.Tx) error {
-			return tx.QueryRow(ctx, `SELECT count(*) FROM audit.audit_log WHERE tenant_id = $1 AND entity_table = 'user_credentials'`, e.tenantID).Scan(&n)
+			return tx.QueryRow(ctx, "SELECT count(*) FROM audit.audit_log WHERE entity_table = 'user_credentials'").Scan(&n)
 		}))
 		return
 	}

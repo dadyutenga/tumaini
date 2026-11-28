@@ -175,16 +175,14 @@ func TestReportsAndDashboard(t *testing.T) {
 	require.Equal(t, 200, ownerMe.code, ownerMe.raw)
 	require.True(t, dec(ownerMe.data["sales_today"].(map[string]any)["count"]).Equal(rd("2")), ownerMe.raw)
 
-	// A second business sees nothing from the first.
-	other := newEnv(t, defaultNow)
-	os := other.owner.call(t, http.MethodGet, "/api/v1/reports/sales/summary", nil, "")
-	require.Equal(t, 200, os.code, os.raw)
-	require.Empty(t, asList(os.data["rows"]))
-	// A branch outside the caller's scope is not found.
-	foreign := other.owner.call(t, http.MethodGet, "/api/v1/reports/sales/summary?branch_id="+e.branch, nil, "")
-	require.Equal(t, 200, foreign.code, foreign.raw) // owner scope is the own business; RLS hides the other tenant's rows
+	// Owners may report on any branch; managers only see their assigned branch.
+	branch := e.owner.call(t, http.MethodPost, "/api/v1/branches", map[string]any{"name": "Warehouse"}, "")
+	require.Equal(t, 201, branch.code, branch.raw)
+	branchID := str(branch.data["id"])
+	foreign := e.owner.call(t, http.MethodGet, "/api/v1/reports/sales/summary?branch_id="+branchID, nil, "")
+	require.Equal(t, 200, foreign.code, foreign.raw)
 	require.Empty(t, asList(foreign.data["rows"]))
-	mForeign := manager.call(t, http.MethodGet, "/api/v1/reports/sales/summary?branch_id="+other.branch, nil, "")
+	mForeign := manager.call(t, http.MethodGet, "/api/v1/reports/sales/summary?branch_id="+branchID, nil, "")
 	require.Equal(t, 200, mForeign.code, mForeign.raw)
 	require.Empty(t, asList(mForeign.data["rows"]))
 }

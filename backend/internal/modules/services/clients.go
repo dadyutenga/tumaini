@@ -36,31 +36,28 @@ type ClientIn struct {
 const clientCols = `c.id, c.full_name::text AS name, c.phone::text AS phone, c.email::text AS email, c.address,
 	c.national_id_last4 AS id_number, ls.name::text AS source, c.needs_summary AS needs, c.notes,
 	c.client_status::text AS status, (c.archived_at IS NULL AND c.client_status <> 'inactive') AS is_active, c.created_at,
-	(SELECT count(*) FROM app.projects pr WHERE pr.tenant_id = c.tenant_id AND pr.customer_id = c.id) AS projects,
-	COALESCE((SELECT SUM(i.balance_due) FROM app.invoices i WHERE i.tenant_id = c.tenant_id AND i.customer_id = c.id AND i.status IN ('issued','partially_paid')), 0) AS balance,
-	COALESCE((SELECT SUM(pr.amount - COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id), 0))
-	          FROM app.payments_received pr WHERE pr.tenant_id = c.tenant_id AND pr.customer_id = c.id AND pr.status = 'posted'), 0) AS deposit_held`
+	(SELECT count(*) FROM app.projects pr WHERE pr.customer_id = c.id) AS projects,
+	COALESCE((SELECT SUM(i.balance_due) FROM app.invoices i WHERE i.customer_id = c.id AND i.status IN ('issued','partially_paid')), 0) AS balance,
+	COALESCE((SELECT SUM(pr.amount - COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.payment_received_id = pr.id), 0))
+	          FROM app.payments_received pr WHERE pr.customer_id = c.id AND pr.status = 'posted'), 0) AS deposit_held`
 
-const clientFrom = ` FROM app.customers c LEFT JOIN app.lead_sources ls ON ls.tenant_id = c.tenant_id AND ls.id = c.lead_source_id`
+const clientFrom = ` FROM app.customers c LEFT JOIN app.lead_sources ls ON ls.id = c.lead_source_id`
 
 // ownClient limits a list to clients the member registered, is assigned to, or runs a project/stage for.
 func ownClient(q *sqlq.Q, p *auth.Principal) {
 	if !p.Has("services.client.view_all") {
 		mid := p.MembershipID
-		q.Add(`(c.registered_by = ? OR c.assigned_to = ? OR EXISTS (SELECT 1 FROM app.projects pr WHERE pr.tenant_id = c.tenant_id AND pr.customer_id = c.id AND (pr.owner_id = ? OR EXISTS (SELECT 1 FROM app.project_stages st WHERE st.tenant_id = pr.tenant_id AND st.project_id = pr.id AND st.owner_id = ?))))`, mid, mid, mid, mid)
+		q.Add(`(c.registered_by = ? OR c.assigned_to = ? OR EXISTS (SELECT 1 FROM app.projects pr WHERE pr.customer_id = c.id AND (pr.owner_id = ? OR EXISTS (SELECT 1 FROM app.project_stages st WHERE st.project_id = pr.id AND st.owner_id = ?))))`, mid, mid, mid, mid)
 	}
 }
 
-func upsertLeadSource(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, name string) (any, error) {
+func upsertLeadSource(ctx context.Context, tx pgx.Tx, name string) (any, error) {
 	name = clean(name)
 	if name == "" {
 		return nil, nil
 	}
 	var id uuid.UUID
-	err := tx.QueryRow(ctx, `
-		INSERT INTO app.lead_sources (tenant_id, name) VALUES ($1, $2)
-		ON CONFLICT (tenant_id, name) DO UPDATE SET name = EXCLUDED.name
-		RETURNING id`, tenantID, name).Scan(&id)
+	err := tx.QueryRow(ctx, "\n\t\tINSERT INTO app.lead_sources (name) VALUES ($1)\n\t\tON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name\n\t\tRETURNING id", name).Scan(&id)
 	return id, err
 }
 
@@ -68,8 +65,8 @@ func (s *Service) ListClients(ctx context.Context, p *auth.Principal, q0, status
 	var out []map[string]any
 	total := 0
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("c.tenant_id = $1 AND c.client_status IS NOT NULL")
+		q := sqlq.New()
+		q.Add("c.client_status IS NOT NULL")
 		if t := clean(q0); t != "" {
 			q.Add("(c.full_name ILIKE '%' || ? || '%' OR c.phone::text ILIKE '%' || ? || '%' OR c.email::text ILIKE '%' || ? || '%')", t, t, t)
 		}
@@ -100,7 +97,7 @@ func (s *Service) CreateClient(ctx context.Context, p *auth.Principal, in Client
 	}
 	id := ids.New()
 	err = s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		srcID, err := upsertLeadSource(ctx, tx, p.TenantID, in.Source)
+		srcID, err := upsertLeadSource(ctx, tx, in.Source)
 		if err != nil {
 			return err
 		}
@@ -108,11 +105,7 @@ func (s *Service) CreateClient(ctx context.Context, p *auth.Principal, in Client
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.customers (id, tenant_id, full_name, phone, email, address, national_id_ciphertext, national_id_key_id, national_id_hmac, national_id_last4,
-			                           client_status, lead_source_id, needs_summary, notes, registered_by, assigned_to)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::app.client_status,$12,$13,$14,$15,$15)
-		`, id, p.TenantID, clean(in.Name), nz(ph), nz(in.Email), nz(in.Address), natID.cipher, natID.keyID, natID.hmac, natID.last4, status, srcID, nz(in.Needs), nz(in.Notes), p.MembershipID); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.customers (id, full_name, phone, email, address, national_id_ciphertext, national_id_key_id, national_id_hmac, national_id_last4, client_status, lead_source_id, needs_summary, notes, registered_by, assigned_to)\n\t\t\tVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::app.client_status, $11, $12, $13, $14, $14)\n\t\t", id, clean(in.Name), nz(ph), nz(in.Email), nz(in.Address), natID.cipher, natID.keyID, natID.hmac, natID.last4, status, srcID, nz(in.Needs), nz(in.Notes), p.MembershipID); err != nil {
 			if isDup(err) {
 				return httpx.Conflict("duplicate", "A client with that phone or ID number already exists")
 			}
@@ -129,8 +122,8 @@ func (s *Service) CreateClient(ctx context.Context, p *auth.Principal, in Client
 func (s *Service) GetClient(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID, id)
-		q.Add("c.tenant_id = $1 AND c.id = $2 AND c.client_status IS NOT NULL")
+		q := sqlq.New(id)
+		q.Add("c.id = $1 AND c.client_status IS NOT NULL")
 		ownClient(q, p)
 		var err error
 		out, err = one(ctx, tx, "Client", `SELECT `+clientCols+clientFrom+q.Where(), q.Args...)
@@ -139,41 +132,41 @@ func (s *Service) GetClient(ctx context.Context, p *auth.Principal, id uuid.UUID
 		}
 		if out["projects_list"], err = rows(ctx, tx, `
 			SELECT pr.id, pr.project_no AS number, pr.title::text AS name, pr.status::text AS status, pr.total_price,
-			       COALESCE((SELECT SUM(i.amount_paid) FROM app.invoices i WHERE i.tenant_id = pr.tenant_id AND i.project_id = pr.id AND i.status <> 'void'), 0) AS paid
-			FROM app.projects pr WHERE pr.tenant_id = $1 AND pr.customer_id = $2 ORDER BY pr.created_at DESC`, p.TenantID, id); err != nil {
+			       COALESCE((SELECT SUM(i.amount_paid) FROM app.invoices i WHERE i.project_id = pr.id AND i.status <> 'void'), 0) AS paid
+			FROM app.projects pr WHERE pr.customer_id = $1 ORDER BY pr.created_at DESC`, id); err != nil {
 			return err
 		}
 		if out["invoices"], err = rows(ctx, tx, `
 			SELECT id, invoice_no AS number,
 			       CASE WHEN status = 'partially_paid' THEN 'partial' ELSE status::text END AS status,
 			       issue_date, due_date, total, amount_paid AS paid_total, balance_due AS balance
-			FROM app.invoices WHERE tenant_id = $1 AND customer_id = $2 ORDER BY created_at DESC LIMIT 50`, p.TenantID, id); err != nil {
+			FROM app.invoices WHERE customer_id = $1 ORDER BY created_at DESC LIMIT 50`, id); err != nil {
 			return err
 		}
 		if out["payments"], err = rows(ctx, tx, `
 			SELECT pr.id, pr.receipt_no AS number, pr.business_date AS date, pr.amount,
-			       COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id), 0) AS applied,
+			       COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.payment_received_id = pr.id), 0) AS applied,
 			       CASE WHEN pr.method = 'bank_transfer' THEN 'bank' ELSE pr.method::text END AS method,
 			       pr.status::text AS status
 			FROM app.payments_received pr
-			WHERE pr.tenant_id = $1 AND pr.customer_id = $2
-			ORDER BY pr.business_date DESC, pr.created_at DESC LIMIT 50`, p.TenantID, id); err != nil {
+			WHERE pr.customer_id = $1
+			ORDER BY pr.business_date DESC, pr.created_at DESC LIMIT 50`, id); err != nil {
 			return err
 		}
 		if out["documents"], err = rows(ctx, tx, `
 			SELECT d.id, d.title::text AS name, COALESCE(dt.name::text, CASE WHEN d.is_final_deliverable THEN 'deliverable' ELSE 'required' END) AS doc_type,
 			       d.status::text AS status, d.file_id, d.project_id, d.received_at
 			FROM app.client_documents d
-			LEFT JOIN app.document_types dt ON dt.tenant_id = d.tenant_id AND dt.id = d.document_type_id
-			WHERE d.tenant_id = $1 AND d.customer_id = $2 ORDER BY d.created_at DESC LIMIT 100`, p.TenantID, id); err != nil {
+			LEFT JOIN app.document_types dt ON dt.id = d.document_type_id
+			WHERE d.customer_id = $1 ORDER BY d.created_at DESC LIMIT 100`, id); err != nil {
 			return err
 		}
 		out["communication"], err = rows(ctx, tx, `
 			SELECT n.id, n.kind::text AS kind, n.summary AS body, n.occurred_at::date AS noted_on, pr.project_no AS project_number, n.project_id
 			FROM app.client_interactions n
-			LEFT JOIN app.projects pr ON pr.tenant_id = n.tenant_id AND pr.id = n.project_id
-			WHERE n.tenant_id = $1 AND n.customer_id = $2
-			ORDER BY n.occurred_at DESC, n.created_at DESC LIMIT 50`, p.TenantID, id)
+			LEFT JOIN app.projects pr ON pr.id = n.project_id
+			WHERE n.customer_id = $1
+			ORDER BY n.occurred_at DESC, n.created_at DESC LIMIT 50`, id)
 		return err
 	})
 	return out, err
@@ -188,29 +181,18 @@ func (s *Service) UpdateClient(ctx context.Context, p *auth.Principal, id uuid.U
 		}
 	}
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID, id)
-		q.Add("c.tenant_id = $1 AND c.id = $2 AND c.client_status IS NOT NULL")
+		q := sqlq.New(id)
+		q.Add("c.id = $1 AND c.client_status IS NOT NULL")
 		ownClient(q, p)
 		before, err := one(ctx, tx, "Client", `SELECT `+clientCols+clientFrom+q.Where()+` FOR UPDATE OF c`, q.Args...)
 		if err != nil {
 			return err
 		}
-		srcID, err := upsertLeadSource(ctx, tx, p.TenantID, in.Source)
+		srcID, err := upsertLeadSource(ctx, tx, in.Source)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.customers SET
-			  full_name = COALESCE(NULLIF($3,''), full_name),
-			  phone = COALESCE($4, phone),
-			  email = COALESCE(NULLIF($5,'')::citext, email),
-			  address = COALESCE(NULLIF($6,''), address),
-			  lead_source_id = COALESCE($7, lead_source_id),
-			  needs_summary = COALESCE(NULLIF($8,''), needs_summary),
-			  notes = COALESCE(NULLIF($9,''), notes),
-			  client_status = COALESCE(NULLIF($10,'')::app.client_status, client_status)
-			WHERE tenant_id = $1 AND id = $2`,
-			p.TenantID, id, clean(in.Name), nz(ph), clean(in.Email), clean(in.Address), srcID, clean(in.Needs), clean(in.Notes), in.Status); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.customers SET\n\t\t\t  full_name = COALESCE(NULLIF($2,''), full_name),\n\t\t\t  phone = COALESCE($3, phone),\n\t\t\t  email = COALESCE(NULLIF($4,'')::citext, email),\n\t\t\t  address = COALESCE(NULLIF($5,''), address),\n\t\t\t  lead_source_id = COALESCE($6, lead_source_id),\n\t\t\t  needs_summary = COALESCE(NULLIF($7,''), needs_summary),\n\t\t\t  notes = COALESCE(NULLIF($8,''), notes),\n\t\t\t  client_status = COALESCE(NULLIF($9,'')::app.client_status, client_status)\n\t\t\tWHERE id = $1", id, clean(in.Name), nz(ph), clean(in.Email), clean(in.Address), srcID, clean(in.Needs), clean(in.Notes), in.Status); err != nil {
 			if isDup(err) {
 				return httpx.Conflict("duplicate", "A client with that phone already exists")
 			}
@@ -221,9 +203,7 @@ func (s *Service) UpdateClient(ctx context.Context, p *auth.Principal, id uuid.U
 			if err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `
-				UPDATE app.customers SET national_id_ciphertext=$3, national_id_key_id=$4, national_id_hmac=$5, national_id_last4=$6
-				WHERE tenant_id=$1 AND id=$2`, p.TenantID, id, natID.cipher, natID.keyID, natID.hmac, natID.last4); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tUPDATE app.customers SET national_id_ciphertext=$2, national_id_key_id=$3, national_id_hmac=$4, national_id_last4=$5\n\t\t\t\tWHERE id=$1", id, natID.cipher, natID.keyID, natID.hmac, natID.last4); err != nil {
 				if isDup(err) {
 					return httpx.Conflict("duplicate", "A client with that ID number already exists")
 				}
@@ -241,14 +221,14 @@ func (s *Service) UpdateClient(ctx context.Context, p *auth.Principal, id uuid.U
 // SetClientStatus converts a lead (active) or updates client_status.
 func (s *Service) SetClientStatus(ctx context.Context, p *auth.Principal, id uuid.UUID, status string) (map[string]any, error) {
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID, id)
-		q.Add("c.tenant_id = $1 AND c.id = $2 AND c.client_status IS NOT NULL")
+		q := sqlq.New(id)
+		q.Add("c.id = $1 AND c.client_status IS NOT NULL")
 		ownClient(q, p)
 		var cur string
 		if err := tx.QueryRow(ctx, `SELECT c.client_status::text FROM app.customers c`+q.Where()+` FOR UPDATE`, q.Args...).Scan(&cur); err != nil {
 			return httpx.NotFound("not_found", "Client not found")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.customers SET client_status = $3::app.client_status, archived_at = CASE WHEN $3 = 'inactive' THEN COALESCE(archived_at, now()) ELSE NULL END WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, status); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.customers SET client_status = $2::app.client_status, archived_at = CASE WHEN $2 = 'inactive' THEN COALESCE(archived_at, now()) ELSE NULL END WHERE id = $1", id, status); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "client.status", "customer", id, map[string]any{"status": cur}, map[string]any{"status": status})
@@ -261,8 +241,8 @@ func (s *Service) SetClientStatus(ctx context.Context, p *auth.Principal, id uui
 
 func (s *Service) DeactivateClient(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID, id)
-		q.Add("c.tenant_id = $1 AND c.id = $2 AND c.client_status IS NOT NULL")
+		q := sqlq.New(id)
+		q.Add("c.id = $1 AND c.client_status IS NOT NULL")
 		ownClient(q, p)
 		c, err := one(ctx, tx, "Client", `SELECT `+clientCols+clientFrom+q.Where()+` FOR UPDATE OF c`, q.Args...)
 		if err != nil {
@@ -271,7 +251,7 @@ func (s *Service) DeactivateClient(ctx context.Context, p *auth.Principal, id uu
 		if num(c, "balance").IsPositive() {
 			return httpx.Conflict("has_balance", "This client still owes "+num(c, "balance").StringFixed(2)+". Collect or void the invoices first")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.customers SET client_status = 'inactive', archived_at = now() WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.customers SET client_status = 'inactive', archived_at = now() WHERE id = $1", id); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "client.deactivated", "customer", id, nil, nil)
@@ -286,7 +266,7 @@ func (s *Service) DeactivateClient(ctx context.Context, p *auth.Principal, id uu
 func (s *Service) ClientStatement(ctx context.Context, p *auth.Principal, id uuid.UUID, from, to string) (map[string]any, error) {
 	var out map[string]any
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		c, err := one(ctx, tx, "Client", `SELECT id, full_name::text AS name, phone::text AS phone, email::text AS email FROM app.customers WHERE tenant_id = $1 AND id = $2 AND client_status IS NOT NULL`, p.TenantID, id)
+		c, err := one(ctx, tx, "Client", `SELECT id, full_name::text AS name, phone::text AS phone, email::text AS email FROM app.customers WHERE id = $1 AND client_status IS NOT NULL`, id)
 		if err != nil {
 			return err
 		}
@@ -297,20 +277,17 @@ func (s *Service) ClientStatement(ctx context.Context, p *auth.Principal, id uui
 			to = "2999-12-31"
 		}
 		opening := money.Zero
-		if err := tx.QueryRow(ctx, `
-			SELECT COALESCE((SELECT SUM(total) FROM app.invoices WHERE tenant_id = $1 AND customer_id = $2 AND status IN ('issued','partially_paid','paid') AND issue_date < $3::date), 0)
-			     - COALESCE((SELECT SUM(amount) FROM app.payments_received WHERE tenant_id = $1 AND customer_id = $2 AND status = 'posted' AND business_date < $3::date), 0)
-		`, p.TenantID, id, from).Scan(&opening); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT COALESCE((SELECT SUM(total) FROM app.invoices WHERE customer_id = $1 AND status IN ('issued','partially_paid','paid') AND issue_date < $2::date), 0)\n\t\t\t     - COALESCE((SELECT SUM(amount) FROM app.payments_received WHERE customer_id = $1 AND status = 'posted' AND business_date < $2::date), 0)\n\t\t", id, from).Scan(&opening); err != nil {
 			return err
 		}
 		lines, err := rows(ctx, tx, `
 			SELECT * FROM (
 			  SELECT issue_date AS date, invoice_no AS number, 'Invoice' AS description, total AS debit, 0::numeric AS credit, created_at
-			  FROM app.invoices WHERE tenant_id = $1 AND customer_id = $2 AND status IN ('issued','partially_paid','paid') AND issue_date BETWEEN $3::date AND $4::date
+			  FROM app.invoices WHERE customer_id = $1 AND status IN ('issued','partially_paid','paid') AND issue_date BETWEEN $2::date AND $3::date
 			  UNION ALL
 			  SELECT business_date AS date, receipt_no AS number, 'Payment received' AS description, 0::numeric AS debit, amount AS credit, created_at
-			  FROM app.payments_received WHERE tenant_id = $1 AND customer_id = $2 AND status = 'posted' AND business_date BETWEEN $3::date AND $4::date
-			) x ORDER BY date, created_at`, p.TenantID, id, from, to)
+			  FROM app.payments_received WHERE customer_id = $1 AND status = 'posted' AND business_date BETWEEN $2::date AND $3::date
+			) x ORDER BY date, created_at`, id, from, to)
 		if err != nil {
 			return err
 		}
@@ -398,7 +375,7 @@ func (s *Service) SendClientStatement(ctx context.Context, p *auth.Principal, id
 	key := fmt.Sprintf("client-stmt:%s:%s:%s:%s:%s", id.String(), ch, from, to, suffix)
 	var out map[string]any
 	err = s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+		row, err := s.Outbound.Enqueue(ctx, tx, outbound.Message{
 			Channel:        ch,
 			Recipient:      recipient,
 			Subject:        "Client statement",
@@ -426,7 +403,7 @@ func (s *Service) SendClientDebtReminder(ctx context.Context, p *auth.Principal,
 	}
 	var out map[string]any
 	err = s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		c, err := one(ctx, tx, "Client", `SELECT `+clientCols+clientFrom+` WHERE c.tenant_id = $1 AND c.id = $2 AND c.client_status IS NOT NULL`, p.TenantID, id)
+		c, err := one(ctx, tx, "Client", `SELECT `+clientCols+clientFrom+` WHERE c.id = $1 AND c.client_status IS NOT NULL`, id)
 		if err != nil {
 			return err
 		}
@@ -456,7 +433,7 @@ func (s *Service) SendClientDebtReminder(ctx context.Context, p *auth.Principal,
 			},
 		)
 		key := fmt.Sprintf("debt-reminder:client:%s:%s:%s", id.String(), ch, today)
-		row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+		row, err := s.Outbound.Enqueue(ctx, tx, outbound.Message{
 			Channel:        ch,
 			Recipient:      recipient,
 			Subject:        "Payment reminder",

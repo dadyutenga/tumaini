@@ -14,7 +14,7 @@ import (
 	"bms/internal/platform/httpx"
 )
 
-// A "user" in the API is a person with a seat in this tenant: an iam.users identity joined to its
+// A "user" in the API is an iam.users identity joined to its
 // app.memberships row. The id is the person's iam.users id.
 type User struct {
 	ID           uuid.UUID   `json:"id"`
@@ -49,10 +49,9 @@ const userSelect = `
 	FROM app.memberships m
 	JOIN iam.users u ON u.id = m.user_id
 	JOIN iam.user_credentials c ON c.user_id = u.id
-	LEFT JOIN app.membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.membership_id = m.id
-	LEFT JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id
-	LEFT JOIN app.employees e ON e.tenant_id = m.tenant_id AND e.membership_id = m.id
-	WHERE m.tenant_id = $1`
+	LEFT JOIN app.membership_roles mr ON mr.membership_id = m.id
+	LEFT JOIN app.roles r ON r.id = mr.role_id
+	LEFT JOIN app.employees e ON e.membership_id = m.id`
 
 func scanUser(row pgx.Row) (User, error) {
 	var u User
@@ -69,15 +68,12 @@ func (s *Service) ListUsers(ctx context.Context, p *auth.Principal, q string, pa
 	out := []User{}
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `
-			SELECT count(*) FROM app.memberships m JOIN iam.users u ON u.id = m.user_id
-			WHERE m.tenant_id = $1 AND ($2 = '' OR u.full_name ILIKE '%'||$2||'%' OR u.phone ILIKE '%'||$2||'%' OR u.email::text ILIKE '%'||$2||'%')`,
-			p.TenantID, q).Scan(&total); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT count(*) FROM app.memberships m JOIN iam.users u ON u.id = m.user_id\n\t\t\tWHERE ($1 = '' OR u.full_name ILIKE '%'||$1||'%' OR u.phone ILIKE '%'||$1||'%' OR u.email::text ILIKE '%'||$1||'%')", q).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, userSelect+`
-			AND ($2 = '' OR u.full_name ILIKE '%'||$2||'%' OR u.phone ILIKE '%'||$2||'%' OR u.email::text ILIKE '%'||$2||'%')
-			ORDER BY u.full_name LIMIT $3 OFFSET $4`, p.TenantID, q, page.PerPage, page.Offset)
+			WHERE ($1 = '' OR u.full_name ILIKE '%'||$1||'%' OR u.phone ILIKE '%'||$1||'%' OR u.email::text ILIKE '%'||$1||'%')
+			ORDER BY u.full_name LIMIT $2 OFFSET $3`, q, page.PerPage, page.Offset)
 		if err != nil {
 			return err
 		}
@@ -94,8 +90,8 @@ func (s *Service) ListUsers(ctx context.Context, p *auth.Principal, q string, pa
 	return out, total, err
 }
 
-func (s *Service) getUser(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (User, error) {
-	u, err := scanUser(tx.QueryRow(ctx, userSelect+` AND u.id = $2`, tenantID, id))
+func (s *Service) getUser(ctx context.Context, tx pgx.Tx, id uuid.UUID) (User, error) {
+	u, err := scanUser(tx.QueryRow(ctx, userSelect+` WHERE u.id = $1`, id))
 	if err != nil {
 		return User{}, httpx.NotFound("not_found", "User not found")
 	}
@@ -105,7 +101,7 @@ func (s *Service) getUser(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID
 func (s *Service) GetUser(ctx context.Context, p *auth.Principal, id uuid.UUID) (User, error) {
 	var u User
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) (err error) {
-		u, err = s.getUser(ctx, tx, p.TenantID, id)
+		u, err = s.getUser(ctx, tx, id)
 		return err
 	})
 	return u, err
@@ -143,8 +139,8 @@ func (s *Service) CreateUser(ctx context.Context, p *auth.Principal, in UserInpu
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO iam.users (full_name, email, phone, preferred_locale)
 			VALUES ($1, NULLIF($2,'')::app.email, NULLIF($3,'')::app.phone_e164,
-			        coalesce(NULLIF($4,''), (SELECT default_locale FROM app.tenants WHERE id = $5), 'sw')) RETURNING id`,
-			name, email, phone, lang, p.TenantID).Scan(&userID); err != nil {
+			        coalesce(NULLIF($4,''), (SELECT default_locale FROM app.business_profile), 'sw')) RETURNING id`,
+			name, email, phone, lang).Scan(&userID); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "That phone or email is already in use")
 			}
@@ -160,14 +156,14 @@ func (s *Service) CreateUser(ctx context.Context, p *auth.Principal, in UserInpu
 		if len(in.BranchIDs) > 0 {
 			loc = &in.BranchIDs[0]
 		} else {
-			_ = tx.QueryRow(ctx, `SELECT id FROM app.locations WHERE tenant_id = $1 AND is_default`, p.TenantID).Scan(&loc)
+			_ = tx.QueryRow(ctx, "SELECT id FROM app.locations WHERE is_default").Scan(&loc)
 		}
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.memberships (tenant_id, user_id, status, default_location_id, joined_at)
-			VALUES ($1, $2, 'active', $3, now()) RETURNING id`, p.TenantID, userID, loc).Scan(&membershipID); err != nil {
+			INSERT INTO app.memberships (user_id, status, default_location_id, joined_at)
+			VALUES ($1, 'active', $2, now()) RETURNING id`, userID, loc).Scan(&membershipID); err != nil {
 			return httpx.BadRequest("invalid_branch", "That branch does not exist")
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO app.membership_roles (tenant_id, membership_id, role_id) VALUES ($1,$2,$3)`, p.TenantID, membershipID, in.RoleID); err != nil {
+		if _, err := tx.Exec(ctx, "INSERT INTO app.membership_roles (membership_id, role_id) VALUES ($1, $2)", membershipID, in.RoleID); err != nil {
 			return err
 		}
 		if in.EmployeeID != nil {
@@ -183,7 +179,7 @@ func (s *Service) CreateUser(ctx context.Context, p *auth.Principal, in UserInpu
 			return err
 		}
 		var err error
-		out, err = s.getUser(ctx, tx, p.TenantID, userID)
+		out, err = s.getUser(ctx, tx, userID)
 		return err
 	})
 	return out, err
@@ -192,7 +188,7 @@ func (s *Service) CreateUser(ctx context.Context, p *auth.Principal, in UserInpu
 func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUID, in UserInput) (User, error) {
 	var out User
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		cur, err := s.getUser(ctx, tx, p.TenantID, id)
+		cur, err := s.getUser(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -211,7 +207,7 @@ func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUI
 				return err
 			}
 			if cur.RoleSlug == "admin" {
-				if err := s.ensureAnotherAdmin(ctx, tx, p.TenantID, id); err != nil {
+				if err := s.ensureAnotherAdmin(ctx, tx, id); err != nil {
 					return err
 				}
 			}
@@ -244,7 +240,7 @@ func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUI
 			}
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.membership_roles SET role_id = $3 WHERE tenant_id = $1 AND membership_id = $2`, p.TenantID, cur.MembershipID, newRole); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.membership_roles SET role_id = $2 WHERE membership_id = $1", cur.MembershipID, newRole); err != nil {
 			return err
 		}
 		if len(in.BranchIDs) > 0 {
@@ -260,16 +256,16 @@ func (s *Service) UpdateUser(ctx context.Context, p *auth.Principal, id uuid.UUI
 		if err := s.Audit.Record(ctx, tx, p, "user.updated", "users", id, nil, map[string]any{"name": in.Name, "role_id": newRole}); err != nil {
 			return err
 		}
-		out, err = s.getUser(ctx, tx, p.TenantID, id)
+		out, err = s.getUser(ctx, tx, id)
 		return err
 	})
 	return out, err
 }
 
-// SetActive suspends or restores the person's seat in this tenant and ends their sessions here.
+// SetActive suspends or restores the person's seat and ends their sessions.
 func (s *Service) SetActive(ctx context.Context, p *auth.Principal, id uuid.UUID, active bool) error {
 	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		cur, err := s.getUser(ctx, tx, p.TenantID, id)
+		cur, err := s.getUser(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -281,14 +277,14 @@ func (s *Service) SetActive(ctx context.Context, p *auth.Principal, id uuid.UUID
 				return httpx.Forbidden("permission_denied", "You cannot deactivate yourself")
 			}
 			if cur.RoleSlug == "admin" {
-				if err := s.ensureAnotherAdmin(ctx, tx, p.TenantID, id); err != nil {
+				if err := s.ensureAnotherAdmin(ctx, tx, id); err != nil {
 					return err
 				}
 			}
 			if _, err := tx.Exec(ctx, `UPDATE app.memberships SET status = 'suspended', deactivated_at = now(), deactivation_reason = 'Deactivated by an administrator' WHERE id = $1`, cur.MembershipID); err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `UPDATE iam.sessions SET revoked_at = now(), revoked_reason = 'membership_revoked' WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL`, id, p.TenantID); err != nil {
+			if _, err := tx.Exec(ctx, "UPDATE iam.sessions SET revoked_at = now(), revoked_reason = 'membership_revoked' WHERE user_id = $1  AND revoked_at IS NULL", id); err != nil {
 				return err
 			}
 		} else if _, err := tx.Exec(ctx, `UPDATE app.memberships SET status = 'active', deactivated_at = NULL, deactivation_reason = NULL WHERE id = $1`, cur.MembershipID); err != nil {
@@ -302,15 +298,11 @@ func (s *Service) SetActive(ctx context.Context, p *auth.Principal, id uuid.UUID
 	})
 }
 
-// ensureAnotherAdmin keeps the tenant from losing its last active Admin. The database enforces the
+// ensureAnotherAdmin keeps the business from losing its last active Admin. The database enforces the
 // same rule (app.tg_keep_one_admin); this gives a clear message first.
-func (s *Service) ensureAnotherAdmin(ctx context.Context, tx pgx.Tx, tenantID, except uuid.UUID) error {
+func (s *Service) ensureAnotherAdmin(ctx context.Context, tx pgx.Tx, except uuid.UUID) error {
 	var n int
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*) FROM app.memberships m
-		JOIN app.membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.membership_id = m.id
-		JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id AND r.code = 'admin'
-		WHERE m.tenant_id = $1 AND m.status = 'active' AND m.user_id <> $2`, tenantID, except).Scan(&n); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tSELECT count(*) FROM app.memberships m\n\t\tJOIN app.membership_roles mr ON mr.membership_id = m.id\n\t\tJOIN app.roles r ON r.id = mr.role_id AND r.code = 'admin'\n\t\tWHERE m.status = 'active' AND m.user_id <> $1", except).Scan(&n); err != nil {
 		return err
 	}
 	if n == 0 {
@@ -330,22 +322,8 @@ func (s *Service) ResetPassword(ctx context.Context, p *auth.Principal, id uuid.
 	if err != nil {
 		return err
 	}
-	// Do not allow a single tenant administrator to overwrite credentials of a user who belongs to other active businesses.
-	var activeTenants int
-	if err := s.DB.InUserTx(ctx, id, func(ctx context.Context, tx pgx.Tx) error {
-		return tx.QueryRow(ctx, `
-			SELECT count(DISTINCT m.tenant_id)
-			  FROM app.memberships m
-			  JOIN app.tenants t ON t.id = m.tenant_id AND t.status = 'active'
-			 WHERE m.user_id = $1 AND m.status = 'active'`, id).Scan(&activeTenants)
-	}); err != nil {
-		return err
-	}
-	if activeTenants > 1 {
-		return httpx.Conflict("multi_tenant_user", "This user belongs to multiple businesses and must reset their password themselves")
-	}
 	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := s.getUser(ctx, tx, p.TenantID, id); err != nil {
+		if _, err := s.getUser(ctx, tx, id); err != nil {
 			return err
 		}
 		if err := s.guardTarget(ctx, tx, p, id); err != nil {
@@ -365,26 +343,26 @@ func (s *Service) ResetPassword(ctx context.Context, p *auth.Principal, id uuid.
 		return s.Audit.Record(ctx, tx, p, "user.password_reset", "users", id, nil, map[string]any{"id": id})
 	})
 	if err == nil {
-		s.event(ctx, "password_changed", &id, &p.TenantID, "", nil, p.IP, p.UserAgent, "")
+		s.event(ctx, "password_changed", &id, "", nil, p.IP, p.UserAgent, "")
 	}
 	return err
 }
 
 func (s *Service) EndSessions(ctx context.Context, p *auth.Principal, userID uuid.UUID) error {
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := s.getUser(ctx, tx, p.TenantID, userID); err != nil {
+		if _, err := s.getUser(ctx, tx, userID); err != nil {
 			return err
 		}
 		if err := s.guardTarget(ctx, tx, p, userID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE iam.sessions SET revoked_at = now(), revoked_reason = 'admin_force_signout' WHERE user_id = $1 AND tenant_id = $2 AND revoked_at IS NULL`, userID, p.TenantID); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE iam.sessions SET revoked_at = now(), revoked_reason = 'admin_force_signout' WHERE user_id = $1  AND revoked_at IS NULL", userID); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "user.sessions_ended", "users", userID, nil, nil)
 	})
 	if err == nil {
-		s.event(ctx, "forced_signout", &userID, &p.TenantID, "", nil, p.IP, p.UserAgent, "")
+		s.event(ctx, "forced_signout", &userID, "", nil, p.IP, p.UserAgent, "")
 	}
 	return err
 }
@@ -471,7 +449,7 @@ type RoleInput struct {
 func (s *Service) ListRoles(ctx context.Context, p *auth.Principal) ([]Role, error) {
 	out := []Role{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id, name::text, code::text, description, is_system, rank FROM app.roles WHERE tenant_id = $1 AND status = 'active' ORDER BY rank DESC, name`, p.TenantID)
+		rows, err := tx.Query(ctx, "SELECT id, name::text, code::text, description, is_system, rank FROM app.roles WHERE status = 'active' ORDER BY rank DESC, name")
 		if err != nil {
 			return err
 		}
@@ -488,14 +466,14 @@ func (s *Service) ListRoles(ctx context.Context, p *auth.Principal) ([]Role, err
 	return out, err
 }
 
-func (s *Service) getRole(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (Role, error) {
+func (s *Service) getRole(ctx context.Context, tx pgx.Tx, id uuid.UUID) (Role, error) {
 	var r Role
-	if err := tx.QueryRow(ctx, `SELECT id, name::text, code::text, description, is_system, rank FROM app.roles WHERE tenant_id = $1 AND id = $2 AND status = 'active'`, tenantID, id).
+	if err := tx.QueryRow(ctx, "SELECT id, name::text, code::text, description, is_system, rank FROM app.roles WHERE id = $1 AND status = 'active'", id).
 		Scan(&r.ID, &r.Name, &r.Slug, &r.Description, &r.IsSystem, &r.Rank); err != nil {
 		return r, httpx.NotFound("not_found", "Role not found")
 	}
 	r.Perms = []RolePermView{}
-	rows, err := tx.Query(ctx, `SELECT permission_code FROM app.role_permissions WHERE tenant_id = $1 AND role_id = $2 ORDER BY permission_code`, tenantID, id)
+	rows, err := tx.Query(ctx, "SELECT permission_code FROM app.role_permissions WHERE role_id = $1 ORDER BY permission_code", id)
 	if err != nil {
 		return r, err
 	}
@@ -509,7 +487,7 @@ func (s *Service) getRole(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID
 	}
 	rows.Close()
 	r.Limits = map[string]decimal.Decimal{}
-	lrows, err := tx.Query(ctx, `SELECT limit_code::text, limit_value FROM app.authority_limits WHERE tenant_id = $1 AND role_id = $2`, tenantID, id)
+	lrows, err := tx.Query(ctx, "SELECT limit_code::text, limit_value FROM app.authority_limits WHERE role_id = $1", id)
 	if err != nil {
 		return r, err
 	}
@@ -537,7 +515,7 @@ func (s *Service) getRole(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID
 func (s *Service) GetRole(ctx context.Context, p *auth.Principal, id uuid.UUID) (Role, error) {
 	var r Role
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) (err error) {
-		r, err = s.getRole(ctx, tx, p.TenantID, id)
+		r, err = s.getRole(ctx, tx, id)
 		return err
 	})
 	return r, err
@@ -588,8 +566,8 @@ func (s *Service) CreateRole(ctx context.Context, p *auth.Principal, in RoleInpu
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var id uuid.UUID
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.roles (tenant_id, code, name, description, is_system, rank) VALUES ($1,$2,$3,NULLIF($4,''),false,$5) RETURNING id`,
-			p.TenantID, roleCode(name), name, in.Description, rank).Scan(&id); err != nil {
+			INSERT INTO app.roles (code, name, description, is_system, rank) VALUES ($1,$2,NULLIF($3,''),false,$4) RETURNING id`,
+			roleCode(name), name, in.Description, rank).Scan(&id); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "A role with that name already exists")
 			}
@@ -599,7 +577,7 @@ func (s *Service) CreateRole(ctx context.Context, p *auth.Principal, in RoleInpu
 			return err
 		}
 		var err error
-		out, err = s.getRole(ctx, tx, p.TenantID, id)
+		out, err = s.getRole(ctx, tx, id)
 		return err
 	})
 	return out, err
@@ -616,7 +594,7 @@ func (s *Service) UpdateRole(ctx context.Context, p *auth.Principal, id uuid.UUI
 	}
 	var out Role
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		cur, err := s.getRole(ctx, tx, p.TenantID, id)
+		cur, err := s.getRole(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -634,26 +612,26 @@ func (s *Service) UpdateRole(ctx context.Context, p *auth.Principal, id uuid.UUI
 		if err := s.replacePerms(ctx, tx, p, id, in.Perms, limits); err != nil {
 			return err
 		}
-		out, err = s.getRole(ctx, tx, p.TenantID, id)
+		out, err = s.getRole(ctx, tx, id)
 		return err
 	})
 	return out, err
 }
 
 func (s *Service) replacePerms(ctx context.Context, tx pgx.Tx, p *auth.Principal, roleID uuid.UUID, perms []RolePermView, limits map[string]decimal.Decimal) error {
-	if _, err := tx.Exec(ctx, `DELETE FROM app.role_permissions WHERE tenant_id = $1 AND role_id = $2`, p.TenantID, roleID); err != nil {
+	if _, err := tx.Exec(ctx, "DELETE FROM app.role_permissions WHERE role_id = $1", roleID); err != nil {
 		return err
 	}
 	for _, perm := range perms {
-		if _, err := tx.Exec(ctx, `INSERT INTO app.role_permissions (tenant_id, role_id, permission_code) VALUES ($1,$2,$3)`, p.TenantID, roleID, perm.Key); err != nil {
+		if _, err := tx.Exec(ctx, "INSERT INTO app.role_permissions (role_id, permission_code) VALUES ($1, $2)", roleID, perm.Key); err != nil {
 			return httpx.BadRequest("invalid_body", "Unknown permission "+perm.Key)
 		}
 	}
-	if _, err := tx.Exec(ctx, `DELETE FROM app.authority_limits WHERE tenant_id = $1 AND role_id = $2`, p.TenantID, roleID); err != nil {
+	if _, err := tx.Exec(ctx, "DELETE FROM app.authority_limits WHERE role_id = $1", roleID); err != nil {
 		return err
 	}
 	for code, v := range limits {
-		if _, err := tx.Exec(ctx, `INSERT INTO app.authority_limits (tenant_id, role_id, limit_code, limit_value) VALUES ($1,$2,$3::app.limit_code,$4)`, p.TenantID, roleID, code, v); err != nil {
+		if _, err := tx.Exec(ctx, "INSERT INTO app.authority_limits (role_id, limit_code, limit_value) VALUES ($1, $2::app.limit_code, $3)", roleID, code, v); err != nil {
 			return httpx.BadRequest("invalid_body", "Invalid limit "+code)
 		}
 	}
@@ -664,7 +642,7 @@ func (s *Service) replacePerms(ctx context.Context, tx pgx.Tx, p *auth.Principal
 // the status to inactive; a role still held by anyone cannot be retired.
 func (s *Service) DeleteRole(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
 	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		r, err := s.getRole(ctx, tx, p.TenantID, id)
+		r, err := s.getRole(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -672,7 +650,7 @@ func (s *Service) DeleteRole(ctx context.Context, p *auth.Principal, id uuid.UUI
 			return httpx.Conflict("invalid_status", "System roles cannot be deleted")
 		}
 		var n int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.membership_roles WHERE tenant_id = $1 AND role_id = $2`, p.TenantID, id).Scan(&n); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM app.membership_roles WHERE role_id = $1", id).Scan(&n); err != nil {
 			return err
 		}
 		if n > 0 {
@@ -701,7 +679,7 @@ type LoginEvent struct {
 	CreatedAt  time.Time  `json:"created_at"`
 }
 
-// LoginHistory lists sign-in events for people in this tenant. The identifier is shown from the
+// LoginHistory lists sign-in events for people in this business. The identifier is shown from the
 // person's profile, never from the event (events store only a keyed hash of what was typed).
 func (s *Service) LoginHistory(ctx context.Context, p *auth.Principal, userID *uuid.UUID, from, to string, page httpx.Page) ([]LoginEvent, int, error) {
 	out := []LoginEvent{}
@@ -710,16 +688,15 @@ func (s *Service) LoginHistory(ctx context.Context, p *auth.Principal, userID *u
 		const where = `
 			FROM iam.auth_events e LEFT JOIN iam.users u ON u.id = e.user_id
 			WHERE e.event_type IN ('login_success','login_failure','account_locked','logout','session_timeout','forced_signout')
-			  AND (e.tenant_id = $1 OR e.user_id IN (SELECT m.user_id FROM app.memberships m WHERE m.tenant_id = $1))
-			  AND ($2::uuid IS NULL OR e.user_id = $2)
-			  AND ($3 = '' OR e.occurred_at::date >= $3::date) AND ($4 = '' OR e.occurred_at::date <= $4::date)`
-		if err := tx.QueryRow(ctx, `SELECT count(*) `+where, p.TenantID, userID, from, to).Scan(&total); err != nil {
+			  AND ($1::uuid IS NULL OR e.user_id = $1)
+			  AND ($2 = '' OR e.occurred_at::date >= $2::date) AND ($3 = '' OR e.occurred_at::date <= $3::date)`
+		if err := tx.QueryRow(ctx, `SELECT count(*) `+where, userID, from, to).Scan(&total); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `
 			SELECT e.id, e.user_id, coalesce(u.phone::text, u.email::text, ''), e.event_type::text, e.event_type = 'login_success',
 			       e.failure_reason, e.ip::text, e.user_agent, e.occurred_at `+where+`
-			ORDER BY e.occurred_at DESC, e.id DESC LIMIT $5 OFFSET $6`, p.TenantID, userID, from, to, page.PerPage, page.Offset)
+			ORDER BY e.occurred_at DESC, e.id DESC LIMIT $4 OFFSET $5`, userID, from, to, page.PerPage, page.Offset)
 		if err != nil {
 			return err
 		}
@@ -805,13 +782,13 @@ type UserPermissionOverride struct {
 func (s *Service) GetUserPermissions(ctx context.Context, p *auth.Principal, userID uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		u, err := s.getUser(ctx, tx, p.TenantID, userID)
+		u, err := s.getUser(ctx, tx, userID)
 		if err != nil {
 			return err
 		}
 		rolePerms := []map[string]any{}
 		if u.RoleID != nil {
-			rows, err := tx.Query(ctx, `SELECT permission_code FROM app.role_permissions WHERE tenant_id = $1 AND role_id = $2 ORDER BY permission_code`, p.TenantID, *u.RoleID)
+			rows, err := tx.Query(ctx, "SELECT permission_code FROM app.role_permissions WHERE role_id = $1 ORDER BY permission_code", *u.RoleID)
 			if err != nil {
 				return err
 			}
@@ -826,9 +803,7 @@ func (s *Service) GetUserPermissions(ctx context.Context, p *auth.Principal, use
 			rows.Close()
 		}
 		overrides := []UserPermissionOverride{}
-		orows, err := tx.Query(ctx, `
-			SELECT permission_code, effect = 'allow', reason, expires_at FROM app.membership_permission_overrides
-			WHERE tenant_id = $1 AND membership_id = $2 ORDER BY permission_code`, p.TenantID, u.MembershipID)
+		orows, err := tx.Query(ctx, "\n\t\t\tSELECT permission_code, effect = 'allow', reason, expires_at FROM app.membership_permission_overrides\n\t\t\tWHERE membership_id = $1 ORDER BY permission_code", u.MembershipID)
 		if err != nil {
 			return err
 		}
@@ -851,7 +826,7 @@ func (s *Service) PutUserPermissions(ctx context.Context, p *auth.Principal, use
 		return nil, httpx.Forbidden("permission_denied", "You cannot modify your own permissions")
 	}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		u, err := s.getUser(ctx, tx, p.TenantID, userID)
+		u, err := s.getUser(ctx, tx, userID)
 		if err != nil {
 			return err
 		}
@@ -870,7 +845,7 @@ func (s *Service) PutUserPermissions(ctx context.Context, p *auth.Principal, use
 				return httpx.Forbidden("privilege_escalation", "You cannot grant a permission you do not hold: "+ov.PermissionKey)
 			}
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM app.membership_permission_overrides WHERE tenant_id = $1 AND membership_id = $2`, p.TenantID, u.MembershipID); err != nil {
+		if _, err := tx.Exec(ctx, "DELETE FROM app.membership_permission_overrides WHERE membership_id = $1", u.MembershipID); err != nil {
 			return err
 		}
 		for _, ov := range overrides {
@@ -881,9 +856,7 @@ func (s *Service) PutUserPermissions(ctx context.Context, p *auth.Principal, use
 			if len(reason) < 3 {
 				reason = "Set by an administrator"
 			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO app.membership_permission_overrides (tenant_id, membership_id, permission_code, effect, reason, expires_at)
-				VALUES ($1,$2,$3,$4::app.permission_effect,$5,$6)`, p.TenantID, u.MembershipID, ov.PermissionKey, effect, reason, ov.ExpiresAt); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tINSERT INTO app.membership_permission_overrides (membership_id, permission_code, effect, reason, expires_at)\n\t\t\t\tVALUES ($1, $2, $3::app.permission_effect, $4, $5)", u.MembershipID, ov.PermissionKey, effect, reason, ov.ExpiresAt); err != nil {
 				return err
 			}
 		}

@@ -247,20 +247,20 @@ func (s *Service) rules(ctx context.Context, tx pgx.Tx) (map[string]any, error) 
 func (s *Service) writeSetting(ctx context.Context, tx pgx.Tx, p *auth.Principal, key string, val any) error {
 	switch {
 	case key == "invoice.prefix":
-		_, err := tx.Exec(ctx, `UPDATE app.document_sequences SET prefix = $2 WHERE tenant_id = $1 AND doc_type = 'invoice'`, p.TenantID, fmt.Sprint(val)+"-")
+		_, err := tx.Exec(ctx, "UPDATE app.document_sequences SET prefix = $1 WHERE doc_type = 'invoice'", fmt.Sprint(val)+"-")
 		return err
 	case setting.Typed[key].Column != "":
 		c := setting.Typed[key]
-		keyCol := "tenant_id"
-		if c.Table == "app.tenants" {
-			keyCol = "id"
+		where := ""
+		if c.Table == "app.business_profile" {
+			where = " WHERE id = true"
 		}
 		// c comes from the fixed setting.Typed map, never from the request.
-		if _, err := tx.Exec(ctx, `UPDATE `+c.Table+` SET `+c.Column+` = $2 WHERE `+keyCol+` = $1`, p.TenantID, val); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE `+c.Table+` SET `+c.Column+` = $1`+where, val); err != nil {
 			return err
 		}
 		if key == "currency.code" {
-			_, err := tx.Exec(ctx, `UPDATE app.tenants SET default_currency = $2 WHERE id = $1`, p.TenantID, val)
+			_, err := tx.Exec(ctx, `UPDATE app.business_profile SET default_currency = $1 WHERE id = true`, val)
 			return err
 		}
 		return nil
@@ -269,10 +269,7 @@ func (s *Service) writeSetting(ctx context.Context, tx pgx.Tx, p *auth.Principal
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `
-		INSERT INTO app.tenant_setting_values (tenant_id, key, value, updated_by) VALUES ($1,$2,$3,$4)
-		ON CONFLICT (tenant_id, key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by`,
-		p.TenantID, key, raw, p.MembershipID)
+	_, err = tx.Exec(ctx, "\n\t\tINSERT INTO app.setting_values (key, value, updated_by) VALUES ($1, $2, $3)\n\t\tON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by", key, raw, p.MembershipID)
 	return err
 }
 
@@ -330,8 +327,7 @@ func (s *Service) UpdateSettings(ctx context.Context, p *auth.Principal, group s
 				return err
 			}
 			// Every change is logged with its old and new value.
-			if err := s.Audit.Record(ctx, tx, p, "settings.updated", "settings", p.TenantID,
-				map[string]any{"key": key, "value": before}, map[string]any{"key": key, "value": val}); err != nil {
+			if err := s.Audit.Record(ctx, tx, p, "settings.updated", "settings", map[string]any{"key": key, "value": before}, map[string]any{"key": key, "value": val}); err != nil {
 				return err
 			}
 		}
@@ -400,14 +396,13 @@ func (s *Service) saveRules(ctx context.Context, tx pgx.Tx, p *auth.Principal, r
 	}
 	for _, typ := range types {
 		r := rules[typ]
-		if _, err := tx.Exec(ctx, `INSERT INTO app.notification_rules (tenant_id, notification_type) VALUES ($1,$2::app.notification_type) ON CONFLICT DO NOTHING`, p.TenantID, typ); err != nil {
+		if _, err := tx.Exec(ctx, "INSERT INTO app.notification_rules (notification_type) VALUES ($1::app.notification_type) ON CONFLICT DO NOTHING", typ); err != nil {
 			return err
 		}
 		for _, col := range []string{"enabled", "in_app", "email", "sms", "whatsapp"} {
 			if v, ok := r[col]; ok {
 				// col comes from the fixed list above, never from the request.
-				if _, err := tx.Exec(ctx, `UPDATE app.notification_rules SET `+col+` = $3, updated_at = now(), updated_by = $4 WHERE tenant_id = $1 AND notification_type = $2::app.notification_type`,
-					p.TenantID, typ, v, p.MembershipID); err != nil {
+				if _, err := tx.Exec(ctx, `UPDATE app.notification_rules SET `+col+` = $2, updated_at = now(), updated_by = $3 WHERE notification_type = $1::app.notification_type`, typ, v, p.MembershipID); err != nil {
 					return err
 				}
 			}
@@ -415,7 +410,7 @@ func (s *Service) saveRules(ctx context.Context, tx pgx.Tx, p *auth.Principal, r
 		if v, set := r["days_before"]; set {
 			key := "notifications.days_before_" + typ
 			if v == nil {
-				if _, err := tx.Exec(ctx, `DELETE FROM app.tenant_setting_values WHERE tenant_id = $1 AND key = $2`, p.TenantID, key); err != nil {
+				if _, err := tx.Exec(ctx, "DELETE FROM app.setting_values WHERE key = $1", key); err != nil {
 					return err
 				}
 			} else if err := s.writeSetting(ctx, tx, p, key, v); err != nil {
@@ -423,5 +418,5 @@ func (s *Service) saveRules(ctx context.Context, tx pgx.Tx, p *auth.Principal, r
 			}
 		}
 	}
-	return s.Audit.Record(ctx, tx, p, "settings.updated", "settings", p.TenantID, map[string]any{"key": "notifications.rules", "value": oldRules}, map[string]any{"key": "notifications.rules", "value": rules})
+	return s.Audit.Record(ctx, tx, p, "settings.updated", "settings", map[string]any{"key": "notifications.rules", "value": oldRules}, map[string]any{"key": "notifications.rules", "value": rules})
 }

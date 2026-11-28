@@ -33,9 +33,9 @@ func (s *Service) ListDocuments(ctx context.Context, p *auth.Principal, employee
 			       a.created_by AS uploaded_by, a.created_at,
 			       '/api/v1/files/' || a.file_id::text AS download_url
 			FROM app.attachments a
-			JOIN app.files f ON f.tenant_id = a.tenant_id AND f.id = a.file_id
-			WHERE a.tenant_id = $1 AND a.employee_id = $2 AND f.deleted_at IS NULL
-			ORDER BY a.created_at DESC, a.id`, p.TenantID, employeeID)
+			JOIN app.files f ON f.id = a.file_id
+			WHERE a.employee_id = $1 AND f.deleted_at IS NULL
+			ORDER BY a.created_at DESC, a.id`, employeeID)
 		return err
 	})
 	return out, err
@@ -59,28 +59,23 @@ func (s *Service) AddDocument(ctx context.Context, p *auth.Principal, employeeID
 		if _, err := s.loadEmployee(ctx, tx, p, employeeID); err != nil {
 			return err
 		}
-		file, err := s.Store.Save(ctx, p.TenantID.String(), filename, upload.Reader(content), documentMax)
+		file, err := s.Store.Save(ctx, "business", filename, upload.Reader(content), documentMax)
 		if err != nil {
 			return err
 		}
 		var fileID, docID uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.files (tenant_id, storage_key, original_name, mime_type, size_bytes, sha256, classification)
-			VALUES ($1,$2,$3,$4,$5,$6,'restricted') RETURNING id`,
-			p.TenantID, file.Path, filename, mime, file.Size, sum[:]).Scan(&fileID); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.files (storage_key, original_name, mime_type, size_bytes, sha256, classification)\n\t\t\tVALUES ($1, $2, $3, $4, $5, 'restricted') RETURNING id", file.Path, filename, mime, file.Size, sum[:]).Scan(&fileID); err != nil {
 			return err
 		}
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.attachments (tenant_id, file_id, caption, employee_id)
-			VALUES ($1,$2,$3,$4) RETURNING id`, p.TenantID, fileID, caption, employeeID).Scan(&docID); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.attachments (file_id, caption, employee_id)\n\t\t\tVALUES ($1, $2, $3) RETURNING id", fileID, caption, employeeID).Scan(&docID); err != nil {
 			return err
 		}
 		if out, err = hrkit.One(ctx, tx, "Document not found", `
 			SELECT a.id, COALESCE(a.caption, f.original_name) AS name, a.file_id, f.mime_type, f.size_bytes,
 			       a.created_by AS uploaded_by, a.created_at,
 			       '/api/v1/files/' || a.file_id::text AS download_url
-			FROM app.attachments a JOIN app.files f ON f.tenant_id = a.tenant_id AND f.id = a.file_id
-			WHERE a.tenant_id = $1 AND a.id = $2`, p.TenantID, docID); err != nil {
+			FROM app.attachments a JOIN app.files f ON f.id = a.file_id
+			WHERE a.id = $1`, docID); err != nil {
 			return err
 		}
 		out["kind"] = kind
@@ -96,12 +91,10 @@ func (s *Service) DeleteDocument(ctx context.Context, p *auth.Principal, employe
 			return err
 		}
 		var fileID uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			DELETE FROM app.attachments WHERE tenant_id = $1 AND id = $2 AND employee_id = $3 RETURNING file_id`,
-			p.TenantID, docID, employeeID).Scan(&fileID); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tDELETE FROM app.attachments WHERE id = $1 AND employee_id = $2 RETURNING file_id", docID, employeeID).Scan(&fileID); err != nil {
 			return httpx.NotFound("not_found", "Document not found")
 		}
-		if err := tx.QueryRow(ctx, `UPDATE app.files SET deleted_at = now() WHERE tenant_id = $1 AND id = $2 RETURNING storage_key`, p.TenantID, fileID).Scan(&path); err != nil {
+		if err := tx.QueryRow(ctx, "UPDATE app.files SET deleted_at = now() WHERE id = $1 RETURNING storage_key", fileID).Scan(&path); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "employee.document_removed", "employees", employeeID, map[string]any{"document_id": docID}, nil)

@@ -38,8 +38,7 @@ func (s *Service) Transactions(ctx context.Context, p *auth.Principal, f TxFilte
 		return out, 0, nil
 	}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("t.tenant_id = $1")
+		q := sqlq.New()
 		q.If(f.AccountID != nil, "t.account_id = ?", f.AccountID)
 		q.If(typ != "", "t.txn_type = ?::app.txn_type", typ)
 		q.If(f.From != "", "t.business_date >= ?::date", f.From)
@@ -48,11 +47,11 @@ func (s *Service) Transactions(ctx context.Context, p *auth.Principal, f TxFilte
 		base := ` FROM (
 			SELECT t.*, sum(CASE t.direction WHEN 'in' THEN t.amount ELSE -t.amount END)
 			         OVER (PARTITION BY t.account_id ORDER BY t.business_date, t.occurred_at, t.id) AS running
-			FROM app.financial_transactions t WHERE t.tenant_id = $1) t
-			JOIN app.financial_accounts fa ON fa.tenant_id = t.tenant_id AND fa.id = t.account_id
-			LEFT JOIN app.memberships m ON m.tenant_id = t.tenant_id AND m.id = t.created_by LEFT JOIN iam.users u ON u.id = m.user_id
-			LEFT JOIN app.payments_received pr ON pr.tenant_id = t.tenant_id AND pr.id = t.payment_received_id
-			LEFT JOIN app.payments_made pm ON pm.tenant_id = t.tenant_id AND pm.id = t.payment_made_id`
+			FROM app.financial_transactions t WHERE true) t
+			JOIN app.financial_accounts fa ON fa.id = t.account_id
+			LEFT JOIN app.memberships m ON m.id = t.created_by LEFT JOIN iam.users u ON u.id = m.user_id
+			LEFT JOIN app.payments_received pr ON pr.id = t.payment_received_id
+			LEFT JOIN app.payments_made pm ON pm.id = t.payment_made_id`
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+base+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}

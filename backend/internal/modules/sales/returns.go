@@ -68,7 +68,7 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uu
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -77,9 +77,7 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uu
 		var locID uuid.UUID
 		var number string
 		var subtotal, saleTotal, paid decimal.Decimal
-		if err := tx.QueryRow(ctx, `
-			SELECT location_id, COALESCE(receipt_no, ''), subtotal, total, amount_paid
-			FROM app.sales WHERE tenant_id = $1 AND id = $2 AND status = 'completed' FOR UPDATE`, p.TenantID, saleID).
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT location_id, COALESCE(receipt_no, ''), subtotal, total, amount_paid\n\t\t\tFROM app.sales WHERE id = $1 AND status = 'completed' FOR UPDATE", saleID).
 			Scan(&locID, &number, &subtotal, &saleTotal, &paid); err != nil {
 			return httpx.NotFound("not_found", "Completed sale not found")
 		}
@@ -95,13 +93,7 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uu
 			}
 			seen[it.SaleItemID] = true
 			var qty, returned, pending, lineTotal decimal.Decimal
-			if err := tx.QueryRow(ctx, `
-				SELECT sl.quantity, sl.returned_quantity, sl.line_total,
-				       COALESCE((SELECT SUM(rl.quantity) FROM app.sale_return_lines rl
-				                 JOIN app.sale_returns r ON r.tenant_id = rl.tenant_id AND r.id = rl.sale_return_id
-				                 WHERE rl.tenant_id = sl.tenant_id AND rl.sale_line_id = sl.id AND r.status IN ('requested','approved')), 0)
-				FROM app.sale_lines sl WHERE sl.tenant_id = $1 AND sl.id = $2 AND sl.sale_id = $3`,
-				p.TenantID, it.SaleItemID, saleID).Scan(&qty, &returned, &lineTotal, &pending); err != nil {
+			if err := tx.QueryRow(ctx, "\n\t\t\t\tSELECT sl.quantity, sl.returned_quantity, sl.line_total,\n\t\t\t\t       COALESCE((SELECT SUM(rl.quantity) FROM app.sale_return_lines rl\n\t\t\t\t                 JOIN app.sale_returns r ON r.id = rl.sale_return_id\n\t\t\t\t                 WHERE rl.sale_line_id = sl.id AND r.status IN ('requested','approved')), 0)\n\t\t\t\tFROM app.sale_lines sl WHERE sl.id = $1 AND sl.sale_id = $2", it.SaleItemID, saleID).Scan(&qty, &returned, &lineTotal, &pending); err != nil {
 				return httpx.NotFound("not_found", "Sale line not found")
 			}
 			if returned.Add(pending).Add(it.Qty).GreaterThan(qty) {
@@ -144,10 +136,7 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uu
 				return httpx.BadRequest("invalid_body", "Refund amount must be greater than zero")
 			}
 			var existingRefunds decimal.Decimal
-			if err := tx.QueryRow(ctx, `
-				SELECT COALESCE(SUM(refund_amount), 0) FROM app.sale_returns
-				WHERE tenant_id = $1 AND sale_id = $2 AND status IN ('requested','approved','completed')`,
-				p.TenantID, saleID).Scan(&existingRefunds); err != nil {
+			if err := tx.QueryRow(ctx, "\n\t\t\t\tSELECT COALESCE(SUM(refund_amount), 0) FROM app.sale_returns\n\t\t\t\tWHERE sale_id = $1 AND status IN ('requested','approved','completed')", saleID).Scan(&existingRefunds); err != nil {
 				return err
 			}
 			if existingRefunds.Add(amount).GreaterThan(paid) {
@@ -163,18 +152,11 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uu
 			return err
 		}
 		var rid uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.sale_returns (tenant_id, return_no, sale_id, location_id, status, resolution, reason, refund_amount, business_date)
-			VALUES ($1,$2,$3,$4,'requested',$5::app.return_resolution,$6,$7,$8::date)
-			RETURNING id`,
-			p.TenantID, retNumber, saleID, locID, resolution, reason, amount, date).Scan(&rid); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.sale_returns (return_no, sale_id, location_id, status, resolution, reason, refund_amount, business_date)\n\t\t\tVALUES ($1, $2, $3, 'requested', $4::app.return_resolution, $5, $6, $7::date)\n\t\t\tRETURNING id", retNumber, saleID, locID, resolution, reason, amount, date).Scan(&rid); err != nil {
 			return err
 		}
 		for _, r := range rets {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO app.sale_return_lines (tenant_id, sale_return_id, sale_line_id, quantity, condition, restock, refund_amount, product_unit_id)
-				VALUES ($1,$2,$3,$4,$5::app.item_condition,$6,$7,$8)`,
-				p.TenantID, rid, r.saleLineID, r.qty, r.condition, r.restock, r.amt, r.productUnitID); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tINSERT INTO app.sale_return_lines (sale_return_id, sale_line_id, quantity, condition, restock, refund_amount, product_unit_id)\n\t\t\t\tVALUES ($1, $2, $3, $4::app.item_condition, $5, $6, $7)", rid, r.saleLineID, r.qty, r.condition, r.restock, r.amt, r.productUnitID); err != nil {
 				return err
 			}
 		}
@@ -183,7 +165,7 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uu
 			a := amount
 			amtPtr = &a
 		}
-		_ = s.Notify.ToApprovers(ctx, tx, p.TenantID, &locID, "shop.return.approve", amtPtr, p.UserID, notify.Message{
+		_ = s.Notify.ToApprovers(ctx, tx, &locID, "shop.return.approve", amtPtr, p.UserID, notify.Message{
 			Type: "approval_waiting", Title: "Return awaiting approval",
 			Body: "Return " + retNumber + " on sale " + number + ": " + reason,
 			Link: "/sale-returns/" + rid.String(), EntityType: "sale_return", EntityID: &rid,
@@ -193,7 +175,7 @@ func (s *Service) CreateReturn(ctx context.Context, p *auth.Principal, saleID uu
 		}); err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 201, httpx.Data(map[string]any{
+		raw, err := idem.Complete(ctx, tx, 201, httpx.Data(map[string]any{
 			"id": rid, "number": retNumber, "sale_id": saleID, "status": "requested", "resolution": resolution, "refund_total": amount,
 		}))
 		status, body = 201, raw
@@ -209,7 +191,7 @@ func (s *Service) DecideReturn(ctx context.Context, p *auth.Principal, id uuid.U
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var st string
 		var requestedBy uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT status::text, requested_by FROM app.sale_returns WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&st, &requestedBy)
+		err := tx.QueryRow(ctx, "SELECT status::text, requested_by FROM app.sale_returns WHERE id = $1 FOR UPDATE", id).Scan(&st, &requestedBy)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFound("not_found", "Return not found")
 		}
@@ -226,7 +208,7 @@ func (s *Service) DecideReturn(ctx context.Context, p *auth.Principal, id uuid.U
 		if approve {
 			next = "approved"
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.sale_returns SET status = $3::app.return_status WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, next); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.sale_returns SET status = $2::app.return_status WHERE id = $1", id, next); err != nil {
 			return err
 		}
 		if err := s.Audit.Record(ctx, tx, p, "sale_return."+next, "sale_return", id, nil, map[string]any{"status": next}); err != nil {
@@ -244,7 +226,7 @@ func (s *Service) CancelReturn(ctx context.Context, p *auth.Principal, id uuid.U
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var st string
 		var requestedBy uuid.UUID
-		err := tx.QueryRow(ctx, `SELECT status::text, requested_by FROM app.sale_returns WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&st, &requestedBy)
+		err := tx.QueryRow(ctx, "SELECT status::text, requested_by FROM app.sale_returns WHERE id = $1 FOR UPDATE", id).Scan(&st, &requestedBy)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFound("not_found", "Return not found")
 		}
@@ -262,7 +244,7 @@ func (s *Service) CancelReturn(ctx context.Context, p *auth.Principal, id uuid.U
 		if st != "requested" && st != "approved" {
 			return httpx.Conflict("invalid_status", "This return cannot be cancelled")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.sale_returns SET status = 'cancelled' WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.sale_returns SET status = 'cancelled' WHERE id = $1", id); err != nil {
 			return err
 		}
 		out = map[string]any{"id": id, "status": "cancelled"}
@@ -277,7 +259,7 @@ func (s *Service) CompleteReturn(ctx context.Context, p *auth.Principal, id uuid
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -287,10 +269,7 @@ func (s *Service) CompleteReturn(ctx context.Context, p *auth.Principal, id uuid
 		var custID *uuid.UUID
 		var st, resolution, retNo string
 		var refundAmt decimal.Decimal
-		err := tx.QueryRow(ctx, `
-			SELECT r.sale_id, r.location_id, s.customer_id, r.status::text, r.resolution::text, r.return_no, r.refund_amount
-			FROM app.sale_returns r JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id
-			WHERE r.tenant_id = $1 AND r.id = $2 FOR UPDATE OF r, s`, p.TenantID, id).
+		err := tx.QueryRow(ctx, "\n\t\t\tSELECT r.sale_id, r.location_id, s.customer_id, r.status::text, r.resolution::text, r.return_no, r.refund_amount\n\t\t\tFROM app.sale_returns r JOIN app.sales s ON s.id = r.sale_id\n\t\t\tWHERE r.id = $1 FOR UPDATE OF r, s", id).
 			Scan(&saleID, &locID, &custID, &st, &resolution, &retNo, &refundAmt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFound("not_found", "Return not found")
@@ -304,9 +283,7 @@ func (s *Service) CompleteReturn(ctx context.Context, p *auth.Principal, id uuid
 		if resolution == "refund" && refundAmt.IsPositive() && in.AccountID == nil {
 			return httpx.BadRequest("invalid_body", "Choose the money account to refund from")
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.sale_returns SET status = 'completed', completed_at = now(), exchange_sale_id = COALESCE($3, exchange_sale_id)
-			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, in.ExchangeSaleID); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.sale_returns SET status = 'completed', completed_at = now(), exchange_sale_id = COALESCE($2, exchange_sale_id)\n\t\t\tWHERE id = $1", id, in.ExchangeSaleID); err != nil {
 			return err
 		}
 		out := map[string]any{"id": id, "number": retNo, "sale_id": saleID, "status": "completed", "resolution": resolution, "refund_total": refundAmt}
@@ -327,7 +304,8 @@ func (s *Service) CompleteReturn(ctx context.Context, p *auth.Principal, id uuid
 				}
 			}
 			pay, err := payments.Pay(ctx, tx, payments.PayInput{
-				TenantID: p.TenantID, LocationID: locID, AccountID: *in.AccountID,
+				LocationID: locID,
+				AccountID:  *in.AccountID,
 				CustomerID: custID, OtherPayee: otherPayee, Method: method,
 				Amount: refundAmt, Reference: strings.TrimSpace(in.Reference), BusinessDate: date,
 				Notes: "Refund " + retNo, Allocations: []payments.Alloc{{SaleReturnID: &id, Amount: refundAmt}},
@@ -341,7 +319,7 @@ func (s *Service) CompleteReturn(ctx context.Context, p *auth.Principal, id uuid
 		if err := s.Audit.Record(ctx, tx, p, "sale_return.completed", "sale_return", id, nil, out); err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(out))
+		raw, err := idem.Complete(ctx, tx, 200, httpx.Data(out))
 		status, body = 200, raw
 		return err
 	})
@@ -360,15 +338,14 @@ func (s *Service) Returns(ctx context.Context, p *auth.Principal, f ReturnFilter
 	out := []map[string]any{}
 	total := 0
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("r.tenant_id = $1")
+		q := sqlq.New()
 		q.If(p.BranchID != nil, "r.location_id = ?", p.BranchID)
 		q.If(!p.Has("shop.sale.view_all") && !p.Has("shop.return.approve"), "(r.requested_by = ? OR s.sold_by = ?)", p.MembershipID, p.MembershipID)
 		q.If(f.SaleID != nil, "r.sale_id = ?", f.SaleID)
 		q.If(f.Status != "", "r.status = ?::app.return_status", f.Status)
 		q.If(f.From != "", "r.business_date >= ?::date", f.From)
 		q.If(f.To != "", "r.business_date <= ?::date", f.To)
-		from := ` FROM app.sale_returns r JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id`
+		from := ` FROM app.sale_returns r JOIN app.sales s ON s.id = r.sale_id`
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
@@ -410,11 +387,7 @@ func scanReturn(row pgx.Row) (map[string]any, error) {
 func (s *Service) Return(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		m, err := scanReturn(tx.QueryRow(ctx, `
-			SELECT r.id, r.return_no, r.sale_id, COALESCE(s.receipt_no, ''), r.status::text, r.resolution::text,
-			       r.reason, r.refund_amount, r.requested_by, r.decided_by, r.created_at, r.completed_at, r.location_id
-			FROM app.sale_returns r JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id
-			WHERE r.tenant_id = $1 AND r.id = $2`, p.TenantID, id))
+		m, err := scanReturn(tx.QueryRow(ctx, "\n\t\t\tSELECT r.id, r.return_no, r.sale_id, COALESCE(s.receipt_no, ''), r.status::text, r.resolution::text,\n\t\t\t       r.reason, r.refund_amount, r.requested_by, r.decided_by, r.created_at, r.completed_at, r.location_id\n\t\t\tFROM app.sale_returns r JOIN app.sales s ON s.id = r.sale_id\n\t\t\tWHERE r.id = $1", id))
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFound("not_found", "Return not found")
 		}
@@ -423,18 +396,14 @@ func (s *Service) Return(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 		}
 		if !p.Has("shop.sale.view_all") && !p.Has("shop.return.approve") {
 			var soldBy uuid.UUID
-			if err := tx.QueryRow(ctx, `SELECT sold_by FROM app.sales WHERE tenant_id = $1 AND id = $2`, p.TenantID, m["sale_id"]).Scan(&soldBy); err != nil {
+			if err := tx.QueryRow(ctx, "SELECT sold_by FROM app.sales WHERE id = $1", m["sale_id"]).Scan(&soldBy); err != nil {
 				return err
 			}
 			if m["requested_by"] != p.MembershipID && soldBy != p.MembershipID {
 				return httpx.NotFound("not_found", "Return not found")
 			}
 		}
-		rows, err := tx.Query(ctx, `
-			SELECT rl.id, rl.sale_line_id, sl.product_id, sl.product_name::text, rl.quantity, rl.condition::text, rl.restock, rl.refund_amount, rl.product_unit_id
-			FROM app.sale_return_lines rl
-			JOIN app.sale_lines sl ON sl.tenant_id = rl.tenant_id AND sl.id = rl.sale_line_id
-			WHERE rl.tenant_id = $1 AND rl.sale_return_id = $2 ORDER BY sl.line_no`, p.TenantID, id)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT rl.id, rl.sale_line_id, sl.product_id, sl.product_name::text, rl.quantity, rl.condition::text, rl.restock, rl.refund_amount, rl.product_unit_id\n\t\t\tFROM app.sale_return_lines rl\n\t\t\tJOIN app.sale_lines sl ON sl.id = rl.sale_line_id\n\t\t\tWHERE rl.sale_return_id = $1 ORDER BY sl.line_no", id)
 		if err != nil {
 			return err
 		}

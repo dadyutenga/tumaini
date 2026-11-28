@@ -35,8 +35,7 @@ const paymentUnion = `(
 	       coalesce(c.full_name::text, 'Walk-in') AS party_name, pr.account_id, pr.method::text AS method, pr.amount,
 	       coalesce(pr.reference, '') AS reference, pr.business_date, pr.status::text AS status, coalesce(pr.notes, '') AS note,
 	       pr.created_by, pr.created_at, pr.voided_at, coalesce(pr.void_reason, '') AS void_reason
-	FROM app.payments_received pr LEFT JOIN app.customers c ON c.tenant_id = pr.tenant_id AND c.id = pr.customer_id
-	WHERE pr.tenant_id = $1
+	FROM app.payments_received pr LEFT JOIN app.customers c ON c.id = pr.customer_id
 	UNION ALL
 	SELECT pm.id, pm.payment_no, pm.location_id, 'out',
 	       CASE WHEN pm.supplier_id IS NOT NULL THEN 'supplier' WHEN pm.contractor_id IS NOT NULL THEN 'contractor'
@@ -48,19 +47,19 @@ const paymentUnion = `(
 	       pm.account_id, pm.method::text, pm.amount, coalesce(pm.reference, ''), pm.business_date, pm.status::text, coalesce(pm.notes, ''),
 	       pm.created_by, pm.created_at, pm.voided_at, coalesce(pm.void_reason, '')
 	FROM app.payments_made pm
-	LEFT JOIN app.suppliers s ON s.tenant_id = pm.tenant_id AND s.id = pm.supplier_id
-	LEFT JOIN app.contractors ct ON ct.tenant_id = pm.tenant_id AND ct.id = pm.contractor_id
-	LEFT JOIN app.employees e ON e.tenant_id = pm.tenant_id AND e.id = pm.employee_id
-	LEFT JOIN app.customers cu ON cu.tenant_id = pm.tenant_id AND cu.id = pm.customer_id
-	WHERE pm.tenant_id = $1) p`
+	LEFT JOIN app.suppliers s ON s.id = pm.supplier_id
+	LEFT JOIN app.contractors ct ON ct.id = pm.contractor_id
+	LEFT JOIN app.employees e ON e.id = pm.employee_id
+	LEFT JOIN app.customers cu ON cu.id = pm.customer_id
+	WHERE true) p`
 
 const paymentCols = `p.id, p.number, p.location_id, p.direction, p.kind, p.party_type, p.party_id, p.party_name,
 	p.account_id, fa.name::text, fa.kind::text, p.method, p.amount, p.reference, p.business_date::text, p.status, p.note,
 	m.user_id, coalesce(u.full_name::text, ''), p.created_at, p.voided_at, p.void_reason`
 
 const paymentFrom = ` FROM ` + paymentUnion + `
-	JOIN app.financial_accounts fa ON fa.tenant_id = $1 AND fa.id = p.account_id
-	LEFT JOIN app.memberships m ON m.tenant_id = $1 AND m.id = p.created_by LEFT JOIN iam.users u ON u.id = m.user_id`
+	JOIN app.financial_accounts fa ON fa.id = p.account_id
+	LEFT JOIN app.memberships m ON m.id = p.created_by LEFT JOIN iam.users u ON u.id = m.user_id`
 
 func scanPayment(row pgx.Row) (map[string]any, error) {
 	var id, branch, account uuid.UUID
@@ -91,7 +90,7 @@ func (s *Service) Payments(ctx context.Context, p *auth.Principal, f PaymentFilt
 	out := []map[string]any{}
 	total := 0
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
+		q := sqlq.New()
 		q.If(!p.Has("finance.payment.view_all"), "p.created_by = ?", p.MembershipID)
 		q.If(p.BranchID != nil, "p.location_id = ?", p.BranchID)
 		q.If(f.Direction != "", "p.direction = ?", f.Direction)
@@ -126,34 +125,18 @@ func (s *Service) Payments(ctx context.Context, p *auth.Principal, f PaymentFilt
 }
 
 func (s *Service) payment(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
-	m, err := scanPayment(tx.QueryRow(ctx, `SELECT `+paymentCols+paymentFrom+` WHERE p.id = $2`, p.TenantID, id))
+	m, err := scanPayment(tx.QueryRow(ctx, `SELECT `+paymentCols+paymentFrom+` WHERE p.id = $1`, id))
 	if err != nil {
 		return nil, httpx.NotFound("not_found", "Payment not found")
 	}
 	if !p.Has("finance.payment.view_all") {
 		var mine bool
-		_ = tx.QueryRow(ctx, `SELECT m.user_id = $2 FROM app.memberships m WHERE m.tenant_id = $1 AND m.id = (
-			SELECT created_by FROM app.payments_received WHERE tenant_id = $1 AND id = $3
-			UNION ALL SELECT created_by FROM app.payments_made WHERE tenant_id = $1 AND id = $3 LIMIT 1)`, p.TenantID, p.UserID, id).Scan(&mine)
+		_ = tx.QueryRow(ctx, "SELECT m.user_id = $1 FROM app.memberships m WHERE m.id = (\n\t\t\tSELECT created_by FROM app.payments_received WHERE id = $2\n\t\t\tUNION ALL SELECT created_by FROM app.payments_made WHERE id = $2 LIMIT 1)", p.UserID, id).Scan(&mine)
 		if !mine {
 			return nil, httpx.NotFound("not_found", "Payment not found")
 		}
 	}
-	rows, err := tx.Query(ctx, `
-		SELECT 'sale', a.sale_id, a.amount, coalesce(sa.receipt_no, '') FROM app.payment_allocations a
-		  LEFT JOIN app.sales sa ON sa.tenant_id = a.tenant_id AND sa.id = a.sale_id WHERE a.tenant_id = $1 AND a.payment_received_id = $2 AND a.sale_id IS NOT NULL
-		UNION ALL
-		SELECT 'invoice', a.invoice_id, a.amount, coalesce(i.invoice_no, '') FROM app.payment_allocations a
-		  LEFT JOIN app.invoices i ON i.tenant_id = a.tenant_id AND i.id = a.invoice_id WHERE a.tenant_id = $1 AND a.payment_received_id = $2 AND a.invoice_id IS NOT NULL
-		UNION ALL
-		SELECT 'purchase', a.purchase_id, a.amount, coalesce(pu.purchase_no, '') FROM app.payment_made_allocations a
-		  LEFT JOIN app.purchases pu ON pu.tenant_id = a.tenant_id AND pu.id = a.purchase_id WHERE a.tenant_id = $1 AND a.payment_made_id = $2 AND a.purchase_id IS NOT NULL
-		UNION ALL
-		SELECT 'contractor_bill', a.contractor_bill_id, a.amount, coalesce(b.bill_no, '') FROM app.payment_made_allocations a
-		  LEFT JOIN app.contractor_bills b ON b.tenant_id = a.tenant_id AND b.id = a.contractor_bill_id WHERE a.tenant_id = $1 AND a.payment_made_id = $2 AND a.contractor_bill_id IS NOT NULL
-		UNION ALL
-		SELECT 'sale_return', a.sale_return_id, a.amount, coalesce(r.return_no, '') FROM app.payment_made_allocations a
-		  LEFT JOIN app.sale_returns r ON r.tenant_id = a.tenant_id AND r.id = a.sale_return_id WHERE a.tenant_id = $1 AND a.payment_made_id = $2 AND a.sale_return_id IS NOT NULL`, p.TenantID, id)
+	rows, err := tx.Query(ctx, "\n\t\tSELECT 'sale', a.sale_id, a.amount, coalesce(sa.receipt_no, '') FROM app.payment_allocations a\n\t\t  LEFT JOIN app.sales sa ON sa.id = a.sale_id WHERE a.payment_received_id = $1 AND a.sale_id IS NOT NULL\n\t\tUNION ALL\n\t\tSELECT 'invoice', a.invoice_id, a.amount, coalesce(i.invoice_no, '') FROM app.payment_allocations a\n\t\t  LEFT JOIN app.invoices i ON i.id = a.invoice_id WHERE a.payment_received_id = $1 AND a.invoice_id IS NOT NULL\n\t\tUNION ALL\n\t\tSELECT 'purchase', a.purchase_id, a.amount, coalesce(pu.purchase_no, '') FROM app.payment_made_allocations a\n\t\t  LEFT JOIN app.purchases pu ON pu.id = a.purchase_id WHERE a.payment_made_id = $1 AND a.purchase_id IS NOT NULL\n\t\tUNION ALL\n\t\tSELECT 'contractor_bill', a.contractor_bill_id, a.amount, coalesce(b.bill_no, '') FROM app.payment_made_allocations a\n\t\t  LEFT JOIN app.contractor_bills b ON b.id = a.contractor_bill_id WHERE a.payment_made_id = $1 AND a.contractor_bill_id IS NOT NULL\n\t\tUNION ALL\n\t\tSELECT 'sale_return', a.sale_return_id, a.amount, coalesce(r.return_no, '') FROM app.payment_made_allocations a\n\t\t  LEFT JOIN app.sale_returns r ON r.id = a.sale_return_id WHERE a.payment_made_id = $1 AND a.sale_return_id IS NOT NULL", id)
 	if err != nil {
 		return nil, err
 	}
@@ -200,11 +183,11 @@ func (s *Service) Voucher(ctx context.Context, p *auth.Principal, id uuid.UUID) 
 		}
 		var name string
 		var phone, address, tin *string
-		if err := tx.QueryRow(ctx, `SELECT business_name::text, phone::text, address, tin FROM app.tenant_settings WHERE tenant_id = $1`, p.TenantID).Scan(&name, &phone, &address, &tin); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT business_name::text, phone::text, address, tin FROM app.business_settings WHERE true").Scan(&name, &phone, &address, &tin); err != nil {
 			return err
 		}
 		var branchName string
-		_ = tx.QueryRow(ctx, `SELECT name::text FROM app.locations WHERE tenant_id = $1 AND id = $2`, p.TenantID, out["branch_id"]).Scan(&branchName)
+		_ = tx.QueryRow(ctx, "SELECT name::text FROM app.locations WHERE id = $1", out["branch_id"]).Scan(&branchName)
 		title := "Payment receipt"
 		if out["direction"] == "out" {
 			title = "Payment voucher"
@@ -293,7 +276,7 @@ func (s *Service) Void(ctx context.Context, p *auth.Principal, id uuid.UUID, rea
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -327,7 +310,7 @@ func (s *Service) Void(ctx context.Context, p *auth.Principal, id uuid.UUID, rea
 			if err := s.Audit.Record(ctx, tx, p, "payment.void_requested", "payments", id, nil, map[string]any{"reason": reason, "approval_request_id": reqID}); err != nil {
 				return err
 			}
-			raw, err := idem.Complete(ctx, tx, p.UserID, 202, httpx.Data(map[string]any{"id": id, "approval_request_id": reqID, "status": "pending_approval"}))
+			raw, err := idem.Complete(ctx, tx, 202, httpx.Data(map[string]any{"id": id, "approval_request_id": reqID, "status": "pending_approval"}))
 			status, body = 202, raw
 			return err
 		}
@@ -338,7 +321,7 @@ func (s *Service) Void(ctx context.Context, p *auth.Principal, id uuid.UUID, rea
 		if err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(out))
+		raw, err := idem.Complete(ctx, tx, 200, httpx.Data(out))
 		status, body = 200, raw
 		return err
 	})
@@ -352,8 +335,7 @@ func (s *Service) voidPayment(ctx context.Context, tx pgx.Tx, p *auth.Principal,
 		table = "app.payments_made"
 	}
 	// table is one of two fixed names chosen above.
-	if _, err := tx.Exec(ctx, `UPDATE `+table+` SET status = 'voided', voided_at = now(), voided_by = $2, void_reason = $3 WHERE tenant_id = $1 AND id = $4`,
-		p.TenantID, p.MembershipID, reason, id); err != nil {
+	if _, err := tx.Exec(ctx, `UPDATE `+table+` SET status = 'voided', voided_at = now(), voided_by = $1, void_reason = $2 WHERE id = $3`, p.MembershipID, reason, id); err != nil {
 		return err
 	}
 	return s.Audit.Record(ctx, tx, p, "payment.voided", "payments", id, nil, map[string]any{"reason": reason})

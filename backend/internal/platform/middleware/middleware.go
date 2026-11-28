@@ -37,10 +37,9 @@ func RequestLogger() fiber.Handler {
 			}
 		}
 		p, _ := c.Locals(principalKey).(*auth.Principal)
-		uid, tid := "", ""
+		uid := ""
 		if p != nil {
 			uid = p.UserID.String()
-			tid = p.TenantID.String()
 		}
 		slog.Info("request",
 			"request_id", requestid.FromContext(c),
@@ -49,7 +48,6 @@ func RequestLogger() fiber.Handler {
 			"status", c.Response().StatusCode(),
 			"duration_ms", time.Since(start).Milliseconds(),
 			"user_id", uid,
-			"tenant_id", tid,
 		)
 		return nil
 	}

@@ -66,11 +66,10 @@ func (s *Service) Recurring(ctx context.Context, p *auth.Principal, page httpx.P
 	out := []map[string]any{}
 	total := 0
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("r.tenant_id = $1")
+		q := sqlq.New()
 		q.If(p.BranchID != nil, "r.location_id = ?", p.BranchID)
 		q.If(active != nil, "r.active = ?", active)
-		from := ` FROM app.recurring_expenses r JOIN app.expense_categories ec ON ec.tenant_id = r.tenant_id AND ec.id = r.category_id`
+		from := ` FROM app.recurring_expenses r JOIN app.expense_categories ec ON ec.id = r.category_id`
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
@@ -91,15 +90,15 @@ func (s *Service) Recurring(ctx context.Context, p *auth.Principal, page httpx.P
 	return out, total, err
 }
 
-func (s *Service) getRecurring(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, lock bool) (map[string]any, error) {
+func (s *Service) getRecurring(ctx context.Context, tx pgx.Tx, id uuid.UUID, lock bool) (map[string]any, error) {
 	suffix := ""
 	if lock {
 		suffix = " FOR UPDATE OF r"
 	}
 	m, err := scanRecurring(tx.QueryRow(ctx, `
 		SELECT `+recurringCols+` FROM app.recurring_expenses r
-		JOIN app.expense_categories ec ON ec.tenant_id = r.tenant_id AND ec.id = r.category_id
-		WHERE r.tenant_id = $1 AND r.id = $2`+suffix, tenantID, id))
+		JOIN app.expense_categories ec ON ec.id = r.category_id
+		WHERE r.id = $1`+suffix, id))
 	if err != nil {
 		return nil, httpx.NotFound("not_found", "Recurring expense not found")
 	}
@@ -118,7 +117,7 @@ func (s *Service) checkRecurring(ctx context.Context, tx pgx.Tx, p *auth.Princip
 	if branch == nil {
 		return uuid.Nil, 0, "", httpx.BadRequest("branch_required", "Choose a branch first")
 	}
-	if err := s.categoryOK(ctx, tx, p.TenantID, in.CategoryID); err != nil {
+	if err := s.categoryOK(ctx, tx, in.CategoryID); err != nil {
 		return uuid.Nil, 0, "", err
 	}
 	next := strings.TrimSpace(in.NextRunOn)
@@ -153,14 +152,10 @@ func (s *Service) CreateRecurring(ctx context.Context, p *auth.Principal, in Rec
 			return err
 		}
 		var id uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.recurring_expenses (tenant_id, category_id, description, amount, business_unit_id, location_id, account_id, day_of_month, next_run_on)
-			VALUES ($1,$2,$3,$4,(SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $5),$5,$6,$7,$8::date)
-			RETURNING id`,
-			p.TenantID, in.CategoryID, in.Description, money.Money(in.Amount), branch, in.MoneyAccountID, dom, next).Scan(&id); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.recurring_expenses ( category_id, description, amount, business_unit_id, location_id, account_id, day_of_month, next_run_on)\n\t\t\tVALUES ($1,$2,$3,(SELECT business_unit_id FROM app.locations WHERE id = $4),$4,$5,$6,$7::date)\n\t\t\tRETURNING id", in.CategoryID, in.Description, money.Money(in.Amount), branch, in.MoneyAccountID, dom, next).Scan(&id); err != nil {
 			return err
 		}
-		out, err = s.getRecurring(ctx, tx, p.TenantID, id, false)
+		out, err = s.getRecurring(ctx, tx, id, false)
 		if err != nil {
 			return err
 		}
@@ -172,7 +167,7 @@ func (s *Service) CreateRecurring(ctx context.Context, p *auth.Principal, in Rec
 func (s *Service) UpdateRecurring(ctx context.Context, p *auth.Principal, id uuid.UUID, in RecurringIn) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		before, err := s.getRecurring(ctx, tx, p.TenantID, id, true)
+		before, err := s.getRecurring(ctx, tx, id, true)
 		if err != nil {
 			return err
 		}
@@ -184,15 +179,10 @@ func (s *Service) UpdateRecurring(ctx context.Context, p *auth.Principal, id uui
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.recurring_expenses
-			SET business_unit_id = (SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $3),
-			    location_id = $3, category_id = $4, amount = $5, description = $6, account_id = $7, day_of_month = $8, next_run_on = $9::date
-			WHERE tenant_id = $1 AND id = $2`,
-			p.TenantID, id, branch, in.CategoryID, money.Money(in.Amount), in.Description, in.MoneyAccountID, dom, next); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.recurring_expenses\n\t\t\tSET business_unit_id = (SELECT business_unit_id FROM app.locations WHERE id = $2),\n\t\t\t    location_id = $2, category_id = $3, amount = $4, description = $5, account_id = $6, day_of_month = $7, next_run_on = $8::date\n\t\t\tWHERE id = $1", id, branch, in.CategoryID, money.Money(in.Amount), in.Description, in.MoneyAccountID, dom, next); err != nil {
 			return err
 		}
-		out, err = s.getRecurring(ctx, tx, p.TenantID, id, false)
+		out, err = s.getRecurring(ctx, tx, id, false)
 		if err != nil {
 			return err
 		}
@@ -204,7 +194,7 @@ func (s *Service) UpdateRecurring(ctx context.Context, p *auth.Principal, id uui
 func (s *Service) SetRecurringActive(ctx context.Context, p *auth.Principal, id uuid.UUID, active bool) (map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		before, err := s.getRecurring(ctx, tx, p.TenantID, id, true)
+		before, err := s.getRecurring(ctx, tx, id, true)
 		if err != nil {
 			return err
 		}
@@ -224,10 +214,10 @@ func (s *Service) SetRecurringActive(ctx context.Context, p *auth.Principal, id 
 			}
 			next = d.Format("2006-01-02")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.recurring_expenses SET active = $3, next_run_on = $4::date WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, active, next); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.recurring_expenses SET active = $2, next_run_on = $3::date WHERE id = $1", id, active, next); err != nil {
 			return err
 		}
-		out, err = s.getRecurring(ctx, tx, p.TenantID, id, false)
+		out, err = s.getRecurring(ctx, tx, id, false)
 		if err != nil {
 			return err
 		}
@@ -242,12 +232,12 @@ func (s *Service) SetRecurringActive(ctx context.Context, p *auth.Principal, id 
 
 // RunRecurring generates submitted expenses for every active template due on or before the run date
 // and advances next_run_on by one month.
-func (s *Service) RunRecurring(ctx context.Context, tenantID uuid.UUID, payload json.RawMessage) error {
+func (s *Service) RunRecurring(ctx context.Context, payload json.RawMessage) error {
 	var in struct {
 		Date string `json:"date"`
 	}
 	_ = json.Unmarshal(payload, &in)
-	return s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		date := in.Date
 		if _, err := time.Parse("2006-01-02", date); err != nil {
 			if date, err = s.bizDate(ctx, tx); err != nil {
@@ -255,12 +245,8 @@ func (s *Service) RunRecurring(ctx context.Context, tenantID uuid.UUID, payload 
 			}
 		}
 		var fallbackMember uuid.UUID
-		_ = tx.QueryRow(ctx, `SELECT id FROM app.memberships WHERE tenant_id = $1 AND status = 'active' ORDER BY created_at LIMIT 1`, tenantID).Scan(&fallbackMember)
-		rows, err := tx.Query(ctx, `
-			SELECT id, business_unit_id, location_id, category_id, account_id, amount, description::text, day_of_month, next_run_on::text, created_by
-			FROM app.recurring_expenses
-			WHERE tenant_id = $1 AND active AND next_run_on <= $2::date
-			ORDER BY next_run_on FOR UPDATE SKIP LOCKED`, tenantID, date)
+		_ = tx.QueryRow(ctx, "SELECT id FROM app.memberships WHERE status = 'active' ORDER BY created_at LIMIT 1").Scan(&fallbackMember)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT id, business_unit_id, location_id, category_id, account_id, amount, description::text, day_of_month, next_run_on::text, created_by\n\t\t\tFROM app.recurring_expenses\n\t\t\tWHERE active AND next_run_on <= $1::date\n\t\t\tORDER BY next_run_on FOR UPDATE SKIP LOCKED", date)
 		if err != nil {
 			return err
 		}
@@ -296,7 +282,7 @@ func (s *Service) RunRecurring(ctx context.Context, tenantID uuid.UUID, payload 
 			for due.Format("2006-01-02") <= date {
 				day := due.Format("2006-01-02")
 				var exists bool
-				if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.expenses WHERE tenant_id = $1 AND recurring_expense_id = $2 AND expense_date = $3::date)`, tenantID, t.id, day).Scan(&exists); err != nil {
+				if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM app.expenses WHERE recurring_expense_id = $1 AND expense_date = $2::date)", t.id, day).Scan(&exists); err != nil {
 					return err
 				}
 				if !exists {
@@ -305,17 +291,12 @@ func (s *Service) RunRecurring(ctx context.Context, tenantID uuid.UUID, payload 
 						return err
 					}
 					var expID uuid.UUID
-					if err := tx.QueryRow(ctx, `
-						INSERT INTO app.expenses (tenant_id, expense_no, category_id, description, amount, expense_date,
-						                          business_unit_id, location_id, account_id, status, requested_by, created_by, recurring_expense_id)
-						VALUES ($1,$2,$3,$4,$5,$6::date,$7,$8,$9,'submitted',$10,$10,$11)
-						RETURNING id`,
-						tenantID, number, t.cat, t.desc, t.amount, day, t.unit, t.loc, t.account, reqBy, t.id).Scan(&expID); err != nil {
+					if err := tx.QueryRow(ctx, "\n\t\t\t\t\t\tINSERT INTO app.expenses (expense_no, category_id, description, amount, expense_date, business_unit_id, location_id, account_id, status, requested_by, created_by, recurring_expense_id)\n\t\t\t\t\t\tVALUES ($1, $2, $3, $4, $5::date, $6, $7, $8, 'submitted', $9, $9, $10)\n\t\t\t\t\t\tRETURNING id", number, t.cat, t.desc, t.amount, day, t.unit, t.loc, t.account, reqBy, t.id).Scan(&expID); err != nil {
 						return err
 					}
 					amt := t.amount
 					loc := t.loc
-					_ = s.Notify.ToApprovers(ctx, tx, tenantID, &loc, "finance.expense.approve", &amt, uuid.Nil, notify.Message{
+					_ = s.Notify.ToApprovers(ctx, tx, &loc, "finance.expense.approve", &amt, uuid.Nil, notify.Message{
 						Type: "approval_waiting", Title: "Recurring expense awaiting approval",
 						Body: "Expense " + number + ": " + t.desc,
 						Link: "/expenses/" + expID.String(), EntityType: "expense", EntityID: &expID,
@@ -323,7 +304,7 @@ func (s *Service) RunRecurring(ctx context.Context, tenantID uuid.UUID, payload 
 				}
 				due = nextMonth(due, t.dom)
 			}
-			if _, err := tx.Exec(ctx, `UPDATE app.recurring_expenses SET next_run_on = $3::date WHERE tenant_id = $1 AND id = $2`, tenantID, t.id, due.Format("2006-01-02")); err != nil {
+			if _, err := tx.Exec(ctx, "UPDATE app.recurring_expenses SET next_run_on = $2::date WHERE id = $1", t.id, due.Format("2006-01-02")); err != nil {
 				return err
 			}
 		}

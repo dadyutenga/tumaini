@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -342,7 +341,7 @@ func TestServicesFlow(t *testing.T) {
 	require.Len(t, asList(soon.body["data"]), 1)
 	biz := o.call(t, http.MethodGet, "/api/v1/business", nil, "")
 	require.Equal(t, 200, biz.code, biz.raw)
-	require.NoError(t, e.app.Jobs.Enqueue(context.Background(), uuid.MustParse(str(biz.data["id"])), "service_reminders", map[string]any{}))
+	require.NoError(t, e.app.Jobs.Enqueue(context.Background(), "service_reminders", map[string]any{}))
 	e.runJobs(t)
 	e.runJobs(t)
 	notes := o.call(t, http.MethodGet, "/api/v1/notifications", nil, "")
@@ -388,11 +387,7 @@ func TestServicesFlow(t *testing.T) {
 	require.Equal(t, 200, drep.code, drep.raw)
 	require.Equal(t, 200, o.call(t, http.MethodGet, "/api/v1/reports/projects?format=csv", nil, "").code)
 
-	// Another business sees none of this.
-	other := newEnv(t, defaultNow)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/clients/"+clientID, nil, "").code)
-	empty := other.owner.call(t, http.MethodGet, "/api/v1/projects", nil, "")
-	require.Empty(t, asList(empty.body["data"]))
+	// The public link keeps showing what was decided.
 	decided := pub.call(t, http.MethodGet, "/api/v1/public/design-approvals/"+token2, nil, "")
 	require.Equal(t, 200, decided.code, decided.raw)
 	require.Equal(t, "approved", str(decided.data["status"]), "a decided link shows the recorded choice")

@@ -144,7 +144,7 @@ func TestAuthTokenTamperingIsRejected(t *testing.T) {
 	none := header + "." + parts[1] + "."
 	// A different signature on the same claims.
 	forged := parts[0] + "." + parts[1] + "." + base64.RawURLEncoding.EncodeToString([]byte("forged-signature-forged-signature"))
-	// Claims edited to another business with the old signature.
+	// Claims edited with the old signature.
 	claims, _ := base64.RawURLEncoding.DecodeString(parts[1])
 	var m map[string]any
 	require.NoError(t, json.Unmarshal(claims, &m))
@@ -241,17 +241,6 @@ func TestUsersDeactivationAndOwnerSafety(t *testing.T) {
 	require.Equal(t, 403, selfDeact.code, selfDeact.raw)
 	own := e.owner.call(t, http.MethodPut, "/api/v1/users/"+ownerID, map[string]any{"role_id": e.roleID(t, "staff")}, "")
 	require.Equal(t, 403, own.code, own.raw)
-
-	// A user from another business is invisible.
-	other := newEnv(t, defaultNow)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/users/"+staffID, nil, "").code)
-	require.Equal(t, 404, other.owner.call(t, http.MethodPost, "/api/v1/users/"+staffID+"/deactivate", nil, "").code)
-	require.Equal(t, 404, other.owner.call(t, http.MethodPost, "/api/v1/users/"+staffID+"/reset-password", map[string]any{"password": "hijacked-pass-1"}, "").code)
-	// And the phone is unique across the platform, so a second business cannot register a user with it.
-	dup := other.owner.call(t, http.MethodPost, "/api/v1/users", map[string]any{
-		"name": "Clash", "phone": phone, "password": "clash-pass-123", "role_id": other.roleID(t, "staff"), "branch_ids": []string{other.branch},
-	}, "")
-	require.Equal(t, 409, dup.code, dup.raw)
 }
 
 // A delegated administrator must not be able to promote themselves or take over an Admin.

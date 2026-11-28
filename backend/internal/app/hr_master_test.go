@@ -94,10 +94,6 @@ func TestHRMasterDataEmployeesAndAdjustments(t *testing.T) {
 	require.Equal(t, 200, later.code, later.raw)
 	require.Len(t, asList(later.data["payslips"]), 1, "after the termination only the active employee is paid")
 	require.Equal(t, amani, str(asList(later.data["payslips"])[0]["employee_id"]))
-
-	other := newEnv(t, defaultNow)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/employees/"+amani, nil, "").code)
-	require.Empty(t, asList(other.owner.call(t, http.MethodGet, "/api/v1/pay-adjustments", nil, "").body["data"]))
 }
 
 // Leave is decided on the leave request itself. It does not create an approval request.

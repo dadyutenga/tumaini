@@ -15,14 +15,16 @@ type Config struct {
 	HTTPAddr           string
 	DatabaseURL        string
 	MigrateDatabaseURL string
-	// JobsDatabaseURL connects as the worker role (bms_jobs); it is used only for tenant provisioning
-	// and background jobs. Empty means the API role is used, which the schema does not allow to provision.
+	// JobsDatabaseURL connects as the worker role (bms_jobs); it is used only for the first-run setup
+	// and background jobs. Empty means the API role is used, which the schema does not allow to set up the business.
 	JobsDatabaseURL string
 	// SessionIdleTimeout ends a session that has not been used for this long.
 	SessionIdleTimeout time.Duration
 	// ReauthTTL is how long a recent primary credential check remains valid for sensitive account changes.
-	ReauthTTL       time.Duration
-	JWTSecret       string
+	ReauthTTL time.Duration
+	JWTSecret string
+	// DataKeyOverride, when set, encrypts data at rest instead of a key derived from JWTSecret.
+	DataKeyOverride string
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 	CORSOrigins     []string
@@ -68,6 +70,8 @@ func Load() (Config, error) {
 		SessionIdleTimeout: duration("SESSION_IDLE_TIMEOUT", 30*time.Minute),
 		ReauthTTL:          duration("REAUTH_TTL", 10*time.Minute),
 		JWTSecret:          os.Getenv("JWT_SECRET"),
+		// MFA_ENCRYPTION_KEY is the old name; servers that set it have data encrypted with it.
+		DataKeyOverride:    getenv("DATA_ENCRYPTION_KEY", os.Getenv("MFA_ENCRYPTION_KEY")),
 		AccessTokenTTL:     duration("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL:    duration("REFRESH_TOKEN_TTL", 30*24*time.Hour),
 		CORSOrigins:        splitCSV(getenv("CORS_ORIGINS", "http://localhost:5173")),
@@ -179,7 +183,13 @@ func Load() (Config, error) {
 	return c, nil
 }
 
+// DataKey is the secret that data encrypted at rest (national ID numbers) is derived from, and the
+// key id recorded beside it. Without an override it falls back to JWT_SECRET, in which case rotating
+// JWT_SECRET makes that data unreadable.
 func (c Config) DataKey() (secret, keyID string) {
+	if c.DataKeyOverride != "" {
+		return c.DataKeyOverride, "env-v1"
+	}
 	return c.JWTSecret, "derived-v1"
 }
 

@@ -84,7 +84,7 @@ type DesignJobPatch struct {
 }
 
 func jobCols(todayExpr string) string {
-	return `j.id, j.tenant_id AS business_id, j.job_no AS number, j.title::text AS title,
+	return `j.id, j.job_no AS number, j.title::text AS title,
 	CASE WHEN j.job_type = 'social_media_post' THEN 'social_media' ELSE j.job_type::text END AS job_type,
 	j.status::text AS status, j.priority::text AS priority, j.deadline,
 	j.customer_id AS client_id, c.full_name::text AS client_name,
@@ -93,17 +93,17 @@ func jobCols(todayExpr string) string {
 	j.price, 0::numeric AS deposit, j.revisions_included, j.revisions_used, j.extra_revision_fee,
 	j.printing_needed, j.final_version_id, j.created_at, j.approved_at, j.delivered_at,
 	(j.deadline IS NOT NULL AND j.deadline < ` + todayExpr + ` AND j.status NOT IN ('approved','printing','delivered','cancelled')) AS overdue,
-	(COALESCE((SELECT SUM(i.amount_paid) FROM app.invoices i WHERE i.tenant_id = j.tenant_id AND i.design_job_id = j.id AND i.status <> 'void'), 0)
-	 + COALESCE((SELECT SUM(pay.amount - COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.tenant_id = pay.tenant_id AND a.payment_received_id = pay.id), 0))
-	             FROM app.payments_received pay WHERE pay.tenant_id = j.tenant_id AND pay.customer_id = j.customer_id AND pay.status = 'posted' AND pay.notes LIKE '%[design_job:' || j.id::text || ']%'), 0)) AS paid,
-	(COALESCE((SELECT SUM(e.amount) FROM app.expenses e WHERE e.tenant_id = j.tenant_id AND e.design_job_id = j.id AND e.status IN ('approved','paid')), 0)
-	 + COALESCE((SELECT SUM(b.amount) FROM app.contractor_bills b WHERE b.tenant_id = j.tenant_id AND b.design_job_id = j.id AND b.status <> 'void'), 0)) AS costs`
+	(COALESCE((SELECT SUM(i.amount_paid) FROM app.invoices i WHERE i.design_job_id = j.id AND i.status <> 'void'), 0)
+	 + COALESCE((SELECT SUM(pay.amount - COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.payment_received_id = pay.id), 0))
+	             FROM app.payments_received pay WHERE pay.customer_id = j.customer_id AND pay.status = 'posted' AND pay.notes LIKE '%[design_job:' || j.id::text || ']%'), 0)) AS paid,
+	(COALESCE((SELECT SUM(e.amount) FROM app.expenses e WHERE e.design_job_id = j.id AND e.status IN ('approved','paid')), 0)
+	 + COALESCE((SELECT SUM(b.amount) FROM app.contractor_bills b WHERE b.design_job_id = j.id AND b.status <> 'void'), 0)) AS costs`
 }
 
 const jobFrom = ` FROM app.design_jobs j
-	JOIN app.customers c ON c.tenant_id = j.tenant_id AND c.id = j.customer_id
-	LEFT JOIN app.projects pr ON pr.tenant_id = j.tenant_id AND pr.id = j.project_id
-	LEFT JOIN app.memberships dm ON dm.tenant_id = j.tenant_id AND dm.id = j.designer_id
+	JOIN app.customers c ON c.id = j.customer_id
+	LEFT JOIN app.projects pr ON pr.id = j.project_id
+	LEFT JOIN app.memberships dm ON dm.id = j.designer_id
 	LEFT JOIN iam.users du ON du.id = dm.user_id`
 
 func ownJob(q *sqlq.Q, p *auth.Principal) {
@@ -156,7 +156,7 @@ func (s *Service) ListJobs(ctx context.Context, p *auth.Principal, f JobFilter, 
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+jobFrom+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
-		out, err = rows(ctx, tx, `SELECT `+jobCols("$2::date")+jobFrom+q.Where()+` ORDER BY j.deadline NULLS LAST, j.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
+		out, err = rows(ctx, tx, `SELECT `+jobCols("$1::date")+jobFrom+q.Where()+` ORDER BY j.deadline NULLS LAST, j.created_at DESC`+q.Page(page.PerPage, page.Offset), q.Args...)
 		if err == nil {
 			jobMoney(out)
 		}
@@ -166,8 +166,9 @@ func (s *Service) ListJobs(ctx context.Context, p *auth.Principal, f JobFilter, 
 }
 
 func (s *Service) jobQuery(ctx context.Context, tx pgx.Tx, p *auth.Principal, f JobFilter, today string) *sqlq.Q {
-	q := sqlq.New(p.TenantID, today)
-	q.Add("j.tenant_id = $1")
+	q := sqlq.New(today)
+	// Every query built from this binds today as $1, so one condition must always use it.
+	q.Add("$1::date IS NOT NULL")
 	if t := clean(f.Q); t != "" {
 		q.Add("(j.title ILIKE '%' || ? || '%' OR j.job_no ILIKE '%' || ? || '%' OR c.full_name ILIKE '%' || ? || '%')", t, t, t)
 	}
@@ -179,7 +180,7 @@ func (s *Service) jobQuery(ctx context.Context, tx pgx.Tx, p *auth.Principal, f 
 		q.Add("j.status = ?::app.design_job_status", st)
 	}
 	if f.DesignerID != nil {
-		if mid, err := s.resolveMembership(ctx, tx, p.TenantID, f.DesignerID); err == nil && mid != nil {
+		if mid, err := s.resolveMembership(ctx, tx, f.DesignerID); err == nil && mid != nil {
 			q.Add("j.designer_id = ?", *mid)
 		} else {
 			q.Add("j.designer_id = ?", *f.DesignerID)
@@ -187,7 +188,7 @@ func (s *Service) jobQuery(ctx context.Context, tx pgx.Tx, p *auth.Principal, f 
 	}
 	q.If(f.ClientID != nil, "j.customer_id = ?", f.ClientID)
 	q.If(f.ProjectID != nil, "j.project_id = ?", f.ProjectID)
-	q.If(f.Overdue, "j.deadline < $2::date AND j.status NOT IN ('approved','printing','delivered','cancelled')")
+	q.If(f.Overdue, "j.deadline < $1::date AND j.status NOT IN ('approved','printing','delivered','cancelled')")
 	ownJob(q, p)
 	return q
 }
@@ -202,7 +203,7 @@ func (s *Service) JobBoard(ctx context.Context, p *auth.Principal, designerID *u
 		}
 		q := s.jobQuery(ctx, tx, p, JobFilter{DesignerID: designerID}, today)
 		q.Add("j.status <> 'cancelled'")
-		list, err := rows(ctx, tx, `SELECT `+jobCols("$2::date")+jobFrom+q.Where()+` ORDER BY j.deadline NULLS LAST, j.created_at`, q.Args...)
+		list, err := rows(ctx, tx, `SELECT `+jobCols("$1::date")+jobFrom+q.Where()+` ORDER BY j.deadline NULLS LAST, j.created_at`, q.Args...)
 		if err != nil {
 			return err
 		}
@@ -229,10 +230,10 @@ func (s *Service) jobRow(ctx context.Context, tx pgx.Tx, p *auth.Principal, id u
 	if err != nil {
 		return nil, err
 	}
-	q := sqlq.New(p.TenantID, today, id)
-	q.Add("j.tenant_id = $1 AND j.id = $3")
+	q := sqlq.New(today, id)
+	q.Add("j.id = $2")
 	ownJob(q, p)
-	sql := `SELECT ` + jobCols("$2::date") + `, j.brief, j.size_format, j.style_notes, j.text_to_include, j.service_id` + jobFrom + q.Where()
+	sql := `SELECT ` + jobCols("$1::date") + `, j.brief, j.size_format, j.style_notes, j.text_to_include, j.service_id` + jobFrom + q.Where()
 	if lock {
 		sql += ` FOR UPDATE OF j`
 	}
@@ -255,15 +256,15 @@ func (s *Service) GetJob(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 			       f.original_name::text AS file_name, f.mime_type, v.working_file_url::text AS link, NULL::text AS notes,
 			       CASE WHEN v.status = 'sent_to_client' THEN 'sent' ELSE v.status::text END AS status,
 			       (j.final_version_id = v.id) AS is_final,
-			       (SELECT l.expires_at FROM app.design_approval_links l WHERE l.tenant_id = v.tenant_id AND l.design_version_id = v.id AND l.revoked_at IS NULL ORDER BY l.created_at DESC LIMIT 1) AS token_expires_at,
+			       (SELECT l.expires_at FROM app.design_approval_links l WHERE l.design_version_id = v.id AND l.revoked_at IS NULL ORDER BY l.created_at DESC LIMIT 1) AS token_expires_at,
 			       v.decided_at, v.created_at, u.full_name::text AS uploaded_by
 			FROM app.design_versions v
-			JOIN app.design_jobs j ON j.tenant_id = v.tenant_id AND j.id = v.design_job_id
-			LEFT JOIN app.files f ON f.tenant_id = v.tenant_id AND f.id = v.preview_file_id
-			LEFT JOIN app.memberships m ON m.tenant_id = v.tenant_id AND m.id = v.created_by
+			JOIN app.design_jobs j ON j.id = v.design_job_id
+			LEFT JOIN app.files f ON f.id = v.preview_file_id
+			LEFT JOIN app.memberships m ON m.id = v.created_by
 			LEFT JOIN iam.users u ON u.id = m.user_id
-			WHERE v.tenant_id = $1 AND v.design_job_id = $2
-			ORDER BY v.version_no DESC, v.created_at DESC`, p.TenantID, id)
+			WHERE v.design_job_id = $1
+			ORDER BY v.version_no DESC, v.created_at DESC`, id)
 		if err != nil {
 			return err
 		}
@@ -274,12 +275,12 @@ func (s *Service) GetJob(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 			       'approved'::text AS status, false AS is_final, NULL::timestamptz AS token_expires_at, NULL::timestamptz AS decided_at,
 			       a.created_at, u.full_name::text AS uploaded_by
 			FROM app.design_final_assets a
-			JOIN app.design_versions v ON v.tenant_id = a.tenant_id AND v.id = a.design_version_id
-			LEFT JOIN app.files f ON f.tenant_id = a.tenant_id AND f.id = a.file_id
-			LEFT JOIN app.memberships m ON m.tenant_id = a.tenant_id AND m.id = a.created_by
+			JOIN app.design_versions v ON v.id = a.design_version_id
+			LEFT JOIN app.files f ON f.id = a.file_id
+			LEFT JOIN app.memberships m ON m.id = a.created_by
 			LEFT JOIN iam.users u ON u.id = m.user_id
-			WHERE a.tenant_id = $1 AND v.design_job_id = $2
-			ORDER BY a.created_at DESC`, p.TenantID, id)
+			WHERE v.design_job_id = $1
+			ORDER BY a.created_at DESC`, id)
 		if err != nil {
 			return err
 		}
@@ -289,32 +290,32 @@ func (s *Service) GetJob(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 			SELECT fb.id, fb.design_version_id AS version_id, v.version_no, fb.author_type::text AS author_type,
 			       COALESCE(u.full_name::text, 'Client') AS author, fb.comment, fb.created_at
 			FROM app.design_feedback fb
-			LEFT JOIN app.design_versions v ON v.tenant_id = fb.tenant_id AND v.id = fb.design_version_id
-			LEFT JOIN app.memberships m ON m.tenant_id = fb.tenant_id AND m.id = fb.author_id
+			LEFT JOIN app.design_versions v ON v.id = fb.design_version_id
+			LEFT JOIN app.memberships m ON m.id = fb.author_id
 			LEFT JOIN iam.users u ON u.id = m.user_id
-			WHERE fb.tenant_id = $1 AND fb.design_job_id = $2 ORDER BY fb.created_at`, p.TenantID, id); err != nil {
+			WHERE fb.design_job_id = $1 ORDER BY fb.created_at`, id); err != nil {
 			return err
 		}
 		if j["references"], err = rows(ctx, tx, `
 			SELECT a.id, a.file_id, f.original_name::text AS file_name, f.mime_type, a.caption AS note
 			FROM app.attachments a
-			JOIN app.files f ON f.tenant_id = a.tenant_id AND f.id = a.file_id
-			WHERE a.tenant_id = $1 AND a.design_job_id = $2 ORDER BY a.created_at`, p.TenantID, id); err != nil {
+			JOIN app.files f ON f.id = a.file_id
+			WHERE a.design_job_id = $1 ORDER BY a.created_at`, id); err != nil {
 			return err
 		}
-		if j["costs_list"], err = rows(ctx, tx, costUnionSQL+` WHERE k.design_job_id = $2 ORDER BY k.date, k.created_at`, p.TenantID, id); err != nil {
+		if j["costs_list"], err = rows(ctx, tx, costUnionSQL+` WHERE k.design_job_id = $1 ORDER BY k.date, k.created_at`, id); err != nil {
 			return err
 		}
 		if j["payments"], err = rows(ctx, tx, `
 			SELECT DISTINCT pr.id, pr.receipt_no AS number, pr.business_date AS date, pr.amount,
-			       COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id), 0) AS applied,
+			       COALESCE((SELECT SUM(a.amount) FROM app.payment_allocations a WHERE a.payment_received_id = pr.id), 0) AS applied,
 			       CASE WHEN pr.method = 'bank_transfer' THEN 'bank' ELSE pr.method::text END AS method,
 			       pr.status::text AS status, pr.created_at
 			FROM app.payments_received pr
-			LEFT JOIN app.payment_allocations a ON a.tenant_id = pr.tenant_id AND a.payment_received_id = pr.id
-			LEFT JOIN app.invoices i ON i.tenant_id = a.tenant_id AND i.id = a.invoice_id
-			WHERE pr.tenant_id = $1 AND (i.design_job_id = $2 OR pr.notes LIKE '%[design_job:' || $2::text || ']%')
-			ORDER BY pr.business_date, pr.created_at`, p.TenantID, id); err != nil {
+			LEFT JOIN app.payment_allocations a ON a.payment_received_id = pr.id
+			LEFT JOIN app.invoices i ON i.id = a.invoice_id
+			WHERE (i.design_job_id = $1 OR pr.notes LIKE '%[design_job:' || $1::text || ']%')
+			ORDER BY pr.business_date, pr.created_at`, id); err != nil {
 			return err
 		}
 		if j["print_orders"], err = rows(ctx, tx, `
@@ -322,24 +323,24 @@ func (s *Service) GetJob(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 			       CASE WHEN o.status = 'sent_to_print' THEN 'sent' ELSE o.status::text END AS status,
 			       o.notes AS note, o.created_at
 			FROM app.print_orders o
-			LEFT JOIN app.contractors ct ON ct.tenant_id = o.tenant_id AND ct.id = o.contractor_id
-			WHERE o.tenant_id = $1 AND o.design_job_id = $2 ORDER BY o.created_at`, p.TenantID, id); err != nil {
+			LEFT JOIN app.contractors ct ON ct.id = o.contractor_id
+			WHERE o.design_job_id = $1 ORDER BY o.created_at`, id); err != nil {
 			return err
 		}
 		if j["time"], err = rows(ctx, tx, `
 			SELECT t.id, m.user_id, u.full_name::text AS user_name, t.started_at, t.ended_at AS stopped_at,
 			       CASE WHEN t.ended_at IS NOT NULL THEN GREATEST(1, ROUND(EXTRACT(EPOCH FROM (t.ended_at - t.started_at)) / 60)::int) END AS minutes
 			FROM app.design_time_logs t
-			JOIN app.memberships m ON m.tenant_id = t.tenant_id AND m.id = t.membership_id
+			JOIN app.memberships m ON m.id = t.membership_id
 			JOIN iam.users u ON u.id = m.user_id
-			WHERE t.tenant_id = $1 AND t.design_job_id = $2 ORDER BY t.started_at DESC`, p.TenantID, id); err != nil {
+			WHERE t.design_job_id = $1 ORDER BY t.started_at DESC`, id); err != nil {
 			return err
 		}
 		if j["invoices"], err = rows(ctx, tx, `
 			SELECT id, invoice_no AS number,
 			       CASE WHEN status = 'partially_paid' THEN 'partial' ELSE status::text END AS status,
 			       total, amount_paid AS paid_total, balance_due AS balance
-			FROM app.invoices WHERE tenant_id = $1 AND design_job_id = $2 ORDER BY created_at`, p.TenantID, id); err != nil {
+			FROM app.invoices WHERE design_job_id = $1 ORDER BY created_at`, id); err != nil {
 			return err
 		}
 		out = j
@@ -366,12 +367,12 @@ func (s *Service) CreateJob(ctx context.Context, p *auth.Principal, in DesignJob
 
 func (s *Service) createJobTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, in DesignJobIn) (uuid.UUID, error) {
 	id := ids.New()
-	if err := require404(ctx, tx, "app.customers", "Client", p.TenantID, in.ClientID); err != nil {
+	if err := require404(ctx, tx, "app.customers", "Client", in.ClientID); err != nil {
 		return id, err
 	}
 	if in.ProjectID != nil {
 		var c uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT customer_id FROM app.projects WHERE tenant_id = $1 AND id = $2`, p.TenantID, *in.ProjectID).Scan(&c); err != nil || c != in.ClientID {
+		if err := tx.QueryRow(ctx, "SELECT customer_id FROM app.projects WHERE id = $1", *in.ProjectID).Scan(&c); err != nil || c != in.ClientID {
 			return id, httpx.NotFound("not_found", "Project not found for this client")
 		}
 	}
@@ -379,7 +380,7 @@ func (s *Service) createJobTx(ctx context.Context, tx pgx.Tx, p *auth.Principal,
 		if in.ProjectID == nil {
 			return id, httpx.BadRequest("invalid_body", "A stage link needs a project")
 		}
-		if err := require404(ctx, tx, "app.project_stages", "Stage", p.TenantID, *in.StageID); err != nil {
+		if err := require404(ctx, tx, "app.project_stages", "Stage", *in.StageID); err != nil {
 			return id, err
 		}
 	}
@@ -388,7 +389,7 @@ func (s *Service) createJobTx(ctx context.Context, tx pgx.Tx, p *auth.Principal,
 	if in.ServiceID != nil {
 		var std decimal.Decimal
 		var rev int
-		if err := tx.QueryRow(ctx, `SELECT standard_price, revisions_included FROM app.services WHERE tenant_id = $1 AND id = $2 AND status = 'active'`, p.TenantID, *in.ServiceID).Scan(&std, &rev); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT standard_price, revisions_included FROM app.services WHERE id = $1 AND status = 'active'", *in.ServiceID).Scan(&std, &rev); err != nil {
 			return id, httpx.NotFound("not_found", "Service not found or inactive")
 		}
 		price, revisions = std, rev
@@ -410,11 +411,11 @@ func (s *Service) createJobTx(ctx context.Context, tx pgx.Tx, p *auth.Principal,
 	if brief == "" {
 		brief = clean(in.Title)
 	}
-	designerMid, err := s.resolveMembership(ctx, tx, p.TenantID, in.DesignerID)
+	designerMid, err := s.resolveMembership(ctx, tx, in.DesignerID)
 	if err != nil {
 		return id, err
 	}
-	buID, err := s.servicesBU(ctx, tx, p.TenantID)
+	buID, err := s.servicesBU(ctx, tx)
 	if err != nil {
 		return id, err
 	}
@@ -422,29 +423,25 @@ func (s *Service) createJobTx(ctx context.Context, tx pgx.Tx, p *auth.Principal,
 	if err != nil {
 		return id, err
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO app.design_jobs (id, tenant_id, job_no, customer_id, business_unit_id, project_id, project_stage_id, service_id,
-		                             job_type, title, brief, size_format, style_notes, text_to_include, deadline, priority, designer_id,
-		                             price, revisions_included, printing_needed)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::app.design_job_type,$10,$11,$12,$13,$14,$15,$16::app.priority,$17,$18,$19,$20)`,
-		id, p.TenantID, number, in.ClientID, buID, uuidOrNil(in.ProjectID), uuidOrNil(in.StageID), uuidOrNil(in.ServiceID),
+	if _, err := tx.Exec(ctx, "\n\t\tINSERT INTO app.design_jobs (id, job_no, customer_id, business_unit_id, project_id, project_stage_id, service_id, job_type, title, brief, size_format, style_notes, text_to_include, deadline, priority, designer_id, price, revisions_included, printing_needed)\n\t\tVALUES ($1, $2, $3, $4, $5, $6, $7, $8::app.design_job_type, $9, $10, $11, $12, $13, $14, $15::app.priority, $16, $17, $18, $19)",
+		id, number, in.ClientID, buID, uuidOrNil(in.ProjectID), uuidOrNil(in.StageID), uuidOrNil(in.ServiceID),
 		mapDesignJobType(in.JobType), clean(in.Title), brief, nz(in.SizeFormat), nz(in.StyleNotes), nz(in.TextToInclude),
 		dateOrNil(in.Deadline), prio, uuidOrNil(designerMid), price, revisions, in.PrintingNeeded); err != nil {
 		return id, err
 	}
 	for _, f := range in.ReferenceFileIDs {
-		if err := require404(ctx, tx, "app.files", "Reference file", p.TenantID, f); err != nil {
+		if err := require404(ctx, tx, "app.files", "Reference file", f); err != nil {
 			return id, err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO app.attachments (id, tenant_id, file_id, design_job_id) VALUES ($1,$2,$3,$4)`, ids.New(), p.TenantID, f, id); err != nil {
+		if _, err := tx.Exec(ctx, "INSERT INTO app.attachments (id, file_id, design_job_id) VALUES ($1, $2, $3)", ids.New(), f, id); err != nil {
 			return id, err
 		}
 	}
 	if designerMid != nil && *designerMid != p.MembershipID {
-		uid := s.membershipUserID(ctx, tx, p.TenantID, *designerMid)
+		uid := s.membershipUserID(ctx, tx, *designerMid)
 		if uid != uuid.Nil {
 			eid := id
-			_ = s.Notify.ToUser(ctx, tx, p.TenantID, uid, notify.Message{
+			_ = s.Notify.ToUser(ctx, tx, uid, notify.Message{
 				Type: "design_brief_assigned", Title: "New design brief",
 				Body: number + ": " + clean(in.Title), Link: "/design-jobs/" + id.String(), EntityType: "design_job", EntityID: &eid,
 			})
@@ -470,33 +467,19 @@ func (s *Service) UpdateJob(ctx context.Context, p *auth.Principal, id uuid.UUID
 		if in.Brief != nil && clean(*in.Brief) != "" {
 			brief = clean(*in.Brief)
 		}
-		designerMid, err := s.resolveMembership(ctx, tx, p.TenantID, in.DesignerID)
+		designerMid, err := s.resolveMembership(ctx, tx, in.DesignerID)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.design_jobs SET
-			  title = COALESCE(NULLIF($3,''), title),
-			  brief = COALESCE($4, brief),
-			  size_format = COALESCE($5, size_format),
-			  style_notes = COALESCE($6, style_notes),
-			  text_to_include = COALESCE($7, text_to_include),
-			  deadline = COALESCE(NULLIF($8,'')::date, deadline),
-			  priority = COALESCE(NULLIF($9,'')::app.priority, priority),
-			  designer_id = COALESCE($10, designer_id),
-			  price = COALESCE($11, price),
-			  revisions_included = COALESCE($12, revisions_included),
-			  printing_needed = COALESCE($13, printing_needed)
-			WHERE tenant_id = $1 AND id = $2`,
-			p.TenantID, id, clean(in.Title), brief, in.SizeFormat, in.StyleNotes, in.TextToInclude,
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.design_jobs SET\n\t\t\t  title = COALESCE(NULLIF($2,''), title),\n\t\t\t  brief = COALESCE($3, brief),\n\t\t\t  size_format = COALESCE($4, size_format),\n\t\t\t  style_notes = COALESCE($5, style_notes),\n\t\t\t  text_to_include = COALESCE($6, text_to_include),\n\t\t\t  deadline = COALESCE(NULLIF($7,'')::date, deadline),\n\t\t\t  priority = COALESCE(NULLIF($8,'')::app.priority, priority),\n\t\t\t  designer_id = COALESCE($9, designer_id),\n\t\t\t  price = COALESCE($10, price),\n\t\t\t  revisions_included = COALESCE($11, revisions_included),\n\t\t\t  printing_needed = COALESCE($12, printing_needed)\n\t\t\tWHERE id = $1", id, clean(in.Title), brief, in.SizeFormat, in.StyleNotes, in.TextToInclude,
 			in.Deadline, in.Priority, uuidOrNil(designerMid), price, in.RevisionsIncluded, in.PrintingNeeded); err != nil {
 			return err
 		}
 		if designerMid != nil && *designerMid != p.MembershipID {
-			uid := s.membershipUserID(ctx, tx, p.TenantID, *designerMid)
+			uid := s.membershipUserID(ctx, tx, *designerMid)
 			if uid != uuid.Nil && before["designer_id"] != uid {
 				eid := id
-				_ = s.Notify.ToUser(ctx, tx, p.TenantID, uid, notify.Message{
+				_ = s.Notify.ToUser(ctx, tx, uid, notify.Message{
 					Type: "design_brief_assigned", Title: "New design brief",
 					Body: before["number"].(string) + ": " + before["title"].(string), Link: "/design-jobs/" + id.String(), EntityType: "design_job", EntityID: &eid,
 				})
@@ -519,14 +502,14 @@ func (s *Service) MoveJob(ctx context.Context, p *auth.Principal, id uuid.UUID, 
 			return err
 		}
 		var latestVer *uuid.UUID
-		_ = tx.QueryRow(ctx, `SELECT id FROM app.design_versions WHERE tenant_id = $1 AND design_job_id = $2 ORDER BY version_no DESC LIMIT 1`, p.TenantID, id).Scan(&latestVer)
+		_ = tx.QueryRow(ctx, "SELECT id FROM app.design_versions WHERE design_job_id = $1 ORDER BY version_no DESC LIMIT 1", id).Scan(&latestVer)
 
 		switch to {
 		case "approved":
 			if latestVer == nil {
 				return httpx.Conflict("invalid_status", "Upload a design version before approving")
 			}
-			if _, err := tx.Exec(ctx, `UPDATE app.design_versions SET status = 'approved' WHERE tenant_id = $1 AND id = $2`, p.TenantID, *latestVer); err != nil {
+			if _, err := tx.Exec(ctx, "UPDATE app.design_versions SET status = 'approved' WHERE id = $1", *latestVer); err != nil {
 				return err
 			}
 		case "changes_requested":
@@ -535,34 +518,32 @@ func (s *Service) MoveJob(ctx context.Context, p *auth.Principal, id uuid.UUID, 
 			}
 			// Must be sent_to_client to transition to changes_requested; otherwise move job directly to in_design.
 			var vstat string
-			_ = tx.QueryRow(ctx, `SELECT status::text FROM app.design_versions WHERE tenant_id = $1 AND id = $2`, p.TenantID, *latestVer).Scan(&vstat)
+			_ = tx.QueryRow(ctx, "SELECT status::text FROM app.design_versions WHERE id = $1", *latestVer).Scan(&vstat)
 			if vstat == "sent_to_client" {
-				if _, err := tx.Exec(ctx, `UPDATE app.design_versions SET status = 'changes_requested' WHERE tenant_id = $1 AND id = $2`, p.TenantID, *latestVer); err != nil {
+				if _, err := tx.Exec(ctx, "UPDATE app.design_versions SET status = 'changes_requested' WHERE id = $1", *latestVer); err != nil {
 					return err
 				}
 			} else {
-				if _, err := tx.Exec(ctx, `UPDATE app.design_jobs SET status = 'in_design', designer_id = COALESCE(designer_id, $3) WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, p.MembershipID); err != nil {
+				if _, err := tx.Exec(ctx, "UPDATE app.design_jobs SET status = 'in_design', designer_id = COALESCE(designer_id, $2) WHERE id = $1", id, p.MembershipID); err != nil {
 					return err
 				}
 			}
 		case "in_design", "internal_review", "with_client":
-			if _, err := tx.Exec(ctx, `UPDATE app.design_jobs SET status = $3::app.design_job_status, designer_id = COALESCE(designer_id, $4) WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, to, p.MembershipID); err != nil {
+			if _, err := tx.Exec(ctx, "UPDATE app.design_jobs SET status = $2::app.design_job_status, designer_id = COALESCE(designer_id, $3) WHERE id = $1", id, to, p.MembershipID); err != nil {
 				return err
 			}
 		default:
-			if _, err := tx.Exec(ctx, `UPDATE app.design_jobs SET status = $3::app.design_job_status WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, to); err != nil {
+			if _, err := tx.Exec(ctx, "UPDATE app.design_jobs SET status = $2::app.design_job_status WHERE id = $1", id, to); err != nil {
 				return err
 			}
 		}
 		if note != "" && latestVer != nil {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO app.design_feedback (id, tenant_id, design_job_id, design_version_id, author_type, author_id, comment)
-				VALUES ($1,$2,$3,$4,'staff',$5,$6)`, ids.New(), p.TenantID, id, *latestVer, p.MembershipID, note); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tINSERT INTO app.design_feedback (id, design_job_id, design_version_id, author_type, author_id, comment)\n\t\t\t\tVALUES ($1, $2, $3, 'staff', $4, $5)", ids.New(), id, *latestVer, p.MembershipID, note); err != nil {
 				return err
 			}
 		}
 		if to == "approved" || to == "delivered" || to == "cancelled" {
-			if err := s.checkBrandingStageComplete(ctx, tx, p.TenantID, j); err != nil {
+			if err := s.checkBrandingStageComplete(ctx, tx, j); err != nil {
 				return err
 			}
 		}
@@ -575,16 +556,13 @@ func (s *Service) MoveJob(ctx context.Context, p *auth.Principal, id uuid.UUID, 
 }
 
 // checkBrandingStageComplete completes the linked project if tg_branding_stage_rollup finished the last stage.
-func (s *Service) checkBrandingStageComplete(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, j map[string]any) error {
+func (s *Service) checkBrandingStageComplete(ctx context.Context, tx pgx.Tx, j map[string]any) error {
 	stage, ok := j["stage_id"].(uuid.UUID)
 	if !ok || stage == uuid.Nil {
 		return nil
 	}
 	var open, good int
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*) FILTER (WHERE status NOT IN ('approved','printing','delivered','cancelled')),
-		       count(*) FILTER (WHERE status IN ('approved','printing','delivered'))
-		FROM app.design_jobs WHERE tenant_id = $1 AND project_stage_id = $2`, tenantID, stage).Scan(&open, &good); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tSELECT count(*) FILTER (WHERE status NOT IN ('approved','printing','delivered','cancelled')),\n\t\t       count(*) FILTER (WHERE status IN ('approved','printing','delivered'))\n\t\tFROM app.design_jobs WHERE project_stage_id = $1", stage).Scan(&open, &good); err != nil {
 		return err
 	}
 	if open > 0 || good == 0 {
@@ -592,12 +570,12 @@ func (s *Service) checkBrandingStageComplete(ctx context.Context, tx pgx.Tx, ten
 	}
 	var project uuid.UUID
 	var cur string
-	if err := tx.QueryRow(ctx, `SELECT project_id, status::text FROM app.project_stages WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, tenantID, stage).Scan(&project, &cur); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT project_id, status::text FROM app.project_stages WHERE id = $1 FOR UPDATE", stage).Scan(&project, &cur); err != nil {
 		return nil
 	}
 	if cur != "done" {
 		_, _ = tx.Exec(ctx, `SELECT set_config('app.change_note', 'All design jobs approved', true)`)
-		if _, err := tx.Exec(ctx, `UPDATE app.project_stages SET status = 'done' WHERE tenant_id = $1 AND id = $2`, tenantID, stage); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.project_stages SET status = 'done' WHERE id = $1", stage); err != nil {
 			return err
 		}
 		_, _ = tx.Exec(ctx, `SELECT set_config('app.change_note', '', true)`)
@@ -605,12 +583,12 @@ func (s *Service) checkBrandingStageComplete(ctx context.Context, tx pgx.Tx, ten
 	prRows, err := rows(ctx, tx, `
 		SELECT pr.id, pr.project_no AS number, pr.status::text AS status, om.user_id AS owner_id
 		FROM app.projects pr
-		LEFT JOIN app.memberships om ON om.tenant_id = pr.tenant_id AND om.id = pr.owner_id
-		WHERE pr.tenant_id = $1 AND pr.id = $2`, tenantID, project)
+		LEFT JOIN app.memberships om ON om.id = pr.owner_id
+		WHERE pr.id = $1`, project)
 	if err != nil || len(prRows) == 0 {
 		return err
 	}
-	return s.syncProjectProgress(ctx, tx, tenantID, project, prRows[0])
+	return s.syncProjectProgress(ctx, tx, project, prRows[0])
 }
 
 // ---------- versions, feedback, approval ----------
@@ -641,7 +619,7 @@ func (s *Service) AddVersion(ctx context.Context, p *auth.Principal, jobID uuid.
 			return httpx.Conflict("invalid_status", "A cancelled job cannot take files")
 		}
 		if in.FileID != nil {
-			if err := require404(ctx, tx, "app.files", "File", p.TenantID, *in.FileID); err != nil {
+			if err := require404(ctx, tx, "app.files", "File", *in.FileID); err != nil {
 				return err
 			}
 		}
@@ -674,15 +652,13 @@ func (s *Service) AddVersion(ctx context.Context, p *auth.Principal, jobID uuid.
 				}
 			}
 			id := ids.New()
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO app.design_final_assets (id, tenant_id, design_version_id, asset_kind, file_id, url)
-				VALUES ($1,$2,$3,$4::app.design_asset_kind,$5,$6)`,
-				id, p.TenantID, finalVer, assetKind, fileArg, urlArg); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tINSERT INTO app.design_final_assets (id, design_version_id, asset_kind, file_id, url)\n\t\t\t\tVALUES ($1, $2, $3::app.design_asset_kind, $4, $5)",
+				id, finalVer, assetKind, fileArg, urlArg); err != nil {
 				return err
 			}
 			out, err = one(ctx, tx, "Asset", `
-				SELECT id, 0 AS version_no, $3::text AS kind, file_id, url::text AS link, NULL::text AS notes, 'approved'::text AS status, false AS is_final, created_at
-				FROM app.design_final_assets WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, kind)
+				SELECT id, 0 AS version_no, $2::text AS kind, file_id, url::text AS link, NULL::text AS notes, 'approved'::text AS status, false AS is_final, created_at
+				FROM app.design_final_assets WHERE id = $1`, id, kind)
 			return err
 		}
 
@@ -690,25 +666,23 @@ func (s *Service) AddVersion(ctx context.Context, p *auth.Principal, jobID uuid.
 			return httpx.BadRequest("invalid_body", "A design version requires a preview file")
 		}
 		var no int
-		if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(version_no), 0) + 1 FROM app.design_versions WHERE tenant_id = $1 AND design_job_id = $2`, p.TenantID, jobID).Scan(&no); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(version_no), 0) + 1 FROM app.design_versions WHERE design_job_id = $1`, jobID).Scan(&no); err != nil {
 			return err
 		}
 		id := ids.New()
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.design_versions (id, tenant_id, design_job_id, version_no, preview_file_id, working_file_url)
-			VALUES ($1,$2,$3,$4,$5,$6)`,
-			id, p.TenantID, jobID, no, *in.FileID, httpsOrNil(in.Link)); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.design_versions (id, design_job_id, version_no, preview_file_id, working_file_url)\n\t\t\tVALUES ($1, $2, $3, $4, $5)",
+			id, jobID, no, *in.FileID, httpsOrNil(in.Link)); err != nil {
 			return err
 		}
 		if status == "new_brief" {
-			if _, err := tx.Exec(ctx, `UPDATE app.design_jobs SET status = 'in_design', designer_id = COALESCE(designer_id, $3) WHERE tenant_id = $1 AND id = $2`, p.TenantID, jobID, p.MembershipID); err != nil {
+			if _, err := tx.Exec(ctx, "UPDATE app.design_jobs SET status = 'in_design', designer_id = COALESCE(designer_id, $2) WHERE id = $1", jobID, p.MembershipID); err != nil {
 				return err
 			}
 		}
 		out, err = one(ctx, tx, "Version", `
 			SELECT v.id, v.version_no, 'design'::text AS kind, v.preview_file_id AS file_id, v.working_file_url::text AS link,
 			       NULL::text AS notes, v.status::text AS status, false AS is_final, v.created_at
-			FROM app.design_versions v WHERE v.tenant_id = $1 AND v.id = $2`, p.TenantID, id)
+			FROM app.design_versions v WHERE v.id = $1`, id)
 		return err
 	})
 	return out, err
@@ -729,30 +703,28 @@ func (s *Service) AddFeedback(ctx context.Context, p *auth.Principal, jobID uuid
 		var verID uuid.UUID
 		if in.VersionID != nil {
 			var n int
-			if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.design_versions WHERE tenant_id = $1 AND id = $2 AND design_job_id = $3`, p.TenantID, *in.VersionID, jobID).Scan(&n); err != nil || n == 0 {
+			if err := tx.QueryRow(ctx, "SELECT count(*) FROM app.design_versions WHERE id = $1 AND design_job_id = $2", *in.VersionID, jobID).Scan(&n); err != nil || n == 0 {
 				return httpx.NotFound("not_found", "Version not found")
 			}
 			verID = *in.VersionID
 		} else {
-			if err := tx.QueryRow(ctx, `SELECT id FROM app.design_versions WHERE tenant_id = $1 AND design_job_id = $2 ORDER BY version_no DESC LIMIT 1`, p.TenantID, jobID).Scan(&verID); err != nil {
+			if err := tx.QueryRow(ctx, "SELECT id FROM app.design_versions WHERE design_job_id = $1 ORDER BY version_no DESC LIMIT 1", jobID).Scan(&verID); err != nil {
 				return httpx.BadRequest("invalid_status", "Upload a design version before adding feedback")
 			}
 		}
 		id := ids.New()
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.design_feedback (id, tenant_id, design_job_id, design_version_id, author_type, author_id, comment)
-			VALUES ($1,$2,$3,$4,'staff',$5,$6)`,
-			id, p.TenantID, jobID, verID, p.MembershipID, clean(in.Comment)); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.design_feedback (id, design_job_id, design_version_id, author_type, author_id, comment)\n\t\t\tVALUES ($1, $2, $3, 'staff', $4, $5)",
+			id, jobID, verID, p.MembershipID, clean(in.Comment)); err != nil {
 			return err
 		}
 		if d, ok := j["designer_id"].(uuid.UUID); ok && d != uuid.Nil && d != p.UserID {
 			eid := jobID
-			_ = s.Notify.ToUser(ctx, tx, p.TenantID, d, notify.Message{
+			_ = s.Notify.ToUser(ctx, tx, d, notify.Message{
 				Type: "design_feedback", Title: "Feedback on a design job",
 				Body: j["number"].(string) + ": " + clean(in.Comment), Link: "/design-jobs/" + jobID.String(), EntityType: "design_job", EntityID: &eid,
 			})
 		}
-		out, err = one(ctx, tx, "Feedback", `SELECT id, design_version_id AS version_id, author_type::text AS author_type, comment, created_at FROM app.design_feedback WHERE tenant_id = $1 AND id = $2`, p.TenantID, id)
+		out, err = one(ctx, tx, "Feedback", `SELECT id, design_version_id AS version_id, author_type::text AS author_type, comment, created_at FROM app.design_feedback WHERE id = $1`, id)
 		return err
 	})
 	return out, err
@@ -803,49 +775,36 @@ func (s *Service) SendForApproval(ctx context.Context, p *auth.Principal, jobID,
 			return httpx.Conflict("invalid_status", "A job in "+status+" cannot be sent for approval")
 		}
 		var vstat string
-		if err := tx.QueryRow(ctx, `SELECT status::text FROM app.design_versions WHERE tenant_id = $1 AND id = $2 AND design_job_id = $3 FOR UPDATE`, p.TenantID, versionID, jobID).Scan(&vstat); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT status::text FROM app.design_versions WHERE id = $1 AND design_job_id = $2 FOR UPDATE", versionID, jobID).Scan(&vstat); err != nil {
 			return httpx.NotFound("not_found", "Design version not found")
 		}
 		// Revoke any open approval links for this job.
-		if _, err := tx.Exec(ctx, `
-			WITH rev AS (
-			  UPDATE app.design_approval_links SET revoked_at = now()
-			  WHERE tenant_id = $1 AND design_job_id = $2 AND decided_at IS NULL AND revoked_at IS NULL
-			  RETURNING token_hash
-			)
-			UPDATE iam.public_tokens pt SET revoked_at = now()
-			FROM rev WHERE pt.token_hash = rev.token_hash`, p.TenantID, jobID); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tWITH rev AS (\n\t\t\t  UPDATE app.design_approval_links SET revoked_at = now()\n\t\t\t  WHERE design_job_id = $1 AND decided_at IS NULL AND revoked_at IS NULL\n\t\t\t  RETURNING token_hash\n\t\t\t)\n\t\t\tUPDATE iam.public_tokens pt SET revoked_at = now()\n\t\t\tFROM rev WHERE pt.token_hash = rev.token_hash", jobID); err != nil {
 			return err
 		}
 		// Supersede any other version still marked sent_to_client.
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.design_versions SET status = 'superseded'
-			WHERE tenant_id = $1 AND design_job_id = $2 AND status = 'sent_to_client' AND id <> $3`, p.TenantID, jobID, versionID); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.design_versions SET status = 'superseded'\n\t\t\tWHERE design_job_id = $1 AND status = 'sent_to_client' AND id <> $2", jobID, versionID); err != nil {
 			return err
 		}
 		if vstat != "sent_to_client" {
-			if _, err := tx.Exec(ctx, `UPDATE app.design_versions SET status = 'sent_to_client' WHERE tenant_id = $1 AND id = $2`, p.TenantID, versionID); err != nil {
+			if _, err := tx.Exec(ctx, "UPDATE app.design_versions SET status = 'sent_to_client' WHERE id = $1", versionID); err != nil {
 				return err
 			}
 		}
 		linkID := ids.New()
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.design_approval_links (id, tenant_id, design_job_id, design_version_id, token_hash, expires_at, sent_via)
-			VALUES ($1,$2,$3,$4,$5,$6,$7::app.message_channel)`,
-			linkID, p.TenantID, jobID, versionID, hash, expires, sentVia); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.design_approval_links (id, design_job_id, design_version_id, token_hash, expires_at, sent_via)\n\t\t\tVALUES ($1, $2, $3, $4, $5, $6::app.message_channel)",
+			linkID, jobID, versionID, hash, expires, sentVia); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO iam.public_tokens (token_hash, tenant_id, purpose, target_id, expires_at)
-			VALUES ($1,$2,'design_approval',$3,$4)`,
-			hash, p.TenantID, linkID, expires); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO iam.public_tokens (token_hash, purpose, target_id, expires_at)\n\t\t\tVALUES ($1, 'design_approval', $2, $3)",
+			hash, linkID, expires); err != nil {
 			return err
 		}
 		number, _ = j["number"].(string)
 		title, _ := j["title"].(string)
 		clientID := j["client_id"].(uuid.UUID)
 		var ph, email *string
-		if err := tx.QueryRow(ctx, `SELECT phone::text, email::text FROM app.customers WHERE tenant_id = $1 AND id = $2`, p.TenantID, clientID).Scan(&ph, &email); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT phone::text, email::text FROM app.customers WHERE id = $1", clientID).Scan(&ph, &email); err != nil {
 			return err
 		}
 		recipient := ""
@@ -858,7 +817,7 @@ func (s *Service) SendForApproval(ctx context.Context, p *auth.Principal, jobID,
 		}
 		if s.Outbound != nil && s.Outbound.Channels.Available(sentVia) {
 			if len(strings.TrimSpace(recipient)) >= 5 {
-				row, err := s.Outbound.Enqueue(ctx, tx, p.TenantID, outbound.Message{
+				row, err := s.Outbound.Enqueue(ctx, tx, outbound.Message{
 					Channel:        sentVia,
 					Recipient:      recipient,
 					Subject:        "Design approval: " + title,
@@ -902,7 +861,6 @@ func (s *Service) SendForApproval(ctx context.Context, p *auth.Principal, jobID,
 // ---------- public approval page ----------
 
 type publicTokenRow struct {
-	tenantID  uuid.UUID
 	linkID    uuid.UUID
 	expiresAt time.Time
 	revokedAt *time.Time
@@ -911,9 +869,9 @@ type publicTokenRow struct {
 func (s *Service) resolvePublicToken(ctx context.Context, token string) (publicTokenRow, error) {
 	var r publicTokenRow
 	err := s.DB.Pool.QueryRow(ctx, `
-		SELECT tenant_id, target_id, expires_at, revoked_at
+		SELECT target_id, expires_at, revoked_at
 		FROM iam.public_tokens WHERE token_hash = $1 AND purpose = 'design_approval'`,
-		tokenHashBytes(token)).Scan(&r.tenantID, &r.linkID, &r.expiresAt, &r.revokedAt)
+		tokenHashBytes(token)).Scan(&r.linkID, &r.expiresAt, &r.revokedAt)
 	if err != nil {
 		return r, httpx.NotFound("not_found", "This approval link is not valid")
 	}
@@ -933,19 +891,19 @@ type approvalRow struct {
 	workingURL               *string
 }
 
-func (s *Service) loadApproval(ctx context.Context, tx pgx.Tx, tenantID, linkID uuid.UUID, lock bool) (approvalRow, error) {
+func (s *Service) loadApproval(ctx context.Context, tx pgx.Tx, linkID uuid.UUID, lock bool) (approvalRow, error) {
 	var a approvalRow
 	sql := `
 		SELECT l.id, l.design_version_id, l.design_job_id, v.version_no,
 		       CASE WHEN v.status = 'sent_to_client' THEN 'sent' ELSE v.status::text END,
 		       l.expires_at, l.decided_at, v.preview_file_id, v.working_file_url::text
 		FROM app.design_approval_links l
-		JOIN app.design_versions v ON v.tenant_id = l.tenant_id AND v.id = l.design_version_id
-		WHERE l.tenant_id = $1 AND l.id = $2`
+		JOIN app.design_versions v ON v.id = l.design_version_id
+		WHERE l.id = $1`
 	if lock {
 		sql += ` FOR UPDATE OF l`
 	}
-	if err := tx.QueryRow(ctx, sql, tenantID, linkID).Scan(&a.linkID, &a.versionID, &a.jobID, &a.versionNo, &a.status, &a.expires, &a.decided, &a.fileID, &a.workingURL); err != nil {
+	if err := tx.QueryRow(ctx, sql, linkID).Scan(&a.linkID, &a.versionID, &a.jobID, &a.versionNo, &a.status, &a.expires, &a.decided, &a.fileID, &a.workingURL); err != nil {
 		return a, httpx.NotFound("not_found", "This approval link is not valid")
 	}
 	if s.Clock.Now().After(a.expires) {
@@ -961,25 +919,25 @@ func (s *Service) PublicApproval(ctx context.Context, token string) (map[string]
 		return nil, err
 	}
 	var out map[string]any
-	err = s.tenantTx(ctx, pt.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		a, err := s.loadApproval(ctx, tx, pt.tenantID, pt.linkID, false)
+	err = s.globalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		a, err := s.loadApproval(ctx, tx, pt.linkID, false)
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.design_approval_links SET first_opened_at = COALESCE(first_opened_at, now()) WHERE tenant_id = $1 AND id = $2 AND decision IS NULL`, pt.tenantID, pt.linkID); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.design_approval_links SET first_opened_at = COALESCE(first_opened_at, now()) WHERE id = $1 AND decision IS NULL", pt.linkID); err != nil {
 			return err
 		}
 		out, err = one(ctx, tx, "Design", `
 			SELECT j.title::text AS title,
 			       CASE WHEN j.job_type = 'social_media_post' THEN 'social_media' ELSE j.job_type::text END AS job_type,
 			       c.full_name::text AS client_name,
-			       COALESCE(NULLIF(ts.business_name::text,''), t.legal_name::text) AS business_name,
+			       COALESCE(NULLIF(bs.business_name::text,''), bp.name::text) AS business_name,
 			       j.revisions_included, j.revisions_used
 			FROM app.design_jobs j
-			JOIN app.customers c ON c.tenant_id = j.tenant_id AND c.id = j.customer_id
-			JOIN app.tenants t ON t.id = j.tenant_id
-			LEFT JOIN app.tenant_settings ts ON ts.tenant_id = j.tenant_id
-			WHERE j.tenant_id = $1 AND j.id = $2`, pt.tenantID, a.jobID)
+			JOIN app.customers c ON c.id = j.customer_id
+			CROSS JOIN app.business_profile bp
+			CROSS JOIN app.business_settings bs
+			WHERE j.id = $1`, a.jobID)
 		if err != nil {
 			return err
 		}
@@ -987,12 +945,12 @@ func (s *Service) PublicApproval(ctx context.Context, token string) (map[string]
 		out["has_file"] = a.fileID != uuid.Nil
 		if a.fileID != uuid.Nil {
 			var name, mime string
-			if err := tx.QueryRow(ctx, `SELECT original_name::text, mime_type FROM app.files WHERE tenant_id = $1 AND id = $2`, pt.tenantID, a.fileID).Scan(&name, &mime); err == nil {
+			if err := tx.QueryRow(ctx, "SELECT original_name::text, mime_type FROM app.files WHERE id = $1", a.fileID).Scan(&name, &mime); err == nil {
 				out["file_name"], out["mime_type"] = name, mime
 			}
 		}
 		out["link"] = a.workingURL
-		out["comments"], err = rows(ctx, tx, `SELECT author_type::text AS author_type, comment, created_at FROM app.design_feedback WHERE tenant_id = $1 AND design_version_id = $2 ORDER BY created_at`, pt.tenantID, a.versionID)
+		out["comments"], err = rows(ctx, tx, `SELECT author_type::text AS author_type, comment, created_at FROM app.design_feedback WHERE design_version_id = $1 ORDER BY created_at`, a.versionID)
 		return err
 	})
 	return out, err
@@ -1005,12 +963,12 @@ func (s *Service) PublicApprovalFile(ctx context.Context, token string) (string,
 		return "", "", nil, err
 	}
 	var storageKey, name, mime string
-	err = s.tenantTx(ctx, pt.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		a, err := s.loadApproval(ctx, tx, pt.tenantID, pt.linkID, false)
+	err = s.globalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		a, err := s.loadApproval(ctx, tx, pt.linkID, false)
 		if err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `SELECT storage_key, original_name::text, mime_type FROM app.files WHERE tenant_id = $1 AND id = $2`, pt.tenantID, a.fileID).Scan(&storageKey, &name, &mime)
+		return tx.QueryRow(ctx, "SELECT storage_key, original_name::text, mime_type FROM app.files WHERE id = $1", a.fileID).Scan(&storageKey, &name, &mime)
 	})
 	if err != nil {
 		return "", "", nil, err
@@ -1034,8 +992,8 @@ func (s *Service) PublicDecide(ctx context.Context, token string, in DecisionIn,
 		return nil, err
 	}
 	var result string
-	err = s.tenantTx(ctx, pt.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		a, err := s.loadApproval(ctx, tx, pt.tenantID, pt.linkID, true)
+	err = s.globalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		a, err := s.loadApproval(ctx, tx, pt.linkID, true)
 		if err != nil {
 			return err
 		}
@@ -1046,8 +1004,8 @@ func (s *Service) PublicDecide(ctx context.Context, token string, in DecisionIn,
 			SELECT j.id, j.job_no AS number, j.title::text AS title, j.status::text AS status,
 			       dm.user_id AS designer_id, j.project_stage_id AS stage_id, j.project_id
 			FROM app.design_jobs j
-			LEFT JOIN app.memberships dm ON dm.tenant_id = j.tenant_id AND dm.id = j.designer_id
-			WHERE j.tenant_id = $1 AND j.id = $2 FOR UPDATE OF j`, pt.tenantID, a.jobID)
+			LEFT JOIN app.memberships dm ON dm.id = j.designer_id
+			WHERE j.id = $1 FOR UPDATE OF j`, a.jobID)
 		if err != nil || len(jRows) == 0 {
 			return err
 		}
@@ -1058,22 +1016,17 @@ func (s *Service) PublicDecide(ctx context.Context, token string, in DecisionIn,
 			decision = "changes_requested"
 			result = "changes_requested"
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.design_approval_links
-			SET decision = $3::app.client_decision, decision_ip = NULLIF($4,'')::inet, decision_user_agent = left(NULLIF($5,''), 512)
-			WHERE tenant_id = $1 AND id = $2`, pt.tenantID, pt.linkID, decision, clean(ip), clean(userAgent)); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.design_approval_links\n\t\t\tSET decision = $2::app.client_decision, decision_ip = NULLIF($3,'')::inet, decision_user_agent = left(NULLIF($4,''), 512)\n\t\t\tWHERE id = $1", pt.linkID, decision, clean(ip), clean(userAgent)); err != nil {
 			return err
 		}
 		if clean(in.Comment) != "" {
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO app.design_feedback (id, tenant_id, design_job_id, design_version_id, author_type, approval_link_id, comment)
-				VALUES ($1,$2,$3,$4,'client',$5,$6)`,
-				ids.New(), pt.tenantID, a.jobID, a.versionID, pt.linkID, clean(in.Comment)); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tINSERT INTO app.design_feedback (id, design_job_id, design_version_id, author_type, approval_link_id, comment)\n\t\t\t\tVALUES ($1, $2, $3, 'client', $4, $5)",
+				ids.New(), a.jobID, a.versionID, pt.linkID, clean(in.Comment)); err != nil {
 				return err
 			}
 		}
 		if decision == "approved" {
-			if err := s.checkBrandingStageComplete(ctx, tx, pt.tenantID, j); err != nil {
+			if err := s.checkBrandingStageComplete(ctx, tx, j); err != nil {
 				return err
 			}
 		}
@@ -1087,9 +1040,9 @@ func (s *Service) PublicDecide(ctx context.Context, token string, in DecisionIn,
 			Body: j["number"].(string) + ": " + j["title"].(string), Link: "/design-jobs/" + a.jobID.String(), EntityType: "design_job", EntityID: &eid,
 		}
 		if d, ok := j["designer_id"].(uuid.UUID); ok && d != uuid.Nil {
-			_ = s.Notify.ToUser(ctx, tx, pt.tenantID, d, msg)
+			_ = s.Notify.ToUser(ctx, tx, d, msg)
 		}
-		_ = s.Notify.ToPermission(ctx, tx, pt.tenantID, nil, "services.design.manage", msg)
+		_ = s.Notify.ToPermission(ctx, tx, nil, "services.design.manage", msg)
 		return nil
 	})
 	if err != nil {
@@ -1107,16 +1060,14 @@ func (s *Service) StartTimer(ctx context.Context, p *auth.Principal, jobID uuid.
 			return err
 		}
 		id := ids.New()
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.design_time_logs (id, tenant_id, design_job_id, membership_id, started_at)
-			VALUES ($1,$2,$3,$4,$5)`, id, p.TenantID, jobID, p.MembershipID, s.Clock.Now()); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.design_time_logs (id, design_job_id, membership_id, started_at)\n\t\t\tVALUES ($1, $2, $3, $4)", id, jobID, p.MembershipID, s.Clock.Now()); err != nil {
 			if isDup(err) {
 				return httpx.Conflict("timer_running", "You already have a timer running. Stop it first")
 			}
 			return err
 		}
 		var err error
-		out, err = one(ctx, tx, "Timer", `SELECT id, design_job_id AS job_id, started_at FROM app.design_time_logs WHERE tenant_id = $1 AND id = $2`, p.TenantID, id)
+		out, err = one(ctx, tx, "Timer", `SELECT id, design_job_id AS job_id, started_at FROM app.design_time_logs WHERE id = $1`, id)
 		return err
 	})
 	return out, err
@@ -1127,24 +1078,21 @@ func (s *Service) StopTimer(ctx context.Context, p *auth.Principal, jobID uuid.U
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		var id uuid.UUID
 		var started time.Time
-		if err := tx.QueryRow(ctx, `
-			SELECT id, started_at FROM app.design_time_logs
-			WHERE tenant_id = $1 AND design_job_id = $2 AND membership_id = $3 AND ended_at IS NULL FOR UPDATE`,
-			p.TenantID, jobID, p.MembershipID).Scan(&id, &started); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT id, started_at FROM app.design_time_logs\n\t\t\tWHERE design_job_id = $1 AND membership_id = $2 AND ended_at IS NULL FOR UPDATE", jobID, p.MembershipID).Scan(&id, &started); err != nil {
 			return httpx.Conflict("no_timer", "You have no timer running on this job")
 		}
 		now := s.Clock.Now()
 		if !now.After(started) {
 			now = started.Add(time.Minute)
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.design_time_logs SET ended_at = $3 WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, now); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.design_time_logs SET ended_at = $2 WHERE id = $1", id, now); err != nil {
 			return err
 		}
 		var err error
 		out, err = one(ctx, tx, "Timer", `
 			SELECT id, design_job_id AS job_id, started_at, ended_at AS stopped_at,
 			       GREATEST(1, ROUND(EXTRACT(EPOCH FROM (ended_at - started_at)) / 60)::int) AS minutes
-			FROM app.design_time_logs WHERE tenant_id = $1 AND id = $2`, p.TenantID, id)
+			FROM app.design_time_logs WHERE id = $1`, id)
 		return err
 	})
 	return out, err
@@ -1178,14 +1126,12 @@ func (s *Service) CreatePrintOrder(ctx context.Context, p *auth.Principal, jobID
 		if status != "approved" && status != "printing" {
 			return httpx.Conflict("invalid_status", "A print order needs an approved design")
 		}
-		if err := require404(ctx, tx, "app.contractors", "Contractor", p.TenantID, *in.ContractorID); err != nil {
+		if err := require404(ctx, tx, "app.contractors", "Contractor", *in.ContractorID); err != nil {
 			return err
 		}
 		id := ids.New()
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.print_orders (id, tenant_id, design_job_id, contractor_id, quantity, cost, due_date, notes)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-			id, p.TenantID, jobID, *in.ContractorID, in.Quantity, money.Money(in.Cost), dateOrNil(in.DueDate), nz(in.Note)); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.print_orders (id, design_job_id, contractor_id, quantity, cost, due_date, notes)\n\t\t\tVALUES ($1, $2, $3, $4, $5, $6, $7)",
+			id, jobID, *in.ContractorID, in.Quantity, money.Money(in.Cost), dateOrNil(in.DueDate), nz(in.Note)); err != nil {
 			return err
 		}
 		if in.Cost.IsPositive() {
@@ -1197,7 +1143,7 @@ func (s *Service) CreatePrintOrder(ctx context.Context, p *auth.Principal, jobID
 			}
 		}
 		if status == "approved" {
-			if _, err := tx.Exec(ctx, `UPDATE app.design_jobs SET status = 'printing' WHERE tenant_id = $1 AND id = $2`, p.TenantID, jobID); err != nil {
+			if _, err := tx.Exec(ctx, "UPDATE app.design_jobs SET status = 'printing' WHERE id = $1", jobID); err != nil {
 				return err
 			}
 		}
@@ -1205,7 +1151,7 @@ func (s *Service) CreatePrintOrder(ctx context.Context, p *auth.Principal, jobID
 			SELECT id, design_job_id AS job_id, contractor_id, quantity, cost, due_date,
 			       CASE WHEN status = 'sent_to_print' THEN 'sent' ELSE status::text END AS status,
 			       notes AS note, created_at
-			FROM app.print_orders WHERE tenant_id = $1 AND id = $2`, p.TenantID, id)
+			FROM app.print_orders WHERE id = $1`, id)
 		return err
 	})
 	return out, err
@@ -1216,29 +1162,29 @@ func (s *Service) UpdatePrintOrder(ctx context.Context, p *auth.Principal, id uu
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
 		var cur string
 		var jobID uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT status::text, design_job_id FROM app.print_orders WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, id).Scan(&cur, &jobID); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT status::text, design_job_id FROM app.print_orders WHERE id = $1 FOR UPDATE", id).Scan(&cur, &jobID); err != nil {
 			return httpx.NotFound("not_found", "Print order not found")
 		}
 		if status == "cancelled" {
 			var billID uuid.UUID
-			if err := tx.QueryRow(ctx, `SELECT id FROM app.contractor_bills WHERE tenant_id = $1 AND print_order_id = $2`, p.TenantID, id).Scan(&billID); err == nil {
+			if err := tx.QueryRow(ctx, "SELECT id FROM app.contractor_bills WHERE print_order_id = $1", id).Scan(&billID); err == nil {
 				if err := s.voidCostTx(ctx, tx, p, billID, "Print order cancelled"); err != nil {
 					return err
 				}
 			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.print_orders SET status = $3::app.print_order_status WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, status); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.print_orders SET status = $2::app.print_order_status WHERE id = $1", id, status); err != nil {
 			return err
 		}
 		if status == "ready" {
 			jRows, err := rows(ctx, tx, `
 				SELECT j.job_no AS number, j.title::text AS title, dm.user_id AS designer_id
-				FROM app.design_jobs j LEFT JOIN app.memberships dm ON dm.tenant_id = j.tenant_id AND dm.id = j.designer_id
-				WHERE j.tenant_id = $1 AND j.id = $2`, p.TenantID, jobID)
+				FROM app.design_jobs j LEFT JOIN app.memberships dm ON dm.id = j.designer_id
+				WHERE j.id = $1`, jobID)
 			if err == nil && len(jRows) > 0 {
 				if d, ok := jRows[0]["designer_id"].(uuid.UUID); ok && d != uuid.Nil {
 					eid := jobID
-					_ = s.Notify.ToUser(ctx, tx, p.TenantID, d, notify.Message{
+					_ = s.Notify.ToUser(ctx, tx, d, notify.Message{
 						Type: "print_ready", Title: "Print ready",
 						Body: jRows[0]["number"].(string) + ": " + jRows[0]["title"].(string), Link: "/design-jobs/" + jobID.String(), EntityType: "design_job", EntityID: &eid,
 					})
@@ -1253,7 +1199,7 @@ func (s *Service) UpdatePrintOrder(ctx context.Context, p *auth.Principal, id uu
 			SELECT id, design_job_id AS job_id, contractor_id, quantity, cost, due_date,
 			       CASE WHEN status = 'sent_to_print' THEN 'sent' ELSE status::text END AS status,
 			       notes AS note
-			FROM app.print_orders WHERE tenant_id = $1 AND id = $2`, p.TenantID, id)
+			FROM app.print_orders WHERE id = $1`, id)
 		return err
 	})
 	return out, err
@@ -1264,16 +1210,15 @@ func (s *Service) ListPrintOrders(ctx context.Context, p *auth.Principal, status
 	var out []map[string]any
 	total := 0
 	err := s.tx(ctx, p, func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("po.tenant_id = $1")
+		q := sqlq.New()
 		q.If(status != "", "po.status = ?::app.print_order_status", mapPrintOrderStatus(status))
 		q.If(contractorID != nil, "po.contractor_id = ?", contractorID)
 		q.If(jobID != nil, "po.design_job_id = ?", jobID)
 		ownJob(q, p)
 		from := ` FROM app.print_orders po
-			JOIN app.design_jobs j ON j.tenant_id = po.tenant_id AND j.id = po.design_job_id
-			JOIN app.customers c ON c.tenant_id = j.tenant_id AND c.id = j.customer_id
-			LEFT JOIN app.contractors ct ON ct.tenant_id = po.tenant_id AND ct.id = po.contractor_id`
+			JOIN app.design_jobs j ON j.id = po.design_job_id
+			JOIN app.customers c ON c.id = j.customer_id
+			LEFT JOIN app.contractors ct ON ct.id = po.contractor_id`
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+from+q.Where(), q.Args...).Scan(&total); err != nil {
 			return err
 		}
@@ -1312,20 +1257,18 @@ func (s *Service) AddExtraRevisionCharge(ctx context.Context, p *auth.Principal,
 			extra = 1
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE app.design_jobs SET price = price + $3, extra_revision_fee = extra_revision_fee + $3, revisions_included = revisions_included + $4
-			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, fee, extra); err != nil {
+			UPDATE app.design_jobs SET price = price + $2, extra_revision_fee = extra_revision_fee + $2, revisions_included = revisions_included + $3
+			WHERE id = $1`, id, fee, extra); err != nil {
 			return err
 		}
 		var latestVer *uuid.UUID
-		_ = tx.QueryRow(ctx, `SELECT id FROM app.design_versions WHERE tenant_id = $1 AND design_job_id = $2 ORDER BY version_no DESC LIMIT 1`, p.TenantID, id).Scan(&latestVer)
+		_ = tx.QueryRow(ctx, "SELECT id FROM app.design_versions WHERE design_job_id = $1 ORDER BY version_no DESC LIMIT 1", id).Scan(&latestVer)
 		if latestVer != nil {
 			msg := "Extra revision charge added: " + fee.StringFixed(2)
 			if note := clean(in.Note); note != "" {
 				msg += " — " + note
 			}
-			_, _ = tx.Exec(ctx, `
-				INSERT INTO app.design_feedback (id, tenant_id, design_job_id, design_version_id, author_type, author_id, comment)
-				VALUES ($1,$2,$3,$4,'staff',$5,$6)`, ids.New(), p.TenantID, id, *latestVer, p.MembershipID, msg)
+			_, _ = tx.Exec(ctx, "\n\t\t\t\tINSERT INTO app.design_feedback (id, design_job_id, design_version_id, author_type, author_id, comment)\n\t\t\t\tVALUES ($1, $2, $3, 'staff', $4, $5)", ids.New(), id, *latestVer, p.MembershipID, msg)
 		}
 		return s.Audit.Record(ctx, tx, p, "design_job.extra_revision_charged", "design_job", id,
 			map[string]any{"price": before["price"], "revisions_included": before["revisions_included"]},
@@ -1361,7 +1304,7 @@ func (s *Service) CreateStageJobs(ctx context.Context, p *auth.Principal, projec
 			return err
 		}
 		var n int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.project_stages WHERE tenant_id = $1 AND id = $2 AND project_id = $3`, p.TenantID, stageID, projectID).Scan(&n); err != nil || n == 0 {
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM app.project_stages WHERE id = $1 AND project_id = $2", stageID, projectID).Scan(&n); err != nil || n == 0 {
 			return httpx.NotFound("not_found", "Stage not found")
 		}
 		for _, jb := range in.Jobs {
@@ -1374,7 +1317,7 @@ func (s *Service) CreateStageJobs(ctx context.Context, p *auth.Principal, projec
 			}
 			created = append(created, id)
 		}
-		_, err = tx.Exec(ctx, `UPDATE app.project_stages SET status = 'in_progress', is_branding_stage = true WHERE tenant_id = $1 AND id = $2 AND status = 'not_started'`, p.TenantID, stageID)
+		_, err = tx.Exec(ctx, "UPDATE app.project_stages SET status = 'in_progress', is_branding_stage = true WHERE id = $1 AND status = 'not_started'", stageID)
 		return err
 	})
 	if err != nil {

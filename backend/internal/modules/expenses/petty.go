@@ -23,14 +23,14 @@ import (
 func (s *Service) PettyCash(ctx context.Context, p *auth.Principal) ([]map[string]any, error) {
 	out := []map[string]any{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("fa.tenant_id = $1").Add("fa.kind = 'petty_cash'")
+		q := sqlq.New()
+		q.Add("fa.kind = 'petty_cash'")
 		q.If(p.BranchID != nil, "(fa.location_id IS NULL OR fa.location_id = ?)", p.BranchID)
 		rows, err := tx.Query(ctx, `
 			SELECT fa.id, fa.name::text, fa.location_id, l.name::text, fa.status = 'active', fa.current_balance,
-			       (SELECT max(r.period_end)::text FROM app.petty_cash_reconciliations r WHERE r.tenant_id = fa.tenant_id AND r.account_id = fa.id)
+			       (SELECT max(r.period_end)::text FROM app.petty_cash_reconciliations r WHERE r.account_id = fa.id)
 			FROM app.financial_accounts fa
-			LEFT JOIN app.locations l ON l.tenant_id = fa.tenant_id AND l.id = fa.location_id`+q.Where()+` ORDER BY fa.name`, q.Args...)
+			LEFT JOIN app.locations l ON l.id = fa.location_id`+q.Where()+` ORDER BY fa.name`, q.Args...)
 		if err != nil {
 			return err
 		}
@@ -65,7 +65,7 @@ func (s *Service) pettyAccount(ctx context.Context, tx pgx.Tx, p *auth.Principal
 		return acc, *p.BranchID, nil
 	}
 	var def uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT id FROM app.locations WHERE tenant_id = $1 AND is_default`, p.TenantID).Scan(&def); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT id FROM app.locations WHERE is_default").Scan(&def); err != nil {
 		return acc, uuid.Nil, err
 	}
 	return acc, def, nil
@@ -90,7 +90,7 @@ func (s *Service) TopUp(ctx context.Context, p *auth.Principal, id uuid.UUID, in
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -101,7 +101,7 @@ func (s *Service) TopUp(ctx context.Context, p *auth.Principal, id uuid.UUID, in
 		if secondID.String() < firstID.String() {
 			firstID, secondID = secondID, firstID
 		}
-		if _, err := tx.Exec(ctx, `SELECT id FROM app.financial_accounts WHERE tenant_id = $1 AND id IN ($2, $3) ORDER BY id FOR UPDATE`, p.TenantID, firstID, secondID); err != nil {
+		if _, err := tx.Exec(ctx, "SELECT id FROM app.financial_accounts WHERE id IN ($1, $2) ORDER BY id FOR UPDATE", firstID, secondID); err != nil {
 			return err
 		}
 		petty, branch, err := s.pettyAccount(ctx, tx, p, id)
@@ -135,17 +135,17 @@ func (s *Service) TopUp(ctx context.Context, p *auth.Principal, id uuid.UUID, in
 		}
 		var tid uuid.UUID
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.account_transfers (tenant_id, transfer_no, from_account_id, to_account_id, amount, location_id, business_date, note)
-			VALUES ($1,$2,$3,$4,$5,$6,$7::date,NULLIF($8,''))
-			RETURNING id`, p.TenantID, number, in.FromAccountID, id, amt, branch, date, note).Scan(&tid); err != nil {
+			INSERT INTO app.account_transfers ( transfer_no, from_account_id, to_account_id, amount, location_id, business_date, note)
+			VALUES ($1,$2,$3,$4,$5,$6::date,NULLIF($7,''))
+			RETURNING id`, number, in.FromAccountID, id, amt, branch, date, note).Scan(&tid); err != nil {
 			return err
 		}
 		var bal decimal.Decimal
-		_ = tx.QueryRow(ctx, `SELECT current_balance FROM app.financial_accounts WHERE tenant_id = $1 AND id = $2`, p.TenantID, id).Scan(&bal)
+		_ = tx.QueryRow(ctx, "SELECT current_balance FROM app.financial_accounts WHERE id = $1", id).Scan(&bal)
 		if err := s.Audit.Record(ctx, tx, p, "petty_cash.topped_up", "financial_accounts", id, nil, map[string]any{"transfer_id": tid, "amount": amt, "from_account_id": in.FromAccountID}); err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 201, httpx.Data(map[string]any{"transfer_id": tid, "number": number, "amount": amt, "balance": bal}))
+		raw, err := idem.Complete(ctx, tx, 201, httpx.Data(map[string]any{"transfer_id": tid, "number": number, "amount": amt, "balance": bal}))
 		status, body = 201, raw
 		return err
 	})
@@ -167,7 +167,7 @@ func (s *Service) Reconcile(ctx context.Context, p *auth.Principal, id uuid.UUID
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -186,7 +186,7 @@ func (s *Service) Reconcile(ctx context.Context, p *auth.Principal, id uuid.UUID
 		periodStart := strings.TrimSpace(in.PeriodStart)
 		if periodStart == "" {
 			var prev *string
-			_ = tx.QueryRow(ctx, `SELECT max(period_end)::text FROM app.petty_cash_reconciliations WHERE tenant_id = $1 AND account_id = $2 AND period_end < $3::date`, p.TenantID, id, periodEnd).Scan(&prev)
+			_ = tx.QueryRow(ctx, "SELECT max(period_end)::text FROM app.petty_cash_reconciliations WHERE account_id = $1 AND period_end < $2::date", id, periodEnd).Scan(&prev)
 			if prev != nil {
 				if d, err := time.Parse("2006-01-02", *prev); err == nil {
 					periodStart = d.AddDate(0, 0, 1).Format("2006-01-02")
@@ -200,11 +200,7 @@ func (s *Service) Reconcile(ctx context.Context, p *auth.Principal, id uuid.UUID
 			return httpx.BadRequest("invalid_body", "period_start cannot be after date")
 		}
 		var opening, expected decimal.Decimal
-		if err := tx.QueryRow(ctx, `
-			SELECT COALESCE(SUM(CASE direction WHEN 'in' THEN amount ELSE -amount END) FILTER (WHERE business_date < $3::date), 0),
-			       COALESCE(SUM(CASE direction WHEN 'in' THEN amount ELSE -amount END) FILTER (WHERE business_date <= $4::date), 0)
-			FROM app.financial_transactions WHERE tenant_id = $1 AND account_id = $2`,
-			p.TenantID, id, periodStart, periodEnd).Scan(&opening, &expected); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT COALESCE(SUM(CASE direction WHEN 'in' THEN amount ELSE -amount END) FILTER (WHERE business_date < $2::date), 0),\n\t\t\t       COALESCE(SUM(CASE direction WHEN 'in' THEN amount ELSE -amount END) FILTER (WHERE business_date <= $3::date), 0)\n\t\t\tFROM app.financial_transactions WHERE account_id = $1", id, periodStart, periodEnd).Scan(&opening, &expected); err != nil {
 			return err
 		}
 		counted := money.Money(in.ActualBalance)
@@ -215,9 +211,9 @@ func (s *Service) Reconcile(ctx context.Context, p *auth.Principal, id uuid.UUID
 		}
 		var rid uuid.UUID
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.petty_cash_reconciliations (tenant_id, account_id, period_start, period_end, opening_balance, expected_closing, counted_closing, note)
-			VALUES ($1,$2,$3::date,$4::date,$5,$6,$7,NULLIF($8,''))
-			RETURNING id`, p.TenantID, id, periodStart, periodEnd, opening, expected, counted, note).Scan(&rid); err != nil {
+			INSERT INTO app.petty_cash_reconciliations ( account_id, period_start, period_end, opening_balance, expected_closing, counted_closing, note)
+			VALUES ($1,$2::date,$3::date,$4,$5,$6,NULLIF($7,''))
+			RETURNING id`, id, periodStart, periodEnd, opening, expected, counted, note).Scan(&rid); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "Petty cash is already reconciled for that date")
 			}
@@ -228,7 +224,7 @@ func (s *Service) Reconcile(ctx context.Context, p *auth.Principal, id uuid.UUID
 		if err := s.Audit.Record(ctx, tx, p, "petty_cash.reconciled", "petty_cash_reconciliations", rid, nil, res); err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 201, httpx.Data(res))
+		raw, err := idem.Complete(ctx, tx, 201, httpx.Data(res))
 		status, body = 201, raw
 		return err
 	})

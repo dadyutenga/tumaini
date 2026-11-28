@@ -39,7 +39,7 @@ type Service struct {
 	SMS      sender.Sender
 }
 
-// exportExcluded are tenant tables whose rows are transient queue/idempotency/backup state.
+// exportExcluded are tables whose rows are transient queue/idempotency/backup state.
 var exportExcluded = map[string]bool{
 	"idempotency_keys":    true,
 	"job_queue":           true,
@@ -66,29 +66,23 @@ type exportPayload struct {
 	MembershipID uuid.UUID `json:"membership_id"`
 }
 
-// BusinessExport writes every app.* tenant table as JSON lines into one zip file.
-// Row-level security limits each query to the tenant.
-func (s *Service) BusinessExport(ctx context.Context, tenantID uuid.UUID, raw json.RawMessage) error {
+// BusinessExport writes each application table as JSON lines into one zip file.
+func (s *Service) BusinessExport(ctx context.Context, raw json.RawMessage) error {
 	var in exportPayload
 	if err := json.Unmarshal(raw, &in); err != nil || in.ExportID == uuid.Nil {
 		return fmt.Errorf("export payload: %w", err)
 	}
-	actor := db.Actor{TenantID: tenantID, UserID: in.UserID, MembershipID: in.MembershipID}
-	if err := s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	actor := db.Actor{UserID: in.UserID, MembershipID: in.MembershipID}
+	if err := s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		var exists bool
-		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.backup_runs WHERE id = $1 AND tenant_id = $2)`, in.ExportID, tenantID).Scan(&exists); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM app.backup_runs WHERE id = $1 )", in.ExportID).Scan(&exists); err != nil {
 			return err
 		}
 		if !exists {
 			return pgx.ErrNoRows
 		}
 		if actor.MembershipID == uuid.Nil {
-			_ = tx.QueryRow(ctx, `
-				SELECT m.id, m.user_id FROM app.memberships m
-				JOIN app.membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.membership_id = m.id
-				JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id
-				WHERE m.tenant_id = $1 AND m.status = 'active' AND r.code = 'admin'
-				LIMIT 1`, tenantID).Scan(&actor.MembershipID, &actor.UserID)
+			_ = tx.QueryRow(ctx, "\n\t\t\t\tSELECT m.id, m.user_id FROM app.memberships m\n\t\t\t\tJOIN app.membership_roles mr ON mr.membership_id = m.id\n\t\t\t\tJOIN app.roles r ON r.id = mr.role_id\n\t\t\t\tWHERE m.status = 'active' AND r.code = 'admin'\n\t\t\t\tLIMIT 1").Scan(&actor.MembershipID, &actor.UserID)
 		}
 		_, err := tx.Exec(ctx, `UPDATE app.backup_runs SET status = 'running', error = NULL WHERE id = $1`, in.ExportID)
 		return err
@@ -97,22 +91,19 @@ func (s *Service) BusinessExport(ctx context.Context, tenantID uuid.UUID, raw js
 	}
 	buf, counts, err := s.buildExport(ctx, actor)
 	if err != nil {
-		s.failExport(ctx, tenantID, in.ExportID, err)
+		s.failExport(ctx, in.ExportID, err)
 		return err
 	}
 	name := "business-export-" + s.Clock.Now().Format("20060102-150405") + ".zip"
-	file, err := s.Store.Save(ctx, tenantID.String(), name, bytes.NewReader(buf), exportMax)
+	file, err := s.Store.Save(ctx, "business", name, bytes.NewReader(buf), exportMax)
 	if err != nil {
-		s.failExport(ctx, tenantID, in.ExportID, err)
+		s.failExport(ctx, in.ExportID, err)
 		return err
 	}
 	sum := sha256.Sum256(buf)
 	return s.DB.InActorTx(ctx, actor, func(ctx context.Context, tx pgx.Tx) error {
 		fileID := ids.New()
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.files (id, tenant_id, storage_key, original_name, mime_type, size_bytes, sha256, classification)
-			VALUES ($1,$2,$3,$4,'application/zip',$5,$6,'restricted')
-		`, fileID, tenantID, file.Path, name, file.Size, sum[:]); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.files (id, storage_key, original_name, mime_type, size_bytes, sha256, classification)\n\t\t\tVALUES ($1, $2, $3, 'application/zip', $4, $5, 'restricted')\n\t\t", fileID, file.Path, name, file.Size, sum[:]); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
@@ -123,7 +114,7 @@ func (s *Service) BusinessExport(ctx context.Context, tenantID uuid.UUID, raw js
 			return err
 		}
 		if actor.UserID != uuid.Nil {
-			_ = s.Notify.ToUser(ctx, tx, tenantID, actor.UserID, notify.Message{
+			_ = s.Notify.ToUser(ctx, tx, actor.UserID, notify.Message{
 				Type: "day_closed", Title: "Data export ready",
 				Body: fmt.Sprintf("Your business data export (%d tables) can be downloaded.", len(counts)),
 				Link: "/exports/" + in.ExportID.String(), EntityType: "backup_runs", EntityID: &in.ExportID,
@@ -133,8 +124,8 @@ func (s *Service) BusinessExport(ctx context.Context, tenantID uuid.UUID, raw js
 	})
 }
 
-func (s *Service) failExport(ctx context.Context, tenantID, id uuid.UUID, cause error) {
-	_ = s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+func (s *Service) failExport(ctx context.Context, id uuid.UUID, cause error) {
+	_ = s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `UPDATE app.backup_runs SET status = 'failed', error = $2, finished_at = $3 WHERE id = $1`, id, truncate(cause.Error(), 500), s.Clock.Now())
 		return err
 	})
@@ -146,10 +137,9 @@ func (s *Service) buildExport(ctx context.Context, actor db.Actor) ([]byte, map[
 	counts := map[string]int{}
 	err := s.DB.InActorTx(ctx, actor, func(ctx context.Context, tx pgx.Tx) error {
 		rows, err := tx.Query(ctx, `
-			SELECT c.table_name FROM information_schema.columns c
-			JOIN information_schema.tables t ON t.table_schema = c.table_schema AND t.table_name = c.table_name
-			WHERE c.table_schema = 'app' AND c.column_name = 'tenant_id' AND t.table_type = 'BASE TABLE'
-			ORDER BY c.table_name`)
+			SELECT table_name FROM information_schema.tables
+			WHERE table_schema = 'app' AND table_type = 'BASE TABLE'
+			ORDER BY table_name`)
 		if err != nil {
 			return err
 		}
@@ -168,7 +158,6 @@ func (s *Service) buildExport(ctx context.Context, actor db.Actor) ([]byte, map[
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		tables = append([]string{"tenants"}, tables...)
 		strip := ""
 		for _, col := range exportStripped {
 			strip += " - '" + col + "'"
@@ -208,7 +197,6 @@ func (s *Service) buildExport(ctx context.Context, actor db.Actor) ([]byte, map[
 			counts[table] = n
 		}
 		manifest, _ := json.MarshalIndent(map[string]any{
-			"tenant_id":  actor.TenantID,
 			"created_at": s.Clock.Now(),
 			"format":     "one JSON object per line",
 			"rows":       counts,
@@ -232,8 +220,8 @@ func (s *Service) buildExport(ctx context.Context, actor db.Actor) ([]byte, map[
 // DebtReminders raises summary notifications for overdue customer sales/invoices,
 // customers near their credit limit, supplier purchases due soon or overdue,
 // and approved expenses still unpaid.
-func (s *Service) DebtReminders(ctx context.Context, tenantID uuid.UUID, _ json.RawMessage) error {
-	return s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+func (s *Service) DebtReminders(ctx context.Context, _ json.RawMessage) error {
+	return s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		today, err := s.today(ctx, tx)
 		if err != nil {
 			return err
@@ -244,7 +232,7 @@ func (s *Service) DebtReminders(ctx context.Context, tenantID uuid.UUID, _ json.
 				return nil
 			}
 			msg := notify.Message{Type: "debt_due", Title: title, Body: fmt.Sprintf(body, n, amt.StringFixed(2)), Link: link}
-			return s.Notify.ToPermission(ctx, tx, tenantID, nil, perm, msg)
+			return s.Notify.ToPermission(ctx, tx, nil, perm, msg)
 		}
 
 		// Overdue customer sales + service invoices.
@@ -265,13 +253,10 @@ func (s *Service) DebtReminders(ctx context.Context, tenantID uuid.UUID, _ json.
 			return err
 		}
 
-		// Optional customer outbound reminders only when the tenant explicitly enabled sms or whatsapp on debt_due.
+		// Optional customer outbound reminders only when the business explicitly enabled sms or whatsapp on debt_due.
 		if overdueN > 0 && s.Outbound != nil {
 			var ruleEnabled, ruleSMS, ruleWA bool
-			err := tx.QueryRow(ctx, `
-				SELECT enabled, sms, whatsapp FROM app.notification_rules
-				WHERE tenant_id = $1 AND notification_type = 'debt_due'::app.notification_type`,
-				tenantID).Scan(&ruleEnabled, &ruleSMS, &ruleWA)
+			err := tx.QueryRow(ctx, "\n\t\t\t\tSELECT enabled, sms, whatsapp FROM app.notification_rules\n\t\t\t\tWHERE notification_type = 'debt_due'::app.notification_type").Scan(&ruleEnabled, &ruleSMS, &ruleWA)
 			if err == nil && ruleEnabled && (ruleSMS || ruleWA) {
 				var channels []string
 				if ruleSMS && s.Outbound.Channels.Available("sms") {
@@ -281,18 +266,7 @@ func (s *Service) DebtReminders(ctx context.Context, tenantID uuid.UUID, _ json.
 					channels = append(channels, "whatsapp")
 				}
 				if len(channels) > 0 {
-					crows, err := tx.Query(ctx, `
-						SELECT c.id, c.full_name::text, c.phone::text, SUM(x.bal) AS due
-						FROM app.customers c
-						JOIN (
-							SELECT s.customer_id, s.balance_due AS bal FROM app.sales s
-							WHERE s.tenant_id = $1 AND s.customer_id IS NOT NULL AND s.status = 'completed' AND s.balance_due > 0 AND COALESCE(s.due_date, s.business_date) < $2::date
-							UNION ALL
-							SELECT i.customer_id, i.balance_due AS bal FROM app.invoices i
-							WHERE i.tenant_id = $1 AND i.status IN ('issued', 'partially_paid') AND i.balance_due > 0 AND i.due_date < $2::date
-						) x ON x.customer_id = c.id
-						WHERE c.tenant_id = $1 AND c.phone IS NOT NULL AND length(c.phone::text) >= 5
-						GROUP BY c.id, c.full_name, c.phone`, tenantID, today)
+					crows, err := tx.Query(ctx, "\n\t\t\t\t\t\tSELECT c.id, c.full_name::text, c.phone::text, SUM(x.bal) AS due\n\t\t\t\t\t\tFROM app.customers c\n\t\t\t\t\t\tJOIN (\n\t\t\t\t\t\t\tSELECT s.customer_id, s.balance_due AS bal FROM app.sales s\n\t\t\t\t\t\t\tWHERE s.customer_id IS NOT NULL AND s.status = 'completed' AND s.balance_due > 0 AND COALESCE(s.due_date, s.business_date) < $1::date\n\t\t\t\t\t\t\tUNION ALL\n\t\t\t\t\t\t\tSELECT i.customer_id, i.balance_due AS bal FROM app.invoices i\n\t\t\t\t\t\t\tWHERE i.status IN ('issued', 'partially_paid') AND i.balance_due > 0 AND i.due_date < $1::date\n\t\t\t\t\t\t) x ON x.customer_id = c.id\n\t\t\t\t\t\tWHERE c.phone IS NOT NULL AND length(c.phone::text) >= 5\n\t\t\t\t\t\tGROUP BY c.id, c.full_name, c.phone", today)
 					if err != nil {
 						return err
 					}
@@ -322,7 +296,7 @@ func (s *Service) DebtReminders(ctx context.Context, tenantID uuid.UUID, _ json.
 						)
 						for _, ch := range channels {
 							cid := dc.id
-							if _, err := s.Outbound.Enqueue(ctx, tx, tenantID, outbound.Message{
+							if _, err := s.Outbound.Enqueue(ctx, tx, outbound.Message{
 								Channel:        ch,
 								Recipient:      strings.TrimSpace(dc.phone),
 								Subject:        "Payment reminder",
@@ -345,7 +319,7 @@ func (s *Service) DebtReminders(ctx context.Context, tenantID uuid.UUID, _ json.
 			SELECT count(*), COALESCE(SUM(bal), 0) FROM (
 				SELECT c.id, SUM(s.balance_due) AS bal
 				FROM app.customers c
-				JOIN app.sales s ON s.tenant_id = c.tenant_id AND s.customer_id = c.id
+				JOIN app.sales s ON s.customer_id = c.id
 				WHERE c.credit_limit IS NOT NULL AND c.credit_limit > 0
 				  AND s.status = 'completed' AND s.balance_due > 0
 				GROUP BY c.id, c.credit_limit
@@ -386,12 +360,12 @@ func (s *Service) DebtReminders(ctx context.Context, tenantID uuid.UUID, _ json.
 }
 
 // OwnerDailySummary notifies every Admin with the day's figures.
-func (s *Service) OwnerDailySummary(ctx context.Context, tenantID uuid.UUID, raw json.RawMessage) error {
+func (s *Service) OwnerDailySummary(ctx context.Context, raw json.RawMessage) error {
 	var in struct {
 		Date string `json:"date"`
 	}
 	_ = json.Unmarshal(raw, &in)
-	return s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	return s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		day := in.Date
 		if day == "" {
 			t, err := s.today(ctx, tx)
@@ -419,8 +393,8 @@ func (s *Service) OwnerDailySummary(ctx context.Context, tenantID uuid.UUID, raw
 		}
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM app.stock_balances sb
-			JOIN app.products p ON p.tenant_id = sb.tenant_id AND p.id = sb.product_id
-			JOIN app.tenant_settings ts ON ts.tenant_id = p.tenant_id
+			JOIN app.products p ON p.id = sb.product_id
+			CROSS JOIN app.business_settings ts
 			WHERE p.status = 'active' AND COALESCE(p.min_stock_level, ts.low_stock_default) > 0
 			  AND sb.quantity_on_hand <= COALESCE(p.min_stock_level, ts.low_stock_default)`).Scan(&low); err != nil {
 			return err
@@ -430,14 +404,14 @@ func (s *Service) OwnerDailySummary(ctx context.Context, tenantID uuid.UUID, raw
 		}
 		body := fmt.Sprintf("%s: %d sales worth %s, expenses %s, cash on hand %s, %d low stock items, %d approvals waiting",
 			day, count, sales.StringFixed(2), expenses.StringFixed(2), cash.StringFixed(2), low, pending)
-		return s.toOwners(ctx, tx, tenantID, notify.Message{Type: "day_closed", Title: "Daily summary", Body: body, Link: "/dashboard"})
+		return s.toOwners(ctx, tx, notify.Message{Type: "day_closed", Title: "Daily summary", Body: body, Link: "/dashboard"})
 	})
 }
 
 // LedgerBalanceCheck verifies that every financial account's current_balance matches
 // the sum of its ledger transactions, and alerts Admins otherwise.
-func (s *Service) LedgerBalanceCheck(ctx context.Context, tenantID uuid.UUID, _ json.RawMessage) error {
-	return s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+func (s *Service) LedgerBalanceCheck(ctx context.Context, _ json.RawMessage) error {
+	return s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		var mismatched int
 		var diff decimal.Decimal
 		if err := tx.QueryRow(ctx, `
@@ -453,8 +427,8 @@ func (s *Service) LedgerBalanceCheck(ctx context.Context, tenantID uuid.UUID, _ 
 		if mismatched == 0 {
 			return nil
 		}
-		slog.Error("ledger check failed", "tenant_id", tenantID, "mismatched_accounts", mismatched, "difference", diff.String())
-		return s.toOwners(ctx, tx, tenantID, notify.Message{
+		slog.Error("ledger check failed", "mismatched_accounts", mismatched, "difference", diff.String())
+		return s.toOwners(ctx, tx, notify.Message{
 			Type: "account_locked", Title: "Ledger check failed",
 			Body: fmt.Sprintf("%d financial account balances differ from their ledger by %s. Contact support.", mismatched, diff.StringFixed(2)),
 		})
@@ -462,8 +436,8 @@ func (s *Service) LedgerBalanceCheck(ctx context.Context, tenantID uuid.UUID, _ 
 }
 
 // StockRebuildCheck compares stock_balances with the sum of stock_movements.
-func (s *Service) StockRebuildCheck(ctx context.Context, tenantID uuid.UUID, _ json.RawMessage) error {
-	return s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+func (s *Service) StockRebuildCheck(ctx context.Context, _ json.RawMessage) error {
+	return s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		var mismatched int
 		if err := tx.QueryRow(ctx, `
 			SELECT count(*) FROM app.stock_balances sb
@@ -477,8 +451,8 @@ func (s *Service) StockRebuildCheck(ctx context.Context, tenantID uuid.UUID, _ j
 		if mismatched == 0 {
 			return nil
 		}
-		slog.Error("stock check failed", "tenant_id", tenantID, "mismatched", mismatched)
-		return s.toOwners(ctx, tx, tenantID, notify.Message{
+		slog.Error("stock check failed", "mismatched", mismatched)
+		return s.toOwners(ctx, tx, notify.Message{
 			Type: "account_locked", Title: "Stock check failed",
 			Body: fmt.Sprintf("%d product stock levels differ from their movement history. Contact support.", mismatched),
 		})
@@ -487,8 +461,8 @@ func (s *Service) StockRebuildCheck(ctx context.Context, tenantID uuid.UUID, _ j
 
 // SessionCleanup removes expired sessions, password reset requests, and old idempotency keys.
 // Runs on the worker pool because bms_worker holds DELETE grants on iam.sessions and iam.password_reset_requests.
-func (s *Service) SessionCleanup(ctx context.Context, tenantID uuid.UUID, _ json.RawMessage) error {
-	return s.DB.InJobsTx(ctx, db.Actor{TenantID: tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+func (s *Service) SessionCleanup(ctx context.Context, _ json.RawMessage) error {
+	return s.DB.InJobsTx(ctx, db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
 		now := s.Clock.Now()
 		if _, err := tx.Exec(ctx, `DELETE FROM iam.sessions WHERE absolute_expires_at < $1`, now); err != nil {
 			return err
@@ -506,22 +480,24 @@ func (s *Service) SessionCleanup(ctx context.Context, tenantID uuid.UUID, _ json
 }
 
 // AuditSeal ensures future monthly audit partitions exist, appends a cryptographic hash-chain seal
-// for the tenant's audit log, and verifies the full seal chain — alerting owners if tampering is found.
-func (s *Service) AuditSeal(ctx context.Context, tenantID uuid.UUID, _ json.RawMessage) error {
+// for the business audit log, and verifies the full seal chain — alerting owners if tampering is found.
+func (s *Service) AuditSeal(ctx context.Context, _ json.RawMessage) error {
 	var brokenSeal int64
 	var problem string
-	err := s.DB.InJobsTx(ctx, db.Actor{TenantID: tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InJobsTx(ctx, db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `SELECT audit.ensure_partitions(3)`); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `SELECT audit.seal_tenant($1, interval '5 minutes')`, tenantID); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT audit.seal_tenant($1, interval '5 minutes')`, uuid.Nil); err != nil {
 			return err
 		}
-		// Events outside any business (sign-in identity changes) form their own chain.
-		if _, err := tx.Exec(ctx, `SELECT audit.seal_tenant(NULL, interval '5 minutes')`); err != nil {
-			return err
-		}
-		row := tx.QueryRow(ctx, `SELECT seal_no, problem FROM audit.verify_tenant($1) LIMIT 1`, tenantID)
+		// Every chain is checked, including the one holding entries from before the single-business
+		// migration, which receives no new seals.
+		row := tx.QueryRow(ctx, `
+			SELECT v.seal_no, v.problem
+			  FROM (SELECT DISTINCT tenant_key FROM audit.audit_seals) k,
+			       LATERAL audit.verify_tenant(k.tenant_key) v
+			 LIMIT 1`)
 		if scanErr := row.Scan(&brokenSeal, &problem); scanErr != nil && !errors.Is(scanErr, pgx.ErrNoRows) {
 			return scanErr
 		}
@@ -533,18 +509,18 @@ func (s *Service) AuditSeal(ctx context.Context, tenantID uuid.UUID, _ json.RawM
 	if problem == "" {
 		return nil
 	}
-	slog.Error("audit seal verification failed", "tenant_id", tenantID, "seal_no", brokenSeal, "problem", problem)
-	return s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		return s.toOwners(ctx, tx, tenantID, notify.Message{
+	slog.Error("audit seal verification failed", "seal_no", brokenSeal, "problem", problem)
+	return s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		return s.toOwners(ctx, tx, notify.Message{
 			Type: "account_locked", Title: "Audit trail integrity alert",
 			Body: fmt.Sprintf("Audit seal #%d failed integrity verification (%s). Contact security/support immediately.", brokenSeal, problem),
 		})
 	})
 }
 
-// SendNotification delivers one notification by email/SMS if the tenant rule enables it
+// SendNotification delivers one notification by email/SMS if the business rule enables it
 // and a sender is configured.
-func (s *Service) SendNotification(ctx context.Context, tenantID uuid.UUID, raw json.RawMessage) error {
+func (s *Service) SendNotification(ctx context.Context, raw json.RawMessage) error {
 	var in struct {
 		NotificationID uuid.UUID `json:"notification_id"`
 	}
@@ -554,13 +530,13 @@ func (s *Service) SendNotification(ctx context.Context, tenantID uuid.UUID, raw 
 	var recipientID uuid.UUID
 	var title, body string
 	var wantEmail, wantSMS bool
-	err := s.DB.InJobsTx(ctx, db.Actor{TenantID: tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InJobsTx(ctx, db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
 		// app.notifications restrictive policy allows current_user = 'bms_worker'.
 		_, _ = tx.Exec(ctx, `SET LOCAL ROLE bms_worker`)
 		return tx.QueryRow(ctx, `
 			SELECT n.recipient_id, n.title, COALESCE(n.body, ''), COALESCE(r.email, false), COALESCE(r.sms, false)
 			FROM app.notifications n
-			LEFT JOIN app.notification_rules r ON r.tenant_id = n.tenant_id AND r.notification_type = n.notification_type
+			LEFT JOIN app.notification_rules r ON r.notification_type = n.notification_type
 			WHERE n.id = $1`, in.NotificationID).Scan(&recipientID, &title, &body, &wantEmail, &wantSMS)
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -573,7 +549,7 @@ func (s *Service) SendNotification(ctx context.Context, tenantID uuid.UUID, raw 
 		return nil
 	}
 	var email, phone *string
-	err = s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+	err = s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT u.email::text, u.phone
 			FROM app.memberships m JOIN iam.users u ON u.id = m.user_id
@@ -601,7 +577,7 @@ func (s *Service) SendNotification(ctx context.Context, tenantID uuid.UUID, raw 
 
 func (s *Service) today(ctx context.Context, tx pgx.Tx) (string, error) {
 	tz := "Africa/Dar_es_Salaam"
-	_ = tx.QueryRow(ctx, `SELECT timezone FROM app.tenants WHERE id = app.current_tenant_id()`).Scan(&tz)
+	_ = tx.QueryRow(ctx, `SELECT timezone FROM app.business_profile WHERE id = true`).Scan(&tz)
 	d, err := clock.BusinessDate(s.Clock.Now(), tz, setting.String(ctx, tx, "system.business_day_start", "00:00"))
 	if err != nil {
 		return "", err
@@ -613,8 +589,8 @@ func (s *Service) owners(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT DISTINCT m.user_id
 		FROM app.memberships m
-		JOIN app.membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.membership_id = m.id
-		JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id
+		JOIN app.membership_roles mr ON mr.membership_id = m.id
+		JOIN app.roles r ON r.id = mr.role_id
 		WHERE m.status = 'active' AND r.status = 'active' AND r.code = 'admin'`)
 	if err != nil {
 		return nil, err
@@ -631,13 +607,13 @@ func (s *Service) owners(ctx context.Context, tx pgx.Tx) ([]uuid.UUID, error) {
 	return out, rows.Err()
 }
 
-func (s *Service) toOwners(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, m notify.Message) error {
+func (s *Service) toOwners(ctx context.Context, tx pgx.Tx, m notify.Message) error {
 	owners, err := s.owners(ctx, tx)
 	if err != nil {
 		return err
 	}
 	for _, o := range owners {
-		if err := s.Notify.ToUser(ctx, tx, tenantID, o, m); err != nil {
+		if err := s.Notify.ToUser(ctx, tx, o, m); err != nil {
 			return err
 		}
 	}

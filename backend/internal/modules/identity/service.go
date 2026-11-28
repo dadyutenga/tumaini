@@ -23,8 +23,7 @@ import (
 	"bms/internal/platform/ids"
 )
 
-// Sign-in lockout. The tenant is not known until the person is identified, so these are fixed
-// defaults; they match the tenant_settings defaults (lockout_threshold, lockout_minutes).
+// Sign-in lockout defaults match business settings.
 const (
 	lockoutThreshold = 5
 	lockoutFor       = 15 * time.Minute
@@ -40,7 +39,7 @@ type Service struct {
 	Notify *notify.Service
 	// TTL is how long a session may live in total (REFRESH_TOKEN_TTL).
 	TTL time.Duration
-	// IdleTimeout is used until the tenant's own setting is known (SESSION_IDLE_TIMEOUT).
+	// IdleTimeout is used when the configured timeout is unavailable.
 	IdleTimeout time.Duration
 	// ReauthTTL is how long a recent credential check remains valid for sensitive actions.
 	ReauthTTL time.Duration
@@ -169,18 +168,6 @@ func (s *Service) Setup(ctx context.Context, in SetupInput) (SessionResult, erro
 		if exists {
 			return httpx.Conflict("setup_already_done", "Setup has already been completed")
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.business_profile(name,timezone,default_currency,status,phone,email)
-			VALUES ($1,$2,$3,'active',$4,NULLIF($5,'')::app.email)
-		`, businessName, s.DefaultTimezone, s.DefaultCurrency, phone, email); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.business_settings(business_name,phone,email,currency)
-			VALUES ($1,$2,NULLIF($3,'')::app.email,$4::app.currency)
-		`, businessName, phone, email, s.DefaultCurrency); err != nil {
-			return err
-		}
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO iam.users(full_name,email,phone,preferred_locale)
 			VALUES ($1,NULLIF($2,'')::app.email,$3::app.phone_e164,'en') RETURNING id
@@ -199,74 +186,10 @@ func (s *Service) Setup(ctx context.Context, in SetupInput) (SessionResult, erro
 		if _, err := tx.Exec(ctx, `INSERT INTO iam.password_history(user_id,password_hash) VALUES ($1,$2)`, userID, hash); err != nil {
 			return err
 		}
-		var buA uuid.UUID
+		// The business, its units, main shop, roles, limits and numbering; the owner becomes Admin.
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.business_units(code,name,kind) VALUES ('A','Shop','retail_shop') RETURNING id
-		`).Scan(&buA); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.business_units(code,name,kind) VALUES ('B','Services','professional_services')
-		`); err != nil {
-			return err
-		}
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.locations(business_unit_id,name,kind,is_default)
-			VALUES ($1,'Main shop','shop',true) RETURNING id
-		`, buA).Scan(&locationID); err != nil {
-			return err
-		}
-		var adminRole uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.roles(code,name,is_system,rank) VALUES ('admin','Admin',true,100) RETURNING id
-		`).Scan(&adminRole); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.role_permissions(role_id,permission_code)
-			SELECT $1,code FROM app.permissions
-		`, adminRole); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.roles(code,name,is_system,rank)
-			VALUES ('manager','Manager',true,60),('staff','Staff',true,20)
-		`); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.role_permissions(role_id,permission_code)
-			SELECT r.id,p.code FROM app.roles r CROSS JOIN app.permissions p
-			WHERE r.code='manager' AND p.code IN (
-				'dashboard.operations.view','shop.sale.create','shop.sale.view_all','shop.stock.view',
-				'shop.stock.manage','shop.customer.view_all','shop.customer.manage','shop.purchase.manage',
-				'finance.payment.receive','finance.payment.view_all','finance.expense.enter',
-				'finance.expense.submit','finance.expense.approve','finance.day.close','hr.employee.view',
-				'hr.attendance.manage','hr.leave.approve','reports.operations.view','reports.export'
-			)
-		`); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.role_permissions(role_id,permission_code)
-			SELECT r.id,p.code FROM app.roles r CROSS JOIN app.permissions p
-			WHERE r.code='staff' AND p.code IN (
-				'shop.sale.create','shop.product.view','shop.customer.manage',
-				'services.client.manage','services.project.manage','finance.payment.receive',
-				'finance.expense.submit'
-			)
-		`); err != nil {
-			return err
-		}
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.memberships(user_id,status,default_location_id,joined_at)
-			VALUES ($1,'active',$2,now()) RETURNING id
-		`, userID, locationID).Scan(&membershipID); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.membership_roles(membership_id,role_id) VALUES ($1,$2)
-		`, membershipID, adminRole); err != nil {
+			SELECT membership_id, location_id FROM app.provision_business($1, $2, $3, $4, $5, $6)
+		`, businessName, userID, phone, email, s.DefaultCurrency, s.DefaultTimezone).Scan(&membershipID, &locationID); err != nil {
 			return err
 		}
 		return seedDefaults(ctx, tx, &locationID)
@@ -274,11 +197,11 @@ func (s *Service) Setup(ctx context.Context, in SetupInput) (SessionResult, erro
 	if err != nil {
 		return SessionResult{}, err
 	}
-	out, err := s.startSession(ctx, userID, uuid.Nil, membershipID, in.IP, in.UserAgent, nil)
+	out, err := s.startSession(ctx, userID, membershipID, in.IP, in.UserAgent)
 	if err != nil {
 		return SessionResult{}, err
 	}
-	s.event(ctx, "login_success", &userID, nil, in.Phone, &out.sessionID, in.IP, in.UserAgent, "")
+	s.event(ctx, "login_success", &userID, in.Phone, &out.sessionID, in.IP, in.UserAgent, "")
 	return out.SessionResult, nil
 }
 
@@ -293,7 +216,7 @@ type started struct {
 
 // startSession opens an iam.sessions row for the member, issues the opaque refresh token (stored only
 // as its SHA-256) and the signed access token.
-func (s *Service) startSession(ctx context.Context, userID, tenantID, membershipID uuid.UUID, ip, ua string, mfaVerifiedAt *time.Time) (started, error) {
+func (s *Service) startSession(ctx context.Context, userID, membershipID uuid.UUID, ip, ua string) (started, error) {
 	now := s.Clock.Now()
 	raw, hash, err := auth.RandomToken(32)
 	if err != nil {
@@ -325,7 +248,7 @@ func (s *Service) startSession(ctx context.Context, userID, tenantID, membership
 	if err != nil {
 		return started{}, err
 	}
-	access, err := s.Auth.Sign(userID, tenantID, membershipID, sid, now)
+	access, err := s.Auth.Sign(userID, membershipID, sid, now)
 	if err != nil {
 		return started{}, err
 	}
@@ -338,7 +261,7 @@ func (s *Service) startSession(ctx context.Context, userID, tenantID, membership
 }
 
 // event appends to iam.auth_events (the Login History screen). It never fails the request.
-func (s *Service) event(ctx context.Context, kind string, userID, tenantID *uuid.UUID, identifier string, sessionID *uuid.UUID, ip, ua, reason string) {
+func (s *Service) event(ctx context.Context, kind string, userID *uuid.UUID, identifier string, sessionID *uuid.UUID, ip, ua, reason string) {
 	_ = s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		_, err := tx.Exec(ctx, `
 			INSERT INTO iam.auth_events (id, occurred_at, event_type, user_id, identifier_hmac, session_id, ip, user_agent, failure_reason)
@@ -387,34 +310,34 @@ func (s *Service) Login(ctx context.Context, in LoginInput) (SessionResult, erro
 	u, err := s.findUser(ctx, id)
 	if err != nil {
 		s.verifyDummy(in.Password)
-		s.event(ctx, "login_failure", nil, nil, id, nil, in.IP, in.UserAgent, "unknown_identifier")
+		s.event(ctx, "login_failure", nil, id, nil, in.IP, in.UserAgent, "unknown_identifier")
 		return SessionResult{}, errInvalid
 	}
 	if u.LockedUntil != nil && u.LockedUntil.After(now) {
 		s.verifyDummy(in.Password)
-		s.event(ctx, "login_failure", &u.ID, nil, id, nil, in.IP, in.UserAgent, "locked")
+		s.event(ctx, "login_failure", &u.ID, id, nil, in.IP, in.UserAgent, "locked")
 		// Return the exact same error as invalid credentials so lockouts cannot be used to enumerate accounts.
 		return SessionResult{}, errInvalid
 	}
 	if u.Disabled {
 		s.verifyDummy(in.Password)
-		s.event(ctx, "login_failure", &u.ID, nil, id, nil, in.IP, in.UserAgent, "disabled")
+		s.event(ctx, "login_failure", &u.ID, id, nil, in.IP, in.UserAgent, "disabled")
 		return SessionResult{}, errInvalid
 	}
 	if !auth.VerifyPassword(u.Hash, in.Password) {
-		s.event(ctx, "login_failure", &u.ID, nil, id, nil, in.IP, in.UserAgent, "bad_password")
+		s.event(ctx, "login_failure", &u.ID, id, nil, in.IP, in.UserAgent, "bad_password")
 		s.failed(ctx, u.ID, id, in.IP, in.UserAgent, now)
 		return SessionResult{}, errInvalid
 	}
-	_, membershipID, err := s.pickMembership(ctx, u.ID, nil)
+	membershipID, err := s.pickMembership(ctx, u.ID)
 	if err != nil {
-		s.event(ctx, "login_failure", &u.ID, nil, id, nil, in.IP, in.UserAgent, "membership_inactive")
+		s.event(ctx, "login_failure", &u.ID, id, nil, in.IP, in.UserAgent, "membership_inactive")
 		return SessionResult{}, errInvalid
 	}
-	return s.completeLogin(ctx, u.ID, uuid.Nil, membershipID, u.MustChange, id, in.IP, in.UserAgent, nil, now)
+	return s.completeLogin(ctx, u.ID, membershipID, u.MustChange, id, in.IP, in.UserAgent, now)
 }
 
-func (s *Service) completeLogin(ctx context.Context, userID, tenantID, membershipID uuid.UUID, mustChange bool, id, ip, ua string, mfaVerifiedAt *time.Time, now time.Time) (SessionResult, error) {
+func (s *Service) completeLogin(ctx context.Context, userID, membershipID uuid.UUID, mustChange bool, id, ip, ua string, now time.Time) (SessionResult, error) {
 	var notifyNewDevice bool
 	if trimmedUA := strings.TrimSpace(ua); trimmedUA != "" && s.Notify != nil {
 		_ = s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
@@ -428,13 +351,13 @@ func (s *Service) completeLogin(ctx context.Context, userID, tenantID, membershi
 			return nil
 		})
 	}
-	out, err := s.startSession(ctx, userID, tenantID, membershipID, ip, ua, mfaVerifiedAt)
+	out, err := s.startSession(ctx, userID, membershipID, ip, ua)
 	if err != nil {
 		return SessionResult{}, err
 	}
 	if notifyNewDevice {
-		_ = s.DB.InTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			return s.Notify.ToUser(ctx, tx, tenantID, userID, notify.Message{
+		_ = s.DB.InActorTx(ctx, db.Actor{UserID: userID, MembershipID: membershipID}, func(ctx context.Context, tx pgx.Tx) error {
+			return s.Notify.ToUser(ctx, tx, userID, notify.Message{
 				Type: "account_locked", Title: "Sign-in from a new device",
 				Body: "Your account was signed in from " + ua,
 				Link: "/me/sessions",
@@ -445,12 +368,12 @@ func (s *Service) completeLogin(ctx context.Context, userID, tenantID, membershi
 		_, err := tx.Exec(ctx, `UPDATE iam.user_credentials SET failed_attempts = 0, last_failed_at = NULL, locked_until = NULL, updated_at = $2 WHERE user_id = $1`, userID, now)
 		return err
 	})
-	s.event(ctx, "login_success", &userID, &tenantID, id, &out.sessionID, ip, ua, "")
+	s.event(ctx, "login_success", &userID, id, &out.sessionID, ip, ua, "")
 	out.MustChangePassword = mustChange
 	return out.SessionResult, nil
 }
 
-// failed counts a wrong password or MFA code and locks the account at the threshold.
+// failed counts a wrong password and locks the account at the threshold.
 // If the previous failure window has elapsed, counting restarts at 1.
 func (s *Service) failed(ctx context.Context, userID uuid.UUID, identifier, ip, ua string, now time.Time) {
 	var attempts int
@@ -470,10 +393,10 @@ func (s *Service) failed(ctx context.Context, userID uuid.UUID, identifier, ip, 
 			userID, now, lockoutThreshold, now.Add(lockoutFor), windowStart).Scan(&attempts)
 	})
 	if err == nil && attempts == lockoutThreshold {
-		s.event(ctx, "account_locked", &userID, nil, identifier, nil, ip, ua, "")
+		s.event(ctx, "account_locked", &userID, identifier, nil, ip, ua, "")
 		if s.Notify != nil {
 			_ = s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
-				return s.Notify.ToPermission(ctx, tx, uuid.Nil, nil, "security.user.manage", notify.Message{
+				return s.Notify.ToPermission(ctx, tx, nil, "security.user.manage", notify.Message{
 					Type: "account_locked", Title: "Account locked",
 					Body: "Account " + identifier + " was locked for 15 minutes after repeated failed sign-in attempts.",
 					Link: "/users",
@@ -483,18 +406,18 @@ func (s *Service) failed(ctx context.Context, userID uuid.UUID, identifier, ip, 
 	}
 }
 
-// pickMembership chooses the tenant to sign in to: the requested one, else the earliest joined active seat.
-// A seat linked to a suspended or terminated employee cannot sign in.
-func (s *Service) pickMembership(ctx context.Context, userID uuid.UUID, want *uuid.UUID) (uuid.UUID, uuid.UUID, error) {
+// pickMembership chooses the user's active membership. A seat linked to a suspended or
+// terminated employee cannot sign in.
+func (s *Service) pickMembership(ctx context.Context, userID uuid.UUID) (uuid.UUID, error) {
 	var membershipID uuid.UUID
-	err := s.DB.InUserTx(ctx, userID, func(ctx context.Context, tx pgx.Tx) error {
+	err := s.DB.InGlobalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
 			SELECT m.id FROM app.memberships m
 			  LEFT JOIN app.employees e ON e.membership_id = m.id
 			 WHERE m.user_id = $1 AND m.status = 'active' AND (e.id IS NULL OR e.status = 'active')
 			 ORDER BY m.joined_at NULLS LAST LIMIT 1`, userID).Scan(&membershipID)
 	})
-	return uuid.Nil, membershipID, err
+	return membershipID, err
 }
 
 type sessionRow struct {
@@ -542,7 +465,7 @@ func (s *Service) Refresh(ctx context.Context, raw, ip, ua string) (SessionResul
 		return qerr
 	})
 	if tokenReused {
-		s.event(ctx, "forced_signout", &reusedUserID, nil, "", &reusedSessionID, ip, ua, "")
+		s.event(ctx, "forced_signout", &reusedUserID, "", &reusedSessionID, ip, ua, "")
 		return SessionResult{}, ended
 	}
 	if err != nil || sr.Revoked || !sr.UserActive || sr.MembershipID == nil {
@@ -555,7 +478,7 @@ func (s *Service) Refresh(ctx context.Context, raw, ip, ua string) (SessionResul
 		return SessionResult{}, ended
 	case now.Sub(sr.LastSeen) > sr.Idle:
 		s.revoke(ctx, sr.ID, "idle_timeout")
-		s.event(ctx, "session_timeout", &sr.UserID, nil, "", &sr.ID, ip, ua, "")
+		s.event(ctx, "session_timeout", &sr.UserID, "", &sr.ID, ip, ua, "")
 		return SessionResult{}, httpx.Unauthorized("session_ended", "You were signed out after a period of inactivity. Sign in again.")
 	}
 	var active bool
@@ -603,10 +526,10 @@ func (s *Service) Refresh(ctx context.Context, raw, ip, ua string) (SessionResul
 		return SessionResult{}, err
 	}
 	if !rotated {
-		s.event(ctx, "forced_signout", &sr.UserID, nil, "", &sr.ID, ip, ua, "")
+		s.event(ctx, "forced_signout", &sr.UserID, "", &sr.ID, ip, ua, "")
 		return SessionResult{}, ended
 	}
-	access, err := s.Auth.Sign(sr.UserID, uuid.Nil, *sr.MembershipID, sr.ID, now)
+	access, err := s.Auth.Sign(sr.UserID, *sr.MembershipID, sr.ID, now)
 	if err != nil {
 		return SessionResult{}, err
 	}
@@ -635,7 +558,7 @@ func (s *Service) Logout(ctx context.Context, p *auth.Principal, refreshCookie s
 			})
 		}
 	}
-	s.event(ctx, "logout", &p.UserID, nil, "", &p.SessionID, p.IP, p.UserAgent, "")
+	s.event(ctx, "logout", &p.UserID, "", &p.SessionID, p.IP, p.UserAgent, "")
 	return nil
 }
 
@@ -717,7 +640,7 @@ func (s *Service) ChangePassword(ctx context.Context, p *auth.Principal, current
 	if failure != nil {
 		return failure
 	}
-	s.event(ctx, "password_changed", &p.UserID, nil, "", &p.SessionID, p.IP, p.UserAgent, "")
+	s.event(ctx, "password_changed", &p.UserID, "", &p.SessionID, p.IP, p.UserAgent, "")
 	return nil
 }
 

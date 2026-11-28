@@ -82,10 +82,10 @@ var unitCode = regexp.MustCompile(`^[a-z]{1,10}$`)
 const productColumns = `
 	p.id, p.name::text, coalesce(p.sku, ''), p.barcode, p.category_id, p.unit_of_measure, p.tax_rate_id, p.selling_price, p.buying_price,
 	coalesce(p.min_stock_level, ts.low_stock_default), p.status = 'active',
-	(SELECT sum(b.quantity_on_hand) FROM app.stock_balances b WHERE b.tenant_id = p.tenant_id AND b.product_id = p.id AND ($1::uuid IS NULL OR b.location_id = $1)),
+	(SELECT sum(b.quantity_on_hand) FROM app.stock_balances b WHERE b.product_id = p.id AND ($1::uuid IS NULL OR b.location_id = $1)),
 	p.average_cost, p.description, p.warranty_months, p.tracks_serial, p.photo_file_id`
 
-const productFrom = ` FROM app.products p JOIN app.tenant_settings ts ON ts.tenant_id = p.tenant_id`
+const productFrom = ` FROM app.products p CROSS JOIN app.business_settings ts`
 
 func scanProduct(row pgx.Row, showCost bool) (Product, error) {
 	var p Product
@@ -110,7 +110,7 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, q string, categor
 		f.If(category != nil, "p.category_id = ?", category)
 		f.If(active != nil, "(p.status = 'active') = ?", active)
 		if low != nil && *low {
-			f.Add(`coalesce((SELECT sum(b.quantity_on_hand) FROM app.stock_balances b WHERE b.tenant_id = p.tenant_id AND b.product_id = p.id AND ($1::uuid IS NULL OR b.location_id = $1)), 0)
+			f.Add(`coalesce((SELECT sum(b.quantity_on_hand) FROM app.stock_balances b WHERE b.product_id = p.id AND ($1::uuid IS NULL OR b.location_id = $1)), 0)
 			       <= coalesce(p.min_stock_level, ts.low_stock_default)`)
 		}
 		if err := tx.QueryRow(ctx, `SELECT count(*)`+productFrom+f.Where(), f.Args...).Scan(&total); err != nil {
@@ -152,11 +152,7 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 	}
 	levels := []map[string]any{}
 	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT l.id, l.name::text, coalesce(b.quantity_on_hand, 0)
-			FROM app.locations l
-			LEFT JOIN app.stock_balances b ON b.tenant_id = l.tenant_id AND b.location_id = l.id AND b.product_id = $1
-			WHERE l.tenant_id = $2 AND l.status = 'active' ORDER BY l.name`, id, p.TenantID)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT l.id, l.name::text, coalesce(b.quantity_on_hand, 0)\n\t\t\tFROM app.locations l\n\t\t\tLEFT JOIN app.stock_balances b ON b.location_id = l.id AND b.product_id = $1\n\t\t\tWHERE l.status = 'active' ORDER BY l.name", id)
 		if err != nil {
 			return err
 		}
@@ -203,7 +199,7 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in ProductInput
 		tax := in.TaxRateID
 		if tax == nil {
 			var tid uuid.UUID
-			if err := tx.QueryRow(ctx, `SELECT id FROM app.tax_rates WHERE tenant_id = $1 AND is_default AND status = 'active'`, p.TenantID).Scan(&tid); err == nil {
+			if err := tx.QueryRow(ctx, "SELECT id FROM app.tax_rates WHERE is_default AND status = 'active'").Scan(&tid); err == nil {
 				tax = &tid
 			}
 		}
@@ -228,11 +224,8 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in ProductInput
 		if in.ReorderLevel.IsPositive() {
 			reorder = &in.ReorderLevel
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.products (id, tenant_id, business_unit_id, category_id, sku, barcode, name, description, unit_of_measure, selling_price,
-			                          buying_price, tax_rate_id, min_stock_level, warranty_months, tracks_serial, photo_file_id)
-			VALUES ($1,$2,(SELECT id FROM app.business_units WHERE tenant_id = $2 AND code = 'A'),$3,$4,NULLIF($5,''),$6,NULLIF($7,''),$8,$9,$10,$11,$12,$13,$14,$15)`,
-			id, p.TenantID, in.CategoryID, sku, strings.TrimSpace(in.Barcode), strings.TrimSpace(in.Name), in.Description, unit,
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.products (id, business_unit_id, category_id, sku, barcode, name, description, unit_of_measure, selling_price,\n\t\t\t                          buying_price, tax_rate_id, min_stock_level, warranty_months, tracks_serial, photo_file_id)\n\t\t\tVALUES ($1,(SELECT id FROM app.business_units WHERE code = 'A'),$2,$3,NULLIF($4,''),$5,NULLIF($6,''),$7,$8,$9,$10,$11,$12,$13,$14)",
+			id, in.CategoryID, sku, strings.TrimSpace(in.Barcode), strings.TrimSpace(in.Name), in.Description, unit,
 			money.Money(in.SellPrice), buy, tax, reorder, warranty, trackSerial, in.PhotoFile); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "SKU or barcode already exists")
@@ -347,10 +340,7 @@ func (s *Service) BranchPrices(ctx context.Context, p *auth.Principal, id uuid.U
 func (s *Service) PriceHistory(ctx context.Context, p *auth.Principal, id uuid.UUID) ([]map[string]any, error) {
 	out := []map[string]any{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT c.id, c.old_selling_price, c.new_selling_price, c.old_buying_price, c.new_buying_price, c.reason, m.user_id, c.effective_at
-			FROM app.product_price_changes c LEFT JOIN app.memberships m ON m.tenant_id = c.tenant_id AND m.id = c.created_by
-			WHERE c.tenant_id = $1 AND c.product_id = $2 ORDER BY c.effective_at DESC`, p.TenantID, id)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT c.id, c.old_selling_price, c.new_selling_price, c.old_buying_price, c.new_buying_price, c.reason, m.user_id, c.effective_at\n\t\t\tFROM app.product_price_changes c LEFT JOIN app.memberships m ON m.id = c.created_by\n\t\t\tWHERE c.product_id = $1 ORDER BY c.effective_at DESC", id)
 		if err != nil {
 			return err
 		}
@@ -386,7 +376,7 @@ type Category struct {
 func (s *Service) Categories(ctx context.Context, p *auth.Principal) ([]Category, error) {
 	out := []Category{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id, parent_id, name::text, status = 'active' FROM app.product_categories WHERE tenant_id = $1 ORDER BY name`, p.TenantID)
+		rows, err := tx.Query(ctx, `SELECT id, parent_id, name::text, status = 'active' FROM app.product_categories ORDER BY name`)
 		if err != nil {
 			return err
 		}
@@ -445,7 +435,7 @@ func (s *Service) SaveCategory(ctx context.Context, p *auth.Principal, id *uuid.
 	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if parent != nil {
 			var exists bool
-			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM app.product_categories WHERE tenant_id = $1 AND id = $2)`, p.TenantID, *parent).Scan(&exists); err != nil {
+			if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM app.product_categories WHERE id = $1)", *parent).Scan(&exists); err != nil {
 				return err
 			}
 			if !exists {
@@ -454,7 +444,7 @@ func (s *Service) SaveCategory(ctx context.Context, p *auth.Principal, id *uuid.
 		}
 		if id == nil {
 			outID = uuid.New()
-			_, err := tx.Exec(ctx, `INSERT INTO app.product_categories (id, tenant_id, parent_id, name) VALUES ($1,$2,$3,$4)`, outID, p.TenantID, parent, name)
+			_, err := tx.Exec(ctx, "INSERT INTO app.product_categories (id, parent_id, name) VALUES ($1, $2, $3)", outID, parent, name)
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "That category already exists")
 			}
@@ -510,13 +500,13 @@ func (s *Service) SaveCategory(ctx context.Context, p *auth.Principal, id *uuid.
 func (s *Service) DeleteCategory(ctx context.Context, p *auth.Principal, id uuid.UUID) error {
 	return s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var n int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.products WHERE tenant_id = $1 AND category_id = $2`, p.TenantID, id).Scan(&n); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM app.products WHERE category_id = $1", id).Scan(&n); err != nil {
 			return err
 		}
 		if n > 0 {
 			return httpx.Conflict("invalid_status", "A category with products cannot be deleted")
 		}
-		tag, err := tx.Exec(ctx, `UPDATE app.product_categories SET status = 'inactive' WHERE tenant_id = $1 AND id = $2`, p.TenantID, id)
+		tag, err := tx.Exec(ctx, "UPDATE app.product_categories SET status = 'inactive' WHERE id = $1", id)
 		if err != nil {
 			return err
 		}
@@ -549,7 +539,7 @@ func (s *Service) Units(ctx context.Context, p *auth.Principal) ([]Unit, error) 
 		known[u.ID] = true
 	}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT DISTINCT unit_of_measure FROM app.products WHERE tenant_id = $1 ORDER BY 1`, p.TenantID)
+		rows, err := tx.Query(ctx, `SELECT DISTINCT unit_of_measure FROM app.products ORDER BY 1`)
 		if err != nil {
 			return err
 		}

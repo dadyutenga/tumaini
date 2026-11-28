@@ -66,10 +66,10 @@ func (k IDProtector) protect(raw string) (protectedID, error) {
 // ProtectNationalIDs is the background job that encrypts rows stored in clear text by earlier
 // releases. Each row is its own transaction: one that now duplicates a newer record is reported and
 // left for a person to merge, without holding back the others.
-func (s *Service) ProtectNationalIDs(ctx context.Context, tenantID uuid.UUID, _ json.RawMessage) error {
+func (s *Service) ProtectNationalIDs(ctx context.Context, _ json.RawMessage) error {
 	var ids []uuid.UUID
-	if err := s.tenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `SELECT id FROM app.customers WHERE tenant_id = $1 AND national_id_key_id = $2`, tenantID, plaintextKeyID)
+	if err := s.globalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
+		rows, err := tx.Query(ctx, "SELECT id FROM app.customers WHERE national_id_key_id = $1", plaintextKeyID)
 		if err != nil {
 			return err
 		}
@@ -79,10 +79,9 @@ func (s *Service) ProtectNationalIDs(ctx context.Context, tenantID uuid.UUID, _ 
 		return err
 	}
 	for _, id := range ids {
-		err := s.tenantTx(ctx, tenantID, func(ctx context.Context, tx pgx.Tx) error {
+		err := s.globalTx(ctx, func(ctx context.Context, tx pgx.Tx) error {
 			var raw []byte
-			err := tx.QueryRow(ctx, `SELECT national_id_ciphertext FROM app.customers WHERE tenant_id = $1 AND id = $2 AND national_id_key_id = $3 FOR UPDATE`,
-				tenantID, id, plaintextKeyID).Scan(&raw)
+			err := tx.QueryRow(ctx, "SELECT national_id_ciphertext FROM app.customers WHERE id = $1 AND national_id_key_id = $2 FOR UPDATE", id, plaintextKeyID).Scan(&raw)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil
 			}
@@ -93,12 +92,11 @@ func (s *Service) ProtectNationalIDs(ctx context.Context, tenantID uuid.UUID, _ 
 			if err != nil {
 				return err
 			}
-			_, err = tx.Exec(ctx, `UPDATE app.customers SET national_id_ciphertext = $3, national_id_key_id = $4, national_id_hmac = $5 WHERE tenant_id = $1 AND id = $2`,
-				tenantID, id, v.cipher, v.keyID, v.hmac)
+			_, err = tx.Exec(ctx, "UPDATE app.customers SET national_id_ciphertext = $2, national_id_key_id = $3, national_id_hmac = $4 WHERE id = $1", id, v.cipher, v.keyID, v.hmac)
 			return err
 		})
 		if db.IsUnique(err) {
-			slog.Warn("national ID not re-encrypted: another customer has the same number", "tenant_id", tenantID, "customer_id", id)
+			slog.Warn("national ID not re-encrypted: another customer has the same number", "customer_id", id)
 			continue
 		}
 		if err != nil {

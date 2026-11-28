@@ -1,9 +1,8 @@
-// Package setting reads tenant settings by their product key ("payroll.pay_day").
+// Package setting reads business settings by their product key ("payroll.pay_day").
 //
-// Where the approved schema has a typed column (app.tenant_settings, app.tenants,
+// Where the approved schema has a typed column (app.business_settings, app.business_profile,
 // app.document_sequences) the key is served from it; every other key lives in
-// app.tenant_setting_values. Callers do not need to know which, so modules read settings the same
-// way they always did. Row-level security limits every read to the caller's tenant.
+// app.setting_values. Callers do not need to know which.
 package setting
 
 import (
@@ -27,19 +26,19 @@ type Column struct {
 // Typed maps a product key to its typed column. The map is fixed code, never request input, so the
 // identifiers can be placed in SQL.
 var Typed = map[string]Column{
-	"tax.prices_include_tax":         {"app.tenant_settings", "prices_include_tax"},
-	"system.allow_negative_stock":    {"app.tenant_settings", "allow_negative_stock"},
-	"system.session_timeout_minutes": {"app.tenant_settings", "session_idle_minutes"},
-	"system.default_low_stock":       {"app.tenant_settings", "low_stock_default"},
-	"invoice.footer":                 {"app.tenant_settings", "invoice_footer"},
-	"invoice.terms":                  {"app.tenant_settings", "quotation_terms"},
-	"receipt.footer":                 {"app.tenant_settings", "receipt_footer"},
-	"currency.code":                  {"app.tenant_settings", "currency"},
-	"system.timezone":                {"app.tenants", "timezone"},
-	"system.language":                {"app.tenants", "default_locale"},
+	"tax.prices_include_tax":         {"app.business_settings", "prices_include_tax"},
+	"system.allow_negative_stock":    {"app.business_settings", "allow_negative_stock"},
+	"system.session_timeout_minutes": {"app.business_settings", "session_idle_minutes"},
+	"system.default_low_stock":       {"app.business_settings", "low_stock_default"},
+	"invoice.footer":                 {"app.business_settings", "invoice_footer"},
+	"invoice.terms":                  {"app.business_settings", "quotation_terms"},
+	"receipt.footer":                 {"app.business_settings", "receipt_footer"},
+	"currency.code":                  {"app.business_settings", "currency"},
+	"system.timezone":                {"app.business_profile", "timezone"},
+	"system.language":                {"app.business_profile", "default_locale"},
 }
 
-// ErrNotSet means the tenant has no value for the key; callers fall back to their default.
+// ErrNotSet means the business has no value for the key; callers fall back to their default.
 var ErrNotSet = errors.New("setting not set")
 
 func Raw(ctx context.Context, q db.Querier, key string) (json.RawMessage, error) {
@@ -48,20 +47,20 @@ func Raw(ctx context.Context, q db.Querier, key string) (json.RawMessage, error)
 	switch {
 	case key == "invoice.prefix":
 		var prefix string
-		err = q.QueryRow(ctx, `SELECT prefix FROM app.document_sequences WHERE tenant_id = app.current_tenant_id() AND doc_type = 'invoice'`).Scan(&prefix)
+		err = q.QueryRow(ctx, `SELECT prefix FROM app.document_sequences WHERE doc_type = 'invoice'`).Scan(&prefix)
 		if err == nil {
 			raw, _ = json.Marshal(strings.TrimSuffix(prefix, "-"))
 		}
 	case Typed[key].Column != "":
 		c := Typed[key]
-		keyCol := "tenant_id"
-		if c.Table == "app.tenants" {
-			keyCol = "id"
+		stmt := `SELECT to_jsonb(` + c.Column + `) FROM ` + c.Table
+		if c.Table == "app.business_profile" {
+			stmt += ` WHERE id = true`
 		}
 		// c comes from the fixed Typed map above.
-		err = q.QueryRow(ctx, `SELECT to_jsonb(`+c.Column+`) FROM `+c.Table+` WHERE `+keyCol+` = app.current_tenant_id()`).Scan(&raw)
+		err = q.QueryRow(ctx, stmt).Scan(&raw)
 	default:
-		err = q.QueryRow(ctx, `SELECT value FROM app.tenant_setting_values WHERE tenant_id = app.current_tenant_id() AND key = $1`, key).Scan(&raw)
+		err = q.QueryRow(ctx, `SELECT value FROM app.setting_values WHERE key = $1`, key).Scan(&raw)
 	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotSet
@@ -75,7 +74,7 @@ func Raw(ctx context.Context, q db.Querier, key string) (json.RawMessage, error)
 	return raw, nil
 }
 
-// Defaults are what a tenant sees for a key it has never changed.
+// Defaults are what a business sees for a key it has never changed.
 var Defaults = map[string]any{
 	"attendance.restrict_clock_in": false, "attendance.allowed_networks": []string{},
 	"currency.symbol": "TZS", "currency.decimals": 2, "currency.thousands_separator": ",",
@@ -185,7 +184,7 @@ func All(ctx context.Context, q db.Querier) (map[string]map[string]any, error) {
 	for k, v := range Defaults {
 		flat[k] = v
 	}
-	rows, err := q.Query(ctx, `SELECT key, value FROM app.tenant_setting_values WHERE tenant_id = app.current_tenant_id()`)
+	rows, err := q.Query(ctx, `SELECT key, value FROM app.setting_values`)
 	if err != nil {
 		return nil, err
 	}

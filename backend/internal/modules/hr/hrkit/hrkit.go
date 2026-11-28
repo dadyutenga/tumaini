@@ -228,7 +228,7 @@ func PayrollLocked(ctx context.Context, tx pgx.Tx, employee uuid.UUID, day strin
 	if err := tx.QueryRow(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM app.payroll_lines pl
-			JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id
+			JOIN app.payroll_runs r ON r.id = pl.payroll_run_id
 			WHERE pl.employee_id = $1 AND r.status IN ('approved','paid')
 			  AND r.period_year = EXTRACT(YEAR FROM $2::date)::smallint
 			  AND r.period_month = EXTRACT(MONTH FROM $2::date)::smallint

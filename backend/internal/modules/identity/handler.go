@@ -32,10 +32,6 @@ func (h *Handler) cookie(c fiber.Ctx, value string, maxAge int) {
 	})
 }
 
-func (h *Handler) Register(c fiber.Ctx) error {
-	return httpx.NotFound("not_found", "Public registration is disabled")
-}
-
 func (h *Handler) SetupStatus(c fiber.Ctx) error {
 	needs, err := h.Svc.SetupStatus(c.Context())
 	if err != nil {

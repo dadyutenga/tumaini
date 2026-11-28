@@ -131,7 +131,7 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in CreateIn) (i
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -141,7 +141,7 @@ func (s *Service) Create(ctx context.Context, p *auth.Principal, in CreateIn) (i
 		if err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, st, httpx.Data(data))
+		raw, err := idem.Complete(ctx, tx, st, httpx.Data(data))
 		status, body = st, raw
 		return err
 	})
@@ -184,12 +184,12 @@ func (s *Service) createTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, in
 	if err != nil {
 		return 0, nil, err
 	}
-	cust, err := s.resolveCustomer(ctx, tx, p.TenantID, in.CustomerID, balance)
+	cust, err := s.resolveCustomer(ctx, tx, in.CustomerID, balance)
 	if err != nil {
 		return 0, nil, err
 	}
 	if balance.IsPositive() && cust != nil {
-		if err := checkCreditLimit(ctx, tx, p.TenantID, *cust, balance); err != nil {
+		if err := checkCreditLimit(ctx, tx, *cust, balance); err != nil {
 			return 0, nil, err
 		}
 	}
@@ -203,26 +203,20 @@ func (s *Service) createTx(ctx context.Context, tx pgx.Tx, p *auth.Principal, in
 	}
 	// State machine requires new sales to start in 'draft'.
 	var saleID uuid.UUID
-	if err := tx.QueryRow(ctx, `
-		INSERT INTO app.sales (tenant_id, business_unit_id, location_id, status, customer_id, sold_by, device_id, client_ref,
-		                       business_date, subtotal, discount_type, discount_value, discount_amount, tax_amount, total, due_date, notes)
-		VALUES ($1, (SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $2), $2, 'draft', $3, $4, $5, $6,
-		        $7::date, $8, $9::app.discount_type, $10, $11, $12, $13, $14::date, NULLIF($15,''))
-		RETURNING id`,
-		p.TenantID, *p.BranchID, cust, p.MembershipID, in.DeviceID, in.ClientRef,
+	if err := tx.QueryRow(ctx, "\n\t\tINSERT INTO app.sales ( business_unit_id, location_id, status, customer_id, sold_by, device_id, client_ref,\n\t\t                       business_date, subtotal, discount_type, discount_value, discount_amount, tax_amount, total, due_date, notes)\n\t\tVALUES ( (SELECT business_unit_id FROM app.locations WHERE id = $1), $1, 'draft', $2, $3, $4, $5,\n\t\t        $6::date, $7, $8::app.discount_type, $9, $10, $11, $12, $13::date, NULLIF($14,''))\n\t\tRETURNING id", *p.BranchID, cust, p.MembershipID, in.DeviceID, in.ClientRef,
 		date, tot.Subtotal, tot.DiscountType, tot.DiscountValue, tot.Discount, tot.Tax, tot.Total, dueDate, strings.TrimSpace(in.Note)).Scan(&saleID); err != nil {
 		return 0, nil, err
 	}
-	if err := insertLines(ctx, tx, p.TenantID, saleID, lines); err != nil {
+	if err := insertLines(ctx, tx, saleID, lines); err != nil {
 		return 0, nil, err
 	}
 	if in.HeldID != nil {
-		if _, err := tx.Exec(ctx, `DELETE FROM app.sales WHERE tenant_id = $1 AND id = $2 AND status = 'held' AND sold_by = $3`, p.TenantID, *in.HeldID, p.MembershipID); err != nil {
+		if _, err := tx.Exec(ctx, "DELETE FROM app.sales WHERE id = $1 AND status = 'held' AND sold_by = $2", *in.HeldID, p.MembershipID); err != nil {
 			return 0, nil, err
 		}
 	}
 	if needsDiscount {
-		if _, err := tx.Exec(ctx, `UPDATE app.sales SET status = 'pending_approval' WHERE tenant_id = $1 AND id = $2`, p.TenantID, saleID); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.sales SET status = 'pending_approval' WHERE id = $1", saleID); err != nil {
 			return 0, nil, err
 		}
 		summary := "Sale needs approval for a discount of " + pct.StringFixed(2) + "%"
@@ -252,7 +246,7 @@ func (s *Service) Complete(ctx context.Context, p *auth.Principal, saleID uuid.U
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -264,10 +258,7 @@ func (s *Service) Complete(ctx context.Context, p *auth.Principal, saleID uuid.U
 		var discType *string
 		var sub, discVal, discAmt, taxAmt, total, paidSoFar decimal.Decimal
 		var dueDate *string
-		err := tx.QueryRow(ctx, `
-			SELECT location_id, customer_id, status::text, business_date::text, subtotal, discount_type::text, discount_value,
-			       discount_amount, tax_amount, total, amount_paid, due_date::text
-			FROM app.sales WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, saleID).
+		err := tx.QueryRow(ctx, "\n\t\t\tSELECT location_id, customer_id, status::text, business_date::text, subtotal, discount_type::text, discount_value,\n\t\t\t       discount_amount, tax_amount, total, amount_paid, due_date::text\n\t\t\tFROM app.sales WHERE id = $1 FOR UPDATE", saleID).
 			Scan(&locID, &cust, &st, &date, &sub, &discType, &discVal, &discAmt, &taxAmt, &total, &paidSoFar, &dueDate)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return httpx.NotFound("not_found", "Sale not found")
@@ -293,7 +284,7 @@ func (s *Service) Complete(ctx context.Context, p *auth.Principal, saleID uuid.U
 			if cust == nil {
 				return httpx.Conflict("customer_required", "A named customer is required for a credit sale")
 			}
-			if err := checkCreditLimit(ctx, tx, p.TenantID, *cust, balance); err != nil {
+			if err := checkCreditLimit(ctx, tx, *cust, balance); err != nil {
 				return err
 			}
 			if dueDate == nil || strings.TrimSpace(in.DueDate) != "" {
@@ -301,12 +292,12 @@ func (s *Service) Complete(ctx context.Context, p *auth.Principal, saleID uuid.U
 				if err != nil {
 					return err
 				}
-				if _, err := tx.Exec(ctx, `UPDATE app.sales SET due_date = $3::date WHERE tenant_id = $1 AND id = $2`, p.TenantID, saleID, d); err != nil {
+				if _, err := tx.Exec(ctx, "UPDATE app.sales SET due_date = $2::date WHERE id = $1", saleID, d); err != nil {
 					return err
 				}
 			}
 		}
-		lines, err := s.loadLinesStruct(ctx, tx, p.TenantID, saleID)
+		lines, err := s.loadLinesStruct(ctx, tx, saleID)
 		if err != nil {
 			return err
 		}
@@ -315,7 +306,7 @@ func (s *Service) Complete(ctx context.Context, p *auth.Principal, saleID uuid.U
 		if err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(v))
+		raw, err := idem.Complete(ctx, tx, 200, httpx.Data(v))
 		status, body = 200, raw
 		return err
 	})
@@ -330,7 +321,8 @@ func (s *Service) completeSale(ctx context.Context, tx pgx.Tx, p *auth.Principal
 			continue
 		}
 		if _, err := payments.Receive(ctx, tx, payments.ReceiveInput{
-			TenantID: p.TenantID, LocationID: locID, AccountID: pay.MoneyAccountID, CustomerID: cust,
+			LocationID: locID,
+			AccountID:  pay.MoneyAccountID, CustomerID: cust,
 			Purpose: "sale", Method: payments.Method(pay.Method), Amount: pay.Amount, Reference: strings.TrimSpace(pay.Reference),
 			BusinessDate: date, Allocations: []payments.Alloc{{SaleID: &saleID, Amount: pay.Amount}},
 		}); err != nil {
@@ -342,15 +334,12 @@ func (s *Service) completeSale(ctx context.Context, tx pgx.Tx, p *auth.Principal
 		return nil, err
 	}
 	var paid, balance decimal.Decimal
-	if err := tx.QueryRow(ctx, `
-		UPDATE app.sales SET status = 'completed', receipt_no = $3, completed_at = now()
-		WHERE tenant_id = $1 AND id = $2
-		RETURNING amount_paid, balance_due`, p.TenantID, saleID, number).Scan(&paid, &balance); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tUPDATE app.sales SET status = 'completed', receipt_no = $2, completed_at = now()\n\t\tWHERE id = $1\n\t\tRETURNING amount_paid, balance_due", saleID, number).Scan(&paid, &balance); err != nil {
 		return nil, err
 	}
 	// Reload unit_cost written by tg_sales_post for callers allowed to see cost.
 	if canSeeCost(p) {
-		rows, err := tx.Query(ctx, `SELECT product_id, COALESCE(unit_cost, 0) FROM app.sale_lines WHERE tenant_id = $1 AND sale_id = $2 ORDER BY line_no`, p.TenantID, saleID)
+		rows, err := tx.Query(ctx, "SELECT product_id, COALESCE(unit_cost, 0) FROM app.sale_lines WHERE sale_id = $1 ORDER BY line_no", saleID)
 		if err == nil {
 			costs := map[uuid.UUID]decimal.Decimal{}
 			for rows.Next() {
@@ -370,7 +359,7 @@ func (s *Service) completeSale(ctx context.Context, tx pgx.Tx, p *auth.Principal
 	for i, ln := range lines {
 		pids[i] = ln.ProductID
 	}
-	if err := jobs.EnqueueTx(ctx, tx, p.TenantID, jobs.CheckLowStock, map[string]any{"branch_id": locID, "product_ids": pids}); err != nil {
+	if err := jobs.EnqueueTx(ctx, tx, jobs.CheckLowStock, map[string]any{"branch_id": locID, "product_ids": pids}); err != nil {
 		return nil, err
 	}
 	if err := s.Audit.Record(ctx, tx, p, "sale.completed", "sale", saleID, nil, map[string]any{"number": number, "total": tot.Total}); err != nil {
@@ -391,10 +380,7 @@ func (s *Service) OnApproved(ctx context.Context, tx pgx.Tx, p *auth.Principal, 
 	var discType *string
 	var sub, discVal, discAmt, taxAmt, total, paid decimal.Decimal
 	var dueDate *string
-	err := tx.QueryRow(ctx, `
-		SELECT location_id, customer_id, status::text, business_date::text, subtotal, discount_type::text, discount_value,
-		       discount_amount, tax_amount, total, amount_paid, due_date::text
-		FROM app.sales WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, req.SubjectID).
+	err := tx.QueryRow(ctx, "\n\t\tSELECT location_id, customer_id, status::text, business_date::text, subtotal, discount_type::text, discount_value,\n\t\t       discount_amount, tax_amount, total, amount_paid, due_date::text\n\t\tFROM app.sales WHERE id = $1 FOR UPDATE", req.SubjectID).
 		Scan(&locID, &cust, &st, &date, &sub, &discType, &discVal, &discAmt, &taxAmt, &total, &paid, &dueDate)
 	if err != nil {
 		return err
@@ -403,7 +389,7 @@ func (s *Service) OnApproved(ctx context.Context, tx pgx.Tx, p *auth.Principal, 
 		return nil
 	}
 	if paid.Equal(total) || (cust != nil && dueDate != nil) {
-		lines, err := s.loadLinesStruct(ctx, tx, p.TenantID, req.SubjectID)
+		lines, err := s.loadLinesStruct(ctx, tx, req.SubjectID)
 		if err != nil {
 			return err
 		}
@@ -411,32 +397,27 @@ func (s *Service) OnApproved(ctx context.Context, tx pgx.Tx, p *auth.Principal, 
 		_, err = s.completeSale(ctx, tx, p, req.SubjectID, locID, date, cust, lines, nil, tot, money.Zero)
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE app.sales SET status = 'draft' WHERE tenant_id = $1 AND id = $2 AND status = 'pending_approval'`, p.TenantID, req.SubjectID)
+	_, err = tx.Exec(ctx, "UPDATE app.sales SET status = 'draft' WHERE id = $1 AND status = 'pending_approval'", req.SubjectID)
 	return err
 }
 
 func (s *Service) OnRejected(ctx context.Context, tx pgx.Tx, p *auth.Principal, req approval.Request) error {
 	// app.sale_status has no 'cancelled'; return to draft so the seller can adjust or discard it.
-	if _, err := tx.Exec(ctx, `UPDATE app.sales SET status = 'draft' WHERE tenant_id = $1 AND id = $2 AND status = 'pending_approval'`, p.TenantID, req.SubjectID); err != nil {
+	if _, err := tx.Exec(ctx, "UPDATE app.sales SET status = 'draft' WHERE id = $1 AND status = 'pending_approval'", req.SubjectID); err != nil {
 		return err
 	}
 	return s.Audit.Record(ctx, tx, p, "sale."+req.Status, "sale", req.SubjectID, nil, map[string]any{"approval_request_id": req.ID, "note": req.Note})
 }
 
-func insertLines(ctx context.Context, tx pgx.Tx, tenantID, saleID uuid.UUID, lines []line) error {
+func insertLines(ctx context.Context, tx pgx.Tx, saleID uuid.UUID, lines []line) error {
 	for i, ln := range lines {
 		var lineID uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.sale_lines (tenant_id, sale_id, line_no, product_id, product_name, quantity, unit_price,
-			                            line_discount, tax_rate_pct, tax_amount, line_total, warranty_months)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
-			RETURNING id`,
-			tenantID, saleID, i+1, ln.ProductID, ln.Name, ln.Qty, ln.UnitPrice,
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.sale_lines (sale_id, line_no, product_id, product_name, quantity, unit_price, line_discount, tax_rate_pct, tax_amount, line_total, warranty_months)\n\t\t\tVALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)\n\t\t\tRETURNING id", saleID, i+1, ln.ProductID, ln.Name, ln.Qty, ln.UnitPrice,
 			ln.Discount, ln.TaxRate, ln.Tax, ln.LineTotal, ln.WarrantyMonths).Scan(&lineID); err != nil {
 			return err
 		}
 		for _, uid := range ln.UnitIDs {
-			if _, err := tx.Exec(ctx, `INSERT INTO app.sale_line_units (tenant_id, sale_line_id, product_unit_id) VALUES ($1,$2,$3)`, tenantID, lineID, uid); err != nil {
+			if _, err := tx.Exec(ctx, "INSERT INTO app.sale_line_units (sale_line_id, product_unit_id) VALUES ($1, $2)", lineID, uid); err != nil {
 				return err
 			}
 		}
@@ -444,10 +425,8 @@ func insertLines(ctx context.Context, tx pgx.Tx, tenantID, saleID uuid.UUID, lin
 	return nil
 }
 
-func (s *Service) loadLinesStruct(ctx context.Context, tx pgx.Tx, tenantID, saleID uuid.UUID) ([]line, error) {
-	rows, err := tx.Query(ctx, `
-		SELECT product_id, product_name::text, quantity, unit_price, line_discount, tax_rate_pct, tax_amount, line_total, COALESCE(unit_cost,0), warranty_months
-		FROM app.sale_lines WHERE tenant_id = $1 AND sale_id = $2 ORDER BY line_no`, tenantID, saleID)
+func (s *Service) loadLinesStruct(ctx context.Context, tx pgx.Tx, saleID uuid.UUID) ([]line, error) {
+	rows, err := tx.Query(ctx, "\n\t\tSELECT product_id, product_name::text, quantity, unit_price, line_discount, tax_rate_pct, tax_amount, line_total, COALESCE(unit_cost,0), warranty_months\n\t\tFROM app.sale_lines WHERE sale_id = $1 ORDER BY line_no", saleID)
 	if err != nil {
 		return nil, err
 	}
@@ -480,14 +459,7 @@ func (s *Service) price(ctx context.Context, tx pgx.Tx, p *auth.Principal, in Cr
 		var sellPrice, avgCost, rate decimal.Decimal
 		var warranty int
 		var tracksSerial bool
-		err := tx.QueryRow(ctx, `
-			SELECT p.name::text, p.selling_price, p.average_cost, p.warranty_months, p.tracks_serial,
-			       COALESCE(tr.rate_pct, def.rate_pct, 0)
-			FROM app.products p
-			LEFT JOIN app.tax_rates tr  ON tr.tenant_id = p.tenant_id AND tr.id = p.tax_rate_id AND tr.status = 'active'
-			LEFT JOIN app.tax_rates def ON def.tenant_id = p.tenant_id AND def.is_default AND def.status = 'active'
-			WHERE p.tenant_id = $1 AND p.id = $2 AND p.status = 'active'`,
-			p.TenantID, it.ProductID).Scan(&name, &sellPrice, &avgCost, &warranty, &tracksSerial, &rate)
+		err := tx.QueryRow(ctx, "\n\t\t\tSELECT p.name::text, p.selling_price, p.average_cost, p.warranty_months, p.tracks_serial,\n\t\t\t       COALESCE(tr.rate_pct, def.rate_pct, 0)\n\t\t\tFROM app.products p\n\t\t\tLEFT JOIN app.tax_rates tr  ON tr.id = p.tax_rate_id AND tr.status = 'active'\n\t\t\tLEFT JOIN app.tax_rates def ON def.is_default AND def.status = 'active'\n\t\t\tWHERE p.id = $1 AND p.status = 'active'", it.ProductID).Scan(&name, &sellPrice, &avgCost, &warranty, &tracksSerial, &rate)
 		if err != nil {
 			return nil, totals{}, httpx.NotFound("not_found", "Product not found or inactive")
 		}
@@ -509,7 +481,7 @@ func (s *Service) price(ctx context.Context, tx pgx.Tx, p *auth.Principal, in Cr
 		var unitIDs []uuid.UUID
 		var serials []string
 		if resolveUnits {
-			unitIDs, serials, err = resolveSerialUnits(ctx, tx, p.TenantID, *p.BranchID, it.ProductID, tracksSerial, it)
+			unitIDs, serials, err = resolveSerialUnits(ctx, tx, *p.BranchID, it.ProductID, tracksSerial, it)
 			if err != nil {
 				return nil, totals{}, err
 			}
@@ -543,7 +515,7 @@ func (s *Service) price(ctx context.Context, tx pgx.Tx, p *auth.Principal, in Cr
 	return lines, tot, nil
 }
 
-func resolveSerialUnits(ctx context.Context, tx pgx.Tx, tenantID, locID, productID uuid.UUID, required bool, it ItemIn) ([]uuid.UUID, []string, error) {
+func resolveSerialUnits(ctx context.Context, tx pgx.Tx, locID, productID uuid.UUID, required bool, it ItemIn) ([]uuid.UUID, []string, error) {
 	var rawSerials []string
 	if sn := strings.TrimSpace(it.SerialNumber); sn != "" {
 		rawSerials = append(rawSerials, sn)
@@ -561,10 +533,7 @@ func resolveSerialUnits(ctx context.Context, tx pgx.Tx, tenantID, locID, product
 	var serials []string
 	for _, uid := range it.UnitIDs {
 		var sn string
-		err := tx.QueryRow(ctx, `
-			SELECT serial_no FROM app.product_units
-			WHERE tenant_id = $1 AND id = $2 AND product_id = $3 AND location_id = $4 AND status = 'in_stock'`,
-			tenantID, uid, productID, locID).Scan(&sn)
+		err := tx.QueryRow(ctx, "\n\t\t\tSELECT serial_no FROM app.product_units\n\t\t\tWHERE id = $1 AND product_id = $2 AND location_id = $3 AND status = 'in_stock'", uid, productID, locID).Scan(&sn)
 		if err != nil {
 			return nil, nil, httpx.Conflict("serial_unavailable", "Serial unit is not in stock at this location")
 		}
@@ -577,10 +546,7 @@ func resolveSerialUnits(ctx context.Context, tx pgx.Tx, tenantID, locID, product
 	for _, sn := range rawSerials {
 		var uid uuid.UUID
 		var foundSN string
-		err := tx.QueryRow(ctx, `
-			SELECT id, serial_no FROM app.product_units
-			WHERE tenant_id = $1 AND product_id = $2 AND location_id = $3 AND status = 'in_stock' AND (serial_no = $4 OR imei = $4)`,
-			tenantID, productID, locID, sn).Scan(&uid, &foundSN)
+		err := tx.QueryRow(ctx, "\n\t\t\tSELECT id, serial_no FROM app.product_units\n\t\t\tWHERE product_id = $1 AND location_id = $2 AND status = 'in_stock' AND (serial_no = $3 OR imei = $3)", productID, locID, sn).Scan(&uid, &foundSN)
 		if err != nil {
 			return nil, nil, httpx.Conflict("serial_unavailable", "Serial number "+sn+" is not in stock at this location")
 		}
@@ -686,7 +652,7 @@ func splitPayments(pays []PayIn, total decimal.Decimal) ([]PayIn, decimal.Decima
 }
 
 // resolveCustomer returns nil for walk-in sales (no customer row in the approved schema).
-func (s *Service) resolveCustomer(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, id *uuid.UUID, balance decimal.Decimal) (*uuid.UUID, error) {
+func (s *Service) resolveCustomer(ctx context.Context, tx pgx.Tx, id *uuid.UUID, balance decimal.Decimal) (*uuid.UUID, error) {
 	if balance.IsPositive() && !creditEnabled(ctx, tx) {
 		return nil, httpx.Conflict("method_disabled", "Credit sales are switched off in the settings")
 	}
@@ -697,29 +663,24 @@ func (s *Service) resolveCustomer(ctx context.Context, tx pgx.Tx, tenantID uuid.
 		return nil, nil
 	}
 	var exists bool
-	if err := tx.QueryRow(ctx, `SELECT true FROM app.customers WHERE tenant_id = $1 AND id = $2 AND archived_at IS NULL`, tenantID, *id).Scan(&exists); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT true FROM app.customers WHERE id = $1 AND archived_at IS NULL", *id).Scan(&exists); err != nil {
 		return nil, httpx.NotFound("not_found", "Customer not found")
 	}
 	cid := *id
 	return &cid, nil
 }
 
-func checkCreditLimit(ctx context.Context, tx pgx.Tx, tenantID, customerID uuid.UUID, added decimal.Decimal) error {
+func checkCreditLimit(ctx context.Context, tx pgx.Tx, customerID uuid.UUID, added decimal.Decimal) error {
 	// Lock the customer row first so concurrent credit sales serialize against the same credit limit.
 	var limit *decimal.Decimal
-	if err := tx.QueryRow(ctx, `
-		SELECT credit_limit FROM app.customers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
-		tenantID, customerID).Scan(&limit); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tSELECT credit_limit FROM app.customers WHERE id = $1 FOR UPDATE", customerID).Scan(&limit); err != nil {
 		return err
 	}
 	if limit == nil {
 		return nil
 	}
 	var owed decimal.Decimal
-	if err := tx.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance_due), 0) FROM app.sales
-		WHERE tenant_id = $1 AND customer_id = $2 AND status = 'completed'`,
-		tenantID, customerID).Scan(&owed); err != nil {
+	if err := tx.QueryRow(ctx, "\n\t\tSELECT COALESCE(SUM(balance_due), 0) FROM app.sales\n\t\tWHERE customer_id = $1 AND status = 'completed'", customerID).Scan(&owed); err != nil {
 		return err
 	}
 	if owed.Add(added).GreaterThan(*limit) {

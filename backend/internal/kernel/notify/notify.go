@@ -1,9 +1,9 @@
 // Package notify writes in-app notifications (app.notifications).
 //
 // Recipients are memberships. Callers still name people by their user id; the service finds that
-// person's seat in the tenant. Delivery by email or SMS to staff is not part of the approved model:
+// person's seat. Delivery by email or SMS to staff is not part of the approved model:
 // app.outbound_messages records messages to customers and must point at a customer, sale, invoice
-// and so on, so staff notifications are in-app only. A tenant's rule for a type (enabled, in_app)
+// and so on, so staff notifications are in-app only. The business's rule for a type (enabled, in_app)
 // decides whether it is written at all.
 package notify
 
@@ -63,16 +63,16 @@ func resolve(t string) (string, bool) {
 	return m, ok
 }
 
-// ToUser notifies one person. It does nothing when the person has no active seat in the tenant or the
-// tenant switched this type off.
-func (s *Service) ToUser(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.UUID, m Message) error {
+// ToUser notifies one person. It does nothing when the person has no active seat or the
+// business switched this type off.
+func (s *Service) ToUser(ctx context.Context, tx pgx.Tx, userID uuid.UUID, m Message) error {
 	typ, ok := resolve(m.Type)
 	if !ok {
 		slog.Debug("notification type not in the approved schema; skipped", "type", m.Type)
 		return nil
 	}
 	enabled, inApp := true, true
-	err := tx.QueryRow(ctx, `SELECT enabled, in_app FROM app.notification_rules WHERE tenant_id = $1 AND notification_type = $2::app.notification_type`, tenantID, typ).Scan(&enabled, &inApp)
+	err := tx.QueryRow(ctx, "SELECT enabled, in_app FROM app.notification_rules WHERE notification_type = $1::app.notification_type", typ).Scan(&enabled, &inApp)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
@@ -80,16 +80,16 @@ func (s *Service) ToUser(ctx context.Context, tx pgx.Tx, tenantID, userID uuid.U
 		return nil
 	}
 	var membership uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT id FROM app.memberships WHERE tenant_id = $1 AND user_id = $2 AND status = 'active'`, tenantID, userID).Scan(&membership); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT id FROM app.memberships WHERE user_id = $1 AND status = 'active'", userID).Scan(&membership); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		return err
 	}
-	return s.insert(ctx, tx, tenantID, membership, typ, m)
+	return s.insert(ctx, tx, membership, typ, m)
 }
 
-func (s *Service) insert(ctx context.Context, tx pgx.Tx, tenantID, membership uuid.UUID, typ string, m Message) error {
+func (s *Service) insert(ctx context.Context, tx pgx.Tx, membership uuid.UUID, typ string, m Message) error {
 	// One notification per person, subject and day: repeating the same event on the same day adds nothing.
 	dedupe := typ + ":" + uuid.NewString()
 	if m.EntityID != nil {
@@ -111,9 +111,9 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, tenantID, membership uu
 		return err
 	}
 	if _, err := sub.Exec(ctx, `
-		INSERT INTO app.notifications (tenant_id, recipient_id, notification_type, title, body, link_path, dedupe_key)
-		VALUES ($1, $2, $3::app.notification_type, left($4, 200), NULLIF($5, ''), NULLIF($6, ''), $7)`,
-		tenantID, membership, typ, m.Title, body, link, dedupe); err != nil {
+		INSERT INTO app.notifications (recipient_id, notification_type, title, body, link_path, dedupe_key)
+		VALUES ($1, $2::app.notification_type, left($3, 200), NULLIF($4, ''), NULLIF($5, ''), $6)`,
+		membership, typ, m.Title, body, link, dedupe); err != nil {
 		_ = sub.Rollback(ctx)
 		if db.IsUnique(err) {
 			return nil
@@ -123,7 +123,7 @@ func (s *Service) insert(ctx context.Context, tx pgx.Tx, tenantID, membership uu
 	return sub.Commit(ctx)
 }
 
-// DaysBefore is how many days ahead a reminder of this type fires: the tenant's setting if it set
+// DaysBefore is how many days ahead a reminder of this type fires: the business setting if it set
 // one, otherwise the fallback.
 func (s *Service) DaysBefore(ctx context.Context, tx pgx.Tx, typ string, fallback int) int {
 	if t, ok := resolve(typ); ok {
@@ -136,29 +136,29 @@ func (s *Service) DaysBefore(ctx context.Context, tx pgx.Tx, typ string, fallbac
 // deny, unexpired) beats the role, exactly as app.has_permission does.
 const holders = `
 	SELECT DISTINCT m.user_id, m.id FROM app.memberships m
-	WHERE m.tenant_id = $1 AND m.status = 'active' AND ($3::uuid IS NULL OR m.user_id <> $3)
+	WHERE m.status = 'active' AND ($2::uuid IS NULL OR m.user_id <> $2)
 	  AND coalesce(
 	    (SELECT o.effect = 'allow' FROM app.membership_permission_overrides o
-	      WHERE o.tenant_id = m.tenant_id AND o.membership_id = m.id AND o.permission_code = $2 AND (o.expires_at IS NULL OR o.expires_at > now())),
+	      WHERE o.membership_id = m.id AND o.permission_code = $1 AND (o.expires_at IS NULL OR o.expires_at > now())),
 	    EXISTS (SELECT 1 FROM app.membership_roles mr
-	              JOIN app.role_permissions rp ON rp.tenant_id = mr.tenant_id AND rp.role_id = mr.role_id
-	              JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id AND r.status = 'active'
-	             WHERE mr.tenant_id = m.tenant_id AND mr.membership_id = m.id AND rp.permission_code = $2))`
+	              JOIN app.role_permissions rp ON rp.role_id = mr.role_id
+	              JOIN app.roles r ON r.id = mr.role_id AND r.status = 'active'
+	             WHERE mr.membership_id = m.id AND rp.permission_code = $1))`
 
-func (s *Service) toHolders(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, permission string, except *uuid.UUID, m Message) error {
+func (s *Service) toHolders(ctx context.Context, tx pgx.Tx, permission string, except *uuid.UUID, m Message) error {
 	typ, ok := resolve(m.Type)
 	if !ok {
 		slog.Debug("notification type not in the approved schema; skipped", "type", m.Type)
 		return nil
 	}
 	enabled, inApp := true, true
-	if err := tx.QueryRow(ctx, `SELECT enabled, in_app FROM app.notification_rules WHERE tenant_id = $1 AND notification_type = $2::app.notification_type`, tenantID, typ).Scan(&enabled, &inApp); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	if err := tx.QueryRow(ctx, "SELECT enabled, in_app FROM app.notification_rules WHERE notification_type = $1::app.notification_type", typ).Scan(&enabled, &inApp); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
 	if !enabled || !inApp {
 		return nil
 	}
-	rows, err := tx.Query(ctx, holders, tenantID, permission, except)
+	rows, err := tx.Query(ctx, holders, permission, except)
 	if err != nil {
 		return err
 	}
@@ -176,7 +176,7 @@ func (s *Service) toHolders(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, 
 		return err
 	}
 	for _, membership := range to {
-		if err := s.insert(ctx, tx, tenantID, membership, typ, m); err != nil {
+		if err := s.insert(ctx, tx, membership, typ, m); err != nil {
 			return fmt.Errorf("notify: %w", err)
 		}
 	}
@@ -186,11 +186,11 @@ func (s *Service) toHolders(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, 
 // ToApprovers notifies the people who can decide a request: those who hold kindPerm. The requester is
 // never notified of their own request. Amount limits are enforced by the database when the person
 // decides (app.assert_can_approve), so they are not repeated here.
-func (s *Service) ToApprovers(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, _ *uuid.UUID, kindPerm string, _ *decimal.Decimal, requester uuid.UUID, m Message) error {
-	return s.toHolders(ctx, tx, tenantID, kindPerm, &requester, m)
+func (s *Service) ToApprovers(ctx context.Context, tx pgx.Tx, _ *uuid.UUID, kindPerm string, _ *decimal.Decimal, requester uuid.UUID, m Message) error {
+	return s.toHolders(ctx, tx, kindPerm, &requester, m)
 }
 
 // ToPermission notifies everyone who holds a permission.
-func (s *Service) ToPermission(ctx context.Context, tx pgx.Tx, tenantID uuid.UUID, _ *uuid.UUID, permission string, m Message) error {
-	return s.toHolders(ctx, tx, tenantID, permission, nil, m)
+func (s *Service) ToPermission(ctx context.Context, tx pgx.Tx, _ *uuid.UUID, permission string, m Message) error {
+	return s.toHolders(ctx, tx, permission, nil, m)
 }

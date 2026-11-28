@@ -81,11 +81,11 @@ func (s Store) Save(ctx context.Context, businessID, name string, r io.Reader, m
 	}
 	found, err := s.Scanner.Scan(ctx, content)
 	if err != nil {
-		slog.Error("virus scan unavailable", "tenant_id", businessID, "err", err)
+		slog.Error("virus scan unavailable", "business_scope", businessID, "err", err)
 		return storage.File{}, httpx.ServiceUnavailable("scan_unavailable", "Files cannot be checked right now. Try again in a few minutes.")
 	}
 	if found != "" {
-		slog.Warn("upload rejected by virus scan", "tenant_id", businessID, "signature", found)
+		slog.Warn("upload rejected by virus scan", "business_scope", businessID, "signature", found)
 		return storage.File{}, httpx.New(422, "malware_detected", "That file was rejected by the virus scanner")
 	}
 	return s.Store.Save(ctx, businessID, name, bytes.NewReader(content), max)

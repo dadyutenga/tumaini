@@ -56,7 +56,7 @@ func (s *Service) idemRun(ctx context.Context, p *auth.Principal, fn func(ctx co
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -66,17 +66,17 @@ func (s *Service) idemRun(ctx context.Context, p *auth.Principal, fn func(ctx co
 		if err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, st, httpx.Data(out))
+		raw, err := idem.Complete(ctx, tx, st, httpx.Data(out))
 		status, body = st, raw
 		return err
 	})
 	return status, body, err
 }
 
-func activeSupplier(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (int, error) {
+func activeSupplier(ctx context.Context, tx pgx.Tx, id uuid.UUID) (int, error) {
 	var active bool
 	var terms *int
-	if err := tx.QueryRow(ctx, `SELECT status = 'active', payment_terms_days FROM app.suppliers WHERE tenant_id = $1 AND id = $2`, tenantID, id).Scan(&active, &terms); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT status = 'active', payment_terms_days FROM app.suppliers WHERE id = $1", id).Scan(&active, &terms); err != nil {
 		return 0, httpx.NotFound("not_found", "Supplier not found")
 	}
 	if !active {
@@ -88,9 +88,9 @@ func activeSupplier(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (int
 	return *terms, nil
 }
 
-func activeProduct(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) error {
+func activeProduct(ctx context.Context, tx pgx.Tx, id uuid.UUID) error {
 	var active bool
-	if err := tx.QueryRow(ctx, `SELECT status = 'active' FROM app.products WHERE tenant_id = $1 AND id = $2`, tenantID, id).Scan(&active); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT status = 'active' FROM app.products WHERE id = $1", id).Scan(&active); err != nil {
 		return httpx.NotFound("not_found", "Product not found")
 	}
 	if !active {
@@ -119,7 +119,7 @@ type POIn struct {
 }
 
 // writePurchaseLines replaces the purchase lines and returns subtotal and tax.
-func writePurchaseLines(ctx context.Context, tx pgx.Tx, tenantID, purchaseID uuid.UUID, items []POItem) (decimal.Decimal, decimal.Decimal, error) {
+func writePurchaseLines(ctx context.Context, tx pgx.Tx, purchaseID uuid.UUID, items []POItem) (decimal.Decimal, decimal.Decimal, error) {
 	seen := map[uuid.UUID]bool{}
 	sub, tax := money.Zero, money.Zero
 	for i, it := range items {
@@ -127,7 +127,7 @@ func writePurchaseLines(ctx context.Context, tx pgx.Tx, tenantID, purchaseID uui
 			return sub, tax, httpx.BadRequest("invalid_body", "Each product may appear only once")
 		}
 		seen[it.ProductID] = true
-		if err := activeProduct(ctx, tx, tenantID, it.ProductID); err != nil {
+		if err := activeProduct(ctx, tx, it.ProductID); err != nil {
 			return sub, tax, err
 		}
 		qty := money.Qty(it.Qty)
@@ -136,10 +136,7 @@ func writePurchaseLines(ctx context.Context, tx pgx.Tx, tenantID, purchaseID uui
 		lineTax := money.Money(line.Mul(it.TaxRate).Div(decimal.NewFromInt(100)))
 		sub = sub.Add(line)
 		tax = tax.Add(lineTax)
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.purchase_lines (tenant_id, purchase_id, line_no, product_id, quantity_ordered, unit_cost, line_total)
-			VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-			tenantID, purchaseID, i+1, it.ProductID, qty, cost, line); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.purchase_lines (purchase_id, line_no, product_id, quantity_ordered, unit_cost, line_total)\n\t\t\tVALUES ($1, $2, $3, $4, $5, $6)", purchaseID, i+1, it.ProductID, qty, cost, line); err != nil {
 			return sub, tax, err
 		}
 	}
@@ -155,7 +152,7 @@ func (s *Service) CreatePO(ctx context.Context, p *auth.Principal, in POIn) (map
 	}
 	var id uuid.UUID
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		terms, err := activeSupplier(ctx, tx, p.TenantID, in.SupplierID)
+		terms, err := activeSupplier(ctx, tx, in.SupplierID)
 		if err != nil {
 			return err
 		}
@@ -169,17 +166,11 @@ func (s *Service) CreatePO(ctx context.Context, p *auth.Principal, in POIn) (map
 			d, _ := time.Parse("2006-01-02", date)
 			due = d.AddDate(0, 0, terms).Format("2006-01-02")
 		}
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.purchases (tenant_id, purchase_no, supplier_id, business_unit_id, location_id, status,
-			                           order_date, expected_date, due_date, supplier_invoice_ref, notes)
-			VALUES ($1,$2,$3,(SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $4),$4,'draft',
-			        $5::date,NULLIF($6,'')::date,NULLIF($7,'')::date,NULLIF($8,''),NULLIF($9,''))
-			RETURNING id`,
-			p.TenantID, number, in.SupplierID, *p.BranchID, date,
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.purchases ( purchase_no, supplier_id, business_unit_id, location_id, status,\n\t\t\t                           order_date, expected_date, due_date, supplier_invoice_ref, notes)\n\t\t\tVALUES ($1,$2,(SELECT business_unit_id FROM app.locations WHERE id = $3),$3,'draft',\n\t\t\t        $4::date,NULLIF($5,'')::date,NULLIF($6,'')::date,NULLIF($7,''),NULLIF($8,''))\n\t\t\tRETURNING id", number, in.SupplierID, *p.BranchID, date,
 			strings.TrimSpace(in.ExpectedDate), due, strings.TrimSpace(in.SupplierInvoiceRef), strings.TrimSpace(in.Note)).Scan(&id); err != nil {
 			return err
 		}
-		sub, tax, err := writePurchaseLines(ctx, tx, p.TenantID, id, in.Items)
+		sub, tax, err := writePurchaseLines(ctx, tx, id, in.Items)
 		if err != nil {
 			return err
 		}
@@ -188,8 +179,7 @@ func (s *Service) CreatePO(ctx context.Context, p *auth.Principal, in POIn) (map
 			return httpx.BadRequest("invalid_body", "Discount cannot exceed subtotal")
 		}
 		total := sub.Sub(disc).Add(tax)
-		if _, err := tx.Exec(ctx, `UPDATE app.purchases SET subtotal = $3, discount_amount = $4, tax_amount = $5, total = $6 WHERE tenant_id = $1 AND id = $2`,
-			p.TenantID, id, sub, disc, tax, total); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.purchases SET subtotal = $2, discount_amount = $3, tax_amount = $4, total = $5 WHERE id = $1", id, sub, disc, tax, total); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "purchase.created", "purchase", id, nil, map[string]any{"number": number, "total": total})
@@ -206,11 +196,9 @@ type poRow struct {
 	total            decimal.Decimal
 }
 
-func lockPO(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID) (poRow, error) {
+func lockPO(ctx context.Context, tx pgx.Tx, id uuid.UUID) (poRow, error) {
 	var r poRow
-	err := tx.QueryRow(ctx, `
-		SELECT location_id, supplier_id, status::text, purchase_no, total
-		FROM app.purchases WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, tenantID, id).
+	err := tx.QueryRow(ctx, "\n\t\tSELECT location_id, supplier_id, status::text, purchase_no, total\n\t\tFROM app.purchases WHERE id = $1 FOR UPDATE", id).
 		Scan(&r.branch, &r.supplier, &r.status, &r.number, &r.total)
 	if err != nil {
 		return r, httpx.NotFound("not_found", "Purchase order not found")
@@ -223,20 +211,20 @@ func (s *Service) UpdatePO(ctx context.Context, p *auth.Principal, id uuid.UUID,
 		return nil, err
 	}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		po, err := lockPO(ctx, tx, p.TenantID, id)
+		po, err := lockPO(ctx, tx, id)
 		if err != nil {
 			return err
 		}
 		if po.status != "draft" {
 			return httpx.Conflict("invalid_status", "Only a draft purchase can be edited")
 		}
-		if _, err := activeSupplier(ctx, tx, p.TenantID, in.SupplierID); err != nil {
+		if _, err := activeSupplier(ctx, tx, in.SupplierID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `DELETE FROM app.purchase_lines WHERE tenant_id = $1 AND purchase_id = $2`, p.TenantID, id); err != nil {
+		if _, err := tx.Exec(ctx, "DELETE FROM app.purchase_lines WHERE purchase_id = $1", id); err != nil {
 			return err
 		}
-		sub, tax, err := writePurchaseLines(ctx, tx, p.TenantID, id, in.Items)
+		sub, tax, err := writePurchaseLines(ctx, tx, id, in.Items)
 		if err != nil {
 			return err
 		}
@@ -245,13 +233,7 @@ func (s *Service) UpdatePO(ctx context.Context, p *auth.Principal, id uuid.UUID,
 			return httpx.BadRequest("invalid_body", "Discount cannot exceed subtotal")
 		}
 		total := sub.Sub(disc).Add(tax)
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.purchases
-			SET supplier_id = $3, expected_date = NULLIF($4,'')::date, due_date = NULLIF($5,'')::date,
-			    supplier_invoice_ref = NULLIF($6,''), notes = NULLIF($7,''),
-			    subtotal = $8, discount_amount = $9, tax_amount = $10, total = $11
-			WHERE tenant_id = $1 AND id = $2`,
-			p.TenantID, id, in.SupplierID, strings.TrimSpace(in.ExpectedDate), strings.TrimSpace(in.DueDate),
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.purchases\n\t\t\tSET supplier_id = $2, expected_date = NULLIF($3,'')::date, due_date = NULLIF($4,'')::date,\n\t\t\t    supplier_invoice_ref = NULLIF($5,''), notes = NULLIF($6,''),\n\t\t\t    subtotal = $7, discount_amount = $8, tax_amount = $9, total = $10\n\t\t\tWHERE id = $1", id, in.SupplierID, strings.TrimSpace(in.ExpectedDate), strings.TrimSpace(in.DueDate),
 			strings.TrimSpace(in.SupplierInvoiceRef), strings.TrimSpace(in.Note), sub, disc, tax, total); err != nil {
 			return err
 		}
@@ -267,14 +249,14 @@ func (s *Service) UpdatePO(ctx context.Context, p *auth.Principal, id uuid.UUID,
 func (s *Service) Submit(ctx context.Context, p *auth.Principal, id uuid.UUID) (int, map[string]any, error) {
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		po, err := lockPO(ctx, tx, p.TenantID, id)
+		po, err := lockPO(ctx, tx, id)
 		if err != nil {
 			return err
 		}
 		if po.status != "draft" {
 			return httpx.Conflict("invalid_status", "Only a draft purchase can be placed as ordered")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.purchases SET status = 'ordered' WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.purchases SET status = 'ordered' WHERE id = $1", id); err != nil {
 			return err
 		}
 		out = map[string]any{"id": id, "number": po.number, "status": "ordered"}
@@ -286,7 +268,7 @@ func (s *Service) Submit(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 // CancelPO cancels a draft or ordered purchase on which nothing has been received or paid.
 func (s *Service) CancelPO(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		po, err := lockPO(ctx, tx, p.TenantID, id)
+		po, err := lockPO(ctx, tx, id)
 		if err != nil {
 			return err
 		}
@@ -294,10 +276,7 @@ func (s *Service) CancelPO(ctx context.Context, p *auth.Principal, id uuid.UUID)
 			return httpx.Conflict("invalid_status", "This purchase can no longer be cancelled")
 		}
 		var received, paid decimal.Decimal
-		if err := tx.QueryRow(ctx, `
-			SELECT COALESCE((SELECT SUM(quantity_received) FROM app.purchase_lines WHERE tenant_id = $1 AND purchase_id = $2), 0),
-			       amount_paid
-			FROM app.purchases WHERE tenant_id = $1 AND id = $2`, p.TenantID, id).Scan(&received, &paid); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT COALESCE((SELECT SUM(quantity_received) FROM app.purchase_lines WHERE purchase_id = $1), 0),\n\t\t\t       amount_paid\n\t\t\tFROM app.purchases WHERE id = $1", id).Scan(&received, &paid); err != nil {
 			return err
 		}
 		if received.IsPositive() {
@@ -306,7 +285,7 @@ func (s *Service) CancelPO(ctx context.Context, p *auth.Principal, id uuid.UUID)
 		if paid.IsPositive() {
 			return httpx.Conflict("invalid_status", "Void the payments on this purchase before cancelling it")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.purchases SET status = 'cancelled' WHERE tenant_id = $1 AND id = $2`, p.TenantID, id); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.purchases SET status = 'cancelled' WHERE id = $1", id); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "purchase.cancelled", "purchase", id, map[string]any{"status": po.status}, map[string]any{"status": "cancelled"})
@@ -375,7 +354,7 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, in ReceiptIn) 
 		var poID, branch, supplier uuid.UUID
 		date := s.bizDate(ctx, tx)
 		if in.POID != nil {
-			po, err := lockPO(ctx, tx, p.TenantID, *in.POID)
+			po, err := lockPO(ctx, tx, *in.POID)
 			if err != nil {
 				return 0, nil, err
 			}
@@ -387,7 +366,7 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, in ReceiptIn) 
 			if p.BranchID == nil {
 				return 0, nil, httpx.BadRequest("branch_required", "Choose a branch first")
 			}
-			terms, err := activeSupplier(ctx, tx, p.TenantID, *in.SupplierID)
+			terms, err := activeSupplier(ctx, tx, *in.SupplierID)
 			if err != nil {
 				return 0, nil, err
 			}
@@ -401,24 +380,18 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, in ReceiptIn) 
 				d, _ := time.Parse("2006-01-02", date)
 				due = d.AddDate(0, 0, terms).Format("2006-01-02")
 			}
-			if err := tx.QueryRow(ctx, `
-				INSERT INTO app.purchases (tenant_id, purchase_no, supplier_id, business_unit_id, location_id, status,
-				                           order_date, due_date, supplier_invoice_ref, notes)
-				VALUES ($1,$2,$3,(SELECT business_unit_id FROM app.locations WHERE tenant_id = $1 AND id = $4),$4,'ordered',
-				        $5::date,NULLIF($6,'')::date,NULLIF($7,''),'Direct receipt')
-				RETURNING id`,
-				p.TenantID, number, supplier, branch, date, due, strings.TrimSpace(in.SupplierInvoiceRef)).Scan(&poID); err != nil {
+			if err := tx.QueryRow(ctx, "\n\t\t\t\tINSERT INTO app.purchases ( purchase_no, supplier_id, business_unit_id, location_id, status,\n\t\t\t\t                           order_date, due_date, supplier_invoice_ref, notes)\n\t\t\t\tVALUES ($1,$2,(SELECT business_unit_id FROM app.locations WHERE id = $3),$3,'ordered',\n\t\t\t\t        $4::date,NULLIF($5,'')::date,NULLIF($6,''),'Direct receipt')\n\t\t\t\tRETURNING id", number, supplier, branch, date, due, strings.TrimSpace(in.SupplierInvoiceRef)).Scan(&poID); err != nil {
 				return 0, nil, err
 			}
 			poItems := make([]POItem, len(in.Items))
 			for i, it := range in.Items {
 				poItems[i] = POItem{ProductID: it.ProductID, Qty: it.Qty, UnitCost: it.UnitCost}
 			}
-			sub, _, err := writePurchaseLines(ctx, tx, p.TenantID, poID, poItems)
+			sub, _, err := writePurchaseLines(ctx, tx, poID, poItems)
 			if err != nil {
 				return 0, nil, err
 			}
-			if _, err := tx.Exec(ctx, `UPDATE app.purchases SET subtotal = $3, total = $3 WHERE tenant_id = $1 AND id = $2`, p.TenantID, poID, sub); err != nil {
+			if _, err := tx.Exec(ctx, "UPDATE app.purchases SET subtotal = $2, total = $2 WHERE id = $1", poID, sub); err != nil {
 				return 0, nil, err
 			}
 		}
@@ -434,10 +407,7 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, in ReceiptIn) 
 		for _, it := range in.Items {
 			var poLineID uuid.UUID
 			var ordered, received decimal.Decimal
-			if err := tx.QueryRow(ctx, `
-				SELECT id, quantity_ordered, quantity_received
-				FROM app.purchase_lines WHERE tenant_id = $1 AND purchase_id = $2 AND product_id = $3 FOR UPDATE`,
-				p.TenantID, poID, it.ProductID).Scan(&poLineID, &ordered, &received); err != nil {
+			if err := tx.QueryRow(ctx, "\n\t\t\t\tSELECT id, quantity_ordered, quantity_received\n\t\t\t\tFROM app.purchase_lines WHERE purchase_id = $1 AND product_id = $2 FOR UPDATE", poID, it.ProductID).Scan(&poLineID, &ordered, &received); err != nil {
 				return 0, nil, httpx.BadRequest("invalid_body", "That product is not on the purchase order")
 			}
 			qty := money.Qty(it.Qty)
@@ -471,9 +441,9 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, in ReceiptIn) 
 		}
 		var id uuid.UUID
 		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.goods_receipts (tenant_id, receipt_no, purchase_id, location_id, business_date, notes)
-			VALUES ($1,$2,$3,$4,$5::date,NULLIF($6,''))
-			RETURNING id`, p.TenantID, number, poID, branch, date, strings.TrimSpace(in.DeliveryNote)).Scan(&id); err != nil {
+			INSERT INTO app.goods_receipts ( receipt_no, purchase_id, location_id, business_date, notes)
+			VALUES ($1,$2,$3,$4::date,NULLIF($5,''))
+			RETURNING id`, number, poID, branch, date, strings.TrimSpace(in.DeliveryNote)).Scan(&id); err != nil {
 			return 0, nil, err
 		}
 		pids := make([]uuid.UUID, 0, len(lines))
@@ -484,34 +454,29 @@ func (s *Service) Receive(ctx context.Context, p *auth.Principal, in ReceiptIn) 
 				cost = money.Money(cost.Add(share.Div(ln.item.Qty)))
 			}
 			var grLineID uuid.UUID
-			if err := tx.QueryRow(ctx, `
-				INSERT INTO app.goods_receipt_lines (tenant_id, goods_receipt_id, purchase_line_id, quantity, unit_cost)
-				VALUES ($1,$2,$3,$4,$5)
-				RETURNING id`, p.TenantID, id, ln.poLineID, ln.item.Qty, cost).Scan(&grLineID); err != nil {
+			if err := tx.QueryRow(ctx, "\n\t\t\t\tINSERT INTO app.goods_receipt_lines (goods_receipt_id, purchase_line_id, quantity, unit_cost)\n\t\t\t\tVALUES ($1, $2, $3, $4)\n\t\t\t\tRETURNING id", id, ln.poLineID, ln.item.Qty, cost).Scan(&grLineID); err != nil {
 				return 0, nil, err
 			}
 			for _, u := range ln.units {
 				var unitID uuid.UUID
 				if err := tx.QueryRow(ctx, `
-					INSERT INTO app.product_units (tenant_id, product_id, location_id, serial_no, imei, status)
-					VALUES ($1,$2,$3,$4,NULLIF($5,''),'in_stock')
-					RETURNING id`, p.TenantID, ln.item.ProductID, branch, u.SerialNo, u.IMEI).Scan(&unitID); err != nil {
+					INSERT INTO app.product_units ( product_id, location_id, serial_no, imei, status)
+					VALUES ($1,$2,$3,NULLIF($4,''),'in_stock')
+					RETURNING id`, ln.item.ProductID, branch, u.SerialNo, u.IMEI).Scan(&unitID); err != nil {
 					if db.IsUnique(err) {
 						return 0, nil, httpx.Conflict("duplicate", "Serial number or IMEI "+u.SerialNo+" is already registered")
 					}
 					return 0, nil, err
 				}
-				if _, err := tx.Exec(ctx, `
-					INSERT INTO app.goods_receipt_line_units (tenant_id, goods_receipt_line_id, product_unit_id)
-					VALUES ($1,$2,$3)`, p.TenantID, grLineID, unitID); err != nil {
+				if _, err := tx.Exec(ctx, "\n\t\t\t\t\tINSERT INTO app.goods_receipt_line_units (goods_receipt_line_id, product_unit_id)\n\t\t\t\t\tVALUES ($1, $2)", grLineID, unitID); err != nil {
 					return 0, nil, err
 				}
 			}
 			pids = append(pids, ln.item.ProductID)
 		}
 		var poStatus string
-		_ = tx.QueryRow(ctx, `SELECT status::text FROM app.purchases WHERE tenant_id = $1 AND id = $2`, p.TenantID, poID).Scan(&poStatus)
-		if err := jobs.EnqueueTx(ctx, tx, p.TenantID, jobs.CheckLowStock, map[string]any{"branch_id": branch, "product_ids": pids}); err != nil {
+		_ = tx.QueryRow(ctx, "SELECT status::text FROM app.purchases WHERE id = $1", poID).Scan(&poStatus)
+		if err := jobs.EnqueueTx(ctx, tx, jobs.CheckLowStock, map[string]any{"branch_id": branch, "product_ids": pids}); err != nil {
 			return 0, nil, err
 		}
 		out := map[string]any{"id": id, "number": number, "po_id": poID, "po_status": poStatus, "supplier_id": supplier, "extra_costs": extra, "total_value": total}
@@ -587,7 +552,7 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, supplierID uuid.UU
 	}
 	return s.idemRun(ctx, p, func(ctx context.Context, tx pgx.Tx) (int, any, error) {
 		var lockedSup uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT id FROM app.suppliers WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, p.TenantID, supplierID).Scan(&lockedSup); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT id FROM app.suppliers WHERE id = $1 FOR UPDATE", supplierID).Scan(&lockedSup); err != nil {
 			return 0, nil, httpx.NotFound("not_found", "Supplier not found")
 		}
 		amt := money.Money(in.Amount)
@@ -614,9 +579,7 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, supplierID uuid.UU
 				var bal decimal.Decimal
 				var sup uuid.UUID
 				var st string
-				if err := tx.QueryRow(ctx, `
-					SELECT balance_due, supplier_id, status::text FROM app.purchases WHERE tenant_id = $1 AND id = $2 FOR UPDATE`,
-					p.TenantID, tid).Scan(&bal, &sup, &st); err != nil || sup != supplierID {
+				if err := tx.QueryRow(ctx, "\n\t\t\t\t\tSELECT balance_due, supplier_id, status::text FROM app.purchases WHERE id = $1 FOR UPDATE", tid).Scan(&bal, &sup, &st); err != nil || sup != supplierID {
 					return 0, nil, httpx.NotFound("not_found", "Purchase not found for this supplier")
 				}
 				if st == "cancelled" {
@@ -634,10 +597,7 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, supplierID uuid.UU
 				allocs = append(allocs, payments.Alloc{PurchaseID: &pid, Amount: useAmt})
 			}
 		} else {
-			rows, err := tx.Query(ctx, `
-				SELECT id, balance_due FROM app.purchases
-				WHERE tenant_id = $1 AND supplier_id = $2 AND status <> 'cancelled' AND balance_due > 0
-				ORDER BY order_date, purchase_no FOR UPDATE`, p.TenantID, supplierID)
+			rows, err := tx.Query(ctx, "\n\t\t\t\tSELECT id, balance_due FROM app.purchases\n\t\t\t\tWHERE supplier_id = $1 AND status <> 'cancelled' AND balance_due > 0\n\t\t\t\tORDER BY order_date, purchase_no FOR UPDATE", supplierID)
 			if err != nil {
 				return 0, nil, err
 			}
@@ -666,7 +626,8 @@ func (s *Service) Pay(ctx context.Context, p *auth.Principal, supplierID uuid.UU
 			date = s.bizDate(ctx, tx)
 		}
 		res, err := payments.Pay(ctx, tx, payments.PayInput{
-			TenantID: p.TenantID, LocationID: *p.BranchID, AccountID: in.MoneyAccountID, SupplierID: &supplierID,
+			LocationID: *p.BranchID,
+			AccountID:  in.MoneyAccountID, SupplierID: &supplierID,
 			Method: method, Amount: amt, Reference: strings.TrimSpace(in.Reference), BusinessDate: date,
 			Notes: strings.TrimSpace(in.Note), Allocations: allocs,
 		})

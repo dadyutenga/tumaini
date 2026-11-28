@@ -30,7 +30,7 @@ func TestTokensUseTheConfiguredClock(t *testing.T) {
 	signedAt := time.Date(2026, 1, 1, 8, 0, 0, 0, time.UTC)
 	now := signedAt
 	tok := Tokens{Secret: []byte("0123456789abcdef0123456789abcdef"), Access: 15 * time.Minute, Now: func() time.Time { return now }}
-	raw, err := tok.Sign(uuid.New(), uuid.New(), uuid.New(), uuid.New(), signedAt)
+	raw, err := tok.Sign(uuid.New(), uuid.New(), uuid.New(), signedAt)
 	require.NoError(t, err)
 	_, err = tok.Verify(raw)
 	require.NoError(t, err, "a token is valid at the clock that signed it, whatever the wall time")

@@ -1,6 +1,6 @@
 // Package sequence issues gap-free document numbers from app.document_sequences.
 //
-// Numbering is per tenant and document type (R-0001, INV-0001, ...): the database function
+// Numbering is per business and document type (R-0001, INV-0001, ...): the database function
 // app.next_document_number locks the sequence row, so a rolled-back transaction releases its number.
 // Branches no longer have their own counters.
 package sequence
@@ -31,7 +31,7 @@ var legacy = map[string]string{
 }
 
 // Next returns the next number for a document type and advances the counter in the caller's
-// transaction. branchID is ignored: numbering is per tenant.
+// transaction. branchID is ignored: numbering is per business.
 func Next(ctx context.Context, tx pgx.Tx, _ uuid.UUID, docType string) (string, error) {
 	if m, ok := legacy[docType]; ok {
 		docType = m

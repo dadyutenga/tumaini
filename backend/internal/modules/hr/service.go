@@ -79,14 +79,14 @@ const employeeCols = `e.id, e.employee_no, e.full_name::text AS name, e.phone::t
 	comp.payout_account_last4 AS pay_account_last4, comp.payout_provider AS pay_provider`
 
 const employeeFrom = ` FROM app.employees e
-	LEFT JOIN app.locations l ON l.tenant_id = e.tenant_id AND l.id = e.location_id
-	LEFT JOIN app.memberships m ON m.tenant_id = e.tenant_id AND m.id = e.membership_id
-	LEFT JOIN app.membership_roles mr ON mr.tenant_id = m.tenant_id AND mr.membership_id = m.id
-	LEFT JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id
+	LEFT JOIN app.locations l ON l.id = e.location_id
+	LEFT JOIN app.memberships m ON m.id = e.membership_id
+	LEFT JOIN app.membership_roles mr ON mr.membership_id = m.id
+	LEFT JOIN app.roles r ON r.id = mr.role_id
 	LEFT JOIN LATERAL (
 		SELECT c.basic_salary, c.pay_method, c.payout_account_last4, c.payout_provider
 		FROM app.employee_compensation c
-		WHERE c.tenant_id = e.tenant_id AND c.employee_id = e.id AND c.effective_to IS NULL
+		WHERE c.employee_id = e.id AND c.effective_to IS NULL
 		ORDER BY c.effective_from DESC LIMIT 1
 	) comp ON true`
 
@@ -126,8 +126,7 @@ func (s *Service) ListEmployees(ctx context.Context, p *auth.Principal, f Employ
 	var out []map[string]any
 	var total int
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		q := sqlq.New(p.TenantID)
-		q.Add("e.tenant_id = $1")
+		q := sqlq.New()
 		branch := f.BranchID
 		if branch == nil {
 			branch = p.BranchID
@@ -153,7 +152,7 @@ func (s *Service) ListEmployees(ctx context.Context, p *auth.Principal, f Employ
 }
 
 func (s *Service) loadEmployee(ctx context.Context, tx pgx.Tx, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
-	return hrkit.One(ctx, tx, "Employee not found", `SELECT `+employeeCols+employeeFrom+` WHERE e.tenant_id = $1 AND e.id = $2`, p.TenantID, id)
+	return hrkit.One(ctx, tx, "Employee not found", `SELECT `+employeeCols+employeeFrom+` WHERE e.id = $1`, id)
 }
 
 func (s *Service) GetEmployee(ctx context.Context, p *auth.Principal, id uuid.UUID) (map[string]any, error) {
@@ -168,8 +167,8 @@ func (s *Service) GetEmployee(ctx context.Context, p *auth.Principal, id uuid.UU
 			       count(*) FILTER (WHERE status = 'late') AS days_late,
 			       count(*) FILTER (WHERE status = 'absent') AS days_absent,
 			       count(*) FILTER (WHERE status = 'on_leave') AS days_leave
-			FROM app.attendance_records WHERE tenant_id = $1 AND employee_id = $2 AND work_date >= date_trunc('month', $3::date)`,
-			p.TenantID, id, s.today(ctx, tx))
+			FROM app.attendance_records WHERE employee_id = $1 AND work_date >= date_trunc('month', $2::date)`,
+			id, s.today(ctx, tx))
 		if err != nil {
 			return err
 		}
@@ -191,7 +190,7 @@ func last4Digits(raw string) *string {
 	return &s
 }
 
-func insertCompensation(ctx context.Context, tx pgx.Tx, tenantID, empID uuid.UUID, basic decimal.Decimal, method, account, provider, effectiveFrom, reason string) error {
+func insertCompensation(ctx context.Context, tx pgx.Tx, empID uuid.UUID, basic decimal.Decimal, method, account, provider, effectiveFrom, reason string) error {
 	if method == "" {
 		method = "cash"
 	}
@@ -213,23 +212,19 @@ func insertCompensation(ctx context.Context, tx pgx.Tx, tenantID, empID uuid.UUI
 	// Close any open compensation row before appending a new one.
 	var prevID uuid.UUID
 	var prevFrom string
-	err := tx.QueryRow(ctx, `
-		SELECT id, effective_from::text FROM app.employee_compensation
-		WHERE tenant_id = $1 AND employee_id = $2 AND effective_to IS NULL
-		ORDER BY effective_from DESC LIMIT 1 FOR UPDATE`, tenantID, empID).Scan(&prevID, &prevFrom)
+	err := tx.QueryRow(ctx, "\n\t\tSELECT id, effective_from::text FROM app.employee_compensation\n\t\tWHERE employee_id = $1 AND effective_to IS NULL\n\t\tORDER BY effective_from DESC LIMIT 1 FOR UPDATE", empID).Scan(&prevID, &prevFrom)
 	if err == nil {
 		if effectiveFrom <= prevFrom {
 			return httpx.Conflict("invalid_body", "effective_from must be after the current compensation effective date ("+prevFrom+")")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.employee_compensation SET effective_to = $3::date WHERE tenant_id = $1 AND id = $2`, tenantID, prevID, effectiveFrom); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.employee_compensation SET effective_to = $2::date WHERE id = $1", prevID, effectiveFrom); err != nil {
 			return err
 		}
 	}
 	_, err = tx.Exec(ctx, `
 		INSERT INTO app.employee_compensation
-			(tenant_id, employee_id, effective_from, basic_salary, pay_method, payout_account_ciphertext, payout_key_id, payout_account_last4, payout_provider, reason)
-		VALUES ($1,$2,$3::date,$4,$5::app.pay_method,$6,$7,$8,NULLIF($9,''),$10)`,
-		tenantID, empID, effectiveFrom, money.Money(basic), method, cipher, keyID, last4, strings.TrimSpace(provider), reason)
+			( employee_id, effective_from, basic_salary, pay_method, payout_account_ciphertext, payout_key_id, payout_account_last4, payout_provider, reason)
+		VALUES ($1,$2::date,$3,$4::app.pay_method,$5,$6,$7,NULLIF($8,''),$9)`, empID, effectiveFrom, money.Money(basic), method, cipher, keyID, last4, strings.TrimSpace(provider), reason)
 	return err
 }
 
@@ -264,7 +259,7 @@ func (s *Service) CreateEmployee(ctx context.Context, p *auth.Principal, in Empl
 	err = s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		if loc != nil {
 			var ok bool
-			if err := tx.QueryRow(ctx, `SELECT status = 'active' FROM app.locations WHERE tenant_id = $1 AND id = $2`, p.TenantID, *loc).Scan(&ok); err != nil || !ok {
+			if err := tx.QueryRow(ctx, "SELECT status = 'active' FROM app.locations WHERE id = $1", *loc).Scan(&ok); err != nil || !ok {
 				return httpx.BadRequest("invalid_branch", "Location not found")
 			}
 		}
@@ -280,10 +275,9 @@ func (s *Service) CreateEmployee(ctx context.Context, p *auth.Principal, in Empl
 		var id uuid.UUID
 		if err := tx.QueryRow(ctx, `
 			INSERT INTO app.employees
-				(tenant_id, employee_no, full_name, phone, email, position, location_id, start_date, photo_file_id, emergency_contact_name, emergency_contact_phone)
-			VALUES ($1,$2,$3,NULLIF($4,'')::app.phone_e164,NULLIF($5,'')::app.email,$6,$7,$8::date,$9,NULLIF($10,''),NULLIF($11,'')::app.phone_e164)
-			RETURNING id`,
-			p.TenantID, number, in.Name, ph, deref(in.Email), pos, loc, startDate, in.PhotoFileID, deref(in.EmergencyContact), eph).Scan(&id); err != nil {
+				( employee_no, full_name, phone, email, position, location_id, start_date, photo_file_id, emergency_contact_name, emergency_contact_phone)
+			VALUES ($1,$2,NULLIF($3,'')::app.phone_e164,NULLIF($4,'')::app.email,$5,$6,$7::date,$8,NULLIF($9,''),NULLIF($10,'')::app.phone_e164)
+			RETURNING id`, number, in.Name, ph, deref(in.Email), pos, loc, startDate, in.PhotoFileID, deref(in.EmergencyContact), eph).Scan(&id); err != nil {
 			return err
 		}
 		if in.BasePay != nil {
@@ -291,7 +285,7 @@ func (s *Service) CreateEmployee(ctx context.Context, p *auth.Principal, in Empl
 			if eff == "" {
 				eff = startDate
 			}
-			if err := insertCompensation(ctx, tx, p.TenantID, id, *in.BasePay, deref(in.PayMethod), deref(in.PayAccount), deref(in.PayProvider), eff, in.CompensationReason); err != nil {
+			if err := insertCompensation(ctx, tx, id, *in.BasePay, deref(in.PayMethod), deref(in.PayAccount), deref(in.PayProvider), eff, in.CompensationReason); err != nil {
 				return err
 			}
 		}
@@ -346,40 +340,24 @@ func (s *Service) UpdateEmployee(ctx context.Context, p *auth.Principal, id uuid
 		}
 		if in.BranchID != nil {
 			var ok bool
-			if err := tx.QueryRow(ctx, `SELECT status = 'active' FROM app.locations WHERE tenant_id = $1 AND id = $2`, p.TenantID, *in.BranchID).Scan(&ok); err != nil || !ok {
+			if err := tx.QueryRow(ctx, "SELECT status = 'active' FROM app.locations WHERE id = $1", *in.BranchID).Scan(&ok); err != nil || !ok {
 				return httpx.BadRequest("invalid_branch", "Location not found")
 			}
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.employees SET
-			  full_name = COALESCE(NULLIF($3,''), full_name),
-			  phone = CASE WHEN $4 THEN NULLIF($5,'')::app.phone_e164 ELSE phone END,
-			  email = CASE WHEN $6::text IS NULL THEN email ELSE NULLIF($6,'')::app.email END,
-			  position = COALESCE(NULLIF($7,''), position),
-			  location_id = COALESCE($8, location_id),
-			  start_date = COALESCE(NULLIF($9,'')::date, start_date),
-			  photo_file_id = COALESCE($10, photo_file_id),
-			  emergency_contact_name = CASE WHEN $11::text IS NULL THEN emergency_contact_name ELSE NULLIF($11,'') END,
-			  emergency_contact_phone = CASE WHEN $12 THEN NULLIF($13,'')::app.phone_e164 ELSE emergency_contact_phone END,
-			  status = COALESCE(NULLIF($14,'')::app.employee_status, status)
-			WHERE tenant_id = $1 AND id = $2`,
-			p.TenantID, id, strings.TrimSpace(in.Name), in.Phone != nil, ph, in.Email, strings.TrimSpace(in.Position),
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.employees SET\n\t\t\t  full_name = COALESCE(NULLIF($2,''), full_name),\n\t\t\t  phone = CASE WHEN $3 THEN NULLIF($4,'')::app.phone_e164 ELSE phone END,\n\t\t\t  email = CASE WHEN $5::text IS NULL THEN email ELSE NULLIF($5,'')::app.email END,\n\t\t\t  position = COALESCE(NULLIF($6,''), position),\n\t\t\t  location_id = COALESCE($7, location_id),\n\t\t\t  start_date = COALESCE(NULLIF($8,'')::date, start_date),\n\t\t\t  photo_file_id = COALESCE($9, photo_file_id),\n\t\t\t  emergency_contact_name = CASE WHEN $10::text IS NULL THEN emergency_contact_name ELSE NULLIF($10,'') END,\n\t\t\t  emergency_contact_phone = CASE WHEN $11 THEN NULLIF($12,'')::app.phone_e164 ELSE emergency_contact_phone END,\n\t\t\t  status = COALESCE(NULLIF($13,'')::app.employee_status, status)\n\t\t\tWHERE id = $1", id, strings.TrimSpace(in.Name), in.Phone != nil, ph, in.Email, strings.TrimSpace(in.Position),
 			in.BranchID, strings.TrimSpace(in.HireDate), in.PhotoFileID, in.EmergencyContact, in.EmergencyContactPhone != nil, eph, strings.TrimSpace(in.Status)); err != nil {
 			return err
 		}
 		// Suspending an employee immediately suspends their linked login seat and revokes all active sessions.
 		if strings.TrimSpace(in.Status) == "suspended" && before["status"] != "suspended" {
 			var mid *uuid.UUID
-			if tx.QueryRow(ctx, `SELECT membership_id FROM app.employees WHERE tenant_id = $1 AND id = $2`, p.TenantID, id).Scan(&mid) == nil && mid != nil {
+			if tx.QueryRow(ctx, "SELECT membership_id FROM app.employees WHERE id = $1", id).Scan(&mid) == nil && mid != nil {
 				var isOnlyAdmin bool
-				_ = tx.QueryRow(ctx, `
-					SELECT EXISTS (SELECT 1 FROM app.membership_roles mr JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id WHERE mr.tenant_id = $1 AND mr.membership_id = $2 AND r.code = 'admin')
-					   AND (SELECT count(*) FROM app.membership_roles mr JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id JOIN app.memberships m ON m.tenant_id = mr.tenant_id AND m.id = mr.membership_id WHERE mr.tenant_id = $1 AND r.code = 'admin' AND m.status = 'active') <= 1`,
-					p.TenantID, *mid).Scan(&isOnlyAdmin)
+				_ = tx.QueryRow(ctx, "\n\t\t\t\t\tSELECT EXISTS (SELECT 1 FROM app.membership_roles mr JOIN app.roles r ON r.id = mr.role_id WHERE mr.membership_id = $1 AND r.code = 'admin')\n\t\t\t\t\t   AND (SELECT count(*) FROM app.membership_roles mr JOIN app.roles r ON r.id = mr.role_id JOIN app.memberships m ON m.id = mr.membership_id WHERE r.code = 'admin' AND m.status = 'active') <= 1", *mid).Scan(&isOnlyAdmin)
 				if isOnlyAdmin {
 					return httpx.Conflict("last_owner", "The business must keep at least one active admin")
 				}
-				if _, err := tx.Exec(ctx, `UPDATE app.memberships SET status = 'suspended', deactivated_at = now(), deactivation_reason = 'Employee suspended' WHERE tenant_id = $1 AND id = $2 AND status = 'active'`, p.TenantID, *mid); err != nil {
+				if _, err := tx.Exec(ctx, "UPDATE app.memberships SET status = 'suspended', deactivated_at = now(), deactivation_reason = 'Employee suspended' WHERE id = $1 AND status = 'active'", *mid); err != nil {
 					return err
 				}
 				if _, err := tx.Exec(ctx, `UPDATE iam.sessions SET revoked_at = now(), revoked_reason = 'membership_revoked' WHERE membership_id = $1 AND revoked_at IS NULL`, *mid); err != nil {
@@ -392,7 +370,7 @@ func (s *Service) UpdateEmployee(ctx context.Context, p *auth.Principal, id uuid
 			if eff == "" {
 				eff = s.today(ctx, tx)
 			}
-			if err := insertCompensation(ctx, tx, p.TenantID, id, *in.BasePay, deref(in.PayMethod), deref(in.PayAccount), deref(in.PayProvider), eff, in.CompensationReason); err != nil {
+			if err := insertCompensation(ctx, tx, id, *in.BasePay, deref(in.PayMethod), deref(in.PayAccount), deref(in.PayProvider), eff, in.CompensationReason); err != nil {
 				return err
 			}
 		}
@@ -430,19 +408,16 @@ func (s *Service) Terminate(ctx context.Context, p *auth.Principal, id uuid.UUID
 		if in.Date < asString(before["hire_date"]) {
 			return httpx.BadRequest("invalid_body", "Termination date cannot be before the start date")
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.employees SET status = 'terminated', end_date = $3::date WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, in.Date); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.employees SET status = 'terminated', end_date = $2::date WHERE id = $1", id, in.Date); err != nil {
 			return err
 		}
 		// Revoke linked seat (unless doing so would remove the last active Admin, enforced by tg_keep_one_admin).
 		var mid *uuid.UUID
-		if tx.QueryRow(ctx, `SELECT membership_id FROM app.employees WHERE tenant_id = $1 AND id = $2`, p.TenantID, id).Scan(&mid) == nil && mid != nil {
+		if tx.QueryRow(ctx, "SELECT membership_id FROM app.employees WHERE id = $1", id).Scan(&mid) == nil && mid != nil {
 			var isOnlyAdmin bool
-			_ = tx.QueryRow(ctx, `
-				SELECT EXISTS (SELECT 1 FROM app.membership_roles mr JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id WHERE mr.tenant_id = $1 AND mr.membership_id = $2 AND r.code = 'admin')
-				   AND (SELECT count(*) FROM app.membership_roles mr JOIN app.roles r ON r.tenant_id = mr.tenant_id AND r.id = mr.role_id JOIN app.memberships m ON m.tenant_id = mr.tenant_id AND m.id = mr.membership_id WHERE mr.tenant_id = $1 AND r.code = 'admin' AND m.status = 'active') <= 1`,
-				p.TenantID, *mid).Scan(&isOnlyAdmin)
+			_ = tx.QueryRow(ctx, "\n\t\t\t\tSELECT EXISTS (SELECT 1 FROM app.membership_roles mr JOIN app.roles r ON r.id = mr.role_id WHERE mr.membership_id = $1 AND r.code = 'admin')\n\t\t\t\t   AND (SELECT count(*) FROM app.membership_roles mr JOIN app.roles r ON r.id = mr.role_id JOIN app.memberships m ON m.id = mr.membership_id WHERE r.code = 'admin' AND m.status = 'active') <= 1", *mid).Scan(&isOnlyAdmin)
 			if !isOnlyAdmin {
-				if _, err := tx.Exec(ctx, `UPDATE app.memberships SET status = 'revoked', deactivated_at = now() WHERE tenant_id = $1 AND id = $2 AND status IN ('active','suspended','invited')`, p.TenantID, *mid); err != nil {
+				if _, err := tx.Exec(ctx, "UPDATE app.memberships SET status = 'revoked', deactivated_at = now() WHERE id = $1 AND status IN ('active','suspended','invited')", *mid); err != nil {
 					return err
 				}
 				if _, err := tx.Exec(ctx, `UPDATE iam.sessions SET revoked_at = now(), revoked_reason = 'membership_revoked' WHERE membership_id = $1 AND revoked_at IS NULL`, *mid); err != nil {
@@ -521,7 +496,7 @@ func (s *Service) CreateLogin(ctx context.Context, p *auth.Principal, id uuid.UU
 		} else if b, err := uuid.Parse(asString(emp["branch_id"])); err == nil {
 			loc = &b
 		} else {
-			_ = tx.QueryRow(ctx, `SELECT id FROM app.locations WHERE tenant_id = $1 AND is_default`, p.TenantID).Scan(&loc)
+			_ = tx.QueryRow(ctx, "SELECT id FROM app.locations WHERE is_default").Scan(&loc)
 		}
 		lang := in.Language
 		if lang == "" {
@@ -544,15 +519,13 @@ func (s *Service) CreateLogin(ctx context.Context, p *auth.Principal, id uuid.UU
 			return err
 		}
 		var membershipID uuid.UUID
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.memberships (tenant_id, user_id, default_location_id, status)
-			VALUES ($1,$2,$3,'active') RETURNING id`, p.TenantID, userID, loc).Scan(&membershipID); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.memberships (user_id, default_location_id, status)\n\t\t\tVALUES ($1, $2, 'active') RETURNING id", userID, loc).Scan(&membershipID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO app.membership_roles (tenant_id, membership_id, role_id) VALUES ($1,$2,$3)`, p.TenantID, membershipID, in.RoleID); err != nil {
+		if _, err := tx.Exec(ctx, "INSERT INTO app.membership_roles (membership_id, role_id) VALUES ($1, $2)", membershipID, in.RoleID); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE app.employees SET membership_id = $3 WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, membershipID); err != nil {
+		if _, err := tx.Exec(ctx, "UPDATE app.employees SET membership_id = $2 WHERE id = $1", id, membershipID); err != nil {
 			return err
 		}
 		out = map[string]any{"id": userID, "membership_id": membershipID, "employee_id": id, "name": name, "phone": ph, "email": email, "role_id": in.RoleID}
@@ -569,7 +542,7 @@ func (s *Service) Statement(ctx context.Context, p *auth.Principal, id uuid.UUID
 		if err != nil {
 			return err
 		}
-		out, err = statement(ctx, tx, p.TenantID, id, from, to)
+		out, err = statement(ctx, tx, id, from, to)
 		if err != nil {
 			return err
 		}
@@ -579,7 +552,7 @@ func (s *Service) Statement(ctx context.Context, p *auth.Principal, id uuid.UUID
 	return out, err
 }
 
-func statement(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, from, to string) (map[string]any, error) {
+func statement(ctx context.Context, tx pgx.Tx, id uuid.UUID, from, to string) (map[string]any, error) {
 	if from == "" {
 		from = "0001-01-01"
 	}
@@ -592,25 +565,25 @@ func statement(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, from, to 
 		       pl.gross_pay AS gross, (pl.deductions + pl.advance_repayment + pl.statutory_deductions) AS total_deductions,
 		       pl.net_pay AS net, CASE WHEN pl.paid_at IS NOT NULL THEN pl.net_pay ELSE 0 END AS paid_total, pl.paid_at
 		FROM app.payroll_lines pl
-		JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id
-		LEFT JOIN app.payslips ps ON ps.tenant_id = pl.tenant_id AND ps.payroll_line_id = pl.id
-		WHERE pl.tenant_id = $1 AND pl.employee_id = $2 AND r.status IN ('approved','paid')
-		  AND make_date(r.period_year, r.period_month, 1) BETWEEN $3::date AND $4::date
-		ORDER BY r.period_year, r.period_month`, tenantID, id, from, to)
+		JOIN app.payroll_runs r ON r.id = pl.payroll_run_id
+		LEFT JOIN app.payslips ps ON ps.payroll_line_id = pl.id
+		WHERE pl.employee_id = $1 AND r.status IN ('approved','paid')
+		  AND make_date(r.period_year, r.period_month, 1) BETWEEN $2::date AND $3::date
+		ORDER BY r.period_year, r.period_month`, id, from, to)
 	if err != nil {
 		return nil, err
 	}
 	pays, err := hrkit.All(ctx, tx, `
 		SELECT id, payment_no AS number, 'out' AS direction, method::text AS method, amount, business_date AS payment_date, status::text AS status, reference
 		FROM app.payments_made
-		WHERE tenant_id = $1 AND employee_id = $2 AND business_date BETWEEN $3::date AND $4::date
-		ORDER BY business_date, created_at`, tenantID, id, from, to)
+		WHERE employee_id = $1 AND business_date BETWEEN $2::date AND $3::date
+		ORDER BY business_date, created_at`, id, from, to)
 	if err != nil {
 		return nil, err
 	}
 	loans, err := hrkit.All(ctx, tx, `
 		SELECT id, kind::text AS kind, principal, monthly_deduction, amount_repaid, balance, status::text AS status, issued_on AS start_period
-		FROM app.employee_advances WHERE tenant_id = $1 AND employee_id = $2 ORDER BY created_at`, tenantID, id)
+		FROM app.employee_advances WHERE employee_id = $1 ORDER BY created_at`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -620,14 +593,14 @@ func statement(ctx context.Context, tx pgx.Tx, tenantID, id uuid.UUID, from, to 
 		       COALESCE(SUM(pl.deductions + pl.advance_repayment + pl.statutory_deductions), 0),
 		       COALESCE(SUM(pl.net_pay), 0),
 		       COALESCE(SUM(CASE WHEN pl.paid_at IS NOT NULL THEN pl.net_pay ELSE 0 END), 0)
-		FROM app.payroll_lines pl JOIN app.payroll_runs r ON r.tenant_id = pl.tenant_id AND r.id = pl.payroll_run_id
-		WHERE pl.tenant_id = $1 AND pl.employee_id = $2 AND r.status IN ('approved','paid')
-		  AND make_date(r.period_year, r.period_month, 1) BETWEEN $3::date AND $4::date`, tenantID, id, from, to).
+		FROM app.payroll_lines pl JOIN app.payroll_runs r ON r.id = pl.payroll_run_id
+		WHERE pl.employee_id = $1 AND r.status IN ('approved','paid')
+		  AND make_date(r.period_year, r.period_month, 1) BETWEEN $2::date AND $3::date`, id, from, to).
 		Scan(&gross, &ded, &net, &paid); err != nil {
 		return nil, err
 	}
 	var loanBal decimal.Decimal
-	_ = tx.QueryRow(ctx, `SELECT COALESCE(SUM(balance), 0) FROM app.employee_advances WHERE tenant_id = $1 AND employee_id = $2 AND status = 'active'`, tenantID, id).Scan(&loanBal)
+	_ = tx.QueryRow(ctx, "SELECT COALESCE(SUM(balance), 0) FROM app.employee_advances WHERE employee_id = $1 AND status = 'active'", id).Scan(&loanBal)
 	return map[string]any{
 		"payslips": slips, "payments": pays, "loans": loans,
 		"totals": map[string]any{"gross": gross, "deductions": ded, "net": net, "paid": paid, "unpaid": net.Sub(paid), "loan_balance": loanBal},
@@ -646,8 +619,8 @@ func (s *Service) Components(ctx context.Context, p *auth.Principal, id uuid.UUI
 		out, err = hrkit.All(ctx, tx, `
 			SELECT id, name::text AS name, amount, effective_from, effective_to
 			FROM app.employee_allowances
-			WHERE tenant_id = $1 AND employee_id = $2 AND effective_to IS NULL
-			ORDER BY name`, p.TenantID, id)
+			WHERE employee_id = $1 AND effective_to IS NULL
+			ORDER BY name`, id)
 		return err
 	})
 	return out, err
@@ -666,14 +639,12 @@ func (s *Service) PutComponents(ctx context.Context, p *auth.Principal, id uuid.
 		}
 		today := s.today(ctx, tx)
 		// End currently active allowances (only those whose effective_from < today; same-day ones are deleted).
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.employee_allowances SET effective_to = $3::date
-			WHERE tenant_id = $1 AND employee_id = $2 AND effective_to IS NULL AND effective_from < $3::date`, p.TenantID, id, today); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.employee_allowances SET effective_to = $2::date\n\t\t\tWHERE employee_id = $1 AND effective_to IS NULL AND effective_from < $2::date", id, today); err != nil {
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE app.employee_allowances SET effective_to = effective_from + 1
-			WHERE tenant_id = $1 AND employee_id = $2 AND effective_to IS NULL`, p.TenantID, id); err != nil {
+			WHERE employee_id = $1 AND effective_to IS NULL`, id); err != nil {
 			return err
 		}
 		for _, a := range in {
@@ -681,9 +652,7 @@ func (s *Service) PutComponents(ctx context.Context, p *auth.Principal, id uuid.
 			if eff == "" {
 				eff = today
 			}
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO app.employee_allowances (tenant_id, employee_id, name, amount, effective_from)
-				VALUES ($1,$2,$3,$4,$5::date)`, p.TenantID, id, strings.TrimSpace(a.Name), money.Money(a.Amount), eff); err != nil {
+			if _, err := tx.Exec(ctx, "\n\t\t\t\tINSERT INTO app.employee_allowances (employee_id, name, amount, effective_from)\n\t\t\t\tVALUES ($1, $2, $3, $4::date)", id, strings.TrimSpace(a.Name), money.Money(a.Amount), eff); err != nil {
 				return err
 			}
 		}
@@ -704,7 +673,7 @@ func (s *Service) LeaveBalance(ctx context.Context, p *auth.Principal, id uuid.U
 			return err
 		}
 		var err error
-		out, err = leaveBalance(ctx, tx, p.TenantID, id, s.yearOf(ctx, tx, year))
+		out, err = leaveBalance(ctx, tx, id, s.yearOf(ctx, tx, year))
 		return err
 	})
 	return out, err
@@ -717,15 +686,15 @@ func (s *Service) yearOf(ctx context.Context, tx pgx.Tx, year int) int {
 	return hrkit.MustDate(s.today(ctx, tx)).Year()
 }
 
-func leaveBalance(ctx context.Context, tx pgx.Tx, tenantID, employee uuid.UUID, year int) ([]map[string]any, error) {
+func leaveBalance(ctx context.Context, tx pgx.Tx, employee uuid.UUID, year int) ([]map[string]any, error) {
 	return hrkit.All(ctx, tx, `
 		SELECT lt.id AS leave_type_id, lt.name::text AS name, lt.is_paid, COALESCE(lt.annual_days, 0) AS allowed,
 		       COALESCE(SUM(lr.days) FILTER (WHERE lr.status = 'approved'), 0) AS taken,
 		       COALESCE(SUM(lr.days) FILTER (WHERE lr.status = 'requested'), 0) AS pending,
 		       GREATEST(COALESCE(lt.annual_days, 0) - COALESCE(SUM(lr.days) FILTER (WHERE lr.status = 'approved'), 0), 0) AS remaining
 		FROM app.leave_types lt
-		LEFT JOIN app.leave_requests lr ON lr.tenant_id = lt.tenant_id AND lr.leave_type_id = lt.id
-		     AND lr.employee_id = $2 AND EXTRACT(YEAR FROM lr.start_date) = $3
-		WHERE lt.tenant_id = $1 AND lt.status = 'active'
-		GROUP BY lt.id ORDER BY lt.name`, tenantID, employee, year)
+		LEFT JOIN app.leave_requests lr ON lr.leave_type_id = lt.id
+		     AND lr.employee_id = $1 AND EXTRACT(YEAR FROM lr.start_date) = $2
+		WHERE lt.status = 'active'
+		GROUP BY lt.id ORDER BY lt.name`, employee, year)
 }

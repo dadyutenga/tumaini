@@ -14,7 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"bms/internal/platform/db"
-	"bms/internal/platform/jobs"
 )
 
 // TestDatabaseSecurity_CompromisedAppServerCannotRewriteFinancialHistory directly tests the
@@ -40,22 +39,22 @@ func TestDatabaseSecurity_CompromisedAppServerCannotRewriteFinancialHistory(t *t
 		sql  string
 		arg  any
 	}{
-		{"update financial_transactions", `UPDATE app.financial_transactions SET amount = 1 WHERE tenant_id = $1`, e.tenantID},
-		{"delete financial_transactions", `DELETE FROM app.financial_transactions WHERE tenant_id = $1`, e.tenantID},
+		{"update financial_transactions", `UPDATE app.financial_transactions SET amount = 1 WHERE true`, nil},
+		{"delete financial_transactions", `DELETE FROM app.financial_transactions WHERE true`, nil},
 		{"truncate financial_transactions", `TRUNCATE app.financial_transactions`, nil},
-		{"update payments_received", `UPDATE app.payments_received SET amount = 1 WHERE tenant_id = $1`, e.tenantID},
-		{"delete payments_received", `DELETE FROM app.payments_received WHERE tenant_id = $1`, e.tenantID},
+		{"update payments_received", `UPDATE app.payments_received SET amount = 1 WHERE true`, nil},
+		{"delete payments_received", `DELETE FROM app.payments_received WHERE true`, nil},
 		{"update completed sale total", `UPDATE app.sales SET total = 1 WHERE id = $1`, saleID},
 		{"delete completed sale", `DELETE FROM app.sales WHERE id = $1`, saleID},
-		{"update stock_movements", `UPDATE app.stock_movements SET quantity_delta = 0 WHERE tenant_id = $1`, e.tenantID},
-		{"delete stock_movements", `DELETE FROM app.stock_movements WHERE tenant_id = $1`, e.tenantID},
-		{"update audit_log", `UPDATE audit.audit_log SET new_values = '{}'::jsonb WHERE tenant_id = $1`, e.tenantID},
-		{"delete audit_log", `DELETE FROM audit.audit_log WHERE tenant_id = $1`, e.tenantID},
+		{"update stock_movements", `UPDATE app.stock_movements SET quantity_delta = 0 WHERE true`, nil},
+		{"delete stock_movements", `DELETE FROM app.stock_movements WHERE true`, nil},
+		{"update audit_log", `UPDATE audit.audit_log SET new_values = '{}'::jsonb WHERE true`, nil},
+		{"delete audit_log", `DELETE FROM audit.audit_log WHERE true`, nil},
 		{"truncate audit_log", `TRUNCATE audit.audit_log`, nil},
 	}
 
 	for _, atk := range attacks {
-		err := e.app.DB.InActorTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
+		err := e.app.DB.InActorTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
 			var qErr error
 			if atk.arg != nil {
 				_, qErr = tx.Exec(ctx, atk.sql, atk.arg)
@@ -149,90 +148,17 @@ func TestAPISecurity_HeadersSQLiUploadsCORSAndErrorRedaction(t *testing.T) {
 	require.Contains(t, dlResp.Header.Get("Content-Disposition"), "attachment")
 }
 
-// TestMultiTenantAndBranchIsolation_CrossTenantOrgSpoofingBlocked directly tests the
-// Section 10 challenge:
-// "Can Business A access Business B's sales by changing an organization ID in the request?"
-// Verifies tenant isolation across sales, reports, exports, inventory, files, audit logs,
-// branch isolation within a tenant, and tenant-scoped background job execution.
-func TestMultiTenantAndBranchIsolation_CrossTenantOrgSpoofingBlocked(t *testing.T) {
-	envA := newEnv(t, defaultNow)
-	envB := newEnv(t, defaultNow)
-
-	tillA := envA.cashAccount(t)
-	tillB := envB.cashAccount(t)
-	prodA := envA.product(t, "Alpha Item", "10000", "10", "5000")
-	prodB := envB.product(t, "Beta Secret Item", "99000", "10", "40000")
-
-	saleA := envA.owner.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
-		"items":    []map[string]any{{"product_id": prodA, "qty": "1"}},
-		"payments": []map[string]any{{"method": "cash", "money_account_id": tillA, "amount": "10000"}},
-	}, key())
-	require.Equal(t, 201, saleA.code, saleA.raw)
-
-	saleB := envB.owner.call(t, http.MethodPost, "/api/v1/sales", map[string]any{
-		"items":    []map[string]any{{"product_id": prodB, "qty": "1"}},
-		"payments": []map[string]any{{"method": "cash", "money_account_id": tillB, "amount": "99000"}},
-	}, key())
-	require.Equal(t, 201, saleB.code, saleB.raw)
-	saleBID := str(saleB.data["id"])
-
-	code, raw := upload(t, envB.app.Fiber, envB.owner, "/api/v1/files", "b-secret.png", "image/png", pngBytes)
-	require.Equal(t, 201, code, raw)
-	fileBID := regexpID(t, raw)
-
-	tB := envB.tenantID.String()
-
-	// 1. Business A spoofing organization_id / tenant_id / business_id cannot read, void, or receipt Business B's sale.
-	require.Equal(t, 404, envA.owner.call(t, http.MethodGet, "/api/v1/sales/"+saleBID+"?tenant_id="+tB+"&organization_id="+tB+"&business_id="+tB, nil, "").code)
-	require.Equal(t, 404, envA.owner.call(t, http.MethodGet, "/api/v1/sales/"+saleBID+"/receipt?tenant_id="+tB, nil, "").code)
-	require.Equal(t, 404, envA.owner.call(t, http.MethodGet, "/api/v1/sales/"+saleBID+"/invoice?tenant_id="+tB, nil, "").code)
-	require.Equal(t, 404, envA.owner.call(t, http.MethodPost, "/api/v1/sales/"+saleBID+"/void", map[string]any{
-		"reason": "Cross-tenant sabotage", "tenant_id": tB, "organization_id": tB,
-	}, key()).code)
-
-	// 2. Listing sales, financial reports, CSV exports, stock levels, files, and audit logs strictly respect tenant boundaries.
-	salesListA := envA.owner.call(t, http.MethodGet, "/api/v1/sales?tenant_id="+tB+"&organization_id="+tB, nil, "")
-	require.Equal(t, 200, salesListA.code, salesListA.raw)
-	require.Len(t, asList(salesListA.body["data"]), 1)
-	require.NotContains(t, salesListA.raw, saleBID)
-
-	repA := envA.owner.call(t, http.MethodGet, "/api/v1/reports/sales/summary?from=2026-11-01&to=2026-11-30&tenant_id="+tB, nil, "")
-	require.Equal(t, 200, repA.code, repA.raw)
-	require.True(t, dec(repA.data["totals"].(map[string]any)["gross_sales"]).Equal(rd("10000")),
-		"Business A report must never include Business B's 99,000 sale: %s", repA.raw)
-
-	exportCode, _, exportBody := envA.owner.rawGet(t, "/api/v1/reports/sales/by-product?format=csv&tenant_id="+tB)
-	require.Equal(t, 200, exportCode)
-	require.Contains(t, string(exportBody), "Alpha Item")
-	require.NotContains(t, string(exportBody), "Beta Secret Item")
-
-	stockA := envA.owner.call(t, http.MethodGet, "/api/v1/stock/levels?tenant_id="+tB, nil, "")
-	require.Equal(t, 200, stockA.code, stockA.raw)
-	require.NotContains(t, stockA.raw, prodB)
-
-	require.Equal(t, 404, envA.owner.call(t, http.MethodGet, "/api/v1/files/"+fileBID, nil, "").code)
-
-	// Spoofing Business B's branch ID in X-Branch-Id header is rejected.
-	spoofBranch := &client{app: envA.owner.app, token: envA.owner.token, branch: envB.branch}
-	spoofRes := spoofBranch.call(t, http.MethodGet, "/api/v1/sales", nil, "")
-	require.True(t, spoofRes.code == 403 || spoofRes.code == 404, "cross-tenant X-Branch-Id must be rejected, got %d: %s", spoofRes.code, spoofRes.raw)
-
-	// 3. Branch-level isolation within Business A: user assigned to Branch 1 cannot access Branch 2 or "all".
-	br2 := envA.owner.call(t, http.MethodPost, "/api/v1/branches", map[string]any{"name": "Branch Two"}, "")
+// TestBranchIsolation_StaffCannotCrossLocations verifies that location scoping remains enforced.
+func TestBranchIsolation_StaffCannotCrossLocations(t *testing.T) {
+	e := newEnv(t, defaultNow)
+	br2 := e.owner.call(t, http.MethodPost, "/api/v1/branches", map[string]any{"name": "Branch Two"}, "")
 	require.Equal(t, 201, br2.code, br2.raw)
 	branch2ID := str(br2.data["id"])
-
-	staffA, _ := envA.user(t, "staff")
-	staffAtB2 := &client{app: staffA.app, token: staffA.token, branch: branch2ID}
+	staff, _ := e.user(t, "staff")
+	staffAtB2 := &client{app: staff.app, token: staff.token, branch: branch2ID}
 	require.Equal(t, 403, staffAtB2.call(t, http.MethodGet, "/api/v1/sales", nil, "").code)
-	staffAll := &client{app: staffA.app, token: staffA.token, branch: "all"}
+	staffAll := &client{app: staff.app, token: staff.token, branch: "all"}
 	require.Equal(t, 403, staffAll.call(t, http.MethodGet, "/api/v1/sales", nil, "").code)
-
-	// 4. Background jobs run strictly scoped to their owning tenant.
-	require.NoError(t, envA.app.Jobs.Enqueue(context.Background(), envA.tenantID, jobs.LedgerBalanceCheck, map[string]any{}))
-	require.NoError(t, envA.app.Jobs.Enqueue(context.Background(), envA.tenantID, jobs.StockRebuildCheck, map[string]any{}))
-	require.NoError(t, envA.app.Jobs.Enqueue(context.Background(), envA.tenantID, jobs.AuditSeal, map[string]any{}))
-	require.NoError(t, envA.app.Jobs.RunPendingForTenant(context.Background(), envA.tenantID))
 }
 
 // TestAuditIntegrity_FiveMillionAccountabilityTrailAndHashChain directly tests the
@@ -258,7 +184,7 @@ func TestAuditIntegrity_FiveMillionAccountabilityTrailAndHashChain(t *testing.T)
 	}, "")
 	require.Equal(t, 200, okLogin.code, okLogin.raw)
 
-	// Ordinary staff cannot read tenant-wide audit logs or login history.
+	// Ordinary staff cannot read business-wide audit logs or login history.
 	require.Equal(t, 403, staff.call(t, http.MethodGet, "/api/v1/audit-logs", nil, "").code)
 	require.Equal(t, 403, staff.call(t, http.MethodGet, "/api/v1/login-history", nil, "").code)
 
@@ -350,11 +276,11 @@ func TestAuditIntegrity_FiveMillionAccountabilityTrailAndHashChain(t *testing.T)
 	// 4. Cryptographic hash-chain sealing & verification via worker role succeeds with 0 broken seals.
 	var sealed int
 	var broken int
-	err := e.app.DB.InJobsTx(context.Background(), db.Actor{TenantID: e.tenantID}, func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT audit.seal_tenant($1, interval '0 seconds')`, e.tenantID).Scan(&sealed); err != nil {
+	err := e.app.DB.InJobsTx(context.Background(), db.Actor{}, func(ctx context.Context, tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, `SELECT audit.seal_tenant($1, interval '0 seconds')`, uuid.Nil).Scan(&sealed); err != nil {
 			return err
 		}
-		return tx.QueryRow(ctx, `SELECT count(*) FROM audit.verify_tenant($1)`, e.tenantID).Scan(&broken)
+		return tx.QueryRow(ctx, `SELECT count(*) FROM audit.verify_tenant($1)`, uuid.Nil).Scan(&broken)
 	})
 	require.NoError(t, err)
 	require.Greater(t, sealed, 0, "audit.seal_tenant must cryptographically seal audit rows")

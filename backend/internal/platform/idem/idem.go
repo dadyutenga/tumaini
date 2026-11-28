@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"bms/internal/platform/httpx"
@@ -45,10 +44,8 @@ type Replay struct {
 }
 
 // Claim records the key in app.idempotency_keys inside the caller's transaction, or finds it.
-// A replay is returned when the same key and request already completed. The tenant and member come
-// from the transaction's request context (app.current_membership_id()), so the arguments exist only
-// to keep call sites stable.
-func Claim(ctx context.Context, tx pgx.Tx, tenantID, _ uuid.UUID) (*Replay, error) {
+// A replay is returned when the same key and request already completed.
+func Claim(ctx context.Context, tx pgx.Tx) (*Replay, error) {
 	info, ok := From(ctx)
 	if !ok {
 		return nil, nil
@@ -57,11 +54,11 @@ func Claim(ctx context.Context, tx pgx.Tx, tenantID, _ uuid.UUID) (*Replay, erro
 	var status *int16
 	var response []byte
 	err := tx.QueryRow(ctx, `
-		INSERT INTO app.idempotency_keys (tenant_id, idempotency_key, membership_id, request_method, request_path, request_hash)
-		VALUES ($1, $2, app.current_membership_id(), $3, $4, $5)
-		ON CONFLICT (tenant_id, idempotency_key) DO UPDATE SET idempotency_key = app.idempotency_keys.idempotency_key
+		INSERT INTO app.idempotency_keys ( idempotency_key, membership_id, request_method, request_path, request_hash)
+		VALUES ( $1, app.current_membership_id(), $2, $3, $4)
+		ON CONFLICT (idempotency_key) DO UPDATE SET idempotency_key = app.idempotency_keys.idempotency_key
 		RETURNING request_hash, response_status, response_body
-	`, tenantID, info.Key, info.Method, info.Path, info.Hash).Scan(&hash, &status, &response)
+	`, info.Key, info.Method, info.Path, info.Hash).Scan(&hash, &status, &response)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +72,7 @@ func Claim(ctx context.Context, tx pgx.Tx, tenantID, _ uuid.UUID) (*Replay, erro
 }
 
 // Complete stores the response against the key so a retry gets the same answer.
-func Complete(ctx context.Context, tx pgx.Tx, _ uuid.UUID, status int, body any) ([]byte, error) {
+func Complete(ctx context.Context, tx pgx.Tx, status int, body any) ([]byte, error) {
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return nil, err
@@ -86,6 +83,6 @@ func Complete(ctx context.Context, tx pgx.Tx, _ uuid.UUID, status int, body any)
 	}
 	_, err = tx.Exec(ctx, `
 		UPDATE app.idempotency_keys SET response_status = $2, response_body = $3
-		WHERE tenant_id = app.current_tenant_id() AND idempotency_key = $1`, info.Key, status, raw)
+		WHERE idempotency_key = $1`, info.Key, status, raw)
 	return raw, err
 }

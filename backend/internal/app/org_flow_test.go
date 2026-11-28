@@ -83,10 +83,6 @@ func TestSettingsAreValidatedAndAudited(t *testing.T) {
 	require.Equal(t, 422, o.call(t, http.MethodPut, "/api/v1/settings/notifications", map[string]any{"rules": map[string]any{"made_up": map[string]any{"email": true}}}, "").code)
 	require.Equal(t, 422, o.call(t, http.MethodPut, "/api/v1/settings/notifications", map[string]any{"rules": map[string]any{"low_stock": map[string]any{"email": "yes"}}}, "").code)
 	require.Equal(t, 422, o.call(t, http.MethodPut, "/api/v1/settings/notifications", map[string]any{"rules": map[string]any{"low_stock": map[string]any{"pigeon": true}}}, "").code)
-
-	// Another business keeps its own settings.
-	other := newEnv(t, defaultNow)
-	require.NotEqual(t, "Karibu tena", str(other.owner.call(t, http.MethodGet, "/api/v1/settings", nil, "").data["receipt"].(map[string]any)["footer"]))
 }
 
 func TestBusinessProfileAndPaymentMethods(t *testing.T) {

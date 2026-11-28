@@ -147,8 +147,4 @@ func TestFinanceFlow(t *testing.T) {
 	require.Equal(t, 201, recloseRes.code, recloseRes.raw)
 	require.Equal(t, "closed", recloseRes.data["status"])
 
-	// Another business sees none of it.
-	other := newEnv(t, defaultNow)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/money-accounts/"+bankID, nil, "").code)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/payments/"+salePay, nil, "").code)
 }

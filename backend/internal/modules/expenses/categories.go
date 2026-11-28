@@ -21,11 +21,7 @@ type CategoryIn struct {
 func (s *Service) Categories(ctx context.Context, p *auth.Principal, all bool) ([]map[string]any, error) {
 	out := []map[string]any{}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		rows, err := tx.Query(ctx, `
-			SELECT id, name::text, is_project_cost, status = 'active'
-			FROM app.expense_categories
-			WHERE tenant_id = $1 AND (status = 'active' OR $2)
-			ORDER BY name`, p.TenantID, all)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT id, name::text, is_project_cost, status = 'active'\n\t\t\tFROM app.expense_categories\n\t\t\tWHERE (status = 'active' OR $1)\n\t\t\tORDER BY name", all)
 		if err != nil {
 			return err
 		}
@@ -55,9 +51,7 @@ func (s *Service) CreateCategory(ctx context.Context, p *auth.Principal, in Cate
 	}
 	var id uuid.UUID
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `
-			INSERT INTO app.expense_categories (tenant_id, name, is_project_cost)
-			VALUES ($1,$2,$3) RETURNING id`, p.TenantID, in.Name, isProj).Scan(&id); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tINSERT INTO app.expense_categories (name, is_project_cost)\n\t\t\tVALUES ($1, $2) RETURNING id", in.Name, isProj).Scan(&id); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "A category with that name already exists")
 			}
@@ -79,9 +73,7 @@ func (s *Service) UpdateCategory(ctx context.Context, p *auth.Principal, id uuid
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var oldName string
 		var oldProj, oldActive bool
-		if err := tx.QueryRow(ctx, `
-			SELECT name::text, is_project_cost, status = 'active'
-			FROM app.expense_categories WHERE tenant_id = $1 AND id = $2`, p.TenantID, id).Scan(&oldName, &oldProj, &oldActive); err != nil {
+		if err := tx.QueryRow(ctx, "\n\t\t\tSELECT name::text, is_project_cost, status = 'active'\n\t\t\tFROM app.expense_categories WHERE id = $1", id).Scan(&oldName, &oldProj, &oldActive); err != nil {
 			return httpx.NotFound("not_found", "Expense category not found")
 		}
 		isProj := oldProj
@@ -94,9 +86,7 @@ func (s *Service) UpdateCategory(ctx context.Context, p *auth.Principal, id uuid
 		} else if in.IsActive == nil && !oldActive {
 			st = "inactive"
 		}
-		if _, err := tx.Exec(ctx, `
-			UPDATE app.expense_categories SET name = $3, is_project_cost = $4, status = $5::app.record_status
-			WHERE tenant_id = $1 AND id = $2`, p.TenantID, id, in.Name, isProj, st); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tUPDATE app.expense_categories SET name = $2, is_project_cost = $3, status = $4::app.record_status\n\t\t\tWHERE id = $1", id, in.Name, isProj, st); err != nil {
 			if db.IsUnique(err) {
 				return httpx.Conflict("duplicate", "A category with that name already exists")
 			}

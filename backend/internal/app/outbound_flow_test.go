@@ -87,10 +87,8 @@ func TestOutboundMessagingFlow(t *testing.T) {
 	require.Equal(t, 503, t503.code, t503.raw)
 
 	countOutbound := func() (total, sent int) {
-		_ = e.app.DB.InTx(context.Background(), e.tenantID, func(ctx context.Context, tx pgx.Tx) error {
-			return tx.QueryRow(ctx, `
-				SELECT count(*), count(*) FILTER (WHERE status = 'sent')
-				FROM app.outbound_messages WHERE tenant_id = $1`, e.tenantID).Scan(&total, &sent)
+		_ = e.app.DB.InGlobalTx(context.Background(), func(ctx context.Context, tx pgx.Tx) error {
+			return tx.QueryRow(ctx, "\n\t\t\t\tSELECT count(*), count(*) FILTER (WHERE status = 'sent')\n\t\t\t\tFROM app.outbound_messages WHERE true").Scan(&total, &sent)
 		})
 		return
 	}
@@ -156,7 +154,7 @@ func TestOutboundMessagingFlow(t *testing.T) {
 	require.Equal(t, 200, tOK.code, tOK.raw)
 
 	// Drain the background worker — all 7 queued rows must move to 'sent'.
-	require.NoError(t, e.app.Jobs.RunPendingForTenant(context.Background(), e.tenantID))
+	require.NoError(t, e.app.Jobs.RunPending(context.Background()))
 	tot, sent := countOutbound()
 	require.Equal(t, 7, tot)
 	require.Equal(t, 7, sent)

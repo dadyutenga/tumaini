@@ -35,7 +35,7 @@ func TestScheduledSystemJobs(t *testing.T) {
 	jobCount := func() int {
 		t.Helper()
 		var n int
-		require.NoError(t, e.app.DB.Jobs.QueryRow(ctx, `SELECT count(*) FROM app.job_queue WHERE tenant_id = $1 AND kind IN ('debt_reminders','owner_daily_summary','ledger_balance_check','stock_rebuild_check','session_cleanup')`, e.tenantID).Scan(&n))
+		require.NoError(t, e.app.DB.Jobs.QueryRow(ctx, "SELECT count(*) FROM app.job_queue WHERE kind IN ('debt_reminders','owner_daily_summary','ledger_balance_check','stock_rebuild_check','session_cleanup')").Scan(&n))
 		return n
 	}
 	queued := jobCount()
@@ -53,12 +53,6 @@ func TestScheduledSystemJobs(t *testing.T) {
 	require.NotContains(t, got, "Stock check failed")
 
 	var failed int
-	require.NoError(t, e.app.DB.Jobs.QueryRow(ctx, `SELECT count(*) FROM app.job_queue WHERE tenant_id = $1 AND (status='failed' OR last_error IS NOT NULL)`, e.tenantID).Scan(&failed))
+	require.NoError(t, e.app.DB.Jobs.QueryRow(ctx, "SELECT count(*) FROM app.job_queue WHERE (status='failed' OR last_error IS NOT NULL)").Scan(&failed))
 	require.Zero(t, failed)
-
-	// Another business gets its own jobs and sees none of this business's alerts.
-	other := newEnv(t, defaultNow)
-	require.NoError(t, other.app.Jobs.Schedule(ctx))
-	other.runJobs(t)
-	require.NotContains(t, titles(t, other.owner), "Approved expenses unpaid")
 }

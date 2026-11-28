@@ -78,8 +78,8 @@ func (f Filter) subtitle() string {
 	return "All dates"
 }
 
-// tx runs fn in a REPEATABLE READ, READ ONLY actor transaction for the caller's tenant, with the
-// tenant timezone and business date loaded into f so multi-query reports read one atomic MVCC snapshot.
+// tx runs fn in a REPEATABLE READ, READ ONLY actor transaction for the caller, with the
+// business timezone and business date loaded into f so multi-query reports read one atomic MVCC snapshot.
 func (s *Service) tx(ctx context.Context, p *auth.Principal, f *Filter, fn func(ctx context.Context, tx pgx.Tx) error) error {
 	return s.DB.InActorReadTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		f.tz = setting.String(ctx, tx, "system.timezone", "Africa/Dar_es_Salaam")
@@ -189,10 +189,9 @@ func pct(part, whole decimal.Decimal) any {
 // linesSQL is the sale-line ledger used by every sales report: completed sale lines dated
 // on business_date, and completed return lines dated on r.business_date with quantities
 // and money negated. Cost reduces only when returned goods were restocked.
-func linesSQL(q *sqlq.Q, tenantID uuid.UUID, f Filter) string {
-	t := q.Arg(tenantID)
-	sc := "s.tenant_id = " + t + " AND s.status = 'completed'"
-	rc := "r.tenant_id = " + t + " AND r.status = 'completed'"
+func linesSQL(q *sqlq.Q, f Filter) string {
+	sc := "s.status = 'completed'"
+	rc := "r.status = 'completed'"
 	if f.From != "" {
 		a := q.Arg(f.From)
 		sc += " AND s.business_date >= " + a + "::date"
@@ -218,7 +217,7 @@ func linesSQL(q *sqlq.Q, tenantID uuid.UUID, f Filter) string {
 		         - CASE WHEN s.subtotal > 0 THEN sl.tax_amount * s.total / s.subtotal ELSE sl.tax_amount END AS net,
 		       sl.quantity * COALESCE(sl.unit_cost, 0) AS cost, 0::numeric AS ret
 		FROM app.sales s
-		JOIN app.sale_lines sl ON sl.tenant_id = s.tenant_id AND sl.sale_id = s.id
+		JOIN app.sale_lines sl ON sl.sale_id = s.id
 		WHERE ` + sc + `
 		UNION ALL
 		SELECT s.id, r.business_date, r.location_id, sl.product_id, s.customer_id, s.sold_by,
@@ -230,9 +229,9 @@ func linesSQL(q *sqlq.Q, tenantID uuid.UUID, f Filter) string {
 		       -(CASE WHEN rl.restock THEN rl.quantity * COALESCE(sl.unit_cost, 0) ELSE 0 END),
 		       ROUND(sl.line_total * (CASE WHEN s.subtotal > 0 THEN s.total / s.subtotal ELSE 1 END) * rl.quantity / sl.quantity, 2)
 		FROM app.sale_returns r
-		JOIN app.sale_return_lines rl ON rl.tenant_id = r.tenant_id AND rl.sale_return_id = r.id
-		JOIN app.sale_lines sl ON sl.tenant_id = rl.tenant_id AND sl.id = rl.sale_line_id
-		JOIN app.sales s ON s.tenant_id = r.tenant_id AND s.id = r.sale_id
+		JOIN app.sale_return_lines rl ON rl.sale_return_id = r.id
+		JOIN app.sale_lines sl ON sl.id = rl.sale_line_id
+		JOIN app.sales s ON s.id = r.sale_id
 		WHERE ` + rc + `
 	) l`
 }

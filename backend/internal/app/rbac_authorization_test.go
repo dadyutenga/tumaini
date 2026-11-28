@@ -278,7 +278,7 @@ func TestRBACSelfRoleAndPermissionModificationBlocked(t *testing.T) {
 }
 
 // TestRBACBranchIsolationAndIDORProtection verifies branch-level access restrictions
-// and cross-user / cross-tenant IDOR protection across sales, search, expenses, clients,
+// and cross-user / cross-branch IDOR protection across sales, search, expenses, clients,
 // attachments, and stored files.
 func TestRBACBranchIsolationAndIDORProtection(t *testing.T) {
 	e := newEnv(t, defaultNow)
@@ -395,14 +395,6 @@ func TestRBACBranchIsolationAndIDORProtection(t *testing.T) {
 	require.Equal(t, 404, ownOnlyRep.call(t, http.MethodPost, "/api/v1/clients/"+clientAID+"/convert", nil, "").code)
 	require.Equal(t, 404, ownOnlyRep.call(t, http.MethodPost, "/api/v1/clients/"+clientAID+"/deactivate", nil, "").code)
 
-	// 3. Cross-tenant IDOR isolation: a second tenant's Owner cannot access Tenant A's records or files.
-	other := newEnv(t, defaultNow)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/sales/"+saleAID, nil, "").code)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/files/"+saleFileID, nil, "").code)
-	require.Equal(t, 404, other.owner.call(t, http.MethodDelete, "/api/v1/attachments/"+attAID, nil, "").code)
-	otherAtts := other.owner.call(t, http.MethodGet, "/api/v1/attachments?entity_type=sale&entity_id="+saleAID, nil, "")
-	require.Equal(t, 200, otherAtts.code, otherAtts.raw)
-	require.Empty(t, asList(otherAtts.body["data"]))
 }
 
 // TestRBACPermissionChangesTakeEffectImmediately verifies that revoking a permission via

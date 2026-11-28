@@ -143,9 +143,9 @@ func (s *Service) List(ctx context.Context, p *auth.Principal, f ApprovalFilter,
 			       rm.user_id, u.full_name::text, dm.user_id, d.full_name::text,
 			       ar.decided_at, ar.decision_note, ar.requested_at, (` + can + `)
 			FROM app.approval_requests ar
-			JOIN app.memberships rm ON rm.tenant_id = ar.tenant_id AND rm.id = ar.requested_by
+			JOIN app.memberships rm ON rm.id = ar.requested_by
 			JOIN iam.users u ON u.id = rm.user_id
-			LEFT JOIN app.memberships dm ON dm.tenant_id = ar.tenant_id AND dm.id = ar.decided_by
+			LEFT JOIN app.memberships dm ON dm.id = ar.decided_by
 			LEFT JOIN iam.users d ON d.id = dm.user_id` + q.Where() + ` ORDER BY ar.requested_at DESC` + q.Page(page.PerPage, page.Offset)
 		rows, err := tx.Query(ctx, sql, q.Args...)
 		if err != nil {
@@ -218,9 +218,9 @@ func (s *Service) Get(ctx context.Context, p *auth.Principal, id uuid.UUID) (map
 			       rm.user_id, u.full_name::text, dm.user_id, d.full_name::text,
 			       ar.decided_at, ar.decision_note, ar.requested_at, (`+can+`)
 			FROM app.approval_requests ar
-			JOIN app.memberships rm ON rm.tenant_id = ar.tenant_id AND rm.id = ar.requested_by
+			JOIN app.memberships rm ON rm.id = ar.requested_by
 			JOIN iam.users u ON u.id = rm.user_id
-			LEFT JOIN app.memberships dm ON dm.tenant_id = ar.tenant_id AND dm.id = ar.decided_by
+			LEFT JOIN app.memberships dm ON dm.id = ar.decided_by
 			LEFT JOIN iam.users d ON d.id = dm.user_id
 			WHERE ar.id = $1`, q.Args...))
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -256,7 +256,7 @@ func (s *Service) Decide(ctx context.Context, p *auth.Principal, id uuid.UUID, a
 	var status int
 	var body []byte
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if rep, err := idem.Claim(ctx, tx, p.TenantID, p.UserID); err != nil || rep != nil {
+		if rep, err := idem.Claim(ctx, tx); err != nil || rep != nil {
 			if rep != nil {
 				status, body = rep.Status, rep.Body
 			}
@@ -272,7 +272,7 @@ func (s *Service) Decide(ctx context.Context, p *auth.Principal, id uuid.UUID, a
 		if err := s.Audit.Record(ctx, tx, p, "approval."+state, "approval_requests", id, nil, map[string]any{"note": note}); err != nil {
 			return err
 		}
-		raw, err := idem.Complete(ctx, tx, p.UserID, 200, httpx.Data(map[string]any{"id": id, "status": state}))
+		raw, err := idem.Complete(ctx, tx, 200, httpx.Data(map[string]any{"id": id, "status": state}))
 		status, body = 200, raw
 		return err
 	})
@@ -405,10 +405,7 @@ func (s *Service) SendTestNotification(ctx context.Context, p *auth.Principal, c
 		return map[string]any{"id": id, "channel": channel, "recipient": rec, "message": msg, "ok": true}, nil
 	}
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.notifications (id, tenant_id, recipient_id, notification_type, title, body, link_path, dedupe_key, created_at)
-			VALUES ($1,$2,$3,'day_closed'::app.notification_type,$4,$5,'/settings',$6,$7)
-		`, id, p.TenantID, p.MembershipID, "Test notification ("+channel+")", msg, "test:"+id.String(), s.Clock.Now()); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.notifications (id, recipient_id, notification_type, title, body, link_path, dedupe_key, created_at)\n\t\t\tVALUES ($1, $2, 'day_closed'::app.notification_type, $3, $4, '/settings', $5, $6)\n\t\t", id, p.MembershipID, "Test notification ("+channel+")", msg, "test:"+id.String(), s.Clock.Now()); err != nil {
 			return err
 		}
 		return s.Audit.Record(ctx, tx, p, "notification.test_sent", "notifications", id, nil, map[string]any{
@@ -487,19 +484,16 @@ func (s *Service) StartExport(ctx context.Context, p *auth.Principal) (map[strin
 	id := ids.New()
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
 		var running int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.backup_runs WHERE tenant_id = $1 AND backup_kind = 'tenant_export' AND status = 'running'`, p.TenantID).Scan(&running); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM app.backup_runs WHERE backup_kind = 'tenant_export' AND status = 'running'").Scan(&running); err != nil {
 			return err
 		}
 		if running > 0 {
 			return httpx.Conflict("invalid_status", "A data export is already in progress")
 		}
-		if _, err := tx.Exec(ctx, `
-			INSERT INTO app.backup_runs (id, backup_kind, tenant_id, status, started_at)
-			VALUES ($1, 'tenant_export', $2, 'running', $3)
-		`, id, p.TenantID, s.Clock.Now()); err != nil {
+		if _, err := tx.Exec(ctx, "\n\t\t\tINSERT INTO app.backup_runs (id, backup_kind, status, started_at)\n\t\t\tVALUES ($1, 'tenant_export', 'running', $2)\n\t\t", id, s.Clock.Now()); err != nil {
 			return err
 		}
-		if err := jobs.EnqueueTx(ctx, tx, p.TenantID, jobs.BusinessExport, map[string]any{
+		if err := jobs.EnqueueTx(ctx, tx, jobs.BusinessExport, map[string]any{
 			"export_id":     id,
 			"user_id":       p.UserID,
 			"membership_id": p.MembershipID,
@@ -526,18 +520,10 @@ func (s *Service) Backups(ctx context.Context, p *auth.Principal, page httpx.Pag
 	total := 0
 	var last *time.Time
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM app.backup_runs WHERE tenant_id = $1 AND backup_kind = 'tenant_export'`, p.TenantID).Scan(&total); err != nil {
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM app.backup_runs WHERE backup_kind = 'tenant_export'").Scan(&total); err != nil {
 			return err
 		}
-		rows, err := tx.Query(ctx, `
-			SELECT br.id, br.status::text, m.user_id, u.full_name::text, f.id, br.error, br.started_at, br.finished_at
-			FROM app.backup_runs br
-			LEFT JOIN app.files f ON f.tenant_id = br.tenant_id AND f.storage_key = br.storage_uri
-			LEFT JOIN app.memberships m ON m.tenant_id = f.tenant_id AND m.id = f.created_by
-			LEFT JOIN iam.users u ON u.id = m.user_id
-			WHERE br.tenant_id = $1 AND br.backup_kind = 'tenant_export'
-			ORDER BY br.started_at DESC LIMIT $2 OFFSET $3
-		`, p.TenantID, page.PerPage, page.Offset)
+		rows, err := tx.Query(ctx, "\n\t\t\tSELECT br.id, br.status::text, m.user_id, u.full_name::text, f.id, br.error, br.started_at, br.finished_at\n\t\t\tFROM app.backup_runs br\n\t\t\tLEFT JOIN app.files f ON f.storage_key = br.storage_uri\n\t\t\tLEFT JOIN app.memberships m ON m.id = f.created_by\n\t\t\tLEFT JOIN iam.users u ON u.id = m.user_id\n\t\t\tWHERE br.backup_kind = 'tenant_export'\n\t\t\tORDER BY br.started_at DESC LIMIT $1 OFFSET $2\n\t\t", page.PerPage, page.Offset)
 		if err != nil {
 			return err
 		}
@@ -594,14 +580,7 @@ func (s *Service) Export(ctx context.Context, p *auth.Principal, id uuid.UUID) (
 	}
 	var out map[string]any
 	err := s.DB.InActorTx(ctx, p.Actor(), func(ctx context.Context, tx pgx.Tx) error {
-		row, err := scanExport(tx.QueryRow(ctx, `
-			SELECT br.id, br.status::text, m.user_id, u.full_name::text, f.id, br.error, br.started_at, br.finished_at
-			FROM app.backup_runs br
-			LEFT JOIN app.files f ON f.tenant_id = br.tenant_id AND f.storage_key = br.storage_uri
-			LEFT JOIN app.memberships m ON m.tenant_id = f.tenant_id AND m.id = f.created_by
-			LEFT JOIN iam.users u ON u.id = m.user_id
-			WHERE br.tenant_id = $1 AND br.id = $2
-		`, p.TenantID, id), false)
+		row, err := scanExport(tx.QueryRow(ctx, "\n\t\t\tSELECT br.id, br.status::text, m.user_id, u.full_name::text, f.id, br.error, br.started_at, br.finished_at\n\t\t\tFROM app.backup_runs br\n\t\t\tLEFT JOIN app.files f ON f.storage_key = br.storage_uri\n\t\t\tLEFT JOIN app.memberships m ON m.id = f.created_by\n\t\t\tLEFT JOIN iam.users u ON u.id = m.user_id\n\t\t\tWHERE br.id = $1\n\t\t", id), false)
 		if err != nil {
 			return httpx.NotFound("not_found", "Export not found")
 		}

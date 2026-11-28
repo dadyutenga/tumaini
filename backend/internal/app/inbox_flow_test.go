@@ -141,12 +141,6 @@ func TestInboxApprovalsNotificationsAuditBackups(t *testing.T) {
 	require.Equal(t, 200, myLogins.code, myLogins.raw)
 	require.NotEmpty(t, asList(myLogins.body["data"]))
 
-	// Tenancy: another business sees none of it.
-	other := newEnv(t, defaultNow)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/approvals/"+third, nil, "").code)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/exports/"+exportID, nil, "").code)
-	empty := other.owner.call(t, http.MethodGet, "/api/v1/audit-logs/entity/approval_requests/"+third, nil, "")
-	require.Empty(t, asList(empty.body["data"]))
 }
 
 func download(t *testing.T, app *fiber.App, c *client, url string) []byte {

@@ -38,11 +38,9 @@ func TestInvoiceNumbersAndPrefixes(t *testing.T) {
 	require.Equal(t, 200, o.call(t, http.MethodPut, "/api/v1/settings/invoice", map[string]any{"prefix": "TAX"}, "").code)
 	require.Equal(t, str(i1["invoice_number"]), str(invoice(o, s1)["invoice_number"]), "an issued number never changes")
 
-	// Same permission as viewing the sale; another business cannot reach it.
+	// Same permission as viewing the sale.
 	staff, _ := e.user(t, "staff")
 	require.Equal(t, 404, staff.call(t, http.MethodGet, "/api/v1/sales/"+s1+"/invoice", nil, "").code, "staff see only their own sales")
-	other := newEnv(t, defaultNow)
-	require.Equal(t, 404, other.owner.call(t, http.MethodGet, "/api/v1/sales/"+s1+"/invoice", nil, "").code)
 }
 
 // The business's language setting is what new users start with (FR-SET-09).
