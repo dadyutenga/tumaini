@@ -2,6 +2,22 @@
 
 Status document. It is updated with every step; the commit log on branch `feature/new-database` is the detailed history.
 
+## Since 2026-11-28: one business per installation
+
+Everything below describes the transition to the multi-business schema and is kept as history. Migrations
+`340_remove_multitenancy.sql` and `341_remove_mfa_api_keys.sql` then changed it:
+
+| Before | Now |
+|---|---|
+| `app.tenants`, `tenant_id` columns, GUC `app.tenant_id`, tenant policies | `app.business_profile` (one row); no tenant columns. Role rules stay as restrictive policies beside an `app_access` policy |
+| `app.tenant_settings`, `app.tenant_setting_values` | `app.business_settings` (one row), `app.setting_values` |
+| `app.provision_tenant`, public registration | `app.provision_business`, called once by `POST /setup` |
+| MFA factors, recovery codes, API keys | removed |
+| `audit.audit_log.tenant_id` | `audit.audit_log.legacy_scope`. Entries written before the migration keep their value and their own seal chain; new entries have none |
+
+Functions that took a tenant keep their signature and ignore the argument. Upgrading refuses to run when the
+database holds more than one business.
+
 ## What changed
 
 | | Legacy | Approved (now) |

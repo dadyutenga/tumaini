@@ -7,7 +7,7 @@ Every endpoint, the permission it needs and what it does. Base path `/api/v1`.
 | Topic | Rule |
 | --- | --- |
 | Base | `/api/v1`, JSON in and out, UTF-8 |
-| Auth | `Authorization: Bearer <access token>` on every route except `/auth/login`, `/auth/register`, `/auth/refresh` |
+| Auth | `Authorization: Bearer <access token>` on every route except `/setup`, `/setup/status`, `/auth/login`, `/auth/refresh` |
 | Branch | `X-Branch-Id: <uuid>` on branch-scoped routes. Users with scope `all` may send `all` on GET routes |
 | Idempotency | `Idempotency-Key: <uuid>` on POST routes marked (I). Same key and same body returns the first response. Same key and different body returns 409 |
 | Pagination | `?page=1&per_page=25`, maximum 100. Response has `meta: {page, per_page, total}` |
@@ -26,7 +26,8 @@ In the tables below the Permission column is the key checked by the route. Scope
 
 | Method and path | Permission | Does |
 | --- | --- | --- |
-| POST `/auth/register` | public | Create business, main branch, defaults and Owner |
+| GET `/setup/status` | public | Whether the first-run setup is still needed |
+| POST `/setup` | public, once | First-run setup: business, main branch, defaults and Owner. Refused after the first user exists |
 | POST `/auth/login` | public | Return access token, set refresh cookie |
 | POST `/auth/refresh` | cookie | Rotate refresh token, return new access token |
 | POST `/auth/logout` | any | End current session |

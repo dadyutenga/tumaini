@@ -59,15 +59,16 @@ npm install
 npm run dev
 ```
 
-Open <http://localhost:5173> and register a business. See `frontend/README.md`.
+Open <http://localhost:5173/setup> and complete the one-time setup: it creates the business and its Admin account. An installation holds one business, with any number of branches. See `frontend/README.md`.
 
 ## Tests
 
-The integration tests drive the real HTTP handlers against a real PostgreSQL as the `bms_app` role. Each test registers its own business and does not wipe other data.
+The integration tests drive the real HTTP handlers against a real PostgreSQL as the API role. Each test copies the migrated database named by `MIGRATE_DATABASE_URL` (a superuser connection), sets up a business in the copy and drops it afterwards.
 
 ```bash
 cd backend
 export DATABASE_URL='postgres://bms_app:bms_app_dev@127.0.0.1:5433/bms?sslmode=disable'
+export MIGRATE_DATABASE_URL='postgres://postgres:postgres_dev@127.0.0.1:5433/bms?sslmode=disable'
 export JWT_SECRET='0123456789abcdef0123456789abcdef'
 go test -race -count=1 ./...
 ```

@@ -95,3 +95,20 @@ After a change to `deploy/server-setup.sh` or the nginx vhost (new cron jobs, th
 
 Set `CLAMD_ADDR=clamav:3310` in `.env` and deploy. ClamAV needs about 3 GB of free memory. While it starts, or if it
 stops, uploads are refused rather than stored unchecked.
+
+## First-run setup
+
+After the first deployment of a new server, open the site and complete `/setup`. It creates the
+business profile, the main shop, business units A and B, the Admin, Manager and Staff roles and the
+Admin account. It can be done once.
+
+## Upgrading to the single-business schema (migrations 340 and 341)
+
+The upgrade is destructive and cannot be reversed except by restoring a backup.
+
+1. Take a backup (`./backup-prod.sh`) and run `./restore-verify.sh` on it.
+2. Rehearse on a copy: restore the backup into a scratch database and run the migrations there.
+3. Migration 340 stops with `multi_tenant_data_present` if the database holds more than one business.
+4. Leave `MFA_ENCRYPTION_KEY` and `JWT_SECRET` in `.env` exactly as they are: stored national ID
+   numbers are encrypted with them. Two-factor authentication is removed; people sign in with their
+   password only.
