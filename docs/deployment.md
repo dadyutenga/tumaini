@@ -15,20 +15,22 @@ install it: after changing that file, re-run `scripts/provision-server.sh`.
 
 ## Branches and releases
 
-There are two branches. `main` is where work lands; `deploy` is the release line. To release:
+There are two branches. `dev` is where work lands; `main` is the release line. To release:
 
 ```bash
-git checkout deploy && git merge --ff-only main && git push
+git switch main && git pull --ff-only && git merge --no-ff dev && git push
+git switch dev
 ```
 
-That push runs the Deploy workflow. Pushes to `main` only run the CI workflows.
+Every push to `main` runs the Deploy workflow and releases to production, including a push that changes only
+documentation. Pushes to `dev` only run the CI workflows.
 
 ## Pipeline
 
 | Workflow | When | What |
 | --- | --- | --- |
-| `backend-ci.yml`, `frontend-ci.yml` | pull requests and pushes touching those paths | full checks (lint, `go test -race`, ...) |
-| `deploy.yml` | push to the `deploy` branch, or run it by hand | both CI workflows (tests, vulnerability scans, lint, builds) -> build images -> scan them -> push `ghcr.io/<repo>/{api,web}:sha-<12>` -> SSH deploy |
+| `backend-ci.yml`, `frontend-ci.yml` | pull requests, and pushes to branches other than `main`, touching those paths | full checks (lint, `go test -race`, ...) |
+| `deploy.yml` | push to `main`, or run it by hand | both CI workflows (tests, vulnerability scans, lint, builds) -> build images -> scan them -> push `ghcr.io/<repo>/{api,web}:sha-<12>` -> SSH deploy |
 
 A failing test, a known vulnerability or a high-severity image finding stops the release. Third-party actions are
 pinned to commit hashes; update the hash and its version comment together.

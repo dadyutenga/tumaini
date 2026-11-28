@@ -1,12 +1,12 @@
 name: Deploy
-# Push to the `deploy` branch: verify, build and push images to GHCR, then deploy to the server over SSH.
-# Release flow: merge main into deploy. Run it by hand (Actions > Deploy > Run workflow) to redeploy.
+# Push to `main`: verify, build and push images to GHCR, then deploy to the server over SSH.
+# Release flow: merge dev into main. Run it by hand (Actions > Deploy > Run workflow, branch main) to redeploy.
 #
 # Repository secrets: SSH_HOST, SSH_PORT, SSH_USER (deploy), SSH_PRIVATE_KEY, SSH_KNOWN_HOSTS.
 # See docs/deployment.md.
 on:
   push:
-    branches: [deploy]
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
